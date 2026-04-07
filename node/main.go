@@ -1,0 +1,687 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	agent "dylaris-agent"
+
+	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
+)
+
+var (
+	nodeID        string
+	clusterSecret string
+
+	// Node Redis
+	redisAddr string
+	redisUser string
+	redisPass string
+	redisDB   int
+
+	// Redis address passed to MC containers (non-Swarm, can't resolve Swarm DNS)
+	mcRedisAddr string
+	mcRedisUser string
+	mcRedisPass string
+	mcRedisDB   string
+
+	nodeTags          string
+	defaultCpusetCpus string
+	statsBufferMaxLen int64
+	statsStreamMaxLen int64
+	storagePaths      string
+)
+
+type NodeCommand struct {
+	Action     string          `json:"action"`
+	Config     ServerConfig    `json:"config"`
+	Installer  InstallerConfig `json:"installer"`
+	TargetPath string          `json:"targetPath,omitempty"`
+}
+
+func main() {
+	parseConfig()
+
+	log.Printf("Starting Dylaris Node '%s'...", nodeID)
+	log.Printf("Connecting to Redis at %s (User: '%s', DB: %d)", redisAddr, redisUser, redisDB)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Username: redisUser,
+		Password: redisPass,
+		DB:       redisDB,
+	})
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	log.Println("Connected to Redis")
+
+	// Multi-storage: init StorageManager with configured paths
+	storageMgr := NewStorageManager(storagePaths, rdb)
+	storageMgr.LogStorageInfo()
+	globalStorageMgr = storageMgr
+
+	dockerMgr, err := NewDockerManager(storageMgr)
+	if err != nil {
+		log.Fatalf("Failed to init Docker Manager: %v", err)
+	}
+
+	// Quota provider for first storage path (legacy compat) — multi-path quota handled per-path
+	quotaProvider := NewQuotaProvider(storageMgr.Paths()[0])
+
+	// On startup, restart any running MC containers with stale Redis config
+	dockerMgr.ReconcileRedisEnv()
+
+	// Shared agent monitor for heartbeat + system stats (single gopsutil instance)
+	mon, monErr := agent.NewMonitor(agent.MonitorConfig{})
+	if monErr != nil {
+		log.Printf("Warning: system monitor init failed: %v", monErr)
+		mon = nil
+	}
+	// 1-second poll goroutine for accurate speed delta calculations
+	if mon != nil {
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					mon.Shutdown()
+					return
+				case <-ticker.C:
+					mon.GetCurrentStats()
+				}
+			}
+		}()
+	}
+
+	go startDiscoveryLoop(ctx, rdb, nodeID, clusterSecret, nodeTags, mon, dockerMgr)
+	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
+	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
+	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
+	go StartReconciler(ctx, rdb, dockerMgr)
+
+	// gRPC Mesh: connect outbound to all Cores
+	streamHandler := NewStreamHandler(storageMgr)
+	meshMgr := NewMeshManager(nodeID, rdb, streamHandler)
+	go meshMgr.Run(ctx)
+
+	// Beam: file transfer gRPC server on localhost:9091
+	beamThrottle := NewBeamThrottle(ctx, rdb)
+	go StartBeamServer(ctx, storageMgr, beamThrottle)
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	<-c
+	log.Println("Shutting down node gracefully...")
+}
+
+func parseConfig() {
+	if _, err := os.Stat(".env"); os.IsNotExist(err) {
+		log.Println("No .env file found. Using system environment variables.")
+	} else {
+		godotenv.Load()
+	}
+
+	// 1. Node Basics
+	nodeID = os.Getenv("DYLARIS_NODE_ID")
+	clusterSecret = os.Getenv("DYLARIS_CLUSTER_SECRET")
+	nodeTags = os.Getenv("DYLARIS_TAGS")
+
+	if clusterSecret == "" {
+		log.Fatal("FATAL: DYLARIS_CLUSTER_SECRET is missing!")
+	}
+	if nodeID == "" {
+		hostname, err := os.Hostname()
+		if err != nil || hostname == "" {
+			log.Fatal("FATAL: DYLARIS_NODE_ID is missing and hostname could not be determined!")
+		}
+		nodeID = hostname
+		log.Printf("No Node ID provided. Automatically using system hostname: '%s'", nodeID)
+	}
+
+	// 2. Node Redis
+	redisAddr = os.Getenv("REDIS_ADDR")
+	redisUser = os.Getenv("REDIS_USER")
+	redisPass = os.Getenv("REDIS_PASSWORD")
+	redisDB = 0
+	if dbStr := os.Getenv("REDIS_DB"); dbStr != "" {
+		if db, err := strconv.Atoi(dbStr); err == nil {
+			redisDB = db
+		}
+	}
+
+	if redisAddr == "" {
+		log.Fatal("FATAL: REDIS_ADDR is missing!")
+	}
+
+	// 2b. MC Container Redis (non-Swarm containers can't resolve Swarm DNS)
+	mcRedisAddr = os.Getenv("SIDECAR_REDIS_ADDR")
+	if mcRedisAddr == "" {
+		mcRedisAddr = redisAddr // fallback: works if MC containers can reach Swarm DNS
+	}
+	mcRedisUser = os.Getenv("SIDECAR_REDIS_USER")
+	if mcRedisUser == "" {
+		mcRedisUser = redisUser
+	}
+	mcRedisPass = os.Getenv("SIDECAR_REDIS_PASSWORD")
+	if mcRedisPass == "" {
+		mcRedisPass = redisPass
+	}
+	mcRedisDB = os.Getenv("SIDECAR_REDIS_DB")
+	if mcRedisDB == "" {
+		mcRedisDB = strconv.Itoa(redisDB)
+	}
+
+	// 3. CPU Pinning (cpuset-cpus) default for all MC containers on this node
+	defaultCpusetCpus = os.Getenv("DYLARIS_CPUSET_CPUS")
+	if defaultCpusetCpus != "" {
+		log.Printf("Default CPU pinning (cpuset-cpus): %s", defaultCpusetCpus)
+	}
+
+	// 4. Stats buffer stream MAXLEN (default: 1800 = 1 hour at 2s intervals)
+	// RAM per entry: ~150 bytes (stream overhead + JSON payload)
+	//
+	// Examples (entries x 150 bytes x server count):
+	//   100 servers  x 1800 = 27 MB
+	//   10k servers  x 1800 = 2.7 GB
+	//   100k servers x 1800 = 27 GB
+	//
+	// Reduce for large deployments, e.g. 150 (5 min buffer):
+	//   100k servers x 150 = 2.25 GB
+	statsBufferMaxLen = 1800
+	if v := os.Getenv("DYLARIS_STATS_BUFFER_MAXLEN"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			statsBufferMaxLen = n
+		}
+	}
+	log.Printf("Stats buffer MAXLEN: %d entries", statsBufferMaxLen)
+
+	// Node system stats stream (CPU/RAM/Net of the host)
+	statsStreamMaxLen = 360 // ~3h at 30s interval
+	if v := os.Getenv("STATS_STREAM_MAXLEN"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			statsStreamMaxLen = n
+		}
+	}
+
+	// Storage paths (comma-separated, default: ./dylaris_data/servers)
+	storagePaths = os.Getenv("DYLARIS_STORAGE_PATHS")
+}
+
+func getOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
+// storageManager is set during init and used by heartbeat to publish storage info.
+var globalStorageMgr *StorageManager
+
+func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, secret, tags string, mon *agent.Monitor, dm *DockerManager) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	sendHeartbeat(ctx, rdb, id, secret, tags, mon, dm)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sendHeartbeat(ctx, rdb, id, secret, tags, mon, dm)
+		}
+	}
+}
+
+func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags string, mon *agent.Monitor, dm *DockerManager) {
+	key := fmt.Sprintf("dylaris:discovery:%s", id)
+	data := map[string]interface{}{
+		"id": id, "name": id, "ip": getOutboundIP(),
+		"clusterSecret": secret, "tags": tags, "timestamp": time.Now().Unix(),
+		"ips": map[string]interface{}{
+			"public":  getOutboundIP(),
+			"private": getPrivateIPs(),
+		},
+	}
+
+	// Include live CPU/RAM in heartbeat
+	if mon != nil {
+		if snap, err := mon.Snapshot(); err == nil {
+			data["cpuUsage"] = snap.CPUPercent
+			data["ramFree"] = int64(snap.RAMTotal) - int64(snap.RAMUsed)
+			data["ramTotal"] = snap.RAMTotal
+		}
+	}
+
+	// Include link container count
+	if dm != nil {
+		data["linkCount"] = dm.CountLinkContainers()
+	}
+
+	// Include storage info in heartbeat
+	if globalStorageMgr != nil {
+		data["storage"] = globalStorageMgr.GetStorageInfo()
+	}
+	jsonData, _ := json.Marshal(data)
+	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
+		log.Printf("Heartbeat warning: %v", err)
+	}
+}
+
+func getPrivateIPs() []string {
+	var ips []string
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ips
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil {
+			continue
+		}
+		if ip[0] == 10 || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) || (ip[0] == 192 && ip[1] == 168) {
+			ips = append(ips, ip.String())
+		}
+	}
+	return ips
+}
+
+func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaProvider, storage *StorageManager) {
+	queueKey := fmt.Sprintf("dylaris:node:%s:queue", id)
+	log.Printf("Listening for core commands on queue: %s", queueKey)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			result, err := rdb.BLPop(ctx, 0, queueKey).Result()
+			if err != nil {
+				log.Printf("Queue connection error: %v", err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+
+			payload := result[1]
+
+			go func(payloadStr string) {
+				var cmd NodeCommand
+				if err := json.Unmarshal([]byte(payloadStr), &cmd); err != nil {
+					log.Printf("Invalid command payload: %v", err)
+					return
+				}
+
+				log.Printf("Pulled command from queue: '%s'", cmd.Action)
+
+				// Apply node-level default cpuset if not set by core
+				if cmd.Config.Docker.CpusetCpus == "" && defaultCpusetCpus != "" {
+					cmd.Config.Docker.CpusetCpus = defaultCpusetCpus
+				}
+
+				switch cmd.Action {
+
+				case "create":
+					// Step 1: create a stopped container slot with no software installed.
+					log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
+
+					// Assign storage path (auto-balances by free space)
+					storagePath, err := storage.SelectStoragePath(cmd.Config.UUID, "")
+					if err != nil {
+						log.Printf("Failed to select storage path for %s: %v", cmd.Config.UUID, err)
+						return
+					}
+					serverPath := filepath.Join(storagePath, cmd.Config.UUID)
+					if err := os.MkdirAll(serverPath, 0755); err != nil {
+						log.Printf("Failed to create directory for %s: %v", cmd.Config.UUID, err)
+						return
+					}
+
+					if quota != nil {
+						if err := quota.AssignQuota(cmd.Config.UUID); err != nil {
+							log.Printf("Quota assign warning for %s: %v", cmd.Config.UUID, err)
+						}
+						if cmd.Config.Docker.DiskLimit > 0 {
+							if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
+								log.Printf("Quota limit warning for %s: %v", cmd.Config.UUID, err)
+							}
+						}
+					}
+
+					if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
+						log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
+					} else {
+						log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
+					}
+
+				case "setup":
+					// Step 2: install software into a named sub-server directory, then start.
+					subName := cmd.Config.ActiveSubServer
+					if subName == "" {
+						subName = "server"
+					}
+					log.Printf("Setting up server %s (sub-server: %s)...", cmd.Config.UUID, subName)
+
+					// Set install-start timestamp for cooldown tracking
+					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
+
+					serverPath := storage.GetServerDir(cmd.Config.UUID)
+
+					if err := InstallServer(serverPath, subName, cmd.Installer); err != nil {
+						log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+						return
+					}
+
+					// Always write eula.txt automatically
+					eulaPath := filepath.Join(serverPath, subName, "eula.txt")
+					if err := os.WriteFile(eulaPath, []byte("eula=true\n"), 0644); err != nil {
+						log.Printf("Failed to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
+					}
+
+					// Smart JAR detection: find the correct server JAR (Forge, Fabric, Paper, etc.)
+					subServerDir := filepath.Join(serverPath, subName)
+					detectedJar := DetectServerJar(subServerDir)
+					if detectedJar != "server.jar" {
+						// Replace hardcoded "server.jar" in the start command
+						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, "-jar server.jar", "-jar "+detectedJar, 1)
+					}
+					// Detect extra JVM args from user_jvm_args.txt (Forge)
+					if detectedArgs := DetectExtraJvmArgs(subServerDir); detectedArgs != "" {
+						// Insert before -jar flag
+						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, " -jar ", " "+detectedArgs+" -jar ", 1)
+					}
+
+					// Track the active sub-server on disk
+					activeFile := filepath.Join(serverPath, ".active_server")
+					if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+						log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
+					}
+
+					// Recreate container with start command pointing to the sub-server
+					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+						log.Printf("Failed to start server pod %s: %v", cmd.Config.UUID, err)
+					} else {
+						log.Printf("Server %s/%s deployed and running!", cmd.Config.UUID, subName)
+					}
+
+					// Notify Core that installation is complete
+					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+
+				case "switch_server":
+					// Update active sub-server on disk, then recreate container with new command.
+					subName := cmd.Config.ActiveSubServer
+					if subName == "" {
+						log.Printf("switch_server for %s: ActiveSubServer is empty, aborting", cmd.Config.UUID)
+						return
+					}
+					log.Printf("Switching server %s to sub-server: %s", cmd.Config.UUID, subName)
+
+					serverPath := storage.GetServerDir(cmd.Config.UUID)
+					activeFile := filepath.Join(serverPath, ".active_server")
+					if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+						log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
+					}
+
+					// Smart JAR detection for the target sub-server
+					switchSubDir := filepath.Join(serverPath, subName)
+					detectedJar := DetectServerJar(switchSubDir)
+					if detectedJar != "server.jar" {
+						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, "-jar server.jar", "-jar "+detectedJar, 1)
+					}
+					if detectedArgs := DetectExtraJvmArgs(switchSubDir); detectedArgs != "" {
+						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, " -jar ", " "+detectedArgs+" -jar ", 1)
+					}
+
+					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+						log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
+					} else {
+						log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
+					}
+
+				case "start":
+					log.Printf("Power Action 'start' for Server %s ...", cmd.Config.UUID)
+					dm.PullContainerImage(cmd.Config.UUID)
+					if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
+						log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
+					} else {
+						log.Printf("Server %s started", cmd.Config.UUID)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "starting", 30*time.Second)
+					}
+
+				case "stop":
+					log.Printf("Graceful stop for Server %s ...", cmd.Config.UUID)
+					gracefulStop(rdb, cmd.Config.UUID, dm)
+					log.Printf("Server %s stopped", cmd.Config.UUID)
+					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+
+				case "kill":
+					log.Printf("Force kill for Server %s ...", cmd.Config.UUID)
+					if err := dm.PowerAction(cmd.Config.UUID, "kill"); err != nil {
+						log.Printf("Failed to kill server %s: %v", cmd.Config.UUID, err)
+					} else {
+						log.Printf("Server %s killed", cmd.Config.UUID)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+					}
+
+				case "restart":
+					log.Printf("Graceful restart for Server %s ...", cmd.Config.UUID)
+					gracefulStop(rdb, cmd.Config.UUID, dm)
+					// Clean up stop-requested key to prevent race with new log-shipper instance
+					rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
+					time.Sleep(2 * time.Second)
+					// Recreate container (more reliable than ContainerStart on exited container)
+					if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
+						log.Printf("Failed to restart server %s: %v", cmd.Config.UUID, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+					} else {
+						log.Printf("Server %s restarted", cmd.Config.UUID)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "starting", 30*time.Second)
+					}
+
+				case "update_resources":
+					log.Printf("Updating resources for Server %s ...", cmd.Config.UUID)
+					if err := dm.UpdateResources(cmd.Config); err != nil {
+						log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
+					} else {
+						log.Printf("Server %s resources updated and restarted", cmd.Config.UUID)
+					}
+					if quota != nil {
+						if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
+							log.Printf("Quota limit update warning for %s: %v", cmd.Config.UUID, err)
+						}
+					}
+
+				case "delete":
+					log.Printf("Deleting Server %s ...", cmd.Config.UUID)
+					dm.PowerAction(cmd.Config.UUID, "delete")
+
+					if quota != nil {
+						quota.RemoveQuota(cmd.Config.UUID)
+					}
+
+					serverPath := storage.GetServerDir(cmd.Config.UUID)
+					os.RemoveAll(serverPath)
+					storage.RemoveServerPath(cmd.Config.UUID)
+					log.Printf("Server %s data fully deleted", cmd.Config.UUID)
+
+				case "delete_sub_server":
+					subName := cmd.Config.ActiveSubServer
+					if subName == "" {
+						log.Printf("delete_sub_server for %s: sub-server name is empty, aborting", cmd.Config.UUID)
+						return
+					}
+					log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
+
+					// Kill the container
+					dm.PowerAction(cmd.Config.UUID, "kill")
+
+					serverPath := storage.GetServerDir(cmd.Config.UUID)
+					subServerPath := filepath.Join(serverPath, subName)
+					if err := os.RemoveAll(subServerPath); err != nil {
+						log.Printf("Failed to delete sub-server directory %s: %v", subServerPath, err)
+						return
+					}
+
+					// Check if this was the active sub-server
+					activeFile := filepath.Join(serverPath, ".active_server")
+					activeBytes, _ := os.ReadFile(activeFile)
+					if string(activeBytes) == subName {
+						// Find another sub-server to activate
+						entries, _ := os.ReadDir(serverPath)
+						newActive := ""
+						for _, e := range entries {
+							if e.IsDir() {
+								newActive = e.Name()
+								break
+							}
+						}
+						if newActive != "" {
+							os.WriteFile(activeFile, []byte(newActive), 0644)
+							log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
+						} else {
+							os.Remove(activeFile)
+							log.Printf("No sub-servers remaining for %s, pending_setup", cmd.Config.UUID)
+						}
+					}
+					log.Printf("Sub-server %s/%s deleted", cmd.Config.UUID, subName)
+
+				case "reinstall":
+					// Reinstall: stop container, clean JARs, re-install, restart
+					subName := cmd.Config.ActiveSubServer
+					if subName == "" {
+						subName = "server"
+					}
+					log.Printf("Reinstalling server %s (sub-server: %s)...", cmd.Config.UUID, subName)
+
+					// Set install-start for cooldown
+					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
+
+					// Stop the container first
+					dm.PowerAction(cmd.Config.UUID, "stop")
+					time.Sleep(3 * time.Second)
+
+					serverPath := storage.GetServerDir(cmd.Config.UUID)
+					subServerDir := filepath.Join(serverPath, subName)
+
+					// Clean old JARs and generated directories
+					if err := CleanServerJars(subServerDir); err != nil {
+						log.Printf("Clean failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+					}
+
+					// Re-install with new config
+					if err := InstallServer(serverPath, subName, cmd.Installer); err != nil {
+						log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+						return
+					}
+
+					// Smart JAR detection after reinstall
+					detectedJar := DetectServerJar(subServerDir)
+					if detectedJar != "server.jar" {
+						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, "-jar server.jar", "-jar "+detectedJar, 1)
+					}
+					if detectedArgs := DetectExtraJvmArgs(subServerDir); detectedArgs != "" {
+						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, " -jar ", " "+detectedArgs+" -jar ", 1)
+					}
+
+					// Recreate container with start command
+					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+						log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+					} else {
+						log.Printf("Server %s/%s reinstalled and running!", cmd.Config.UUID, subName)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+					}
+
+				case "migrate_storage":
+					targetPath := cmd.TargetPath
+					if targetPath == "" {
+						log.Printf("migrate_storage for %s: TargetPath is empty, aborting", cmd.Config.UUID)
+						return
+					}
+					log.Printf("Migrating storage for server %s → %s", cmd.Config.UUID, targetPath)
+
+					// Stop the server first
+					gracefulStop(rdb, cmd.Config.UUID, dm)
+
+					if err := storage.MigrateServerPath(cmd.Config.UUID, targetPath); err != nil {
+						log.Printf("Storage migration failed for %s: %v", cmd.Config.UUID, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+						return
+					}
+
+					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+					log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
+
+				default:
+					log.Printf("Unknown action: %s", cmd.Action)
+				}
+			}(payload)
+		}
+	}
+}
+
+// gracefulStop sends save-all and stop commands via the Redis stdin queue,
+// waits for the container to exit, and falls back to docker stop if needed.
+func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
+	ctx := context.Background()
+	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
+	stopKey := fmt.Sprintf("dylaris:server:%s:stop-requested", uuid)
+	mcName := fmt.Sprintf("mc_%s", uuid)
+
+	// Check if container is running
+	info, err := dm.cli.ContainerInspect(ctx, mcName)
+	if err != nil || !info.State.Running {
+		log.Printf("Server %s container not running, skipping graceful stop", uuid)
+		return
+	}
+
+	// Set stop flag so log-shipper knows not to restart Java
+	rdb.Set(ctx, stopKey, "1", 120*time.Second)
+
+	// Send save-all
+	log.Printf("Server %s: sending save-all...", uuid)
+	rdb.RPush(ctx, inputKey, "save-all")
+	time.Sleep(3 * time.Second)
+
+	// Send stop
+	log.Printf("Server %s: sending stop...", uuid)
+	rdb.RPush(ctx, inputKey, "stop")
+
+	// Wait for container to exit (max 30s)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName)
+		if cErr != nil || !cInfo.State.Running {
+			log.Printf("Server %s: container stopped gracefully", uuid)
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	// Fallback: force stop
+	log.Printf("Server %s: didn't stop gracefully, forcing...", uuid)
+	dm.PowerAction(uuid, "stop")
+}

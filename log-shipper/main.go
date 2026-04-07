@@ -1,0 +1,283 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	batchSize     = 50
+	batchInterval = 200 * time.Millisecond
+	maxStreamLen  = 1000
+	lineChanSize  = 512
+)
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func connectRedis() *redis.Client {
+	addr := getEnv("REDIS_ADDR", "localhost:6379")
+	user := getEnv("REDIS_USER", "")
+	pass := getEnv("REDIS_PASS", "")
+	dbStr := getEnv("REDIS_DB", "0")
+	db, _ := strconv.Atoi(dbStr)
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Username: user,
+		Password: pass,
+		DB:       db,
+	})
+
+	// Retry-Loop mit Exponential Backoff bis max 30s
+	backoff := 1 * time.Second
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := rdb.Ping(ctx).Err()
+		cancel()
+		if err == nil {
+			log.Printf("log-shipper: connected to Redis at %s", addr)
+			return rdb
+		}
+		log.Printf("log-shipper: Redis not reachable (%v), retrying in %s...", err, backoff)
+		time.Sleep(backoff)
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// applyCarriageReturns simulates terminal CR behavior.
+// \r resets the cursor to column 0; the following text overwrites from the start.
+func applyCarriageReturns(line string) string {
+	if !strings.ContainsRune(line, '\r') {
+		return line
+	}
+	parts := strings.Split(line, "\r")
+	result := ""
+	for _, part := range parts {
+		if len(part) >= len(result) {
+			result = part
+		} else {
+			result = part + result[len(part):]
+		}
+	}
+	return result
+}
+
+// scanLines reads from r line by line and sends each line to ch.
+func scanLines(r io.Reader, ch chan<- string) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		ch <- applyCarriageReturns(scanner.Text())
+	}
+}
+
+// shipLogs batches log lines and writes them to the Redis Stream.
+// Flushes every 200ms or when 50 lines accumulate, whichever comes first.
+func shipLogs(ctx context.Context, rdb *redis.Client, streamKey string, lineCh <-chan string) {
+	ticker := time.NewTicker(batchInterval)
+	defer ticker.Stop()
+
+	var buf []string
+
+	flush := func() {
+		if len(buf) == 0 {
+			return
+		}
+		pipe := rdb.Pipeline()
+		for _, line := range buf {
+			pipe.XAdd(ctx, &redis.XAddArgs{
+				Stream: streamKey,
+				MaxLen: maxStreamLen,
+				Approx: true,
+				Values: map[string]interface{}{"line": line},
+			})
+		}
+		_, err := pipe.Exec(ctx)
+		if err != nil && ctx.Err() == nil {
+			// 1x Retry
+			_, retryErr := pipe.Exec(ctx)
+			if retryErr != nil {
+				log.Printf("log-shipper: Redis write failed (dropping %d lines): %v", len(buf), retryErr)
+			}
+		}
+		buf = buf[:0]
+	}
+
+	for {
+		select {
+		case line, ok := <-lineCh:
+			if !ok {
+				flush()
+				return
+			}
+			buf = append(buf, line)
+			if len(buf) >= batchSize {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case <-ctx.Done():
+			flush()
+			return
+		}
+	}
+}
+
+// forwardInput reads commands from the Redis input queue and writes them to Java stdin.
+func forwardInput(ctx context.Context, rdb *redis.Client, inputKey string, stdin io.WriteCloser) {
+	for {
+		result, err := rdb.BLPop(ctx, 2*time.Second, inputKey).Result()
+		if err == redis.Nil {
+			// Timeout — try again
+			continue
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("log-shipper: BLPop error: %v, retrying in 1s...", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if len(result) >= 2 {
+			cmd := result[1] + "\n"
+			if _, err := fmt.Fprint(stdin, cmd); err != nil {
+				log.Printf("log-shipper: stdin write error: %v", err)
+				return
+			}
+		}
+	}
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		log.Fatal("Usage: log-shipper <command> [args...]\nExample: log-shipper java -Xmx2048M -jar /data/server/server.jar nogui")
+	}
+
+	serverUUID := getEnv("SERVER_UUID", "")
+	if serverUUID == "" {
+		log.Fatal("log-shipper: SERVER_UUID environment variable is required")
+	}
+
+	subServer := getEnv("SUB_SERVER", "")
+	streamKey := fmt.Sprintf("dylaris:server:%s:logs", serverUUID)
+	if subServer != "" {
+		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", serverUUID, subServer)
+	}
+	inputKey := fmt.Sprintf("dylaris:server:%s:input", serverUUID)
+
+	rdb := connectRedis()
+	defer rdb.Close()
+
+	// Check if working directory exists (may have been renamed by user)
+	cwd, _ := os.Getwd()
+	if _, err := os.Stat(cwd); err != nil && os.IsNotExist(err) {
+		msg := fmt.Sprintf("[log-shipper] Working directory %s does not exist — server folder may have been renamed. Container will stop.", cwd)
+		log.Print(msg)
+		rdb.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: streamKey,
+			MaxLen: maxStreamLen,
+			Approx: true,
+			Values: map[string]interface{}{"line": msg},
+		})
+		os.Exit(0)
+	}
+
+	stopKey := fmt.Sprintf("dylaris:server:%s:stop-requested", serverUUID)
+
+	// Restart loop: re-launches Java on crash, exits on manual stop.
+	for {
+		javaCmd := exec.Command(os.Args[1], os.Args[2:]...)
+		javaCmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		javaCmd.Stdin = nil // stdin managed via pipe below
+
+		stdoutPipe, err := javaCmd.StdoutPipe()
+		if err != nil {
+			log.Fatalf("log-shipper: StdoutPipe error: %v", err)
+		}
+		stderrPipe, err := javaCmd.StderrPipe()
+		if err != nil {
+			log.Fatalf("log-shipper: StderrPipe error: %v", err)
+		}
+		stdinPipe, err := javaCmd.StdinPipe()
+		if err != nil {
+			log.Fatalf("log-shipper: StdinPipe error: %v", err)
+		}
+
+		if err := javaCmd.Start(); err != nil {
+			log.Fatalf("log-shipper: failed to start process %q: %v", os.Args[1], err)
+		}
+		log.Printf("log-shipper: started PID %d: %s", javaCmd.Process.Pid, strings.Join(os.Args[1:], " "))
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		lineCh := make(chan string, lineChanSize)
+
+		var scanWG sync.WaitGroup
+		scanWG.Add(2)
+
+		go func() { defer scanWG.Done(); scanLines(stdoutPipe, lineCh) }()
+		go func() { defer scanWG.Done(); scanLines(stderrPipe, lineCh) }()
+
+		go forwardInput(ctx, rdb, inputKey, stdinPipe)
+		go shipLogs(ctx, rdb, streamKey, lineCh)
+
+		// Wait for Java process to exit
+		if err := javaCmd.Wait(); err != nil {
+			log.Printf("log-shipper: process exited with error: %v", err)
+		}
+
+		// Wait for scanners to drain, then close lineCh so shipLogs flushes.
+		scanWG.Wait()
+		close(lineCh)
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+
+		exitCode := 0
+		if javaCmd.ProcessState != nil {
+			exitCode = javaCmd.ProcessState.ExitCode()
+		}
+
+		// Check if stop was requested via WebUI
+		_, stopErr := rdb.Get(context.Background(), stopKey).Result()
+		if stopErr == nil {
+			// Stop flag exists -> clean exit (manual stop)
+			rdb.Del(context.Background(), stopKey)
+			log.Printf("log-shipper: stop requested, exiting cleanly")
+			os.Exit(exitCode)
+		}
+
+		// Exit code 0 without stop flag = normal shutdown (e.g. /stop in-game)
+		if exitCode == 0 {
+			log.Printf("log-shipper: process exited normally (code 0), exiting")
+			os.Exit(0)
+		}
+
+		// Crash recovery: restart after delay
+		log.Printf("log-shipper: process crashed (exit %d), restarting in 5s...", exitCode)
+		rdb.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: streamKey,
+			MaxLen: maxStreamLen,
+			Approx: true,
+			Values: map[string]interface{}{"line": fmt.Sprintf("[Server crashed (exit code %d) - restarting automatically...]", exitCode)},
+		})
+		time.Sleep(5 * time.Second)
+	}
+}

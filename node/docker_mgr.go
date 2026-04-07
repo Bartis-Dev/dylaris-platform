@@ -1,0 +1,629 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/docker/docker/api/types/container"
+	dockerimage "github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
+)
+
+type DockerManager struct {
+	cli           *client.Client
+	ctx           context.Context
+	hostDataPath  string          // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
+	localDataPath string          // Container-local path for dylaris_data (for file I/O inside this container, legacy)
+	storageMgr    *StorageManager // Multi-path storage manager
+	hostPathCache map[string]string // local storage path -> host path (resolved from container mounts)
+}
+
+func NewDockerManager(storageMgr *StorageManager) (*DockerManager, error) {
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithVersion("1.44"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	dm := &DockerManager{
+		cli:           cli,
+		ctx:           context.Background(),
+		storageMgr:    storageMgr,
+		hostPathCache: make(map[string]string),
+	}
+
+	baseDir, _ := os.Getwd()
+	dm.localDataPath = filepath.Join(baseDir, "dylaris_data")
+	dm.hostDataPath = dm.resolveHostDataPath()
+
+	if dm.hostDataPath != "" {
+		log.Printf("Resolved host data path: %s (local: %s)", dm.hostDataPath, dm.localDataPath)
+	} else {
+		// Fallback: assume local path = host path (non-containerized / bind-mount setup)
+		dm.hostDataPath = dm.localDataPath
+		log.Printf("Running outside container or volume not detected — using local path for binds: %s", dm.hostDataPath)
+	}
+
+	// Build host path cache for all storage paths
+	dm.buildHostPathCache()
+
+	return dm, nil
+}
+
+// buildHostPathCache resolves host paths for all storage paths by inspecting container mounts.
+func (dm *DockerManager) buildHostPathCache() {
+	if dm.storageMgr == nil {
+		return
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return
+	}
+
+	info, err := dm.cli.ContainerInspect(dm.ctx, hostname)
+	if err != nil {
+		log.Printf("Cannot inspect own container for host path resolution: %v", err)
+		return
+	}
+
+	for _, p := range dm.storageMgr.Paths() {
+		resolved := false
+		for _, m := range info.Mounts {
+			if strings.HasPrefix(p, m.Destination) || p == m.Destination {
+				// Map local path to host path
+				hostPath := strings.Replace(p, m.Destination, m.Source, 1)
+				dm.hostPathCache[p] = hostPath
+				log.Printf("storage: host path %s → %s", p, hostPath)
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
+			// Assume local = host (non-containerized)
+			dm.hostPathCache[p] = p
+		}
+	}
+}
+
+// resolveHostServerPath returns the HOST filesystem path for a server's data directory.
+// Used for Docker bind mounts (Docker API needs the host path, not the container path).
+func (dm *DockerManager) resolveHostServerPath(serverUUID string) string {
+	if dm.storageMgr != nil {
+		storagePath := dm.storageMgr.GetServerPath(serverUUID)
+		if hostBase, ok := dm.hostPathCache[storagePath]; ok {
+			return filepath.Join(hostBase, serverUUID)
+		}
+	}
+	// Legacy fallback
+	return filepath.Join(dm.hostDataPath, "servers", serverUUID)
+}
+
+// resolveLocalServerPath returns the container-local path for a server's data directory.
+func (dm *DockerManager) resolveLocalServerPath(serverUUID string) string {
+	if dm.storageMgr != nil {
+		return dm.storageMgr.GetServerDir(serverUUID)
+	}
+	return filepath.Join(dm.localDataPath, "servers", serverUUID)
+}
+
+// resolveHostDataPath inspects our own container to find the host filesystem path
+// of the dylaris_data volume mount. MC containers spawned via Docker API need the
+// HOST path for bind mounts, not the container-internal path.
+func (dm *DockerManager) resolveHostDataPath() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+
+	info, err := dm.cli.ContainerInspect(dm.ctx, hostname)
+	if err != nil {
+		log.Printf("Could not inspect own container (hostname=%s): %v", hostname, err)
+		return ""
+	}
+
+	for _, m := range info.Mounts {
+		if strings.Contains(m.Destination, "dylaris_data") {
+			return filepath.Join(m.Source) // Host path (e.g. /var/lib/docker/volumes/.../_data)
+		}
+	}
+
+	return ""
+}
+
+type DockerConfig struct {
+	Image      string  `json:"image"`
+	RAM        int     `json:"ram"`
+	CPULimit   float64 `json:"cpuLimit"`
+	CpusetCpus string  `json:"cpusetCpus"`
+	DiskLimit  int64   `json:"diskLimit"`
+	Command    string  `json:"command"`
+}
+
+type ServerConfig struct {
+	UUID            string       `json:"uuid"`
+	Docker          DockerConfig `json:"docker"`
+	ActiveSubServer string       `json:"activeSubServer"`
+}
+
+// buildRedisEnv returns the env-slice that the log-shipper inside the container
+// needs to connect to Redis and identify the server stream.
+// MC containers are non-Swarm and may not resolve Swarm DNS, so we use
+// mcRedis* vars (from SIDECAR_REDIS_ADDR or fallback to REDIS_ADDR).
+func buildRedisEnv(uuid, subServer string) []string {
+	env := []string{
+		fmt.Sprintf("REDIS_ADDR=%s", mcRedisAddr),
+		fmt.Sprintf("REDIS_USER=%s", mcRedisUser),
+		fmt.Sprintf("REDIS_PASS=%s", mcRedisPass),
+		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
+		fmt.Sprintf("SERVER_UUID=%s", uuid),
+		"TERM=xterm-256color",
+	}
+	if subServer != "" {
+		env = append(env, fmt.Sprintf("SUB_SERVER=%s", subServer))
+	}
+	return env
+}
+
+func (dm *DockerManager) ensureGlobalNetwork() (string, error) {
+	netName := "dylaris_net"
+	nets, err := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("network list error: %v", err)
+	}
+	for _, n := range nets {
+		if n.Name == netName || strings.HasSuffix(n.Name, "_"+netName) {
+			log.Printf("Found overlay network %q (ID: %s)", n.Name, n.ID[:12])
+			return n.ID, nil
+		}
+	}
+	return "", fmt.Errorf("overlay network %q not found — ensure it exists in the Swarm stack", netName)
+}
+
+// CreateServerPodStopped creates a container without starting it (Step 1 - pending_setup).
+// No image pull, no EULA - just directory + stopped container.
+func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
+	log.Printf("Creating stopped container for: %s", config.UUID)
+
+	netID, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		return err
+	}
+
+	// Create directory locally (via StorageManager or legacy path)
+	localServerPath := dm.resolveLocalServerPath(config.UUID)
+	os.MkdirAll(localServerPath, 0755)
+
+	// Host path for Docker bind mount
+	hostServerPath := dm.resolveHostServerPath(config.UUID)
+
+	// RAM: user-specified + 512MB OOM buffer
+	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
+	oomPadding := int64(512) * 1024 * 1024
+	nanoCpus := int64(config.Docker.CPULimit * 1e9)
+
+	containerName := fmt.Sprintf("mc_%s", config.UUID)
+
+	cc := &container.Config{
+		Image:      config.Docker.Image,
+		WorkingDir: "/data",
+		Hostname:   containerName,
+		Env:        buildRedisEnv(config.UUID, ""),
+	}
+
+	hc := &container.HostConfig{
+		Resources: container.Resources{
+			Memory:     bookedRAM + oomPadding,
+			MemorySwap: bookedRAM + oomPadding, // same as Memory = no swap
+			NanoCPUs:   nanoCpus,
+			CpusetCpus: config.Docker.CpusetCpus,
+		},
+		Binds:         []string{fmt.Sprintf("%s:/data", hostServerPath)},
+		RestartPolicy: container.RestartPolicy{Name: "no"},
+	}
+
+	nc := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"dylaris_net": {NetworkID: netID},
+		},
+	}
+
+	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
+
+	_, err = dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
+	if err != nil {
+		return fmt.Errorf("container create error: %v", err)
+	}
+
+	log.Printf("Container %s created (stopped, awaiting setup)", containerName)
+	return nil
+}
+
+// CreateServerPod creates a container with start command and starts it (after setup).
+func (dm *DockerManager) CreateServerPod(config ServerConfig) error {
+	log.Printf("Starting Server Container for: %s", config.UUID)
+
+	netID, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		return err
+	}
+
+	_, err = dm.startMinecraftContainer(config, netID)
+	if err != nil {
+		return err
+	}
+	log.Printf("MC Container %s running", config.UUID)
+	return nil
+}
+
+// RecreateWithCommand stops + removes + creates a container with a new sub-server command.
+func (dm *DockerManager) RecreateWithCommand(config ServerConfig) error {
+	log.Printf("Recreating container %s with sub-server: %s", config.UUID, config.ActiveSubServer)
+
+	containerName := fmt.Sprintf("mc_%s", config.UUID)
+	timeout := 15
+	dm.cli.ContainerStop(dm.ctx, containerName, container.StopOptions{Timeout: &timeout})
+	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
+
+	netID, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		return err
+	}
+
+	_, err = dm.startMinecraftContainer(config, netID)
+	return err
+}
+
+func (dm *DockerManager) PowerAction(uuid string, action string) error {
+	mcName := fmt.Sprintf("mc_%s", uuid)
+
+	switch action {
+	case "start":
+		return dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
+	case "stop":
+		timeout := 30
+		return dm.cli.ContainerStop(dm.ctx, mcName, container.StopOptions{Timeout: &timeout})
+	case "kill":
+		return dm.cli.ContainerKill(dm.ctx, mcName, "SIGKILL")
+	case "delete":
+		return dm.cli.ContainerRemove(dm.ctx, mcName, container.RemoveOptions{Force: true})
+	}
+
+	return nil
+}
+
+func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID string) (string, error) {
+	dm.pullImage(config.Docker.Image)
+
+	// Create directory locally (via StorageManager or legacy path)
+	localServerPath := dm.resolveLocalServerPath(config.UUID)
+	os.MkdirAll(localServerPath, 0755)
+
+	// Host path for Docker bind mount
+	hostServerPath := dm.resolveHostServerPath(config.UUID)
+
+	// RAM: user-specified + 512MB OOM buffer
+	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
+	oomPadding := int64(512) * 1024 * 1024
+	nanoCpus := int64(config.Docker.CPULimit * 1e9)
+	cmdParts := strings.Fields(config.Docker.Command)
+
+	containerName := fmt.Sprintf("mc_%s", config.UUID)
+
+	cc := &container.Config{
+		Image:      config.Docker.Image,
+		Cmd:        cmdParts,
+		WorkingDir: fmt.Sprintf("/data/%s", config.ActiveSubServer),
+		Hostname:   containerName,
+		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer),
+	}
+
+	hc := &container.HostConfig{
+		Resources: container.Resources{
+			Memory:     bookedRAM + oomPadding,
+			MemorySwap: bookedRAM + oomPadding, // same as Memory = no swap
+			NanoCPUs:   nanoCpus,
+			CpusetCpus: config.Docker.CpusetCpus,
+		},
+		Binds:         []string{fmt.Sprintf("%s:/data", hostServerPath)},
+		RestartPolicy: container.RestartPolicy{Name: "no"},
+	}
+
+	nc := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"dylaris_net": {NetworkID: netID},
+		},
+	}
+
+	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
+
+	resp, err := dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
+	if err != nil {
+		return "", fmt.Errorf("mc container create error: %v", err)
+	}
+
+	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", fmt.Errorf("mc container start error: %v", err)
+	}
+
+	return containerName, nil
+}
+
+
+// RestartContainer inspects the existing container to capture its full config,
+// removes the old container, and creates + starts a fresh one with identical settings.
+// This is more reliable than ContainerStart on an exited container.
+func (dm *DockerManager) RestartContainer(uuid string) error {
+	containerName := fmt.Sprintf("mc_%s", uuid)
+
+	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("cannot inspect %s for restart: %v", containerName, err)
+	}
+
+	// Build a ServerConfig from the inspected container
+	config := ServerConfig{UUID: uuid}
+	config.Docker.Image = info.Config.Image
+	if len(info.Config.Cmd) > 0 {
+		config.Docker.Command = strings.Join(info.Config.Cmd, " ")
+	}
+	if info.Config.WorkingDir != "" && strings.HasPrefix(info.Config.WorkingDir, "/data/") {
+		config.ActiveSubServer = strings.TrimPrefix(info.Config.WorkingDir, "/data/")
+	}
+	// Restore resource limits
+	config.Docker.RAM = int(info.HostConfig.Memory/(1024*1024)) - 512 // subtract OOM padding
+	if config.Docker.RAM < 0 {
+		config.Docker.RAM = 0
+	}
+	config.Docker.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
+	config.Docker.CpusetCpus = info.HostConfig.CpusetCpus
+
+	log.Printf("RestartContainer %s: image=%s cmd=%s sub=%s ram=%dMB cpu=%.1f",
+		uuid, config.Docker.Image, config.Docker.Command, config.ActiveSubServer, config.Docker.RAM, config.Docker.CPULimit)
+
+	return dm.RecreateWithCommand(config)
+}
+
+// UpdateResources stops the container, then recreates it with new RAM/CPU/Port settings,
+// preserving the existing image and command from the running/last container inspect.
+func (dm *DockerManager) UpdateResources(config ServerConfig) error {
+	containerName := fmt.Sprintf("mc_%s", config.UUID)
+
+	// Inspect existing container to preserve image + command
+	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
+	if err == nil {
+		if config.Docker.Image == "" {
+			config.Docker.Image = info.Config.Image
+		}
+		if config.Docker.Command == "" && len(info.Config.Cmd) > 0 {
+			config.Docker.Command = strings.Join(info.Config.Cmd, " ")
+		}
+	}
+
+	return dm.RecreateWithCommand(config)
+}
+
+
+// PullContainerImage inspects a container to get its image, then pulls the latest version.
+func (dm *DockerManager) PullContainerImage(uuid string) {
+	containerName := fmt.Sprintf("mc_%s", uuid)
+	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
+	if err != nil {
+		log.Printf("Cannot inspect %s for image pull: %v", containerName, err)
+		return
+	}
+	dm.pullImage(info.Config.Image)
+}
+
+func (dm *DockerManager) pullImage(image string) {
+	log.Printf("Pulling Image: %s ...", image)
+	reader, err := dm.cli.ImagePull(dm.ctx, image, dockerimage.PullOptions{})
+	if err != nil {
+		return
+	}
+	io.Copy(io.Discard, reader)
+	reader.Close()
+}
+
+// ContainerStats holds a single snapshot of container resource usage.
+type ContainerStats struct {
+	CPUPercent float64 // percentage of one core (e.g. 145.2 = 1.45 cores)
+	MemUsedMB  int64
+	MemLimitMB int64
+}
+
+// PrevCPUStats stores previous CPU counters for accurate delta calculation.
+type PrevCPUStats struct {
+	TotalUsage  uint64
+	SystemUsage uint64
+}
+
+// GetContainerStats reads a one-shot stats snapshot from the Docker API.
+// Uses caller-provided previous CPU counters for accurate delta calculation,
+// since ContainerStatsOneShot may return empty/stale PreCPUStats.
+func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUStats) (*ContainerStats, *PrevCPUStats, error) {
+	resp, err := dm.cli.ContainerStatsOneShot(dm.ctx, containerName)
+	if err != nil {
+		return nil, prev, err
+	}
+	defer resp.Body.Close()
+
+	var stats container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return nil, prev, fmt.Errorf("stats decode error: %v", err)
+	}
+
+	// Save current CPU counters for next call
+	currentTotal := stats.CPUStats.CPUUsage.TotalUsage
+	currentSystem := stats.CPUStats.SystemUsage
+	newPrev := &PrevCPUStats{TotalUsage: currentTotal, SystemUsage: currentSystem}
+
+	// CPU calculation using our own delta (not Docker's PreCPUStats)
+	numCPUs := float64(stats.CPUStats.OnlineCPUs)
+	if numCPUs == 0 {
+		numCPUs = float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	}
+
+	var cpuPercent float64
+	if prev != nil {
+		cpuDelta := float64(currentTotal - prev.TotalUsage)
+		systemDelta := float64(currentSystem - prev.SystemUsage)
+		if systemDelta > 0 && cpuDelta >= 0 {
+			cpuPercent = (cpuDelta / systemDelta) * numCPUs * 100.0
+		}
+	}
+
+	// Memory: subtract filesystem cache (like docker stats CLI).
+	// Different kernel/cgroup versions expose cache under different keys.
+	memUsage := stats.MemoryStats.Usage
+	cacheSubtracted := false
+	if v, ok := stats.MemoryStats.Stats["inactive_file"]; ok && v > 0 {
+		memUsage -= v // cgroup v2
+		cacheSubtracted = true
+	}
+	if !cacheSubtracted {
+		if v, ok := stats.MemoryStats.Stats["total_inactive_file"]; ok && v > 0 {
+			memUsage -= v // cgroup v1
+			cacheSubtracted = true
+		}
+	}
+	if !cacheSubtracted {
+		if v, ok := stats.MemoryStats.Stats["file"]; ok && v > 0 {
+			memUsage -= v // cgroup v2 fallback
+			cacheSubtracted = true
+		}
+	}
+	if !cacheSubtracted {
+		if v, ok := stats.MemoryStats.Stats["cache"]; ok && v > 0 {
+			memUsage -= v // legacy Docker API
+		}
+	}
+	if memUsage < 0 {
+		memUsage = 0
+	}
+
+	return &ContainerStats{
+		CPUPercent: cpuPercent,
+		MemUsedMB:  int64(memUsage) / (1024 * 1024),
+		MemLimitMB: int64(stats.MemoryStats.Limit) / (1024 * 1024),
+	}, newPrev, nil
+}
+
+// MCContainer holds info about a running Minecraft container.
+type MCContainer struct {
+	UUID          string
+	ContainerName string
+}
+
+// ListRunningMCContainers returns all running containers with the mc_ prefix.
+func (dm *DockerManager) ListRunningMCContainers() ([]MCContainer, error) {
+	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []MCContainer
+	for _, c := range containers {
+		for _, name := range c.Names {
+			clean := strings.TrimPrefix(name, "/")
+			if strings.HasPrefix(clean, "mc_") {
+				uuid := strings.TrimPrefix(clean, "mc_")
+				result = append(result, MCContainer{UUID: uuid, ContainerName: clean})
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+// MCContainerInfo holds info about a Minecraft container including its state.
+type MCContainerInfo struct {
+	UUID          string
+	ContainerName string
+	State         string // "running", "exited", "created", etc.
+}
+
+// ListAllMCContainers returns all mc_ containers (running + stopped/exited).
+func (dm *DockerManager) ListAllMCContainers() ([]MCContainerInfo, error) {
+	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []MCContainerInfo
+	for _, c := range containers {
+		for _, name := range c.Names {
+			clean := strings.TrimPrefix(name, "/")
+			if strings.HasPrefix(clean, "mc_") {
+				uuid := strings.TrimPrefix(clean, "mc_")
+				result = append(result, MCContainerInfo{
+					UUID:          uuid,
+					ContainerName: clean,
+					State:         c.State,
+				})
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+// CountLinkContainers returns the number of running Link containers on this host.
+// It identifies them by checking if the image name contains "dylaris-link".
+func (dm *DockerManager) CountLinkContainers() int {
+	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{})
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, c := range containers {
+		if strings.Contains(c.Image, "dylaris-link") {
+			count++
+		}
+	}
+	return count
+}
+
+// ReconcileRedisEnv checks all running MC containers and restarts any whose
+// REDIS_ADDR env var doesn't match the current mcRedisAddr. This handles the
+// case where Node is redeployed with a new SIDECAR_REDIS_ADDR — running
+// containers still have the old value baked in from creation time.
+func (dm *DockerManager) ReconcileRedisEnv() {
+	running, err := dm.ListRunningMCContainers()
+	if err != nil {
+		log.Printf("ReconcileRedisEnv: failed to list containers: %v", err)
+		return
+	}
+
+	for _, mc := range running {
+		info, err := dm.cli.ContainerInspect(dm.ctx, mc.ContainerName)
+		if err != nil {
+			continue
+		}
+
+		var currentAddr string
+		for _, e := range info.Config.Env {
+			if strings.HasPrefix(e, "REDIS_ADDR=") {
+				currentAddr = strings.TrimPrefix(e, "REDIS_ADDR=")
+				break
+			}
+		}
+
+		if currentAddr != mcRedisAddr {
+			log.Printf("ReconcileRedisEnv: %s has REDIS_ADDR=%s, expected %s — restarting",
+				mc.ContainerName, currentAddr, mcRedisAddr)
+			if err := dm.RestartContainer(mc.UUID); err != nil {
+				log.Printf("ReconcileRedisEnv: failed to restart %s: %v", mc.ContainerName, err)
+			}
+		}
+	}
+}

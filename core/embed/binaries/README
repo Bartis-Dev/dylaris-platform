@@ -1,0 +1,2 @@
+Beam desktop binaries are placed here by CI before Core is built.
+This file ensures the directory is embeddable by Go.

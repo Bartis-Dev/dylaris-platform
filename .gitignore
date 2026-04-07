@@ -1,0 +1,21 @@
+# Data (Minecraft server data etc.)
+node/dylaris_data/
+
+docs/
+# Secrets & Configs (IMPORTANT)
+.env
+config.yaml
+
+# Go & Build (Binaries excluded, but allow dist!)
+*.exe
+*.test
+vendor/
+
+# Node (NEVER upload modules)
+node_modules/
+.next/
+
+# System junk
+.vscode/
+.idea/
+.DS_Store

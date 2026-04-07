@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "panel",
+    "beam/app/frontend"
+  ]
+}

@@ -1,0 +1,30 @@
+# --- Security (IMPORTANT!) ---
+# These files contain secrets and must NEVER end up on GitHub
+.env
+.env.local
+.env.*.local
+
+# --- Frontend (Node/Next.js) ---
+# Dependencies (can be restored anytime with npm install)
+node_modules/
+# Build folder from Next.js
+.next/
+build/
+dist/
+out/
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Backend (Go) ---
+# Compiled binaries/exe files (we don't want these in the code)
+*.exe
+*.test
+*.out
+
+# --- System & Editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,150 @@
+syntax = "proto3";
+package dylaris.node;
+option go_package = "dylaris-proto/node";
+
+// Node connects outbound to Core and registers itself.
+// After that, file requests (Core→Node) and responses (Node→Core)
+// flow over the same bidirectional stream.
+service NodeService {
+  rpc NodeConnect(stream NodeMessage) returns (stream NodeMessage);
+}
+
+// Envelope for all messages over the stream.
+message NodeMessage {
+  string request_id = 1;
+  string server_uuid = 2;
+
+  oneof payload {
+    // Auth (Node→Core, first message after Connect)
+    NodeAuth          auth          = 10;
+    AuthResult        auth_result   = 11;
+
+    // File Listing
+    ListFilesReq      list_req      = 20;
+    ListFilesResp     list_resp     = 21;
+
+    // File Read (Core→Node request, Node→Core chunks+done)
+    ReadFileReq       read_req      = 30;
+
+    // File Write/Save (Core→Node request+chunks+done, Node→Core result)
+    WriteFileReq      write_req     = 40;
+
+    // File Upload (Core→Node: multipart data via chunks)
+    UploadFileReq     upload_req    = 45;
+
+    // Selective Read (download selected files/folders as zip)
+    SelectiveReadReq  selective_read_req = 31;
+
+    // File Create / Delete / Rename / Copy
+    CreateFileReq     create_req    = 50;
+    DeleteFileReq     delete_req    = 51;
+    RenameFileReq     rename_req    = 52;
+    CopyFileReq       copy_req      = 53;
+
+    // Chunked Data (bidirectional, 64KB per chunk)
+    DataChunk         chunk         = 60;
+    TransferDone      transfer_done = 61;
+
+    // Generic result / error
+    OpResult          result        = 90;
+    OpError           error         = 91;
+  }
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────
+message NodeAuth {
+  string node_token = 1;
+  NodeIPs ips = 2;
+}
+
+message AuthResult {
+  bool ok = 1;
+  string core_id = 2;
+  string message = 3;
+}
+
+message NodeIPs {
+  string public = 1;
+  repeated string private = 2;
+}
+
+// ─── File Operations ─────────────────────────────────────────────────
+message ListFilesReq {
+  string path = 1;
+}
+
+message ListFilesResp {
+  repeated FileInfo files = 1;
+}
+
+message FileInfo {
+  string name = 1;
+  bool is_dir = 2;
+  int64 size = 3;
+}
+
+message ReadFileReq {
+  string path = 1;
+  bool zip_if_dir = 2;
+}
+
+// Selective download: zip only selected paths within a base directory.
+// Reusable for backups (same selection mechanism).
+message SelectiveReadReq {
+  string base_path = 1;             // e.g. "" (server root) or "plugins/"
+  repeated string selected = 2;     // e.g. ["WorldEdit/", "config.yml"]
+  bool select_all = 3;              // if true, ignore selected list and zip everything
+}
+
+message WriteFileReq {
+  string path = 1;
+  int64 total_size = 2;
+}
+
+message UploadFileReq {
+  string path = 1;
+  string filename = 2;
+  int64 total_size = 3;
+  string strategy = 4;           // "replace", "merge", etc.
+  string merge_conflict = 5;     // "replace", "ignore"
+}
+
+message CreateFileReq {
+  string path = 1;
+  bool is_dir = 2;
+}
+
+message DeleteFileReq {
+  string path = 1;
+}
+
+message RenameFileReq {
+  string old_path = 1;
+  string new_name = 2;
+}
+
+message CopyFileReq {
+  string src_path = 1;
+  string dst_path = 2;
+}
+
+// ─── Chunked Transfer ────────────────────────────────────────────────
+message DataChunk {
+  bytes data = 1;       // max 64KB
+  int64 offset = 2;
+}
+
+message TransferDone {
+  int64 total_bytes = 1;
+  string filename = 2;  // Optional: filename for downloads
+}
+
+// ─── Results ─────────────────────────────────────────────────────────
+message OpResult {
+  string message = 1;
+}
+
+message OpError {
+  int32 code = 1;
+  string message = 2;
+}

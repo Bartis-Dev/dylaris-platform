@@ -1,0 +1,151 @@
+syntax = "proto3";
+package dylaris.beam;
+option go_package = "dylaris-proto/beam";
+
+// BeamNodeService runs on each Node (localhost:9091 only).
+// Beam desktop clients connect through the BeamRelay tunnel.
+// Auth is stateless: Node validates the JWT ticket signature locally.
+service BeamNodeService {
+  // Auth: first call after gRPC channel opens. Validates the signed ticket.
+  rpc Authenticate(BeamAuthReq) returns (BeamAuthResp);
+
+  // File operations
+  rpc ListFiles(BeamFileListReq) returns (BeamFileListResp);
+  rpc ReadFileContent(BeamFileReadReq) returns (BeamFileContentResp);
+  rpc SaveFileContent(BeamFileSaveReq) returns (BeamOpResp);
+  rpc CreateFile(BeamFileCreateReq) returns (BeamOpResp);
+  rpc DeleteFile(BeamFileDeleteReq) returns (BeamOpResp);
+  rpc RenameFile(BeamFileRenameReq) returns (BeamOpResp);
+  rpc CopyFile(BeamFileCopyReq) returns (BeamOpResp);
+
+  // Streaming transfers (64KB chunks)
+  rpc DownloadFile(BeamDownloadReq) returns (stream BeamChunk);
+  rpc UploadFile(stream BeamUploadMsg) returns (BeamOpResp);
+  rpc DownloadSelective(BeamSelectiveReq) returns (stream BeamChunk);
+
+  // Transfer quota info
+  rpc GetTransferQuota(BeamQuotaReq) returns (BeamQuotaResp);
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────
+
+message BeamAuthReq {
+  string ticket = 1; // JWT signed by Core (contains server_uuid, username, permissions, node_id, expires)
+}
+
+message BeamAuthResp {
+  bool ok = 1;
+  string message = 2;
+  string server_uuid = 3;
+  string username = 4;
+  bool is_admin = 5;
+  repeated string sub_servers = 6;      // Available sub-servers for this server
+  string active_sub_server = 7;         // Currently active sub-server
+}
+
+// ─── File Operations ─────────────────────────────────────────────────
+
+message BeamFileListReq {
+  string path = 1; // Relative to server root (e.g. "" or "plugins/")
+}
+
+message BeamFileListResp {
+  repeated BeamFileInfo files = 1;
+}
+
+message BeamFileInfo {
+  string name = 1;
+  bool is_dir = 2;
+  int64 size = 3;
+  int64 modified = 4; // Unix timestamp
+}
+
+message BeamFileReadReq {
+  string path = 1;   // Relative path to text file
+}
+
+message BeamFileContentResp {
+  bool success = 1;
+  string content = 2;
+  string message = 3; // Error message if not success
+}
+
+message BeamFileSaveReq {
+  string path = 1;
+  string content = 2;
+}
+
+message BeamFileCreateReq {
+  string path = 1;
+  bool is_dir = 2;
+}
+
+message BeamFileDeleteReq {
+  string path = 1;
+}
+
+message BeamFileRenameReq {
+  string old_path = 1;
+  string new_name = 2;
+}
+
+message BeamFileCopyReq {
+  string src_path = 1;
+  string dst_path = 2;
+}
+
+// ─── Streaming Transfers ─────────────────────────────────────────────
+
+message BeamDownloadReq {
+  string path = 1;
+  bool zip_if_dir = 2; // If path is a directory, zip it
+}
+
+message BeamChunk {
+  bytes data = 1;       // Max 64KB per chunk
+  int64 offset = 2;
+  string filename = 3;  // Set on first chunk for downloads
+  int64 total_size = 4; // Set on first chunk for progress tracking
+}
+
+message BeamUploadMsg {
+  oneof payload {
+    BeamUploadStart start = 1;
+    BeamUploadChunkData chunk = 2;
+  }
+}
+
+message BeamUploadStart {
+  string path = 1;        // Remote path (directory)
+  string filename = 2;    // Filename
+  int64 total_size = 3;
+  string strategy = 4;    // "replace", "merge"
+}
+
+message BeamUploadChunkData {
+  bytes data = 1;
+  int64 offset = 2;
+}
+
+message BeamSelectiveReq {
+  string base_path = 1;             // e.g. "" (server root) or "plugins/"
+  repeated string selected = 2;     // e.g. ["WorldEdit/", "config.yml"]
+  bool select_all = 3;              // Zip everything under base_path
+}
+
+// ─── Quota ───────────────────────────────────────────────────────────
+
+message BeamQuotaReq {}
+
+message BeamQuotaResp {
+  int64 daily_used = 1;    // Bytes transferred today
+  int64 daily_limit = 2;   // 0 = unlimited
+  int64 bw_limit = 3;      // Bytes/sec, 0 = unlimited
+}
+
+// ─── Generic Response ────────────────────────────────────────────────
+
+message BeamOpResp {
+  bool success = 1;
+  string message = 2;
+}

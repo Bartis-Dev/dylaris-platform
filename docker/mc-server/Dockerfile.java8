@@ -1,0 +1,6 @@
+FROM eclipse-temurin:8-jre-alpine
+RUN apk add --no-cache ca-certificates tzdata
+COPY log-shipper-linux /usr/local/bin/log-shipper
+RUN chmod +x /usr/local/bin/log-shipper && mkdir -p /data
+WORKDIR /data
+ENTRYPOINT ["/usr/local/bin/log-shipper"]
