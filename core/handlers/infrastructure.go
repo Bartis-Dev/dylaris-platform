@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"dylaris-core/services"
 )
 
 type InfrastructureHandler struct {
@@ -30,13 +32,16 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	hub := h.state.HubBridge.Hub
+	ctx := context.Background()
 
 	// Gates with full stats (auto-discovered from Redis)
-	gates := hub.GetGates()
+	gates := services.GetGatesFromRedis(ctx, h.state.GatewayRedis)
 
 	// Links with online status
-	links := hub.GetLinks()
+	links := services.GetLinksFromRedis(ctx, h.state.GatewayRedis)
+
+	// Route count
+	routeCount := services.CountRoutesFromRedis(ctx, h.state.GatewayRedis)
 
 	// Nodes with server count + live heartbeat stats
 	nodes, err := h.state.Store.ListNodes()
@@ -44,7 +49,6 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		nodes = nil
 	}
 
-	ctx := context.Background()
 	for i := range nodes {
 		count, _ := h.state.Store.CountServersByNode(nodes[i].ID)
 		nodes[i].ServerCount = count
@@ -63,9 +67,6 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Route count
-	routeCount := hub.CountRoutesTotal()
-
 	// Aggregate stats
 	onlineLinks := 0
 	totalTunnels := 0
@@ -83,8 +84,8 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Service errors
-	errors := hub.GetAllServiceErrors(20)
+	// Service errors from Redis Streams
+	errors := services.GetAllServiceErrorsFromRedis(h.state.GatewayRedis, 20)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":      true,

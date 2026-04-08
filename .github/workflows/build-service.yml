@@ -1,0 +1,73 @@
+name: Build Service (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+      entry_path:
+        required: false
+        type: string
+        default: ""
+      dockerfile:
+        required: false
+        type: string
+        default: "./Dockerfile"
+      context:
+        required: false
+        type: string
+        default: "."
+      extra_build_args:
+        required: false
+        type: string
+        default: ""
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: callmebartis/dylaris
+
+jobs:
+  build-and-push:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine tags
+        id: tags
+        run: |
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "TAG_PRIMARY=latest" >> $GITHUB_OUTPUT
+            echo "TAG_SHA=sha-${SHA}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_PRIMARY=dev" >> $GITHUB_OUTPUT
+            echo "TAG_SHA=dev-sha-${SHA}" >> $GITHUB_OUTPUT
+          fi
+          echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ inputs.component }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.IMAGE }}:${{ steps.tags.outputs.TAG_PRIMARY }}
+            ${{ steps.tags.outputs.IMAGE }}:${{ steps.tags.outputs.TAG_SHA }}
+          build-args: |
+            ${{ inputs.entry_path != '' && format('ENTRY_PATH={0}', inputs.entry_path) || '' }}
+            ${{ inputs.extra_build_args }}

@@ -15,5 +15,5 @@ type AppState struct {
 	Queue        *services.QueueService
 	GRPCRegistry *nodegrpc.Registry
 	GatewayRedis *redis.Client
-	HubBridge    *services.HubBridge
+	Gateway      services.GatewayProvider
 }

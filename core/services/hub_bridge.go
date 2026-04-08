@@ -2,185 +2,318 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"log"
+	"strconv"
+	"time"
 
 	"dylaris-core/store"
-
-	"dylaris-hub/pkg/hub"
+	"dylaris-pkg/errlog"
 
 	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 )
 
-// HubBridge wraps Hub's HubService and provides gateway operations for Core.
-// Hub manages all gateway DB operations via GORM. Core adds server/user/limit logic on top.
-type HubBridge struct {
-	Hub   *hub.HubService
-	Store store.Store // Core's raw SQL store for non-gateway queries (servers, nodes, users, route_limits)
+const hubQueueKey = "dylaris:hub:queue"
+
+// --- Redis-side types for reading gateway state ---
+
+// GatewayGateInfo represents a gate as stored in Redis (gate:registry:{id}).
+type GatewayGateInfo struct {
+	GateID      string `json:"gate_id"`
+	Name        string `json:"name"`
+	IP          string `json:"ip"`
+	PrivateIP   string `json:"private_ip"`
+	ServicePort string `json:"service_port"`
+	HealthPort  string `json:"health_port"`
+	Status      string `json:"status"`
 }
 
-// NewHubBridge creates a HubBridge that integrates Hub's library into Core.
-func NewHubBridge(s store.Store, gormDB *gorm.DB, redisClient *redis.Client, clusterSecret string) *HubBridge {
-	hubSvc := hub.New(gormDB, redisClient, hub.Config{
-		ClusterSecret: clusterSecret,
-		TablePrefix:   "gateway_",
-	})
-
-	return &HubBridge{
-		Hub:   hubSvc,
-		Store: s,
-	}
+// GatewayLinkStatus represents a link's online state as readable from Redis.
+type GatewayLinkStatus struct {
+	Token         string `json:"token"`
+	Online        bool   `json:"online"`
+	ActiveTunnels int    `json:"active_tunnels"`
 }
 
-// Start begins Hub's background tasks (sync, gate health check, link discovery).
-func (b *HubBridge) Start() {
-	b.Hub.StartBackgroundTasks()
-	log.Println("HubBridge started (Gateway sync, gate health, link discovery)")
+// GatewayRoute represents a route as stored in Redis (route:{domain}).
+type GatewayRoute struct {
+	Domain     string `json:"domain"`
+	TargetIP   string `json:"target_ip"`
+	TargetPort int    `json:"target_port"`
+	TunnelID   string `json:"tunnel_id"` // link token
+	ServerUUID string `json:"server_uuid"`
 }
 
-// Stop gracefully shuts down Hub's background tasks.
-func (b *HubBridge) Stop() {
-	b.Hub.Stop()
+// hubQueueMessage is the payload pushed to dylaris:hub:queue.
+type hubQueueMessage struct {
+	Action       string `json:"action"`
+	Domain       string `json:"domain,omitempty"`
+	TargetIP     string `json:"target_ip,omitempty"`
+	TargetPort   int    `json:"target_port,omitempty"`
+	LinkToken    string `json:"link_token,omitempty"`
+	ServerUUID   string `json:"server_uuid,omitempty"`
+	ServerID     *uint  `json:"server_id,omitempty"`
+	OwnerID      *uint  `json:"owner_id,omitempty"`
+	NewLinkToken string `json:"new_link_token,omitempty"`
 }
 
-// --- ROUTE OPERATIONS (combines Hub + Core's limit logic) ---
+// --- GatewayProvider interface ---
 
-// CreateServerRoute creates a route for a server, resolving node→IP+link and checking limits.
-func (b *HubBridge) CreateServerRoute(serverID, ownerID int, domain string, targetPort int) (*hub.Route, error) {
-	// 1. Resolve server → node → IP + link
-	server, err := b.Store.GetServerByID(serverID)
-	if err != nil {
-		return nil, fmt.Errorf("server not found: %w", err)
-	}
-
-	node, err := b.Store.GetNodeByID(server.NodeID)
-	if err != nil {
-		return nil, fmt.Errorf("node not found: %w", err)
-	}
-
-	// Target is the MC container name on dylaris_net (Docker DNS resolves it)
-	targetIP := fmt.Sprintf("mc_%s", server.UUID)
-
-	// Find the gateway link for this node (node.Token = DYLARIS_NODE_ID used by Link discovery)
-	link, err := b.Hub.GetLinkByNodeID(node.Token)
-	if err != nil {
-		return nil, fmt.Errorf("no gateway link found for node %s: %w", node.Token, err)
-	}
-
-	// 2. Check route limits
-	if err := b.CheckRouteLimit(ownerID, serverID, targetPort); err != nil {
-		return nil, err
-	}
-
-	// 3. Create route via Hub
-	serverIDUint := uint(serverID)
-	ownerIDUint := uint(ownerID)
-	route := hub.Route{
-		Domain:     domain,
-		TargetIP:   targetIP,
-		TargetPort: targetPort,
-		LinkID:     link.ID,
-		ServerUUID: server.UUID,
-		ServerID:   &serverIDUint,
-		OwnerID:    &ownerIDUint,
-	}
-
-	created, err := b.Hub.CreateRoute(route)
-	if err != nil {
-		return nil, err
-	}
-
-	b.Hub.Log("INFO", "GATEWAY", fmt.Sprintf("Route '%s' created for server %d by user %d", domain, serverID, ownerID))
-	return created, nil
+// GatewayProvider handles route lifecycle operations (write path only).
+// Reads are done directly from Redis using the helper functions below.
+type GatewayProvider interface {
+	CreateServerRoute(serverID, ownerID uint, domain string, port int) error
+	DeleteRoute(domain string) error
+	MigrateServerRoutes(serverID uint, newNodeID uint) error
 }
 
-// CheckRouteLimit validates that a route creation doesn't exceed any configured limits.
-func (b *HubBridge) CheckRouteLimit(ownerID, serverID, targetPort int) error {
-	// 1. Port enable check
-	if targetPort == 25565 {
-		val, _ := b.Store.GetSetting("gateway_port_mc_enabled")
-		if val == "false" {
-			return fmt.Errorf("minecraft port (25565) routing is disabled")
-		}
-	}
-	if targetPort == 443 {
-		val, _ := b.Store.GetSetting("gateway_port_https_enabled")
-		if val == "false" {
-			return fmt.Errorf("HTTPS port (443) routing is disabled")
-		}
-	}
+// --- NoOpGateway (GATEWAY_ENABLED=false) ---
 
-	// 2. Global limit
-	globalLimit, err := b.Store.GetGatewayRouteLimit("global")
-	if err == nil && globalLimit.MaxRoutes != -1 {
-		total := b.Hub.CountRoutesTotal()
-		if total >= int64(globalLimit.MaxRoutes) {
-			return fmt.Errorf("global route limit reached (%d/%d)", total, globalLimit.MaxRoutes)
-		}
-	}
+type NoOpGateway struct{}
 
-	// 3. Per-user limit
-	userScope := fmt.Sprintf("user:%d", ownerID)
-	userLimit, err := b.Store.GetGatewayRouteLimit(userScope)
-	if err != nil {
-		userLimit, err = b.Store.GetGatewayRouteLimit("user_default")
-	}
-	if err == nil && userLimit.MaxRoutes != -1 {
-		count := b.Hub.CountRoutesByOwner(uint(ownerID))
-		if count >= int64(userLimit.MaxRoutes) {
-			return fmt.Errorf("user route limit reached (%d/%d)", count, userLimit.MaxRoutes)
-		}
-	}
+func (n *NoOpGateway) CreateServerRoute(serverID, ownerID uint, domain string, port int) error {
+	return fmt.Errorf("gateway not enabled")
+}
+func (n *NoOpGateway) DeleteRoute(domain string) error         { return nil }
+func (n *NoOpGateway) MigrateServerRoutes(serverID, newNodeID uint) error { return nil }
 
-	// 4. Per-server limit
-	serverLimit, err := b.Store.GetGatewayRouteLimit("per_server")
-	if err == nil && serverLimit.MaxRoutes != -1 {
-		count := b.Hub.CountRoutesByServer(uint(serverID))
-		if count >= int64(serverLimit.MaxRoutes) {
-			return fmt.Errorf("per-server route limit reached (%d/%d)", count, serverLimit.MaxRoutes)
-		}
-	}
+// --- RedisGateway (GATEWAY_ENABLED=true) ---
 
-	// 5. Per-port limit
-	portScope := fmt.Sprintf("port:%d", targetPort)
-	portLimit, err := b.Store.GetGatewayRouteLimit(portScope)
-	if err == nil && portLimit.MaxRoutes != -1 {
-		count := b.Hub.CountRoutesByPort(targetPort)
-		if count >= int64(portLimit.MaxRoutes) {
-			return fmt.Errorf("per-port route limit reached (%d/%d)", count, portLimit.MaxRoutes)
-		}
-	}
-
-	return nil
+type RedisGateway struct {
+	redis         *redis.Client
+	store         store.Store
+	clusterSecret string
 }
 
-// MigrateServerRoutes updates all routes for a server to point to a new node.
-// Called when a server is moved between nodes.
-func (b *HubBridge) MigrateServerRoutes(serverID int, newNodeID int) error {
-	server, err := b.Store.GetServerByID(serverID)
+func NewRedisGateway(r *redis.Client, s store.Store, secret string) *RedisGateway {
+	return &RedisGateway{redis: r, store: s, clusterSecret: secret}
+}
+
+func (g *RedisGateway) CreateServerRoute(serverID, ownerID uint, domain string, port int) error {
+	// 1. Resolve server
+	server, err := g.store.GetServerByID(int(serverID))
 	if err != nil {
 		return fmt.Errorf("server not found: %w", err)
 	}
 
-	node, err := b.Store.GetNodeByID(newNodeID)
+	// 2. Resolve node → derive link token
+	node, err := g.store.GetNodeByID(server.NodeID)
 	if err != nil {
 		return fmt.Errorf("node not found: %w", err)
 	}
+	linkToken := DeriveLinkToken(node.Token, g.clusterSecret)
 
-	// Target is the MC container name on dylaris_net (Docker DNS resolves it)
-	targetIP := fmt.Sprintf("mc_%s", server.UUID)
-
-	// node.Token = DYLARIS_NODE_ID used by Link discovery
-	link, err := b.Hub.GetLinkByNodeID(node.Token)
-	if err != nil {
-		return fmt.Errorf("no gateway link for node %s: %w", node.Token, err)
+	// 3. Port enable checks (limit counts skipped — Hub enforces uniqueness in its DB)
+	if port == 25565 {
+		if val, _ := g.store.GetSetting("gateway_port_mc_enabled"); val == "false" {
+			return fmt.Errorf("minecraft port (25565) routing is disabled")
+		}
+	}
+	if port == 443 {
+		if val, _ := g.store.GetSetting("gateway_port_https_enabled"); val == "false" {
+			return fmt.Errorf("HTTPS port (443) routing is disabled")
+		}
 	}
 
-	return b.Hub.MigrateServerRoutes(uint(serverID), targetIP, link.ID)
+	// 4. Push to queue
+	sID := uint(serverID)
+	oID := uint(ownerID)
+	msg := hubQueueMessage{
+		Action:     "create_route",
+		Domain:     domain,
+		TargetIP:   fmt.Sprintf("mc_%s", server.UUID),
+		TargetPort: port,
+		LinkToken:  linkToken,
+		ServerUUID: server.UUID,
+		ServerID:   &sID,
+		OwnerID:    &oID,
+	}
+
+	return g.pushToQueue(msg)
 }
 
-// SyncData triggers an immediate Redis sync.
-func (b *HubBridge) SyncData() {
-	b.Hub.SyncData(context.Background())
+func (g *RedisGateway) DeleteRoute(domain string) error {
+	return g.pushToQueue(hubQueueMessage{
+		Action: "delete_route",
+		Domain: domain,
+	})
+}
+
+func (g *RedisGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error {
+	server, err := g.store.GetServerByID(int(serverID))
+	if err != nil {
+		return fmt.Errorf("server not found: %w", err)
+	}
+
+	node, err := g.store.GetNodeByID(int(newNodeID))
+	if err != nil {
+		return fmt.Errorf("node not found: %w", err)
+	}
+	newToken := DeriveLinkToken(node.Token, g.clusterSecret)
+
+	return g.pushToQueue(hubQueueMessage{
+		Action:       "migrate_routes",
+		ServerUUID:   server.UUID,
+		NewLinkToken: newToken,
+	})
+}
+
+func (g *RedisGateway) pushToQueue(msg hubQueueMessage) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return g.redis.RPush(ctx, hubQueueKey, string(data)).Err()
+}
+
+// DeriveLinkToken computes SHA256(nodeID + clusterSecret) — same as Link and Hub binaries.
+func DeriveLinkToken(nodeID, clusterSecret string) string {
+	h := sha256.New()
+	h.Write([]byte(nodeID + clusterSecret))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// --- Redis read helpers ---
+
+// GetGatesFromRedis reads all gates from Redis (gate:registry:{id} keys).
+func GetGatesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayGateInfo {
+	var gates []GatewayGateInfo
+	var cursor uint64
+	for {
+		keys, next, err := rdb.Scan(ctx, cursor, "gate:registry:*", 100).Result()
+		if err != nil {
+			break
+		}
+		for _, key := range keys {
+			val, err := rdb.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			var g GatewayGateInfo
+			if json.Unmarshal([]byte(val), &g) == nil {
+				if g.Status == "" {
+					g.Status = "online"
+				}
+				gates = append(gates, g)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return gates
+}
+
+// GetLinksFromRedis reads all known link tokens and their online status from Redis.
+func GetLinksFromRedis(ctx context.Context, rdb *redis.Client) []GatewayLinkStatus {
+	// Tokens with active keep-alive
+	onlineSet, _ := rdb.SMembers(ctx, "sys:online_links").Result()
+	onlineMap := make(map[string]bool, len(onlineSet))
+	for _, t := range onlineSet {
+		onlineMap[t] = true
+	}
+
+	// All known tokens from link:{token} keys
+	var links []GatewayLinkStatus
+	var cursor uint64
+	seen := make(map[string]bool)
+	for {
+		keys, next, err := rdb.Scan(ctx, cursor, "link:*", 100).Result()
+		if err != nil {
+			break
+		}
+		for _, key := range keys {
+			token := key[5:] // strip "link:"
+			if seen[token] {
+				continue
+			}
+			seen[token] = true
+
+			tunnels := 0
+			stats, _ := rdb.HGetAll(ctx, "sys:stats:tunnels:"+token).Result()
+			for _, v := range stats {
+				if n, err := strconv.Atoi(v); err == nil {
+					tunnels += n
+				}
+			}
+			links = append(links, GatewayLinkStatus{
+				Token:         token,
+				Online:        onlineMap[token] || tunnels > 0,
+				ActiveTunnels: tunnels,
+			})
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return links
+}
+
+// GetRoutesFromRedis reads all routes from Redis (sys:index:routes + route:{domain}).
+func GetRoutesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayRoute {
+	domains, err := rdb.SMembers(ctx, "sys:index:routes").Result()
+	if err != nil {
+		return nil
+	}
+	routes := make([]GatewayRoute, 0, len(domains))
+	for _, domain := range domains {
+		val, err := rdb.Get(ctx, "route:"+domain).Result()
+		if err != nil {
+			continue
+		}
+		var r GatewayRoute
+		if json.Unmarshal([]byte(val), &r) == nil {
+			r.Domain = domain
+			routes = append(routes, r)
+		}
+	}
+	return routes
+}
+
+// CountRoutesFromRedis returns the total number of routes in Redis.
+func CountRoutesFromRedis(ctx context.Context, rdb *redis.Client) int64 {
+	count, _ := rdb.SCard(ctx, "sys:index:routes").Result()
+	return count
+}
+
+// GetServiceErrorsFromRedis reads error log entries from Redis Streams.
+func GetServiceErrorsFromRedis(rdb *redis.Client, service string, count int64) []errlog.Entry {
+	streams, err := errlog.ScanErrorStreams(rdb, service)
+	if err != nil {
+		return nil
+	}
+	perStream := count
+	if len(streams) > 1 {
+		perStream = count / int64(len(streams))
+		if perStream < 10 {
+			perStream = 10
+		}
+	}
+	var all []errlog.Entry
+	for _, stream := range streams {
+		entries, err := errlog.ReadEntries(rdb, stream, perStream)
+		if err != nil {
+			continue
+		}
+		all = append(all, entries...)
+	}
+	return all
+}
+
+// GetAllServiceErrorsFromRedis reads errors for all gateway service types.
+func GetAllServiceErrorsFromRedis(rdb *redis.Client, count int64) map[string][]errlog.Entry {
+	result := make(map[string][]errlog.Entry)
+	for _, svc := range []string{"gate", "link"} {
+		entries := GetServiceErrorsFromRedis(rdb, svc, count)
+		if len(entries) > 0 {
+			result[svc] = entries
+		}
+	}
+	return result
 }

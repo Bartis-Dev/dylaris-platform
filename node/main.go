@@ -41,6 +41,11 @@ var (
 	statsBufferMaxLen int64
 	statsStreamMaxLen int64
 	storagePaths      string
+
+	// Gateway / port-range config
+	gatewayEnabled bool
+	portRangeStart int
+	portRangeEnd   int
 )
 
 type NodeCommand struct {
@@ -79,6 +84,11 @@ func main() {
 	dockerMgr, err := NewDockerManager(storageMgr)
 	if err != nil {
 		log.Fatalf("Failed to init Docker Manager: %v", err)
+	}
+
+	// Port-range mode: assign host ports when gateway is disabled
+	if !gatewayEnabled {
+		dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd)
 	}
 
 	// Quota provider for first storage path (legacy compat) — multi-path quota handled per-path
@@ -222,6 +232,24 @@ func parseConfig() {
 
 	// Storage paths (comma-separated, default: ./dylaris_data/servers)
 	storagePaths = os.Getenv("DYLARIS_STORAGE_PATHS")
+
+	// Gateway / port-range (GATEWAY_ENABLED=false → assign host ports directly)
+	gatewayEnabled = os.Getenv("GATEWAY_ENABLED") == "true"
+	portRangeStart = 25600
+	portRangeEnd = 30000
+	if v := os.Getenv("DYLARIS_PORT_RANGE_START"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			portRangeStart = n
+		}
+	}
+	if v := os.Getenv("DYLARIS_PORT_RANGE_END"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			portRangeEnd = n
+		}
+	}
+	if !gatewayEnabled {
+		log.Printf("Gateway disabled — direct port mode (range %d-%d)", portRangeStart, portRangeEnd)
+	}
 }
 
 func getOutboundIP() string {

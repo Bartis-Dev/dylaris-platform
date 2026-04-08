@@ -68,21 +68,20 @@ func main() {
 		}
 	}()
 
-	// --- Gateway (Hub Bridge) ---
-	gatewayRedis, gwErr := database.InitGatewayRedis(cfg)
-	if gwErr != nil {
-		log.Printf("WARNING: Gateway Redis failed: %v", gwErr)
-	} else {
-		gormDB, gormErr := database.InitGORM(cfg)
-		if gormErr != nil {
-			log.Printf("WARNING: GORM init failed: %v", gormErr)
+	// --- Gateway (Redis Queue) ---
+	if cfg.GatewayEnabled {
+		gatewayRedis, gwErr := database.InitGatewayRedis(cfg)
+		if gwErr != nil {
+			log.Printf("WARNING: Gateway Redis failed — gateway disabled: %v", gwErr)
+			appState.Gateway = &services.NoOpGateway{}
 		} else {
-			hubBridge := services.NewHubBridge(pgStore, gormDB, gatewayRedis, cfg.ClusterSecret)
-			hubBridge.Start()
 			appState.GatewayRedis = gatewayRedis
-			appState.HubBridge = hubBridge
-			discovery.SetHubService(hubBridge.Hub)
+			appState.Gateway = services.NewRedisGateway(gatewayRedis, pgStore, cfg.ClusterSecret)
+			log.Println("Gateway enabled (Redis Queue mode)")
 		}
+	} else {
+		appState.Gateway = &services.NoOpGateway{}
+		log.Println("Gateway disabled (GATEWAY_ENABLED=false)")
 	}
 
 	// Handler initialisieren
@@ -202,25 +201,25 @@ func main() {
 	api.HandleFunc("/versions/software", versionHandler.GetSoftwareList).Methods("GET")
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
 
-	// --- Gateway Endpoints (always registered) ---
-	if appState.HubBridge != nil {
+	// --- Gateway Endpoints (registered when gateway Redis is available) ---
+	if appState.GatewayRedis != nil {
 		gatewayHandler := handlers.NewGatewayHandler(appState)
 		infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 
-		// Admin endpoints (read-only for links/gates — they auto-register via Redis)
+		// Admin endpoints
 		api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(gatewayHandler.GetLinks)).Methods("GET")
 		api.HandleFunc("/gateway/gates", authHandler.AuthMiddleware(gatewayHandler.GetGates)).Methods("GET")
 		api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(gatewayHandler.GetAllRoutes)).Methods("GET")
-		api.HandleFunc("/gateway/routes/{id:[0-9]+}", authHandler.AuthMiddleware(gatewayHandler.AdminDeleteRoute)).Methods("DELETE")
+		api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.AdminDeleteRoute)).Methods("DELETE")
 		api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(gatewayHandler.GetLogs)).Methods("GET")
 		api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(gatewayHandler.GetStats)).Methods("GET")
 		api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(gatewayHandler.TriggerSync)).Methods("POST")
 		api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(gatewayHandler.GetErrors)).Methods("GET")
 
-		// User endpoints (per-server routes)
+		// User endpoints (per-server routes, identified by domain)
 		api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.GetServerRoutes)).Methods("GET")
 		api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.CreateServerRoute)).Methods("POST")
-		api.HandleFunc("/servers/{id:[0-9]+}/routes/{routeId:[0-9]+}", authHandler.AuthMiddleware(gatewayHandler.DeleteServerRoute)).Methods("DELETE")
+		api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteServerRoute)).Methods("DELETE")
 
 		// Infrastructure overview
 		api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(infrastructureHandler.GetOverview)).Methods("GET")

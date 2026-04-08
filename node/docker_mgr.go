@@ -14,15 +14,17 @@ import (
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 )
 
 type DockerManager struct {
 	cli           *client.Client
 	ctx           context.Context
-	hostDataPath  string          // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
-	localDataPath string          // Container-local path for dylaris_data (for file I/O inside this container, legacy)
-	storageMgr    *StorageManager // Multi-path storage manager
+	hostDataPath  string            // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
+	localDataPath string            // Container-local path for dylaris_data (for file I/O inside this container, legacy)
+	storageMgr    *StorageManager   // Multi-path storage manager
 	hostPathCache map[string]string // local storage path -> host path (resolved from container mounts)
+	portMgr       *PortManager      // nil when gateway is enabled (port binding not needed)
 }
 
 func NewDockerManager(storageMgr *StorageManager) (*DockerManager, error) {
@@ -231,6 +233,19 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
 
+	// Port binding: only when gateway is disabled (direct port mode)
+	if dm.portMgr != nil {
+		port, portErr := dm.portMgr.AllocatePort(config.UUID)
+		if portErr != nil {
+			return fmt.Errorf("port allocation failed: %w", portErr)
+		}
+		hc.PortBindings = nat.PortMap{
+			"25565/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprint(port)}},
+		}
+		cc.ExposedPorts = nat.PortSet{"25565/tcp": struct{}{}}
+		log.Printf("Container %s: binding host port %d → 25565/tcp", containerName, port)
+	}
+
 	nc := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			"dylaris_net": {NetworkID: netID},
@@ -295,7 +310,11 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 	case "kill":
 		return dm.cli.ContainerKill(dm.ctx, mcName, "SIGKILL")
 	case "delete":
-		return dm.cli.ContainerRemove(dm.ctx, mcName, container.RemoveOptions{Force: true})
+		err := dm.cli.ContainerRemove(dm.ctx, mcName, container.RemoveOptions{Force: true})
+		if err == nil && dm.portMgr != nil {
+			dm.portMgr.ReleasePort(uuid)
+		}
+		return err
 	}
 
 	return nil

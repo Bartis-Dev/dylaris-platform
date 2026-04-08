@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
 )
@@ -21,12 +23,19 @@ func NewGatewayHandler(state *AppState) *GatewayHandler {
 
 var domainRegex = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
+func (h *GatewayHandler) ctx() context.Context {
+	return context.Background()
+}
+
 // ==========================================
 // ADMIN: Links
 // ==========================================
 
 func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
-	links := h.state.HubBridge.Hub.GetLinks()
+	links := services.GetLinksFromRedis(h.ctx(), h.state.GatewayRedis)
+	if links == nil {
+		links = []services.GatewayLinkStatus{}
+	}
 	json.NewEncoder(w).Encode(links)
 }
 
@@ -35,7 +44,10 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetGates(w http.ResponseWriter, r *http.Request) {
-	gates := h.state.HubBridge.Hub.GetGates()
+	gates := services.GetGatesFromRedis(h.ctx(), h.state.GatewayRedis)
+	if gates == nil {
+		gates = []services.GatewayGateInfo{}
+	}
 	json.NewEncoder(w).Encode(gates)
 }
 
@@ -44,13 +56,20 @@ func (h *GatewayHandler) GetGates(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
-	routes := h.state.HubBridge.Hub.GetRoutesWithJoins("users", "servers")
+	routes := services.GetRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+	if routes == nil {
+		routes = []services.GatewayRoute{}
+	}
 	json.NewEncoder(w).Encode(routes)
 }
 
 func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if err := h.state.HubBridge.Hub.DeleteRoute(fmt.Sprint(id)); err != nil {
+	domain := mux.Vars(r)["domain"]
+	if domain == "" {
+		http.Error(w, "domain required", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
@@ -59,18 +78,19 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 }
 
 // ==========================================
-// ADMIN: Logs, Stats, Sync
+// ADMIN: Stats, Sync
 // ==========================================
 
 func (h *GatewayHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
-	logs := h.state.HubBridge.Hub.GetLogs(100)
-	json.NewEncoder(w).Encode(logs)
+	// Hub logs are not in Redis; return service error logs instead
+	errors := services.GetAllServiceErrorsFromRedis(h.state.GatewayRedis, 100)
+	json.NewEncoder(w).Encode(errors)
 }
 
 func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	links := h.state.HubBridge.Hub.GetLinks()
-	gates := h.state.HubBridge.Hub.GetGates()
-	routeCount := h.state.HubBridge.Hub.CountRoutesTotal()
+	links := services.GetLinksFromRedis(h.ctx(), h.state.GatewayRedis)
+	gates := services.GetGatesFromRedis(h.ctx(), h.state.GatewayRedis)
+	routeCount := services.CountRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
 
 	onlineLinks := 0
 	for _, l := range links {
@@ -95,9 +115,9 @@ func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
-	h.state.HubBridge.SyncData()
+	// Sync is managed by Hub autonomously; no-op from Core side
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Sync triggered"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Sync is managed by Hub"})
 }
 
 // ==========================================
@@ -107,10 +127,10 @@ func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	if service != "" {
-		errors := h.state.HubBridge.Hub.GetServiceErrors(service, 50)
+		errors := services.GetServiceErrorsFromRedis(h.state.GatewayRedis, service, 50)
 		json.NewEncoder(w).Encode(errors)
 	} else {
-		errors := h.state.HubBridge.Hub.GetAllServiceErrors(50)
+		errors := services.GetAllServiceErrorsFromRedis(h.state.GatewayRedis, 50)
 		json.NewEncoder(w).Encode(errors)
 	}
 }
@@ -120,13 +140,31 @@ func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request) {
-	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	routes := h.state.HubBridge.Hub.GetRoutesByServer(uint(serverID))
+	serverID := mux.Vars(r)["id"]
+
+	// Get server UUID from Core's store
+	server, err := h.state.Store.GetServerByID(mustAtoi(serverID))
+	if err != nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	// Filter routes by server_uuid
+	all := services.GetRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+	var routes []services.GatewayRoute
+	for _, rt := range all {
+		if rt.ServerUUID == server.UUID {
+			routes = append(routes, rt)
+		}
+	}
+	if routes == nil {
+		routes = []services.GatewayRoute{}
+	}
 	json.NewEncoder(w).Encode(routes)
 }
 
 func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Request) {
-	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	serverID := mustAtoi(mux.Vars(r)["id"])
 	userID := r.Context().Value("userID").(int)
 
 	var req struct {
@@ -152,52 +190,82 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	route, err := h.state.HubBridge.CreateServerRoute(serverID, userID, req.Domain, req.TargetPort)
-	if err != nil {
+	if err := h.state.Gateway.CreateServerRoute(uint(serverID), uint(userID), req.Domain, req.TargetPort); err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") {
 			http.Error(w, errMsg, http.StatusNotFound)
-		} else if strings.Contains(errMsg, "limit") || strings.Contains(errMsg, "disabled") {
+		} else if strings.Contains(errMsg, "disabled") {
 			http.Error(w, errMsg, http.StatusForbidden)
 		} else {
-			http.Error(w, fmt.Sprintf("Failed to create route: %s", errMsg), http.StatusConflict)
+			http.Error(w, fmt.Sprintf("Failed to create route: %s", errMsg), http.StatusInternalServerError)
 		}
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(route)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Route creation queued",
+		"domain":  req.Domain,
+	})
 }
 
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {
-	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	routeID, _ := strconv.Atoi(mux.Vars(r)["routeId"])
+	serverID := mustAtoi(mux.Vars(r)["id"])
+	domain := mux.Vars(r)["domain"]
 	userID := r.Context().Value("userID").(int)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
-	// Get route to verify ownership
-	route, err := h.state.HubBridge.Hub.GetRouteByID(uint(routeID))
-	if err != nil {
-		http.Error(w, "Route not found", http.StatusNotFound)
+	if domain == "" {
+		http.Error(w, "domain required", http.StatusBadRequest)
 		return
 	}
 
-	// Verify ownership
-	if (route.ServerID == nil || int(*route.ServerID) != serverID) && !isAdmin {
-		http.Error(w, "Route does not belong to this server", http.StatusForbidden)
-		return
-	}
-	if (route.OwnerID == nil || int(*route.OwnerID) != userID) && !isAdmin {
-		http.Error(w, "Not authorized to delete this route", http.StatusForbidden)
-		return
+	// Ownership check: verify server belongs to this user (or admin)
+	if !isAdmin {
+		server, err := h.state.Store.GetServerByID(serverID)
+		if err != nil {
+			http.Error(w, "Server not found", http.StatusNotFound)
+			return
+		}
+		if server.OwnerID != userID {
+			http.Error(w, "Not authorized", http.StatusForbidden)
+			return
+		}
 	}
 
-	if err := h.state.HubBridge.Hub.DeleteRoute(fmt.Sprint(routeID)); err != nil {
+	// Ensure the route belongs to this server (optional but safe)
+	if !isAdmin {
+		server, _ := h.state.Store.GetServerByID(serverID)
+		all := services.GetRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+		found := false
+		for _, rt := range all {
+			if rt.Domain == domain && rt.ServerUUID == server.UUID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			http.Error(w, "Route not found for this server", http.StatusNotFound)
+			return
+		}
+	}
+
+	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Route deleted"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Route deletion queued"})
 }
 
+func mustAtoi(s string) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}

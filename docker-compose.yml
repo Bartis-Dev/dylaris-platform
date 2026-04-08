@@ -1,0 +1,82 @@
+services:
+  core:
+    image: ghcr.io/callmebartis/dylaris/core:latest
+    restart: unless-stopped
+    depends_on:
+      - timescaledb
+      - redis
+    environment:
+      API_PORT: "25500"
+      FRONTEND_URL: "http://panel:3000"
+      JWT_SECRET: "${JWT_SECRET}"
+      CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+      DB_NAME: "${DB_NAME}"
+      REDIS_ADDR: "redis:6379"
+      GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
+      # When GATEWAY_ENABLED=true, Hub must share the same Redis:
+      # GATEWAY_REDIS_ADDR: "redis:6379"
+    ports:
+      - "25500:25500"
+      - "25520:25520"
+    networks:
+      - dylaris_net
+
+  node:
+    image: ghcr.io/callmebartis/dylaris/node:latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      DYLARIS_NODE_ID: "${NODE_ID:-node-01}"
+      DYLARIS_CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      REDIS_ADDR: "redis:6379"
+      GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
+      DYLARIS_PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
+      DYLARIS_PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dylaris_data:/app/dylaris_data
+    networks:
+      - dylaris_net
+
+  panel:
+    image: ghcr.io/callmebartis/dylaris/panel:latest
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
+    ports:
+      - "25510:3000"
+    networks:
+      - dylaris_net
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${DB_USER}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
+      POSTGRES_DB: "${DB_NAME}"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    networks:
+      - dylaris_net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    networks:
+      - dylaris_net
+
+volumes:
+  timescaledb_data:
+  dylaris_data:
+
+networks:
+  dylaris_net:
+    driver: overlay
+    attachable: true
