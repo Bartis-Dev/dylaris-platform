@@ -182,6 +182,8 @@ func migrateSchema(db *sql.DB) error {
 		{"servers", "proxy_id", "INTEGER REFERENCES servers(id) ON DELETE SET NULL"},
 		{"nodes", "link_image", "TEXT DEFAULT ''"},
 		{"nodes", "last_seen_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"},
+		{"servers", "host_port", "INT DEFAULT 0"},
+		{"servers", "container_port", "INT DEFAULT 25565"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)

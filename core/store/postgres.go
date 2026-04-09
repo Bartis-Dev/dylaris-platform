@@ -289,13 +289,13 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565)
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.id = $1
 	`
-	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID)
+	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort)
 	if err != nil {
 		return nil, err
 	}
@@ -305,13 +305,13 @@ func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 func (s *PostgresStore) GetServerByUUID(uuid string) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565)
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.uuid = $1
 	`
-	err := s.db.QueryRow(query, uuid).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID)
+	err := s.db.QueryRow(query, uuid).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort)
 	if err != nil {
 		return nil, err
 	}
@@ -352,6 +352,53 @@ func (s *PostgresStore) UpdateServerName(id int, name string) error {
 func (s *PostgresStore) UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error {
 	_, err := s.db.Exec("UPDATE servers SET memory = $1, cpu_limit = $2, disk_limit = $3 WHERE id = $4", ram, cpuLimit, diskLimit, id)
 	return err
+}
+
+func (s *PostgresStore) UpdateServerPorts(id int, hostPort, containerPort int) error {
+	_, err := s.db.Exec("UPDATE servers SET host_port = $1, container_port = $2 WHERE id = $3", hostPort, containerPort, id)
+	return err
+}
+
+func (s *PostgresStore) GetUsedHostPortsOnNode(nodeID int) ([]int, error) {
+	rows, err := s.db.Query("SELECT host_port FROM servers WHERE node_id = $1 AND host_port > 0", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ports []int
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err == nil {
+			ports = append(ports, p)
+		}
+	}
+	return ports, nil
+}
+
+func (s *PostgresStore) GetAllActiveServers() ([]models.Server, error) {
+	rows, err := s.db.Query(`
+		SELECT s.id, s.uuid, s.node_id, n.name as node_name, n.token as node_token, s.status, COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.memory, 1024), COALESCE(s.cpu_limit, 0), COALESCE(s.disk_limit, 0), COALESCE(s.start_command, ''), COALESCE(s.game_image, ''), COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, '')
+		FROM servers s
+		JOIN nodes n ON s.node_id = n.id
+		WHERE s.status != 'pending_setup'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var servers []models.Server
+	for rows.Next() {
+		var srv models.Server
+		// NodeName is reused to carry the node token for migration purposes
+		var nodeToken string
+		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.NodeID, &srv.NodeName, &nodeToken, &srv.Status, &srv.HostPort, &srv.ContainerPort, &srv.Memory, &srv.CPULimit, &srv.DiskLimit, &srv.StartCommand, &srv.GameImage, &srv.ActiveSubServer, &srv.ExtraJvmFlags); err != nil {
+			return nil, err
+		}
+		// Store the node token in NodeAddress field temporarily (migration service reads it)
+		srv.NodeAddress = nodeToken
+		servers = append(servers, srv)
+	}
+	return servers, nil
 }
 
 func (s *PostgresStore) UpdateServerProxyID(id int, proxyID *int) error {
@@ -446,35 +493,39 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 }
 
 func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.Server, error) {
+	serverCols := `s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
+		s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,
+		s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
+		COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''),
+		COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id,
+		COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565)`
+
+	scanServer := func(srv *models.Server, rows *sql.Rows, role string, permsJSON []byte) {
+		if role != "" {
+			srv.Role = role
+		}
+		if (role == "invited" || role == "inherited") && len(permsJSON) > 0 {
+			var perms models.TabPermissions
+			json.Unmarshal(permsJSON, &perms)
+			srv.Permissions = &perms
+		}
+	}
+
 	if isAdmin {
-		// Admin sees all servers
-		query := `
-			SELECT s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
-				s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,
-				s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
-				COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''),
-				COALESCE(s.disk_limit, 0),
-				COALESCE(s.server_type, 'game'), s.proxy_id
-			FROM servers s
-			JOIN nodes n ON s.node_id = n.id
-			JOIN users u ON s.owner_id = u.id
-			ORDER BY s.id ASC
-		`
+		query := `SELECT ` + serverCols + ` FROM servers s JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id ORDER BY s.id ASC`
 		rows, err := s.db.Query(query)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
-
 		var servers []models.Server
 		for rows.Next() {
 			var srv models.Server
 			if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeName, &srv.OwnerName,
 				&srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer,
-				&srv.CreatedAt, &srv.OwnerID,
-				&srv.Memory, &srv.CPULimit, &srv.NodeID, &srv.ExtraJvmFlags, &srv.StartCommand,
-				&srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit,
-				&srv.ServerType, &srv.ProxyID); err != nil {
+				&srv.CreatedAt, &srv.OwnerID, &srv.Memory, &srv.CPULimit, &srv.NodeID,
+				&srv.ExtraJvmFlags, &srv.StartCommand, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber,
+				&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort); err != nil {
 				continue
 			}
 			srv.Role = "owner"
@@ -486,53 +537,22 @@ func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.S
 		return servers, nil
 	}
 
-	// Non-admin: owned + invited via UNION
 	query := `
-		SELECT s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
-			s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,
-			s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
-			COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''),
-			COALESCE(s.disk_limit, 0),
-			COALESCE(s.server_type, 'game'), s.proxy_id,
-			'owner' as role, NULL as permissions
-		FROM servers s
-		JOIN nodes n ON s.node_id = n.id
-		JOIN users u ON s.owner_id = u.id
+		SELECT ` + serverCols + `, 'owner' as role, NULL::jsonb as permissions
+		FROM servers s JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
 		WHERE s.owner_id = $1
-
 		UNION ALL
-
-		SELECT s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
-			s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,
-			s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
-			COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''),
-			COALESCE(s.disk_limit, 0),
-			COALESCE(s.server_type, 'game'), s.proxy_id,
-			'invited' as role, si.permissions
-		FROM server_invites si
-		JOIN servers s ON si.server_id = s.id
-		JOIN nodes n ON s.node_id = n.id
-		JOIN users u ON s.owner_id = u.id
+		SELECT ` + serverCols + `, 'invited' as role, si.permissions
+		FROM server_invites si JOIN servers s ON si.server_id = s.id JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
 		WHERE si.user_id = $1
-
 		UNION ALL
-
-		SELECT s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
-			s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,
-			s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
-			COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''),
-			COALESCE(s.disk_limit, 0),
-			COALESCE(s.server_type, 'game'), s.proxy_id,
-			'inherited' as role, si.permissions
-		FROM servers s
-		JOIN servers proxy ON s.proxy_id = proxy.id
+		SELECT ` + serverCols + `, 'inherited' as role, si.permissions
+		FROM servers s JOIN servers proxy ON s.proxy_id = proxy.id
 		JOIN server_invites si ON si.server_id = proxy.id AND si.user_id = $1
-		JOIN nodes n ON s.node_id = n.id
-		JOIN users u ON s.owner_id = u.id
+		JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
 		WHERE (si.permissions::jsonb->>'inherit')::boolean = true
 			AND s.owner_id != $1
 			AND NOT EXISTS (SELECT 1 FROM server_invites si2 WHERE si2.server_id = s.id AND si2.user_id = $1)
-
 		ORDER BY id ASC
 	`
 	rows, err := s.db.Query(query, userID)
@@ -548,19 +568,13 @@ func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.S
 		var permsJSON []byte
 		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeName, &srv.OwnerName,
 			&srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer,
-			&srv.CreatedAt, &srv.OwnerID,
-			&srv.Memory, &srv.CPULimit, &srv.NodeID, &srv.ExtraJvmFlags, &srv.StartCommand,
-			&srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit,
-			&srv.ServerType, &srv.ProxyID,
+			&srv.CreatedAt, &srv.OwnerID, &srv.Memory, &srv.CPULimit, &srv.NodeID,
+			&srv.ExtraJvmFlags, &srv.StartCommand, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber,
+			&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort,
 			&role, &permsJSON); err != nil {
 			continue
 		}
-		srv.Role = role
-		if (role == "invited" || role == "inherited") && len(permsJSON) > 0 {
-			var perms models.TabPermissions
-			json.Unmarshal(permsJSON, &perms)
-			srv.Permissions = &perms
-		}
+		scanServer(&srv, nil, role, permsJSON)
 		servers = append(servers, srv)
 	}
 	return servers, nil
@@ -731,5 +745,41 @@ func (s *PostgresStore) ListGatewayRouteLimits() ([]models.GatewayRouteLimit, er
 func (s *PostgresStore) DeleteGatewayRouteLimit(scope string) error {
 	_, err := s.db.Exec("DELETE FROM gateway_route_limits WHERE scope = $1", scope)
 	return err
+}
+
+// ==========================================
+// SFTP
+// ==========================================
+
+// GetSFTPAccessByNode returns all (serverUUID, serverName, username) pairs for a node —
+// owners and invited users combined.
+func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
+	query := `
+		SELECT s.uuid, s.name, u.username
+		FROM servers s
+		JOIN users u ON s.owner_id = u.id
+		WHERE s.node_id = $1
+		UNION
+		SELECT s.uuid, s.name, u.username
+		FROM servers s
+		JOIN server_invites si ON si.server_id = s.id
+		JOIN users u ON si.user_id = u.id
+		WHERE s.node_id = $1
+		ORDER BY 1, 3
+	`
+	rows, err := s.db.Query(query, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []SFTPAccess
+	for rows.Next() {
+		var a SFTPAccess
+		if err := rows.Scan(&a.ServerUUID, &a.ServerName, &a.Username); err != nil {
+			continue
+		}
+		result = append(result, a)
+	}
+	return result, nil
 }
 

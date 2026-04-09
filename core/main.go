@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -61,6 +62,9 @@ func main() {
 	statsConsumer := services.NewStatsConsumerService(pgStore, redisClient, cfg.CoreID)
 	statsConsumer.Start()
 
+	sftpSync := services.NewSFTPSyncService(pgStore, redisClient)
+	sftpSync.Start()
+
 	// Fallback cleanup if TimescaleDB retention policy is not active
 	go func() {
 		for range time.NewTicker(1 * time.Hour).C {
@@ -68,20 +72,18 @@ func main() {
 		}
 	}()
 
-	// --- Gateway (Redis Queue) ---
-	if cfg.GatewayEnabled {
-		gatewayRedis, gwErr := database.InitGatewayRedis(cfg)
-		if gwErr != nil {
-			log.Printf("WARNING: Gateway Redis failed — gateway disabled: %v", gwErr)
-			appState.Gateway = &services.NoOpGateway{}
-		} else {
-			appState.GatewayRedis = gatewayRedis
-			appState.Gateway = services.NewRedisGateway(gatewayRedis, pgStore, cfg.ClusterSecret)
-			log.Println("Gateway enabled (Redis Queue mode)")
-		}
-	} else {
-		appState.Gateway = &services.NoOpGateway{}
-		log.Println("Gateway disabled (GATEWAY_ENABLED=false)")
+	// Gateway always active — uses same Redis as Core
+	appState.Gateway = services.NewRedisGateway(redisClient, pgStore, cfg.ClusterSecret)
+
+	// Routing migration service for batch redeployment when mode changes
+	appState.RoutingMigration = services.NewRoutingMigrationService(pgStore, appState.Queue, redisClient)
+
+	// Publish current routing mode to Redis on startup so Nodes pick it up
+	if mode, err := pgStore.GetSetting("routing_mode"); err == nil && mode != "" {
+		redisClient.Set(context.Background(), "dylaris:routing_mode", mode, 0)
+	}
+	if fileMode, err := pgStore.GetSetting("file_access_mode"); err == nil && fileMode != "" {
+		redisClient.Set(context.Background(), "dylaris:file_access_mode", fileMode, 0)
 	}
 
 	// Handler initialisieren
@@ -201,29 +203,28 @@ func main() {
 	api.HandleFunc("/versions/software", versionHandler.GetSoftwareList).Methods("GET")
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
 
-	// --- Gateway Endpoints (registered when gateway Redis is available) ---
-	if appState.GatewayRedis != nil {
-		gatewayHandler := handlers.NewGatewayHandler(appState)
-		infrastructureHandler := handlers.NewInfrastructureHandler(appState)
+	// --- Gateway Endpoints ---
+	gatewayHandler := handlers.NewGatewayHandler(appState)
+	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 
-		// Admin endpoints
-		api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(gatewayHandler.GetLinks)).Methods("GET")
-		api.HandleFunc("/gateway/gates", authHandler.AuthMiddleware(gatewayHandler.GetGates)).Methods("GET")
-		api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(gatewayHandler.GetAllRoutes)).Methods("GET")
-		api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.AdminDeleteRoute)).Methods("DELETE")
-		api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(gatewayHandler.GetLogs)).Methods("GET")
-		api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(gatewayHandler.GetStats)).Methods("GET")
-		api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(gatewayHandler.TriggerSync)).Methods("POST")
-		api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(gatewayHandler.GetErrors)).Methods("GET")
+	// Admin endpoints
+	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(gatewayHandler.GetLinks)).Methods("GET")
+	api.HandleFunc("/gateway/gates", authHandler.AuthMiddleware(gatewayHandler.GetGates)).Methods("GET")
+	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(gatewayHandler.GetAllRoutes)).Methods("GET")
+	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.AdminDeleteRoute)).Methods("DELETE")
+	api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(gatewayHandler.GetLogs)).Methods("GET")
+	api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(gatewayHandler.GetStats)).Methods("GET")
+	api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(gatewayHandler.TriggerSync)).Methods("POST")
+	api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(gatewayHandler.GetErrors)).Methods("GET")
 
-		// User endpoints (per-server routes, identified by domain)
-		api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.GetServerRoutes)).Methods("GET")
-		api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.CreateServerRoute)).Methods("POST")
-		api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteServerRoute)).Methods("DELETE")
+	// User endpoints (per-server routes, identified by domain)
+	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.GetServerRoutes)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.CreateServerRoute)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteServerRoute)).Methods("DELETE")
 
-		// Infrastructure overview
-		api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(infrastructureHandler.GetOverview)).Methods("GET")
-	}
+	// Infrastructure overview + migration status
+	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(infrastructureHandler.GetOverview)).Methods("GET")
+	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(infrastructureHandler.GetRoutingMigrationStatus)).Methods("GET")
 
 	api.HandleFunc("/files", authHandler.AuthMiddleware(fileHandler.GetFilesHandler)).Methods("GET")
 	api.HandleFunc("/files/content", authHandler.AuthMiddleware(fileHandler.GetFileContentHandler)).Methods("GET")
@@ -258,6 +259,8 @@ func main() {
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")
 	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(settingsHandler.GetBeamSettings)).Methods("GET")
 	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(settingsHandler.SaveBeamSettings)).Methods("POST")
+	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.GetRoutingMode)).Methods("GET")
+	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.SaveRoutingMode)).Methods("POST")
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")

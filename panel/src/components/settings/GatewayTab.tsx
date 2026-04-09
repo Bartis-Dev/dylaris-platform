@@ -1,10 +1,28 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { getGatewaySettings, saveGatewaySettings, GatewaySettings } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Shield, Router, Database, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+    getGatewaySettings, saveGatewaySettings, GatewaySettings,
+    getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
+    RoutingMode, FileAccessMode,
+} from '@/lib/api';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Shield, Router, Database, ChevronDown, AlertTriangle, EyeOff } from 'lucide-react';
 
 type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc' | 'portHttps';
+
+type ModeOption<T extends string> = { value: T; label: string; desc: string };
+
+const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
+    { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
+    { value: 'both', label: 'Both', desc: 'Allow both IP:Port and Gateway routes simultaneously' },
+    { value: 'gateway', label: 'Gateway', desc: 'Route-only mode — no host ports exposed, traffic via Gate → Link' },
+];
+
+const FILE_OPTIONS: ModeOption<FileAccessMode>[] = [
+    { value: 'sftp', label: 'SFTP', desc: 'Users access server files via SFTP on the Node IP' },
+    { value: 'both', label: 'Both', desc: 'Allow both SFTP and Beam file access' },
+    { value: 'beam', label: 'Beam', desc: 'File access only via Beam relay — no direct Node IP needed' },
+];
 
 export default function GatewayTab() {
     const [settings, setSettings] = useState<GatewaySettings>({
@@ -29,23 +47,73 @@ export default function GatewayTab() {
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [redisOpen, setRedisOpen] = useState(false);
 
+    // Routing mode state
+    const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
+    const [fileMode, setFileMode] = useState<FileAccessMode>('sftp');
+    const [origRoutingMode, setOrigRoutingMode] = useState<RoutingMode>('ip_port');
+    const [origFileMode, setOrigFileMode] = useState<FileAccessMode>('sftp');
+    const [confirmModal, setConfirmModal] = useState(false);
+    const [savingRouting, setSavingRouting] = useState(false);
+    const [migration, setMigration] = useState<{ running: boolean; total: number; done: number; failed: number } | null>(null);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
     };
 
     useEffect(() => {
-        getGatewaySettings()
-            .then(res => {
-                if (res.success && res.settings) {
-                    setSettings(res.settings);
-                    if (res.settings.redisMode === 'separate') {
-                        setRedisOpen(true);
-                    }
-                }
-            })
-            .finally(() => setLoading(false));
+        Promise.all([
+            getGatewaySettings(),
+            getRoutingMode(),
+        ]).then(([gwRes, rmRes]) => {
+            if (gwRes.success && gwRes.settings) {
+                setSettings(gwRes.settings);
+                if (gwRes.settings.redisMode === 'separate') setRedisOpen(true);
+            }
+            if (rmRes.success) {
+                const m: RoutingMode = rmRes.mode || 'ip_port';
+                const f: FileAccessMode = rmRes.fileMode || 'sftp';
+                setRoutingMode(m); setOrigRoutingMode(m);
+                setFileMode(f); setOrigFileMode(f);
+            }
+        }).finally(() => setLoading(false));
     }, []);
+
+    // Poll migration status while running
+    const startPolling = () => {
+        if (pollRef.current) return;
+        pollRef.current = setInterval(async () => {
+            const res = await getRoutingMigrationStatus();
+            if (res.success) {
+                setMigration({ running: res.running, total: res.total, done: res.done, failed: res.failed });
+                if (!res.running) {
+                    clearInterval(pollRef.current!);
+                    pollRef.current = null;
+                }
+            }
+        }, 3000);
+    };
+
+    const handleSaveRouting = async () => {
+        setSavingRouting(true);
+        setConfirmModal(false);
+        const res = await saveRoutingMode({ mode: routingMode, fileMode });
+        if (res.success) {
+            setOrigRoutingMode(routingMode);
+            setOrigFileMode(fileMode);
+            showToast(`Routing mode saved. ${res.serversQueued > 0 ? `Redeploying ${res.serversQueued} servers...` : ''}`);
+            if (res.serversQueued > 0) {
+                setMigration({ running: true, total: res.serversQueued, done: 0, failed: 0 });
+                startPolling();
+            }
+        } else {
+            showToast(res.message || 'Failed to save routing mode.', false);
+        }
+        setSavingRouting(false);
+    };
+
+    const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
 
     const handleSave = async () => {
         setSaving(true);
@@ -102,6 +170,127 @@ export default function GatewayTab() {
             <div>
                 <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Gateway Configuration</h2>
                 <p className="text-sm text-(--base-07)">Manage gateway routing, link defaults and route limits for gates and links.</p>
+            </div>
+
+            {/* Routing Mode */}
+            <div className="card p-5 space-y-5">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <Router size={18} className="text-(--accent-light)" />
+                    </div>
+                    <div>
+                        <div className="font-medium text-sm text-(--base-09)">Traffic Routing</div>
+                        <div className="text-xs text-(--base-06)">How game traffic and file access are routed to servers</div>
+                    </div>
+                </div>
+
+                {/* Game Traffic */}
+                <div>
+                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Game Traffic</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                        {ROUTING_OPTIONS.map(opt => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setRoutingMode(opt.value)}
+                                className={`p-3 rounded-md border text-left transition-colors ${
+                                    routingMode === opt.value
+                                        ? 'border-(--accent) bg-(--accent)/10'
+                                        : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
+                                }`}
+                            >
+                                <div className={`text-sm font-medium ${routingMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
+                                    {opt.label}
+                                </div>
+                                <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* File Access */}
+                <div>
+                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">File Access</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                        {FILE_OPTIONS.map(opt => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setFileMode(opt.value)}
+                                className={`p-3 rounded-md border text-left transition-colors ${
+                                    fileMode === opt.value
+                                        ? 'border-(--accent) bg-(--accent)/10'
+                                        : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
+                                }`}
+                            >
+                                <div className={`text-sm font-medium ${fileMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
+                                    {opt.label}
+                                </div>
+                                <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* IP-hiding info callout */}
+                <div className={`flex items-start gap-3 p-3 rounded-md border ${
+                    routingMode === 'gateway' && fileMode === 'beam'
+                        ? 'border-(--success)/30 bg-(--success)/5'
+                        : 'border-(--base-04) bg-(--base-02)'
+                }`}>
+                    <EyeOff size={15} className={`mt-0.5 shrink-0 ${routingMode === 'gateway' && fileMode === 'beam' ? 'text-(--success-light)' : 'text-(--base-06)'}`} />
+                    <p className="text-xs text-(--base-07)">
+                        The public Node IP is only fully hidden when both{' '}
+                        <span className="text-(--base-09) font-medium">Game Traffic</span> is set to{' '}
+                        <span className="text-(--base-09) font-medium">Gateway</span> and{' '}
+                        <span className="text-(--base-09) font-medium">File Access</span> is set to{' '}
+                        <span className="text-(--base-09) font-medium">Beam</span>.
+                        {routingMode === 'gateway' && fileMode === 'beam' && (
+                            <span className="text-(--success-light) font-medium ml-1">Node IPs are currently fully hidden.</span>
+                        )}
+                    </p>
+                </div>
+
+                {/* Migration progress */}
+                {migration && (
+                    <div className="p-3 rounded-md bg-(--base-02) border border-(--base-04) space-y-2">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <RefreshCw size={13} className={`${migration.running ? 'animate-spin' : ''} text-(--accent-light)`} />
+                                <span className="text-xs text-(--base-09)">
+                                    {migration.running ? 'Redeploying servers...' : 'Redeploy complete'}
+                                </span>
+                            </div>
+                            <span className="font-mono text-xs text-(--base-06)">
+                                {migration.done} / {migration.total} done{migration.failed > 0 ? ` · ${migration.failed} failed` : ''}
+                            </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-(--base-03) overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all duration-300 ${migration.failed > 0 ? 'bg-(--error-light)' : 'bg-(--accent)'}`}
+                                style={{ width: migration.total > 0 ? `${Math.round((migration.done / migration.total) * 100)}%` : '0%' }}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {/* Save routing */}
+                <div className="flex items-center gap-3 pt-1 border-t border-(--base-03)">
+                    <button
+                        onClick={() => setConfirmModal(true)}
+                        disabled={!routingChanged || savingRouting}
+                        className="btn btn-primary px-5 py-2 text-sm disabled:opacity-40"
+                    >
+                        <Save size={14} />
+                        {savingRouting ? 'Applying...' : 'Apply Routing'}
+                    </button>
+                    {routingChanged && (
+                        <span className="text-xs text-(--base-06) flex items-center gap-1.5">
+                            <AlertTriangle size={12} className="text-(--warning-light)" />
+                            Changing routing mode will trigger a server redeploy
+                        </span>
+                    )}
+                </div>
             </div>
 
             {/* Redis Connection */}
@@ -396,6 +585,54 @@ export default function GatewayTab() {
                     {saving ? 'Saving...' : 'Save Settings'}
                 </button>
             </div>
+
+            {/* Confirmation Modal */}
+            {confirmModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="card p-6 max-w-md w-full mx-4 space-y-4">
+                        <div className="flex items-start gap-3">
+                            <div className="w-9 h-9 rounded-md bg-(--warning)/10 border border-(--warning)/20 flex items-center justify-center shrink-0">
+                                <AlertTriangle size={18} className="text-(--warning-light)" />
+                            </div>
+                            <div>
+                                <h3 className="font-display font-bold text-(--base-09) text-base">Confirm Routing Change</h3>
+                                <p className="text-xs text-(--base-06) mt-0.5">This action will redeploy all active servers</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2 text-sm text-(--base-07)">
+                            {routingMode === 'gateway' && origRoutingMode !== 'gateway' && (
+                                <p>Switching to <span className="text-(--base-09) font-medium">Gateway</span> mode: all host port bindings will be removed and servers will be redeployed without exposed ports.</p>
+                            )}
+                            {routingMode !== 'gateway' && origRoutingMode === 'gateway' && (
+                                <p>Switching away from <span className="text-(--base-09) font-medium">Gateway</span> mode: new host ports will be assigned to all servers during redeploy.</p>
+                            )}
+                            {routingMode === 'both' && origRoutingMode !== 'both' && origRoutingMode !== 'gateway' && (
+                                <p>Switching to <span className="text-(--base-09) font-medium">Both</span> mode: servers will keep or receive host ports while also supporting gateway routes.</p>
+                            )}
+                            {fileMode !== origFileMode && (
+                                <p>File access mode is changing to <span className="text-(--base-09) font-medium">{FILE_OPTIONS.find(o => o.value === fileMode)?.label}</span>.</p>
+                            )}
+                            <p className="text-(--base-06) text-xs pt-1">Servers are redeployed in batches of 4 with 15s between batches. Each container has a 60s timeout before a force-kill is issued.</p>
+                        </div>
+
+                        <div className="flex gap-3 pt-2">
+                            <button
+                                onClick={handleSaveRouting}
+                                className="btn btn-primary px-5 py-2 text-sm flex-1"
+                            >
+                                Confirm & Apply
+                            </button>
+                            <button
+                                onClick={() => setConfirmModal(false)}
+                                className="btn px-5 py-2 text-sm flex-1"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Toast */}
             {toast && (

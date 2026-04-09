@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppModule, User } from '@/lib/api';
 import ModulesTab from './ModulesTab';
 import UsersTab from './UsersTab';
@@ -18,22 +18,34 @@ interface SettingsPanelProps {
     currentUser?: User;
 }
 
-const TABS = [
-    { id: 'modules', label: 'Modules' },
-    { id: 'users', label: 'Users' },
-    { id: 'nodes', label: 'Nodes' },
-    { id: 'library', label: 'Library' },
-    { id: 'filemanager', label: 'File Manager' },
-    { id: 'servers', label: 'Servers' },
-    { id: 'features', label: 'Features' },
-    { id: 'gateway', label: 'Gateway' },
-    { id: 'beam', label: 'Beam' },
+const ALL_TABS = [
+    { id: 'modules', label: 'Modules', always: true },
+    { id: 'users', label: 'Users', always: true },
+    { id: 'nodes', label: 'Nodes', always: true },
+    { id: 'library', label: 'Library', always: true },
+    { id: 'filemanager', label: 'File Manager', always: true },
+    { id: 'servers', label: 'Servers', always: true },
+    { id: 'features', label: 'Features', always: true },
+    { id: 'gateway', label: 'Gateway', always: false, module: 'Gateway' },
+    { id: 'beam', label: 'Beam', always: true },
 ] as const;
 
-type TabId = typeof TABS[number]['id'];
+type TabId = typeof ALL_TABS[number]['id'];
 
 export default function SettingsPanel({ modules, onModulesChange, currentUser }: SettingsPanelProps) {
     const [activeTab, setActiveTab] = useState<TabId>('modules');
+
+    const visibleTabs = ALL_TABS.filter(tab => {
+        if (tab.always) return true;
+        if ('module' in tab) return modules.some(m => m.name === tab.module && m.isEnabled);
+        return true;
+    });
+
+    // If currently active tab becomes hidden, fall back to modules
+    useEffect(() => {
+        const isVisible = visibleTabs.some(t => t.id === activeTab);
+        if (!isVisible) setActiveTab('modules');
+    }, [modules]);
 
     return (
         <div className="p-6 h-full flex flex-col">
@@ -41,7 +53,7 @@ export default function SettingsPanel({ modules, onModulesChange, currentUser }:
 
             {/* Tabs Navigation */}
             <div className="flex gap-4 border-b border-(--base-04) mb-6">
-                {TABS.map(tab => (
+                {visibleTabs.map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
@@ -61,35 +73,27 @@ export default function SettingsPanel({ modules, onModulesChange, currentUser }:
                 {activeTab === 'modules' && (
                     <ModulesTab modules={modules} onModulesChange={onModulesChange} />
                 )}
-
                 {activeTab === 'users' && (
                     <UsersTab currentUser={currentUser} />
                 )}
-
                 {activeTab === 'nodes' && (
                     <NodesTab />
                 )}
-
                 {activeTab === 'library' && (
                     <LibraryTab />
                 )}
-
                 {activeTab === 'filemanager' && (
                     <FileManagerTab />
                 )}
-
                 {activeTab === 'servers' && (
                     <ServersTab />
                 )}
-
                 {activeTab === 'features' && (
                     <FeaturesTab />
                 )}
-
                 {activeTab === 'gateway' && (
                     <GatewayTab />
                 )}
-
                 {activeTab === 'beam' && (
                     <BeamTab />
                 )}

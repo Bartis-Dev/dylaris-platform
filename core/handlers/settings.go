@@ -608,3 +608,85 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 
 	return settings
 }
+
+// --- Routing Mode Settings ---
+
+type RoutingModeSettings struct {
+	Mode     string `json:"mode"`     // "ip_port" | "both" | "gateway"
+	FileMode string `json:"fileMode"` // "sftp" | "both" | "beam"
+}
+
+func validRoutingMode(v string) bool {
+	return v == "ip_port" || v == "both" || v == "gateway"
+}
+
+func validFileMode(v string) bool {
+	return v == "sftp" || v == "both" || v == "beam"
+}
+
+// GetRoutingMode GET /api/settings/routing-mode — available to all authenticated users
+func (h *SettingsHandler) GetRoutingMode(w http.ResponseWriter, r *http.Request) {
+	mode, _ := h.state.Store.GetSetting("routing_mode")
+	fileMode, _ := h.state.Store.GetSetting("file_access_mode")
+	if mode == "" {
+		mode = "ip_port"
+	}
+	if fileMode == "" {
+		fileMode = "sftp"
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"mode":     mode,
+		"fileMode": fileMode,
+	})
+}
+
+// SaveRoutingMode POST /api/settings/routing-mode — admin only
+func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+
+	var req RoutingModeSettings
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if !validRoutingMode(req.Mode) {
+		sendJSONError(w, "Invalid mode: must be ip_port, both, or gateway", http.StatusBadRequest)
+		return
+	}
+	if !validFileMode(req.FileMode) {
+		sendJSONError(w, "Invalid fileMode: must be sftp, both, or beam", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.state.Store.SetSetting("routing_mode", req.Mode); err != nil {
+		sendJSONError(w, "Failed to save routing_mode", http.StatusInternalServerError)
+		return
+	}
+	if err := h.state.Store.SetSetting("file_access_mode", req.FileMode); err != nil {
+		sendJSONError(w, "Failed to save file_access_mode", http.StatusInternalServerError)
+		return
+	}
+
+	// Publish to Redis so Nodes pick it up within 30s
+	ctx := r.Context()
+	h.state.Redis.Set(ctx, "dylaris:routing_mode", req.Mode, 0)
+	h.state.Redis.Set(ctx, "dylaris:file_access_mode", req.FileMode, 0)
+
+	// Kick off migration
+	queued := 0
+	if h.state.RoutingMigration != nil {
+		n, err := h.state.RoutingMigration.Run(ctx, req.Mode)
+		if err == nil {
+			queued = n
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":        true,
+		"serversQueued":  queued,
+	})
+}

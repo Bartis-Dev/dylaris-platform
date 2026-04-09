@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { logout, getProfile, updateProfile as apiUpdateProfile, getModules, getServers, deleteServer, updateServerName, updateServerResources, serverPower, getFeatureSettings, getServerStoragePath, migrateServerStorage, AppModule, Server, User, TabPermissions, ServerStats, StoragePathInfo } from '@/lib/api';
+import { logout, getProfile, updateProfile as apiUpdateProfile, getModules, getServers, deleteServer, updateServerName, updateServerResources, serverPower, getFeatureSettings, getServerStoragePath, migrateServerStorage, getServerRoutes, getRoutingMode, GatewayRoute, AppModule, Server, User, TabPermissions, ServerStats, StoragePathInfo, RoutingMode, FileAccessMode } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
-import { Server as ServerIcon, PlusCircle, Wrench, ChevronDown, UserCog, LogOut, Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull, House, Terminal, FolderOpen, Settings, Users, HardDrive, MoveHorizontal, RefreshCw } from 'lucide-react';
+import { Server as ServerIcon, PlusCircle, Wrench, ChevronDown, UserCog, LogOut, Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull, House, Terminal, FolderOpen, Settings, Users, HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import ProfilePopup from '@/components/ProfilePopup';
 import Navbar from '@/components/Navbar';
@@ -78,6 +78,17 @@ export default function Dashboard() {
     const [killCooldown, setKillCooldown] = useState(false);
     const [showKillConfirm, setShowKillConfirm] = useState(false);
 
+    // Server routes (gateway)
+    const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
+
+    // Routing mode
+    const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
+    const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>('sftp');
+
+    // Edit resources — port fields
+    const [editHostPort, setEditHostPort] = useState(0);
+    const [editContainerPort, setEditContainerPort] = useState(25565);
+
     const router = useRouter();
     
     const activeModule = modules.find(m => String(m.id) === activeModuleId || m.name.toLowerCase() === activeModuleId);
@@ -116,6 +127,13 @@ export default function Dashboard() {
              getFeatureSettings().then(res => {
                  if (res.success && res.settings) {
                      setProxiesEnabled(res.settings.proxyEnabled);
+                 }
+             });
+
+             getRoutingMode().then(res => {
+                 if (res.success) {
+                     setRoutingMode(res.mode || 'ip_port');
+                     setFileAccessMode(res.fileMode || 'sftp');
                  }
              });
 
@@ -229,6 +247,8 @@ export default function Dashboard() {
         setEditRam(selectedServer.memory || 1024);
         setEditCpuLimit(selectedServer.cpuLimit || 0);
         setEditDiskLimit((selectedServer.diskLimit || 0) / 1024);
+        setEditHostPort(selectedServer.hostPort || 0);
+        setEditContainerPort(selectedServer.containerPort || 25565);
         setStorageCurrentPath('');
         setStoragePaths([]);
         setStorageMigrateTarget('');
@@ -250,7 +270,8 @@ export default function Dashboard() {
     };
     const handleSaveResources = async () => {
         if (!selectedServer) return;
-        await updateServerResources(selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0);
+        const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
+        await updateServerResources(selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0, ports);
         setShowEditResourcesPopup(false);
         refreshServers();
     };
@@ -314,9 +335,22 @@ export default function Dashboard() {
         return () => clearTimeout(timeout);
     }, [waitingForStatus]);
 
+    // Fetch per-server gateway routes when server or modules change
+    useEffect(() => {
+        setServerRoutes([]);
+        if (!selectedServer) return;
+        const gatewayOn = modules.some(m => m.name === 'Gateway' && m.isEnabled);
+        if (!gatewayOn) return;
+        getServerRoutes(selectedServer.id).then(res => {
+            if (Array.isArray(res)) setServerRoutes(res);
+            else if (res && Array.isArray(res.routes)) setServerRoutes(res.routes);
+        });
+    }, [selectedServerId, modules]);
+
     // When a server switches from pending_setup to another status, default to 'setup' tab first
     const isPendingSetup = selectedServer?.status === 'pending_setup';
     const isDiskFull = selectedServer?.status === 'disk_full';
+    const gatewayModuleEnabled = modules.some(m => m.name === 'Gateway' && m.isEnabled);
     const libraryEnabled = modules.some(m => m.name === 'Library' && m.isEnabled);
 
     const renderContent = () => {
@@ -357,7 +391,27 @@ export default function Dashboard() {
                 case 'setup': return <SetupView server={selectedServer} libraryEnabled={libraryEnabled} onSetupComplete={refreshServers} />;
                 case 'overview': return <OverviewView server={selectedServer} />;
                 case 'console': return <ConsoleView server={selectedServer} liveStats={liveStats} />;
-                case 'file-browser': return <FileBrowserView serverUuid={selectedServer.uuid} currentServerPath={selectedServer.activeSubServer || ''} />;
+                case 'file-browser': return (
+                    <div className="flex flex-col gap-3 h-full">
+                        {fileAccessMode !== 'beam' && selectedServer.nodeAddress && (
+                            <div className="flex items-center gap-3 px-3 py-2 bg-(--base-02) border border-(--base-03) rounded-lg shrink-0">
+                                <Terminal size={13} className="text-(--base-06) shrink-0" />
+                                <code className="text-xs font-mono text-(--base-07) flex-1 min-w-0 truncate">
+                                    sftp {user?.username}@{selectedServer.nodeAddress} -p 2222
+                                </code>
+                                <button
+                                    onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${selectedServer.nodeAddress} -p 2222`)}
+                                    className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0"
+                                    title="Copy SFTP command"
+                                >
+                                    <Copy size={12} />
+                                </button>
+                                <span className="text-xs text-(--base-05) shrink-0 hidden sm:block">Password = your Dylaris password</span>
+                            </div>
+                        )}
+                        <FileBrowserView serverUuid={selectedServer.uuid} currentServerPath={selectedServer.activeSubServer || ''} />
+                    </div>
+                );
                 case 'network': return <NetworkView server={selectedServer} allServers={servers} onServerSelect={(id) => { setSelectedServerId(id); }} onRefreshServers={refreshServers} />;
                 case 'members': return <MembersView server={selectedServer} />;
                 default: return <PlaceholderView viewName={serverDetailView} />;
@@ -575,6 +629,59 @@ export default function Dashboard() {
                                     )}
                                 </div>
                             </div>
+                            {/* Row 2.5: Connection Info */}
+                            {!isPendingSetup && (
+                                (routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0) ||
+                                (gatewayModuleEnabled && serverRoutes.length > 0) ||
+                                (routingMode === 'gateway' && gatewayModuleEnabled && serverRoutes.length === 0)
+                            ) && (
+                                <div className={`flex items-center gap-4 py-2 border-t flex-wrap ${
+                                    routingMode === 'gateway' && gatewayModuleEnabled && serverRoutes.length === 0
+                                        ? 'border-(--warning)/40 animate-pulse'
+                                        : 'border-(--base-03)/60'
+                                }`}>
+                                    {routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0 && (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Direct</span>
+                                            <div className="flex items-center gap-1.5 bg-(--base-03)/50 border border-(--base-04) rounded-md px-2.5 py-1">
+                                                <Link2 size={11} className="text-(--base-06) shrink-0" />
+                                                <span className="text-xs font-mono text-(--base-07)">{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>
+                                                <button
+                                                    onClick={() => navigator.clipboard.writeText(`${selectedServer.nodeAddress}:${selectedServer.hostPort}`)}
+                                                    className="text-(--base-06) hover:text-(--base-09) transition-colors ml-0.5"
+                                                    title="Copy address"
+                                                >
+                                                    <Copy size={11} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {gatewayModuleEnabled && serverRoutes.length > 0 && (
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Gateway</span>
+                                            {serverRoutes.slice(0, 3).map(route => (
+                                                <div key={route.ID} className="flex items-center gap-1.5 bg-(--accent-ghost) border border-(--accent-border) rounded-md px-2.5 py-1">
+                                                    <Globe size={11} className="text-(--accent-light) shrink-0" />
+                                                    <span className="text-xs font-mono text-(--accent-light)">{route.domain}</span>
+                                                    <button
+                                                        onClick={() => navigator.clipboard.writeText(route.domain)}
+                                                        className="text-(--accent-light)/60 hover:text-(--accent-light) transition-colors ml-0.5"
+                                                        title="Copy domain"
+                                                    >
+                                                        <Copy size={11} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {routingMode === 'gateway' && gatewayModuleEnabled && serverRoutes.length === 0 && (
+                                        <div className="flex items-center gap-2">
+                                            <AlertTriangle size={12} className="text-(--warning)" />
+                                            <span className="text-xs text-(--warning) font-medium">No gateway route configured</span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             {/* Row 3: Tab Bar */}
                             <div className="flex space-x-1 overflow-x-auto hide-scrollbar">
                                 {(() => {
@@ -708,6 +815,24 @@ export default function Dashboard() {
                                     className="input-field w-full" />
                                 <p className="text-xs text-(--base-06)">0 = unlimited</p>
                             </div>
+
+                            {/* Port fields — admin only */}
+                            {user?.isAdmin && (
+                                <div className="border-t border-(--base-03) pt-4 grid grid-cols-2 gap-3">
+                                    <div className="flex flex-col gap-[5px]">
+                                        <label className="input-label">Host Port</label>
+                                        <input type="number" min={0} max={65535} value={editHostPort} onChange={e => setEditHostPort(Number(e.target.value))}
+                                            placeholder="0 = auto"
+                                            className="input-field w-full" />
+                                        <p className="text-xs text-(--base-06)">0 = auto from range</p>
+                                    </div>
+                                    <div className="flex flex-col gap-[5px]">
+                                        <label className="input-label">Container Port</label>
+                                        <input type="number" min={1} max={65535} value={editContainerPort} onChange={e => setEditContainerPort(Number(e.target.value))}
+                                            className="input-field w-full" />
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Storage Path — admin only, when path info available */}
                             {user?.isAdmin && storagePaths.length >= 1 && (

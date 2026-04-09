@@ -784,9 +784,11 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		RAM       int     `json:"ram"`
-		CPULimit  float64 `json:"cpuLimit"`
-		DiskLimit int64   `json:"diskLimit"`
+		RAM           int     `json:"ram"`
+		CPULimit      float64 `json:"cpuLimit"`
+		DiskLimit     int64   `json:"diskLimit"`
+		HostPort      int     `json:"hostPort"`      // admin-only
+		ContainerPort int     `json:"containerPort"` // admin-only
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
@@ -816,6 +818,39 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Port changes: admin-only
+	portChanged := false
+	if isAdmin && (req.HostPort > 0 || req.ContainerPort > 0) {
+		newHostPort := req.HostPort
+		if newHostPort == 0 {
+			newHostPort = srv.HostPort
+		}
+		newContainerPort := req.ContainerPort
+		if newContainerPort == 0 {
+			newContainerPort = srv.ContainerPort
+		}
+		if newContainerPort == 0 {
+			newContainerPort = 25565
+		}
+		// Conflict check: ensure no other server on this node uses the same host port
+		if req.HostPort > 0 && req.HostPort != srv.HostPort {
+			usedPorts, _ := h.state.Store.GetUsedHostPortsOnNode(srv.NodeID)
+			for _, p := range usedPorts {
+				if p == req.HostPort {
+					sendJSONError(w, "Host port already in use on this node", 409)
+					return
+				}
+			}
+		}
+		if err := h.state.Store.UpdateServerPorts(serverID, newHostPort, newContainerPort); err != nil {
+			sendJSONError(w, "Failed to update ports", 500)
+			return
+		}
+		portChanged = req.HostPort > 0 && req.HostPort != srv.HostPort
+		srv.HostPort = newHostPort
+		srv.ContainerPort = newContainerPort
+	}
+
 	// Regenerate start_command with the new RAM value
 	newStartCommand := fmt.Sprintf("java -Xms%dM -Xmx%dM %s %s -jar server.jar nogui",
 		req.RAM, req.RAM, defaultJvmFlags, strings.TrimSpace(srv.ExtraJvmFlags))
@@ -826,21 +861,26 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		srv.ActiveSubServer, srv.ExtraJvmFlags,
 		srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
 
-	// Inform node to recreate container with new resources
+	// Inform node to recreate container with new resources (and port if changed)
 	if h.state.Queue != nil {
 		node, err := h.state.Store.GetNodeByID(srv.NodeID)
 		if err == nil {
+			dockerPayload := map[string]interface{}{
+				"ram":        req.RAM,
+				"cpuLimit":   req.CPULimit,
+				"cpusetCpus": node.CpusetCpus,
+				"diskLimit":  req.DiskLimit,
+				"image":      srv.GameImage,
+				"command":    newStartCommand,
+			}
+			if portChanged {
+				dockerPayload["hostPort"] = srv.HostPort
+				dockerPayload["containerPort"] = srv.ContainerPort
+			}
 			payload := map[string]interface{}{
 				"uuid":            srv.UUID,
 				"activeSubServer": srv.ActiveSubServer,
-				"docker": map[string]interface{}{
-					"ram":        req.RAM,
-					"cpuLimit":   req.CPULimit,
-					"cpusetCpus": node.CpusetCpus,
-					"diskLimit":  req.DiskLimit,
-					"image":      srv.GameImage,
-					"command":    newStartCommand,
-				},
+				"docker":          dockerPayload,
 			}
 			h.state.Queue.SendCommand(context.Background(), node.Token, "update_resources", payload, nil)
 		}

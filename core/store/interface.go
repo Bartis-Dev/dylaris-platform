@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// SFTPAccess is a flat row returned by GetSFTPAccessByNode.
+type SFTPAccess struct {
+	ServerUUID string
+	ServerName string
+	Username   string
+}
+
 // Store defines all database operations of the Core
 type Store interface {
 	// --- Users ---
@@ -48,6 +55,9 @@ type Store interface {
 	UpdateServerActiveSubServer(id int, subServer string) error
 	UpdateServerName(id int, name string) error
 	UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error
+	UpdateServerPorts(id int, hostPort, containerPort int) error
+	GetUsedHostPortsOnNode(nodeID int) ([]int, error)
+	GetAllActiveServers() ([]models.Server, error)
 	CountServersByOwner(ownerID int) (int, error)
 	UpdateServerProxyID(id int, proxyID *int) error
 
@@ -69,6 +79,9 @@ type Store interface {
 	// --- Settings ---
 	GetSetting(key string) (string, error)
 	SetSetting(key, value string) error
+
+	// --- SFTP ---
+	GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error)
 
 	// --- Stats ---
 	InsertStatsBatch(stats []models.ServerStatRow) error

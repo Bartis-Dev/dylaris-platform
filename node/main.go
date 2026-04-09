@@ -42,10 +42,17 @@ var (
 	statsStreamMaxLen int64
 	storagePaths      string
 
-	// Gateway / port-range config
-	gatewayEnabled bool
+	// Port-range config
 	portRangeStart int
 	portRangeEnd   int
+	portMode       string
+	containerPort  int // port MC listens on inside the container
+
+	sftpPort string
+
+	// Dynamic routing modes — loaded from Redis, refreshed every 30s
+	routingMode    string // "ip_port" | "both" | "gateway"
+	fileAccessMode string // "sftp" | "both" | "beam"
 )
 
 type NodeCommand struct {
@@ -86,10 +93,29 @@ func main() {
 		log.Fatalf("Failed to init Docker Manager: %v", err)
 	}
 
-	// Port-range mode: assign host ports when gateway is disabled
-	if !gatewayEnabled {
-		dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd)
-	}
+	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
+	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, portMode)
+
+	// Load routing modes from Redis, refresh every 30s
+	routingMode = "ip_port"
+	fileAccessMode = "sftp"
+	loadModesFromRedis(ctx, rdb)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				loadModesFromRedis(ctx, rdb)
+			}
+		}
+	}()
+
+	// SFTP server: gives users SSH/SFTP access to their server directories
+	sftpSrv := NewSFTPServer(rdb, storageMgr, nodeID)
+	go sftpSrv.Start(ctx, sftpPort)
 
 	// Quota provider for first storage path (legacy compat) — multi-path quota handled per-path
 	quotaProvider := NewQuotaProvider(storageMgr.Paths()[0])
@@ -233,22 +259,47 @@ func parseConfig() {
 	// Storage paths (comma-separated, default: ./dylaris_data/servers)
 	storagePaths = os.Getenv("DYLARIS_STORAGE_PATHS")
 
-	// Gateway / port-range (GATEWAY_ENABLED=false → assign host ports directly)
-	gatewayEnabled = os.Getenv("GATEWAY_ENABLED") == "true"
 	portRangeStart = 25600
 	portRangeEnd = 30000
-	if v := os.Getenv("DYLARIS_PORT_RANGE_START"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			portRangeStart = n
+	// DYLARIS_PORT_RANGE takes priority ("start-end" format)
+	if v := os.Getenv("DYLARIS_PORT_RANGE"); v != "" {
+		parts := strings.SplitN(v, "-", 2)
+		if len(parts) == 2 {
+			if s, err := strconv.Atoi(parts[0]); err == nil {
+				portRangeStart = s
+			}
+			if e, err := strconv.Atoi(parts[1]); err == nil {
+				portRangeEnd = e
+			}
+		}
+	} else {
+		// Legacy separate vars
+		if v := os.Getenv("DYLARIS_PORT_RANGE_START"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				portRangeStart = n
+			}
+		}
+		if v := os.Getenv("DYLARIS_PORT_RANGE_END"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				portRangeEnd = n
+			}
 		}
 	}
-	if v := os.Getenv("DYLARIS_PORT_RANGE_END"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			portRangeEnd = n
+	portMode = os.Getenv("DYLARIS_PORT_MODE")
+	if portMode == "" {
+		portMode = "sequential"
+	}
+	containerPort = 25565
+	if v := os.Getenv("DYLARIS_CONTAINER_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			containerPort = n
 		}
 	}
-	if !gatewayEnabled {
-		log.Printf("Gateway disabled — direct port mode (range %d-%d)", portRangeStart, portRangeEnd)
+	log.Printf("Port config: mode=%s, range=%d-%d, container port=%d", portMode, portRangeStart, portRangeEnd, containerPort)
+
+	sftpPort = os.Getenv("SFTP_PORT")
+	if sftpPort == "" {
+		sftpPort = "2222"
 	}
 }
 
@@ -260,6 +311,17 @@ func getOutboundIP() string {
 	defer conn.Close()
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	return localAddr.IP.String()
+}
+
+// loadModesFromRedis reads routing_mode and file_access_mode from Redis.
+// Called on startup and every 30s so the node reacts to admin mode changes without restart.
+func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
+	if v, err := rdb.Get(ctx, "dylaris:routing_mode").Result(); err == nil && v != "" {
+		routingMode = v
+	}
+	if v, err := rdb.Get(ctx, "dylaris:file_access_mode").Result(); err == nil && v != "" {
+		fileAccessMode = v
+	}
 }
 
 // storageManager is set during init and used by heartbeat to publish storage info.
@@ -281,11 +343,19 @@ func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, secret, tags
 
 func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags string, mon *agent.Monitor, dm *DockerManager) {
 	key := fmt.Sprintf("dylaris:discovery:%s", id)
+
+	// IP-hiding: only expose public IP when at least one mode uses direct access
+	ipHidden := routingMode == "gateway" && fileAccessMode == "beam"
+	publicIP := ""
+	if !ipHidden {
+		publicIP = getOutboundIP()
+	}
+
 	data := map[string]interface{}{
-		"id": id, "name": id, "ip": getOutboundIP(),
+		"id": id, "name": id, "ip": publicIP,
 		"clusterSecret": secret, "tags": tags, "timestamp": time.Now().Unix(),
 		"ips": map[string]interface{}{
-			"public":  getOutboundIP(),
+			"public":  publicIP,
 			"private": getPrivateIPs(),
 		},
 	}

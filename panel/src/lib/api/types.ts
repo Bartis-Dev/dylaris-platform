@@ -86,6 +86,9 @@ export interface Server {
     minecraftVersion?: string;
     buildNumber?: string;
     diskLimit?: number;
+    hostPort?: number;
+    containerPort?: number;
+    nodeAddress?: string;
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;
     createdAt?: string;
@@ -174,8 +177,16 @@ export const migrateServerStorage = (id: number, targetPath: string) =>
 export const updateServerName = (id: number, name: string) =>
     fetchAPI(`/servers/${id}/name`, { method: 'PATCH', body: JSON.stringify({ name }) });
 
-export const updateServerResources = (id: number, ram: number, cpuLimit: number, diskLimit: number) =>
-    fetchAPI(`/servers/${id}/resources`, { method: 'PATCH', body: JSON.stringify({ ram, cpuLimit, diskLimit }) });
+export const updateServerResources = (
+    id: number,
+    ram: number,
+    cpuLimit: number,
+    diskLimit: number,
+    ports?: { hostPort?: number; containerPort?: number }
+) => fetchAPI(`/servers/${id}/resources`, {
+    method: 'PATCH',
+    body: JSON.stringify({ ram, cpuLimit, diskLimit, ...ports }),
+});
 
 export const sendConsoleCommand = (id: number, command: string) =>
     fetchAPI(`/servers/${id}/console/command`, { method: 'POST', body: JSON.stringify({ command }) });
@@ -369,6 +380,14 @@ export const saveGatewaySettings = (data: GatewaySettings) => fetchAPI('/setting
 
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');
+export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing-migration');
+
+// Routing Mode
+export type RoutingMode = 'ip_port' | 'both' | 'gateway';
+export type FileAccessMode = 'sftp' | 'both' | 'beam';
+export const getRoutingMode = () => fetchAPI('/settings/routing-mode');
+export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessMode }) =>
+    fetchAPI('/settings/routing-mode', { method: 'POST', body: JSON.stringify(data) });
 
 // Gateway User API (per-server routes)
 export const getServerRoutes = (serverId: number) => fetchAPI(`/servers/${serverId}/routes`);

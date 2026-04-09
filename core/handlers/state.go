@@ -10,10 +10,10 @@ import (
 
 // AppState holds the global connections for all handlers
 type AppState struct {
-	Store        store.Store
-	Redis        *redis.Client
-	Queue        *services.QueueService
-	GRPCRegistry *nodegrpc.Registry
-	GatewayRedis *redis.Client
-	Gateway      services.GatewayProvider
+	Store            store.Store
+	Redis            *redis.Client
+	Queue            *services.QueueService
+	GRPCRegistry     *nodegrpc.Registry
+	Gateway          services.GatewayProvider
+	RoutingMigration *services.RoutingMigrationService
 }

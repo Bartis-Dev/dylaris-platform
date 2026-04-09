@@ -50,6 +50,7 @@ type Server struct {
 	Name            string       `json:"name"`
 	NodeID          int          `json:"nodeId"`
 	NodeName        string       `json:"node"`
+	NodeAddress     string       `json:"nodeAddress"`
 	OwnerID         int          `json:"ownerId"`
 	OwnerName       string       `json:"owner"`
 	GameImage       string       `json:"image"`
@@ -66,6 +67,8 @@ type Server struct {
 	MinecraftVersion string       `json:"minecraftVersion"`
 	BuildNumber      string       `json:"buildNumber"`
 	DiskLimit        int64        `json:"diskLimit"`
+	HostPort        int             `json:"hostPort"`
+	ContainerPort   int             `json:"containerPort"`
 	ServerType      string          `json:"serverType"`
 	ProxyID         *int            `json:"proxyId"`
 	CreatedAt       time.Time       `json:"createdAt"`

@@ -31,12 +31,6 @@ type Config struct {
 	RedisPass string
 	RedisDB   int
 
-	// --- Gateway (Hub via Redis Queue) ---
-	GatewayEnabled   bool
-	GatewayRedisAddr string
-	GatewayRedisUser string
-	GatewayRedisPass string
-	GatewayRedisDB   int
 }
 
 func LoadConfig() (Config, error) {
@@ -74,20 +68,6 @@ func LoadConfig() (Config, error) {
 		RedisDB:   redisDB,
 
 	}
-
-	// Gateway defaults to Core Redis unless overridden
-	cfg.GatewayRedisAddr = getEnv("GATEWAY_REDIS_ADDR", cfg.RedisAddr)
-	cfg.GatewayRedisUser = getEnv("GATEWAY_REDIS_USER", cfg.RedisUser)
-	cfg.GatewayRedisPass = getEnv("GATEWAY_REDIS_PASS", cfg.RedisPass)
-	if v := getEnv("GATEWAY_REDIS_DB", ""); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.GatewayRedisDB = i
-		}
-	} else {
-		cfg.GatewayRedisDB = cfg.RedisDB
-	}
-
-	cfg.GatewayEnabled = getEnv("GATEWAY_ENABLED", "false") == "true"
 
 	return cfg, nil
 }

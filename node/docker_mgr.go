@@ -143,12 +143,14 @@ func (dm *DockerManager) resolveHostDataPath() string {
 }
 
 type DockerConfig struct {
-	Image      string  `json:"image"`
-	RAM        int     `json:"ram"`
-	CPULimit   float64 `json:"cpuLimit"`
-	CpusetCpus string  `json:"cpusetCpus"`
-	DiskLimit  int64   `json:"diskLimit"`
-	Command    string  `json:"command"`
+	Image         string  `json:"image"`
+	RAM           int     `json:"ram"`
+	CPULimit      float64 `json:"cpuLimit"`
+	CpusetCpus    string  `json:"cpusetCpus"`
+	DiskLimit     int64   `json:"diskLimit"`
+	Command       string  `json:"command"`
+	HostPort      int     `json:"hostPort"`      // 0 = auto-allocate from range
+	ContainerPort int     `json:"containerPort"` // 0 = use global containerPort var
 }
 
 type ServerConfig struct {
@@ -233,17 +235,31 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
 
-	// Port binding: only when gateway is disabled (direct port mode)
-	if dm.portMgr != nil {
-		port, portErr := dm.portMgr.AllocatePort(config.UUID)
-		if portErr != nil {
-			return fmt.Errorf("port allocation failed: %w", portErr)
+	// Port binding: only in direct port mode (routing_mode != "gateway")
+	if routingMode != "gateway" && dm.portMgr != nil {
+		cPort := config.Docker.ContainerPort
+		if cPort == 0 {
+			cPort = containerPort
 		}
+		var hostP int
+		if config.Docker.HostPort > 0 {
+			if err := dm.portMgr.SetPort(config.UUID, config.Docker.HostPort); err != nil {
+				return fmt.Errorf("port assignment failed: %w", err)
+			}
+			hostP = config.Docker.HostPort
+		} else {
+			var portErr error
+			hostP, portErr = dm.portMgr.AllocatePort(config.UUID)
+			if portErr != nil {
+				return fmt.Errorf("port allocation failed: %w", portErr)
+			}
+		}
+		cPortKey := nat.Port(fmt.Sprintf("%d/tcp", cPort))
 		hc.PortBindings = nat.PortMap{
-			"25565/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprint(port)}},
+			cPortKey: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprint(hostP)}},
 		}
-		cc.ExposedPorts = nat.PortSet{"25565/tcp": struct{}{}}
-		log.Printf("Container %s: binding host port %d → 25565/tcp", containerName, port)
+		cc.ExposedPorts = nat.PortSet{cPortKey: struct{}{}}
+		log.Printf("Container %s: binding host port %d → %d/tcp", containerName, hostP, cPort)
 	}
 
 	nc := &network.NetworkingConfig{

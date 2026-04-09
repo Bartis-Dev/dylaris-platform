@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -19,17 +20,22 @@ type PortManager struct {
 	nodeID     string
 	rangeStart int
 	rangeEnd   int
+	portMode   string // "sequential" (default) or "random"
 
 	mu        sync.Mutex
 	usedPorts map[int]string // port → serverUUID (in-RAM index for fast allocation)
 }
 
-func NewPortManager(rdb *redis.Client, nodeID string, rangeStart, rangeEnd int) *PortManager {
+func NewPortManager(rdb *redis.Client, nodeID string, rangeStart, rangeEnd int, portMode string) *PortManager {
+	if portMode == "" {
+		portMode = "sequential"
+	}
 	pm := &PortManager{
 		rdb:        rdb,
 		nodeID:     nodeID,
 		rangeStart: rangeStart,
 		rangeEnd:   rangeEnd,
+		portMode:   portMode,
 		usedPorts:  make(map[int]string),
 	}
 	pm.loadFromRedis()
@@ -83,10 +89,18 @@ func (pm *PortManager) AllocatePort(serverUUID string) (int, error) {
 		}
 	}
 
-	// Find next free port
-	for port := pm.rangeStart; port <= pm.rangeEnd; port++ {
+	// Build candidate list based on mode
+	rangeSize := pm.rangeEnd - pm.rangeStart + 1
+	candidates := make([]int, rangeSize)
+	for i := range candidates {
+		candidates[i] = pm.rangeStart + i
+	}
+	if pm.portMode == "random" {
+		rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
+	}
+
+	for _, port := range candidates {
 		if _, used := pm.usedPorts[port]; !used {
-			// Persist to Redis
 			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
@@ -118,6 +132,40 @@ func (pm *PortManager) ReleasePort(serverUUID string) {
 			return
 		}
 	}
+}
+
+// SetPort forces a specific port for a server, releasing any previous allocation.
+// Returns an error if the port is already used by another server.
+func (pm *PortManager) SetPort(serverUUID string, port int) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// Release existing allocation for this server if different
+	for p, uuid := range pm.usedPorts {
+		if uuid == serverUUID && p != port {
+			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			pm.rdb.Del(ctx, key)
+			cancel()
+			delete(pm.usedPorts, p)
+			break
+		}
+	}
+
+	// Check if new port is taken by another server
+	if existingUUID, ok := pm.usedPorts[port]; ok && existingUUID != serverUUID {
+		return fmt.Errorf("port %d is already allocated to server %s", port, existingUUID)
+	}
+
+	key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := pm.rdb.Set(ctx, key, strconv.Itoa(port), 0).Err(); err != nil {
+		return fmt.Errorf("failed to persist port: %w", err)
+	}
+	pm.usedPorts[port] = serverUUID
+	log.Printf("PortManager: set port %d for server %s", port, serverUUID)
+	return nil
 }
 
 // GetPort returns the port assigned to a server, or 0 if none.

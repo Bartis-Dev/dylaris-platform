@@ -35,13 +35,13 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	ctx := context.Background()
 
 	// Gates with full stats (auto-discovered from Redis)
-	gates := services.GetGatesFromRedis(ctx, h.state.GatewayRedis)
+	gates := services.GetGatesFromRedis(ctx, h.state.Redis)
 
 	// Links with online status
-	links := services.GetLinksFromRedis(ctx, h.state.GatewayRedis)
+	links := services.GetLinksFromRedis(ctx, h.state.Redis)
 
 	// Route count
-	routeCount := services.CountRoutesFromRedis(ctx, h.state.GatewayRedis)
+	routeCount := services.CountRoutesFromRedis(ctx, h.state.Redis)
 
 	// Nodes with server count + live heartbeat stats
 	nodes, err := h.state.Store.ListNodes()
@@ -85,7 +85,7 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Service errors from Redis Streams
-	errors := services.GetAllServiceErrorsFromRedis(h.state.GatewayRedis, 20)
+	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 20)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":      true,
@@ -97,5 +97,25 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		"onlineGates":  onlineGates,
 		"totalTunnels": totalTunnels,
 		"errors":       errors,
+	})
+}
+
+// GetRoutingMigrationStatus GET /api/infrastructure/routing-migration
+func (h *InfrastructureHandler) GetRoutingMigrationStatus(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	if h.state.RoutingMigration == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "running": false})
+		return
+	}
+	status := h.state.RoutingMigration.GetStatus(r.Context())
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"running": status.Running,
+		"total":   status.Total,
+		"done":    status.Done,
+		"failed":  status.Failed,
 	})
 }

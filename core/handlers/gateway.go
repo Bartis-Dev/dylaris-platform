@@ -32,7 +32,7 @@ func (h *GatewayHandler) ctx() context.Context {
 // ==========================================
 
 func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
-	links := services.GetLinksFromRedis(h.ctx(), h.state.GatewayRedis)
+	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
 	if links == nil {
 		links = []services.GatewayLinkStatus{}
 	}
@@ -44,7 +44,7 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetGates(w http.ResponseWriter, r *http.Request) {
-	gates := services.GetGatesFromRedis(h.ctx(), h.state.GatewayRedis)
+	gates := services.GetGatesFromRedis(h.ctx(), h.state.Redis)
 	if gates == nil {
 		gates = []services.GatewayGateInfo{}
 	}
@@ -56,7 +56,7 @@ func (h *GatewayHandler) GetGates(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
-	routes := services.GetRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	if routes == nil {
 		routes = []services.GatewayRoute{}
 	}
@@ -83,14 +83,14 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 
 func (h *GatewayHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	// Hub logs are not in Redis; return service error logs instead
-	errors := services.GetAllServiceErrorsFromRedis(h.state.GatewayRedis, 100)
+	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 100)
 	json.NewEncoder(w).Encode(errors)
 }
 
 func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	links := services.GetLinksFromRedis(h.ctx(), h.state.GatewayRedis)
-	gates := services.GetGatesFromRedis(h.ctx(), h.state.GatewayRedis)
-	routeCount := services.CountRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
+	gates := services.GetGatesFromRedis(h.ctx(), h.state.Redis)
+	routeCount := services.CountRoutesFromRedis(h.ctx(), h.state.Redis)
 
 	onlineLinks := 0
 	for _, l := range links {
@@ -127,10 +127,10 @@ func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	if service != "" {
-		errors := services.GetServiceErrorsFromRedis(h.state.GatewayRedis, service, 50)
+		errors := services.GetServiceErrorsFromRedis(h.state.Redis, service, 50)
 		json.NewEncoder(w).Encode(errors)
 	} else {
-		errors := services.GetAllServiceErrorsFromRedis(h.state.GatewayRedis, 50)
+		errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 50)
 		json.NewEncoder(w).Encode(errors)
 	}
 }
@@ -150,7 +150,7 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Filter routes by server_uuid
-	all := services.GetRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+	all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	var routes []services.GatewayRoute
 	for _, rt := range all {
 		if rt.ServerUUID == server.UUID {
@@ -236,7 +236,7 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 	// Ensure the route belongs to this server (optional but safe)
 	if !isAdmin {
 		server, _ := h.state.Store.GetServerByID(serverID)
-		all := services.GetRoutesFromRedis(h.ctx(), h.state.GatewayRedis)
+		all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 		found := false
 		for _, rt := range all {
 			if rt.Domain == domain && rt.ServerUUID == server.UUID {

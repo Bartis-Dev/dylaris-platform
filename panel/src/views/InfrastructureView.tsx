@@ -361,16 +361,24 @@ export default function InfrastructureView() {
   }
 
   const gates = data?.gates ?? [];
+  const links = data?.links ?? [];
   const nodes = data?.nodes ?? [];
   const routeCount = data?.routeCount ?? 0;
   const onlineGates = data?.onlineGates ?? 0;
   const onlineNodes = nodes.filter(n => n.status === 'online').length;
   const totalPlayers = gates.reduce((sum, g) => sum + (g.stats?.active_mc_streams ?? 0), 0);
 
+  const gatewayDeployed = gates.length > 0 || links.length > 0;
+
   const TABS: { id: Tab; label: string; count: number }[] = [
     { id: 'nodes', label: 'Nodes', count: nodes.length },
-    { id: 'gates', label: 'Gates', count: gates.length },
+    ...(gatewayDeployed ? [{ id: 'gates' as Tab, label: 'Gates', count: gates.length }] : []),
   ];
+
+  // If gates tab is active but gateway is no longer deployed, reset to nodes
+  useEffect(() => {
+    if (tab === 'gates' && !gatewayDeployed) setTab('nodes');
+  }, [gatewayDeployed]);
 
   return (
     <div className="h-full flex flex-col gap-4 overflow-y-auto">
@@ -394,11 +402,11 @@ export default function InfrastructureView() {
       </div>
 
       {/* Summary Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Routes" value={routeCount} icon={<Globe size={16} />} />
-        <StatCard label="Players" value={totalPlayers} icon={<Users size={16} />} />
-        <StatCard label="Gates" value={gates.length} icon={<Server size={16} />} />
+      <div className={`grid gap-3 ${gatewayDeployed ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2'}`}>
         <StatCard label="Nodes" value={nodes.length} icon={<Network size={16} />} />
+        <StatCard label="Online" value={onlineNodes} sub={`/ ${nodes.length}`} icon={<Activity size={16} />} />
+        {gatewayDeployed && <StatCard label="Gates" value={gates.length} icon={<Server size={16} />} />}
+        {gatewayDeployed && <StatCard label="Routes" value={routeCount} icon={<Globe size={16} />} />}
       </div>
 
       {/* Tabs */}

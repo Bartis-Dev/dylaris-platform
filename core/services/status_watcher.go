@@ -5,6 +5,7 @@ import (
 	"dylaris-core/store"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +68,55 @@ func (s *StatusWatcherService) scan() {
 
 	// Publish desired states to Redis so nodes can reconcile
 	s.publishDesiredStates(ctx)
+
+	// Sync host ports: Redis → DB
+	s.syncPortsFromRedis(ctx)
+}
+
+// syncPortsFromRedis reads port allocations written by Nodes and updates DB host_port.
+// Key format: dylaris:node:{nodeID}:port:{serverUUID} → port number
+func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) {
+	var cursor uint64
+	for {
+		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:node:*:port:*", 100).Result()
+		if err != nil {
+			return
+		}
+		for _, key := range keys {
+			// Parse: dylaris:node:{nodeID}:port:{uuid}
+			parts := strings.SplitN(key, ":port:", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			serverUUID := parts[1]
+
+			portStr, err := s.redis.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			redisPort, err := strconv.Atoi(portStr)
+			if err != nil || redisPort <= 0 {
+				continue
+			}
+
+			srv, err := s.store.GetServerByUUID(serverUUID)
+			if err != nil {
+				continue
+			}
+
+			if srv.HostPort != redisPort {
+				containerPort := srv.ContainerPort
+				if containerPort == 0 {
+					containerPort = 25565
+				}
+				s.store.UpdateServerPorts(srv.ID, redisPort, containerPort)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
 }
 
 // publishDesiredStates syncs desired_state from DB to Redis for node reconciliation.
