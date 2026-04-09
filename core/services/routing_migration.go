@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -23,13 +24,13 @@ type MigrationStatus struct {
 }
 
 type RoutingMigrationService struct {
-	store Store
+	store store.Store
 	queue *QueueService
 	redis *redis.Client
 	mu    sync.Mutex
 }
 
-func NewRoutingMigrationService(s Store, q *QueueService, r *redis.Client) *RoutingMigrationService {
+func NewRoutingMigrationService(s store.Store, q *QueueService, r *redis.Client) *RoutingMigrationService {
 	return &RoutingMigrationService{store: s, queue: q, redis: r}
 }
 

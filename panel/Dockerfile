@@ -10,7 +10,6 @@ COPY packages/ui-filebrowser/package.json ./packages/ui-filebrowser/package.json
 COPY packages/ui-filebrowser/src/ ./packages/ui-filebrowser/src/
 COPY packages/ui-filebrowser/tsconfig.json ./packages/ui-filebrowser/tsconfig.json
 COPY panel/package.json ./panel/
-COPY beam/app/frontend/package.json ./beam/app/frontend/package.json
 
 RUN npm install --workspaces --include-workspace-root
 

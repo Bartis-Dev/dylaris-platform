@@ -237,7 +237,7 @@ func (v *virtualFS) resolve(path string) (string, error) {
 
 // --- sftp.ReadWriteAt (FileGet + FilePut) ---
 
-func (v *virtualFS) Fileread(r *sftp.Request) (io.ReadCloser, error) {
+func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 	realPath, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
 		return nil, os.ErrPermission
@@ -245,7 +245,7 @@ func (v *virtualFS) Fileread(r *sftp.Request) (io.ReadCloser, error) {
 	return os.Open(realPath)
 }
 
-func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriteCloser, error) {
+func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	realPath, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
 		return nil, os.ErrPermission
