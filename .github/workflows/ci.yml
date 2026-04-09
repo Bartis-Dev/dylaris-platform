@@ -16,7 +16,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: callmebartis/dylaris
+  IMAGE_NAME: bartis-dev/dylaris
 
 jobs:
   detect-changes:
