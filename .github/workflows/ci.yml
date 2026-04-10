@@ -26,7 +26,6 @@ jobs:
       node: ${{ steps.filter.outputs.node }}
       panel: ${{ steps.filter.outputs.panel }}
       log-shipper: ${{ steps.filter.outputs.log-shipper }}
-      beam-desktop: ${{ steps.filter.outputs.beam-desktop }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -46,73 +45,13 @@ jobs:
             log-shipper:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
-            beam-desktop:
-              - 'beam/**'
 
   # ──────────────────────────────────────────────
-  # Beam desktop binaries (Wails — Linux + Windows)
-  # ──────────────────────────────────────────────
-  build-beam-desktop:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.beam-desktop == 'true' || inputs.build_all == true
-    runs-on: self-hosted
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.1'
-          cache-dependency-path: beam/app/go.mod
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            gcc-mingw-w64-x86-64 libgtk-3-dev libwebkit2gtk-4.0-dev
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
-
-      - name: Build Linux binary
-        working-directory: beam/app
-        run: wails build -platform linux/amd64
-        env:
-          GOWORK: off
-
-      - name: Build Windows binary
-        working-directory: beam/app
-        run: wails build -platform windows/amd64 -skipbindings
-        env:
-          GOWORK: off
-          CC: x86_64-w64-mingw32-gcc
-
-      - name: Collect binaries
-        run: |
-          mkdir -p dist-beam
-          cp beam/app/build/bin/DylarisBeam dist-beam/beam-linux-amd64
-          cp beam/app/build/bin/DylarisBeam.exe dist-beam/beam-windows-amd64.exe
-          chmod +x dist-beam/beam-linux-amd64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: beam-binaries
-          path: dist-beam/
-          retention-days: 7
-
-  # ──────────────────────────────────────────────
-  # Core (depends on beam desktop binaries for embed)
+  # Core
   # ──────────────────────────────────────────────
   build-core:
-    needs: [detect-changes, build-beam-desktop]
-    if: always() && (needs.build-beam-desktop.result == 'success' || needs.build-beam-desktop.result == 'skipped') && (needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.beam-desktop == 'true' || inputs.build_all == true)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.core == 'true' || inputs.build_all == true
     runs-on: self-hosted
     permissions:
       contents: read
@@ -121,13 +60,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Download Beam binaries
-        if: needs.build-beam-desktop.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: beam-binaries
-          path: core/embed/binaries/
 
       - name: Determine tags
         id: tags
