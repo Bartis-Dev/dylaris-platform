@@ -235,33 +235,6 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
 
-	// Port binding: only in direct port mode (routing_mode != "gateway")
-	if routingMode != "gateway" && dm.portMgr != nil {
-		cPort := config.Docker.ContainerPort
-		if cPort == 0 {
-			cPort = containerPort
-		}
-		var hostP int
-		if config.Docker.HostPort > 0 {
-			if err := dm.portMgr.SetPort(config.UUID, config.Docker.HostPort); err != nil {
-				return fmt.Errorf("port assignment failed: %w", err)
-			}
-			hostP = config.Docker.HostPort
-		} else {
-			var portErr error
-			hostP, portErr = dm.portMgr.AllocatePort(config.UUID)
-			if portErr != nil {
-				return fmt.Errorf("port allocation failed: %w", portErr)
-			}
-		}
-		cPortKey := nat.Port(fmt.Sprintf("%d/tcp", cPort))
-		hc.PortBindings = nat.PortMap{
-			cPortKey: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprint(hostP)}},
-		}
-		cc.ExposedPorts = nat.PortSet{cPortKey: struct{}{}}
-		log.Printf("Container %s: binding host port %d → %d/tcp", containerName, hostP, cPort)
-	}
-
 	nc := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			"dylaris_net": {NetworkID: netID},
@@ -371,6 +344,36 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 		},
 		Binds:         []string{fmt.Sprintf("%s:/data", hostServerPath)},
 		RestartPolicy: container.RestartPolicy{Name: "no"},
+	}
+
+	// Port binding: only in direct port mode (routing_mode != "gateway").
+	// Reuse an already-allocated port if one exists, otherwise allocate a new one.
+	if routingMode != "gateway" && dm.portMgr != nil {
+		cPort := config.Docker.ContainerPort
+		if cPort == 0 {
+			cPort = containerPort
+		}
+		hostP := dm.portMgr.GetPort(config.UUID)
+		if hostP == 0 {
+			if config.Docker.HostPort > 0 {
+				if err := dm.portMgr.SetPort(config.UUID, config.Docker.HostPort); err != nil {
+					return "", fmt.Errorf("port assignment failed: %w", err)
+				}
+				hostP = config.Docker.HostPort
+			} else {
+				var portErr error
+				hostP, portErr = dm.portMgr.AllocatePort(config.UUID)
+				if portErr != nil {
+					return "", fmt.Errorf("port allocation failed: %w", portErr)
+				}
+			}
+		}
+		cPortKey := nat.Port(fmt.Sprintf("%d/tcp", cPort))
+		hc.PortBindings = nat.PortMap{
+			cPortKey: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprint(hostP)}},
+		}
+		cc.ExposedPorts = nat.PortSet{cPortKey: struct{}{}}
+		log.Printf("Container %s: binding host port %d → container port %d/tcp", containerName, hostP, cPort)
 	}
 
 	nc := &network.NetworkingConfig{

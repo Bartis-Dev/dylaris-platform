@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -303,14 +305,37 @@ func parseConfig() {
 	}
 }
 
+// getOutboundIP returns the node's public IP address.
+// Inside a Docker Swarm stack the UDP-dial trick returns the overlay IP,
+// so we hit ipify first and fall back to a secondary service before the UDP trick.
 func getOutboundIP() string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, url := range []string{
+		"https://api4.ipify.org",
+		"https://api.ipify.org",
+		"https://checkip.amazonaws.com",
+	} {
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		ip := strings.TrimSpace(string(body))
+		if net.ParseIP(ip) != nil {
+			return ip
+		}
+	}
+	// Last resort: UDP routing trick (returns overlay IP inside Swarm)
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		return "127.0.0.1"
 	}
 	defer conn.Close()
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP.String()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 // loadModesFromRedis reads routing_mode and file_access_mode from Redis.
