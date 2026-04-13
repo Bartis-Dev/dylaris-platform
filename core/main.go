@@ -78,11 +78,19 @@ func main() {
 	// Routing migration service for batch redeployment when mode changes
 	appState.RoutingMigration = services.NewRoutingMigrationService(pgStore, appState.Queue, redisClient)
 
-	// Publish current routing mode to Redis on startup so Nodes pick it up
-	if mode, err := pgStore.GetSetting("routing_mode"); err == nil && mode != "" {
+	// Publish routing modes to Redis on startup so Nodes pick them up immediately.
+	// Always write (even defaults) so stale Redis values from a previous install don't persist.
+	{
+		mode, _ := pgStore.GetSetting("routing_mode")
+		if mode == "" {
+			mode = "ip_port"
+		}
 		redisClient.Set(context.Background(), "dylaris:routing_mode", mode, 0)
-	}
-	if fileMode, err := pgStore.GetSetting("file_access_mode"); err == nil && fileMode != "" {
+
+		fileMode, _ := pgStore.GetSetting("file_access_mode")
+		if fileMode == "" {
+			fileMode = "sftp"
+		}
 		redisClient.Set(context.Background(), "dylaris:file_access_mode", fileMode, 0)
 	}
 

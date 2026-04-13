@@ -352,14 +352,6 @@ export default function InfrastructureView() {
     } catch { setToast('Delete failed'); } finally { setDeleting(false); }
   }
 
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <RefreshCw size={24} className="text-(--base-06) animate-spin" />
-      </div>
-    );
-  }
-
   const gates = data?.gates ?? [];
   const links = data?.links ?? [];
   const nodes = data?.nodes ?? [];
@@ -370,15 +362,23 @@ export default function InfrastructureView() {
 
   const gatewayDeployed = gates.length > 0 || links.length > 0;
 
+  // If gates tab is active but gateway is no longer deployed, reset to nodes
+  useEffect(() => {
+    if (tab === 'gates' && !gatewayDeployed) setTab('nodes');
+  }, [tab, gatewayDeployed]);
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <RefreshCw size={24} className="text-(--base-06) animate-spin" />
+      </div>
+    );
+  }
+
   const TABS: { id: Tab; label: string; count: number }[] = [
     { id: 'nodes', label: 'Nodes', count: nodes.length },
     ...(gatewayDeployed ? [{ id: 'gates' as Tab, label: 'Gates', count: gates.length }] : []),
   ];
-
-  // If gates tab is active but gateway is no longer deployed, reset to nodes
-  useEffect(() => {
-    if (tab === 'gates' && !gatewayDeployed) setTab('nodes');
-  }, [gatewayDeployed]);
 
   return (
     <div className="h-full flex flex-col gap-4 overflow-y-auto">

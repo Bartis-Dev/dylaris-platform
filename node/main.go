@@ -150,7 +150,7 @@ func main() {
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
-	go StartReconciler(ctx, rdb, dockerMgr)
+	go StartReconciler(ctx, rdb, dockerMgr, storageMgr)
 
 	// gRPC Mesh: connect outbound to all Cores
 	streamHandler := NewStreamHandler(storageMgr)
@@ -324,6 +324,20 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 	}
 }
 
+// saveNodeConfig persists the ServerConfig as .node_config.json in the server directory.
+// The reconciler reads this file to recreate containers that were manually deleted.
+func saveNodeConfig(serverDir string, config ServerConfig) {
+	data, err := json.Marshal(config)
+	if err != nil {
+		log.Printf("saveNodeConfig: marshal error for %s: %v", config.UUID, err)
+		return
+	}
+	configPath := filepath.Join(serverDir, ".node_config.json")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		log.Printf("saveNodeConfig: write error for %s: %v", config.UUID, err)
+	}
+}
+
 // storageManager is set during init and used by heartbeat to publish storage info.
 var globalStorageMgr *StorageManager
 
@@ -471,6 +485,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
 					} else {
 						log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
+						saveNodeConfig(serverPath, cmd.Config)
 					}
 
 				case "setup":
@@ -522,6 +537,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to start server pod %s: %v", cmd.Config.UUID, err)
 					} else {
 						log.Printf("Server %s/%s deployed and running!", cmd.Config.UUID, subName)
+						saveNodeConfig(serverPath, cmd.Config)
 					}
 
 					// Notify Core that installation is complete
@@ -556,6 +572,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 					} else {
 						log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
+						saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
 					}
 
 				case "start":
@@ -604,6 +621,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
 					} else {
 						log.Printf("Server %s resources updated and restarted", cmd.Config.UUID)
+						saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
 					}
 					if quota != nil {
 						if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
