@@ -242,12 +242,18 @@ func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 	if err != nil || realPath == "" {
 		return nil, os.ErrPermission
 	}
+	if isProtectedFile(filepath.Base(realPath)) {
+		return nil, os.ErrPermission
+	}
 	return os.Open(realPath)
 }
 
 func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	realPath, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
+		return nil, os.ErrPermission
+	}
+	if isProtectedFile(filepath.Base(realPath)) {
 		return nil, os.ErrPermission
 	}
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -269,10 +275,16 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if err != nil || realPath == "" {
 			return os.ErrPermission
 		}
+		if isProtectedFile(filepath.Base(realPath)) {
+			return os.ErrPermission
+		}
 		return os.Remove(realPath)
 	case "Rename":
 		src, err := v.resolve(r.Filepath)
 		if err != nil || src == "" {
+			return os.ErrPermission
+		}
+		if isProtectedFile(filepath.Base(src)) {
 			return os.ErrPermission
 		}
 		dst, err := v.resolve(r.Target)
@@ -329,6 +341,9 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		}
 		infos := make([]os.FileInfo, 0, len(entries))
 		for _, e := range entries {
+			if isProtectedFile(e.Name()) {
+				continue
+			}
 			fi, err := e.Info()
 			if err == nil {
 				infos = append(infos, fi)

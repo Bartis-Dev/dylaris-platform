@@ -139,7 +139,7 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	files := make([]*pb.FileInfo, 0, len(entries))
 	var dirs []dirEntry
 	for _, e := range entries {
-		if e.Name() == ".active_server" {
+		if isProtectedFile(e.Name()) {
 			continue
 		}
 		fi, err := e.Info()
@@ -659,7 +659,8 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 
 // isProtectedFile checks if a path points to a protected system file.
 func isProtectedFile(path string) bool {
-	return filepath.Base(filepath.Clean(path)) == ".active_server"
+	name := filepath.Base(filepath.Clean(path))
+	return name == ".active_server" || name == ".node_config.json"
 }
 
 func errorMsg(reqID string, code int32, message string) *pb.NodeMessage {
