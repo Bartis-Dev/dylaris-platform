@@ -88,6 +88,7 @@ export interface Server {
     diskLimit?: number;
     hostPort?: number;
     containerPort?: number;
+    cpusetCpus?: string;
     nodeAddress?: string;
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;

@@ -10,6 +10,7 @@ import FileManagerTab from './FileManagerTab';
 import FeaturesTab from './FeaturesTab';
 import GatewayTab from './GatewayTab';
 import ServersTab from './ServersTab';
+
 interface SettingsPanelProps {
     modules: AppModule[];
     onModulesChange: () => void;
