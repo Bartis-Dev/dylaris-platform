@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import { Server, linkServerToProxy, unlinkServerFromProxy, getServerRoutes, createServerRoute, deleteServerRoute, GatewayRoute } from '@/lib/api';
-import { Network, Link, Unlink, Info, Globe, Plus, Trash2, AlertCircle } from 'lucide-react';
+import { useState } from 'react';
+import { Server, linkServerToProxy, unlinkServerFromProxy } from '@/lib/api';
+import { Network, Link, Unlink, Info } from 'lucide-react';
 
 function getStatusDot(status: string) {
   switch (status) {
@@ -22,15 +22,6 @@ interface NetworkViewProps {
 export default function NetworkView({ server, allServers, onServerSelect, onRefreshServers }: NetworkViewProps) {
   const [selectedId, setSelectedId] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
-
-  // Routes state
-  const [routes, setRoutes] = useState<GatewayRoute[]>([]);
-  const [routesLoading, setRoutesLoading] = useState(false);
-  const [newDomain, setNewDomain] = useState('');
-  const [newPort, setNewPort] = useState(25565);
-  const [routeError, setRouteError] = useState('');
-  const [routeCreating, setRouteCreating] = useState(false);
-  const [confirmDeleteRoute, setConfirmDeleteRoute] = useState<number | null>(null);
 
   const isProxy = server.serverType === 'proxy';
   const isGameServer = !isProxy;
@@ -68,54 +59,6 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
       onRefreshServers?.();
     } catch { /* ignore */ }
     setLinkLoading(false);
-  };
-
-  // Routes
-  const loadRoutes = useCallback(async () => {
-    setRoutesLoading(true);
-    try {
-      const res = await getServerRoutes(server.id);
-      if (res.routes) setRoutes(res.routes);
-      else if (Array.isArray(res)) setRoutes(res);
-      else setRoutes([]);
-    } catch { setRoutes([]); }
-    setRoutesLoading(false);
-  }, [server.id]);
-
-  useEffect(() => {
-    loadRoutes();
-  }, [loadRoutes]);
-
-  const handleCreateRoute = async () => {
-    setRouteError('');
-    const domain = newDomain.trim().toLowerCase();
-    if (!domain) { setRouteError('Domain is required'); return; }
-    if (!/^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(domain)) {
-      setRouteError('Invalid domain format');
-      return;
-    }
-    setRouteCreating(true);
-    try {
-      const res = await createServerRoute(server.id, { domain, targetPort: newPort });
-      if (res.error) {
-        setRouteError(res.error);
-      } else {
-        setNewDomain('');
-        setNewPort(25565);
-        loadRoutes();
-      }
-    } catch {
-      setRouteError('Failed to create route');
-    }
-    setRouteCreating(false);
-  };
-
-  const handleDeleteRoute = async (routeId: number) => {
-    try {
-      await deleteServerRoute(server.id, routeId);
-      setRoutes(prev => prev.filter(r => r.ID !== routeId));
-    } catch { /* ignore */ }
-    setConfirmDeleteRoute(null);
   };
 
   return (
@@ -250,99 +193,6 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
         )}
       </div>
 
-      {/* Routes / Domains Section */}
-      <div className="card p-6">
-          <h2 className="modal-title mb-1 flex items-center gap-2">
-            <Globe size={20} className="text-(--accent-light)" />
-            Routes / Domains
-          </h2>
-          <p className="text-sm text-(--base-06) mb-5">
-            Map custom domains to this server through the gateway. Routes are synced to gates automatically.
-          </p>
-
-          {/* Existing routes */}
-          {routesLoading ? (
-            <p className="text-sm text-(--base-07)">Loading routes...</p>
-          ) : routes.length > 0 ? (
-            <div className="space-y-2 mb-4">
-              {routes.map(route => (
-                <div key={route.ID} className="flex items-center justify-between bg-(--base-02) rounded-md px-4 py-2.5 border border-(--base-03)">
-                  <div className="flex items-center gap-3">
-                    <Globe size={14} className="text-(--accent-light) shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium text-(--base-09)">{route.domain}</div>
-                      <div className="font-mono text-[10px] text-(--base-06) uppercase tracking-[0.08em]">
-                        Port {route.target_port}
-                        {route.link_name && <> &middot; Link: {route.link_name}</>}
-                      </div>
-                    </div>
-                  </div>
-                  {confirmDeleteRoute === route.ID ? (
-                    <div className="flex gap-2">
-                      <button onClick={() => handleDeleteRoute(route.ID)} className="btn btn-danger px-3 py-1 text-xs">Delete</button>
-                      <button onClick={() => setConfirmDeleteRoute(null)} className="btn btn-secondary px-3 py-1 text-xs">Cancel</button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmDeleteRoute(route.ID)}
-                      className="text-(--error-light) hover:text-(--error) transition-colors"
-                      title="Delete route"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-(--base-06) italic mb-4">No routes configured for this server.</p>
-          )}
-
-          {/* Add route form */}
-          <div className="bg-(--base-03) rounded-lg border border-(--base-04) p-4">
-            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Add Route</div>
-            <div className="flex gap-2 items-end">
-              <div className="flex-1">
-                <label className="input-label mb-1.5 block">Domain</label>
-                <input
-                  type="text"
-                  value={newDomain}
-                  onChange={e => { setNewDomain(e.target.value); setRouteError(''); }}
-                  onKeyDown={e => e.key === 'Enter' && handleCreateRoute()}
-                  placeholder="play.example.com"
-                  className="input-field w-full text-sm"
-                />
-              </div>
-              <div className="w-36">
-                <label className="input-label mb-1.5 block">Port</label>
-                <select
-                  value={newPort}
-                  onChange={e => setNewPort(Number(e.target.value))}
-                  className="input-field w-full text-sm"
-                >
-                  <option value={25565}>MC (25565)</option>
-                  <option value={80}>HTTP (80)</option>
-                  <option value={443}>HTTPS (443)</option>
-                </select>
-              </div>
-              <button
-                onClick={handleCreateRoute}
-                disabled={routeCreating || !newDomain.trim()}
-                className="btn btn-primary text-xs px-4 py-2.5 disabled:opacity-50"
-              >
-                <Plus size={14} />
-                Add
-              </button>
-            </div>
-            {routeError && (
-              <div className="flex items-center gap-2 mt-2 text-sm text-(--error-light)">
-                <AlertCircle size={14} />
-                {routeError}
-              </div>
-            )}
-          </div>
-      </div>
-
       {/* Info Card */}
       <div className="flex items-start gap-3 bg-(--base-03) border border-(--base-04) rounded-xl px-4 py-3">
         <Info size={16} className="text-(--base-06) mt-0.5 shrink-0" />
@@ -358,7 +208,7 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
               <p>If the proxy owner grants you <span className="font-medium text-(--base-09)">Inherit</span> permissions, you'll automatically get access to all linked servers.</p>
             </>
           )}
-          <p>Routes map custom domains to this server through the gateway infrastructure. The domain resolves to the gate, which tunnels traffic through a link to your server.</p>
+          <p>Domain routes are managed in the <span className="font-medium text-(--base-09)">Setup</span> tab.</p>
         </div>
       </div>
     </div>

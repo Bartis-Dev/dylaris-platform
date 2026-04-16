@@ -8,6 +8,26 @@ import {
 } from 'lucide-react';
 import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayGate, GatewayLink, GateStats } from '@/lib/api';
 
+interface StorageInfo {
+  path: string;
+  total_bytes: number;
+  free_bytes: number;
+  used_bytes: number;
+  server_count: number;
+}
+
+async function fetchNodeStorage(nodeId: number): Promise<StorageInfo[]> {
+  try {
+    const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+    const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    return data.success ? (data.storage ?? []) : [];
+  } catch { return []; }
+}
+
 interface NodeInfo {
   id: number;
   name: string;
@@ -98,6 +118,12 @@ function NodeCard({ node, onDelete }: { node: NodeInfo; onDelete: (node: NodeInf
   const linkCount = node.linkCount ?? 0;
   const hasStats = (node.ramTotal ?? 0) > 0;
 
+  const [storageData, setStorageData] = useState<StorageInfo[] | null>(null);
+
+  useEffect(() => {
+    fetchNodeStorage(node.id).then(setStorageData);
+  }, [node.id]);
+
   return (
     <div className="card p-4 flex flex-col gap-3">
       {/* Header */}
@@ -172,6 +198,39 @@ function NodeCard({ node, onDelete }: { node: NodeInfo; onDelete: (node: NodeInf
       {!isOnline && node.lastSeenAt && (
         <p className="text-[10px] text-(--base-05) font-mono">Last seen {timeAgo(node.lastSeenAt)}</p>
       )}
+
+      {/* Storage */}
+      <div className="border-t border-(--base-03) pt-2 space-y-1.5">
+        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+          <HardDrive size={10} />
+          Storage
+        </div>
+        {storageData === null ? (
+          <p className="text-[10px] font-mono text-(--base-05) italic">Loading...</p>
+        ) : storageData.length === 0 ? (
+          <p className="text-[10px] font-mono text-(--base-05) italic">No storage info available</p>
+        ) : (
+          storageData.map((s, i) => {
+            const pct = s.total_bytes > 0 ? (s.used_bytes / s.total_bytes) * 100 : 0;
+            const barColor = pct > 90 ? 'bg-(--error-light)' : pct > 70 ? 'bg-(--warning)' : 'bg-(--accent)';
+            return (
+              <div key={i} className="bg-(--base-02) rounded p-2 border border-(--base-03)">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-mono text-[10px] text-(--base-07) truncate">{s.path}</span>
+                  <span className="text-[10px] text-(--base-06) ml-2 shrink-0">{s.server_count} srv</span>
+                </div>
+                <div className="h-1 rounded-full bg-(--base-03) overflow-hidden">
+                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-[10px] font-mono text-(--base-06)">{formatBytes(s.used_bytes)} / {formatBytes(s.total_bytes)}</span>
+                  <span className="text-[10px] font-mono text-(--base-06)">{formatBytes(s.free_bytes)} free</span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

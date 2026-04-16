@@ -65,7 +65,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            {(m.name === 'Servers' || m.name === 'Gateway') ? (
+                            {m.name === 'Servers' ? (
                                 <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title="Default module — cannot be disabled">
                                     <span className="toggle-knob toggle-knob-on" />
                                 </div>

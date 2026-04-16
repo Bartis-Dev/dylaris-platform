@@ -182,10 +182,11 @@ export const updateServerResources = (
     ram: number,
     cpuLimit: number,
     diskLimit: number,
-    ports?: { hostPort?: number; containerPort?: number }
+    ports?: { hostPort?: number; containerPort?: number },
+    cpusetCpus?: string
 ) => fetchAPI(`/servers/${id}/resources`, {
     method: 'PATCH',
-    body: JSON.stringify({ ram, cpuLimit, diskLimit, ...ports }),
+    body: JSON.stringify({ ram, cpuLimit, diskLimit, ...ports, ...(cpusetCpus !== undefined ? { cpusetCpus } : {}) }),
 });
 
 export const sendConsoleCommand = (id: number, command: string) =>

@@ -6,11 +6,72 @@ import {
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Shield, Router, Database, ChevronDown, AlertTriangle, EyeOff } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Shield, Router, Database, ChevronDown, AlertTriangle, EyeOff, Radio } from 'lucide-react';
+
+// ─────────────────────────────────────────────
+// Beam settings
+// ─────────────────────────────────────────────
+
+interface BeamSettings {
+    relayAddress: string;
+    bwLimit: number;
+    enabled: boolean;
+}
+
+const BW_UNITS = [
+    { label: 'MB/s', multiplier: 1024 * 1024 },
+    { label: 'Gbit/s', multiplier: 125 * 1024 * 1024 },
+];
+
+function bwToDisplay(bytesPerSec: number): { value: number; unit: string } {
+    if (bytesPerSec === 0) return { value: 0, unit: 'MB/s' };
+    if (bytesPerSec >= 125 * 1024 * 1024 && bytesPerSec % (125 * 1024 * 1024) === 0) {
+        return { value: bytesPerSec / (125 * 1024 * 1024), unit: 'Gbit/s' };
+    }
+    return { value: Math.round(bytesPerSec / (1024 * 1024)), unit: 'MB/s' };
+}
+
+function displayToBw(value: number, unit: string): number {
+    if (value === 0) return 0;
+    const u = BW_UNITS.find(u => u.label === unit);
+    return value * (u?.multiplier || 1);
+}
+
+async function getBeamSettings(): Promise<{ success: boolean; settings?: BeamSettings }> {
+    try {
+        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+        const res = await fetch(`${API_URL}/settings/beam`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        return await res.json();
+    } catch {
+        return { success: false };
+    }
+}
+
+async function saveBeamSettings(settings: BeamSettings): Promise<{ success: boolean; message?: string }> {
+    try {
+        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+        const res = await fetch(`${API_URL}/settings/beam`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(settings),
+        });
+        return await res.json();
+    } catch {
+        return { success: false, message: 'Network error' };
+    }
+}
+
+// ─────────────────────────────────────────────
+// Gateway settings
+// ─────────────────────────────────────────────
 
 type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc' | 'portHttps';
-
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
+type SubTab = 'gateway' | 'beam';
 
 const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
     { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
@@ -24,7 +85,130 @@ const FILE_OPTIONS: ModeOption<FileAccessMode>[] = [
     { value: 'beam', label: 'Beam', desc: 'File access only via Beam relay — no direct Node IP needed' },
 ];
 
-export default function GatewayTab() {
+const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
+    { id: 'gateway', label: 'Gateway', icon: Router },
+    { id: 'beam', label: 'Beam', icon: Radio },
+];
+
+// ─────────────────────────────────────────────
+// Beam panel
+// ─────────────────────────────────────────────
+
+function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    const [settings, setSettings] = useState<BeamSettings>({ relayAddress: '', bwLimit: 0, enabled: true });
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [bwValue, setBwValue] = useState(0);
+    const [bwUnit, setBwUnit] = useState('MB/s');
+    const [unlimited, setUnlimited] = useState(true);
+
+    useEffect(() => {
+        getBeamSettings().then(res => {
+            if (res.success && res.settings) {
+                setSettings(res.settings);
+                const isUnlimited = res.settings.bwLimit === 0;
+                setUnlimited(isUnlimited);
+                if (!isUnlimited) {
+                    const d = bwToDisplay(res.settings.bwLimit);
+                    setBwValue(d.value);
+                    setBwUnit(d.unit);
+                }
+            }
+            setLoading(false);
+        });
+    }, []);
+
+    const handleSave = async () => {
+        setSaving(true);
+        const bwLimit = unlimited ? 0 : displayToBw(bwValue, bwUnit);
+        const res = await saveBeamSettings({ ...settings, bwLimit });
+        showToast(res.success ? 'Beam settings saved.' : (res.message || 'Save failed.'), res.success);
+        setSaving(false);
+    };
+
+    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Beam File Transfer</h2>
+                <p className="text-sm text-(--base-07)">Configure the Beam desktop file transfer service. Users can download the Beam app to manage server files directly.</p>
+            </div>
+
+            <div className="card p-5 space-y-4">
+                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
+                <div className="flex items-center justify-between">
+                    <div>
+                        <label className="input-label">Beam Enabled</label>
+                        <p className="text-xs text-(--base-06) mt-0.5">Allow users to connect via Beam desktop app</p>
+                    </div>
+                    <button
+                        onClick={() => setSettings(s => ({ ...s, enabled: !s.enabled }))}
+                        className={`toggle-track ${settings.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        role="switch"
+                        aria-checked={settings.enabled}
+                    >
+                        <span className={`toggle-knob ${settings.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Relay Address</label>
+                    <p className="text-xs text-(--base-06) mb-1">Public address of the Beam Relay service (e.g. beam.example.com:9095)</p>
+                    <input
+                        type="text"
+                        value={settings.relayAddress}
+                        onChange={e => setSettings(s => ({ ...s, relayAddress: e.target.value }))}
+                        placeholder="beam.example.com:9095"
+                        className="input-field"
+                    />
+                </div>
+            </div>
+
+            <div className="card p-5 space-y-4">
+                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Bandwidth Limit</h3>
+                <p className="text-xs text-(--base-06)">Global bandwidth cap shared across all Beam transfers on each node. Fair sharing is automatic.</p>
+                <div className="flex items-center justify-between">
+                    <label className="input-label">Unlimited</label>
+                    <button
+                        onClick={() => setUnlimited(!unlimited)}
+                        className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        role="switch"
+                        aria-checked={unlimited}
+                    >
+                        <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+                {!unlimited && (
+                    <div className="flex gap-2">
+                        <input
+                            type="number"
+                            min={1}
+                            value={bwValue}
+                            onChange={e => setBwValue(Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field w-28 text-right"
+                        />
+                        <select value={bwUnit} onChange={e => setBwUnit(e.target.value)} className="input-field w-28">
+                            {BW_UNITS.map(u => <option key={u.label} value={u.label}>{u.label}</option>)}
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+                <button onClick={handleSave} disabled={saving} className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50">
+                    <Save size={14} />
+                    {saving ? 'Saving...' : 'Save Settings'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Gateway panel
+// ─────────────────────────────────────────────
+
+function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
     const [settings, setSettings] = useState<GatewaySettings>({
         redisMode: 'shared',
         redisAddr: '',
@@ -33,21 +217,15 @@ export default function GatewayTab() {
         redisDb: 0,
         defaultLinkImage: '',
         limits: {
-            global: -1,
-            userDefault: -1,
-            perServer: -1,
-            portMc: -1,
-            portMcEnabled: true,
-            portHttps: -1,
-            portHttpsEnabled: true,
+            global: -1, userDefault: -1, perServer: -1,
+            portMc: -1, portMcEnabled: true,
+            portHttps: -1, portHttpsEnabled: true,
         },
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [redisOpen, setRedisOpen] = useState(false);
 
-    // Routing mode state
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileMode, setFileMode] = useState<FileAccessMode>('sftp');
     const [origRoutingMode, setOrigRoutingMode] = useState<RoutingMode>('ip_port');
@@ -57,16 +235,8 @@ export default function GatewayTab() {
     const [migration, setMigration] = useState<{ running: boolean; total: number; done: number; failed: number } | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
-
     useEffect(() => {
-        Promise.all([
-            getGatewaySettings(),
-            getRoutingMode(),
-        ]).then(([gwRes, rmRes]) => {
+        Promise.all([getGatewaySettings(), getRoutingMode()]).then(([gwRes, rmRes]) => {
             if (gwRes.success && gwRes.settings) {
                 setSettings(gwRes.settings);
                 if (gwRes.settings.redisMode === 'separate') setRedisOpen(true);
@@ -80,17 +250,13 @@ export default function GatewayTab() {
         }).finally(() => setLoading(false));
     }, []);
 
-    // Poll migration status while running
     const startPolling = () => {
         if (pollRef.current) return;
         pollRef.current = setInterval(async () => {
             const res = await getRoutingMigrationStatus();
             if (res.success) {
                 setMigration({ running: res.running, total: res.total, done: res.done, failed: res.failed });
-                if (!res.running) {
-                    clearInterval(pollRef.current!);
-                    pollRef.current = null;
-                }
+                if (!res.running) { clearInterval(pollRef.current!); pollRef.current = null; }
             }
         }, 3000);
     };
@@ -102,7 +268,7 @@ export default function GatewayTab() {
         if (res.success) {
             setOrigRoutingMode(routingMode);
             setOrigFileMode(fileMode);
-            showToast(`Routing mode saved. ${res.serversQueued > 0 ? `Redeploying ${res.serversQueued} servers...` : ''}`);
+            showToast(`Routing mode saved.${res.serversQueued > 0 ? ` Redeploying ${res.serversQueued} servers...` : ''}`);
             if (res.serversQueued > 0) {
                 setMigration({ running: true, total: res.serversQueued, done: 0, failed: 0 });
                 startPolling();
@@ -113,51 +279,23 @@ export default function GatewayTab() {
         setSavingRouting(false);
     };
 
-    const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
-
     const handleSave = async () => {
         setSaving(true);
         const res = await saveGatewaySettings(settings);
-        if (res.success) {
-            showToast('Gateway settings saved.');
-        } else {
-            showToast(res.message || 'Save failed.', false);
-        }
+        showToast(res.success ? 'Gateway settings saved.' : (res.message || 'Save failed.'), res.success);
         setSaving(false);
     };
 
-    const setLimit = (key: LimitKey, value: number) => {
+    const setLimit = (key: LimitKey, value: number) =>
         setSettings(prev => ({ ...prev, limits: { ...prev.limits, [key]: value } }));
-    };
-
     const isUnlimited = (key: LimitKey) => settings.limits[key] === -1;
-
-    const toggleUnlimited = (key: LimitKey) => {
-        if (isUnlimited(key)) {
-            setLimit(key, 0);
-        } else {
-            setLimit(key, -1);
-        }
-    };
-
+    const toggleUnlimited = (key: LimitKey) => setLimit(key, isUnlimited(key) ? 0 : -1);
     const isSeparate = settings.redisMode === 'separate';
-
     const toggleRedisMode = () => {
-        if (isSeparate) {
-            setSettings(prev => ({ ...prev, redisMode: 'shared' }));
-        } else {
-            setSettings(prev => ({ ...prev, redisMode: 'separate' }));
-            setRedisOpen(true);
-        }
+        if (isSeparate) setSettings(prev => ({ ...prev, redisMode: 'shared' }));
+        else { setSettings(prev => ({ ...prev, redisMode: 'separate' })); setRedisOpen(true); }
     };
-
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center h-40 text-(--base-07)">
-                <RefreshCw size={30} className="animate-spin" />
-            </div>
-        );
-    }
+    const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
 
     const allocationFields: { key: LimitKey; label: string; desc: string }[] = [
         { key: 'global', label: 'Global Max Routes', desc: 'Total routes across all users and servers' },
@@ -165,8 +303,10 @@ export default function GatewayTab() {
         { key: 'perServer', label: 'Per-Server Max', desc: 'Max routes per individual MC server' },
     ];
 
+    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+
     return (
-        <div className="max-w-2xl space-y-6">
+        <div className="space-y-6">
             <div>
                 <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Gateway Configuration</h2>
                 <p className="text-sm text-(--base-07)">Manage gateway routing, link defaults and route limits for gates and links.</p>
@@ -184,103 +324,59 @@ export default function GatewayTab() {
                     </div>
                 </div>
 
-                {/* Game Traffic */}
                 <div>
                     <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Game Traffic</h3>
                     <div className="grid grid-cols-3 gap-2">
                         {ROUTING_OPTIONS.map(opt => (
-                            <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => setRoutingMode(opt.value)}
-                                className={`p-3 rounded-md border text-left transition-colors ${
-                                    routingMode === opt.value
-                                        ? 'border-(--accent) bg-(--accent)/10'
-                                        : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
-                                }`}
-                            >
-                                <div className={`text-sm font-medium ${routingMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
-                                    {opt.label}
-                                </div>
+                            <button key={opt.value} type="button" onClick={() => setRoutingMode(opt.value)}
+                                className={`p-3 rounded-md border text-left transition-colors ${routingMode === opt.value ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
+                                <div className={`text-sm font-medium ${routingMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
                                 <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
                             </button>
                         ))}
                     </div>
                 </div>
 
-                {/* File Access */}
                 <div>
                     <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">File Access</h3>
                     <div className="grid grid-cols-3 gap-2">
                         {FILE_OPTIONS.map(opt => (
-                            <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => setFileMode(opt.value)}
-                                className={`p-3 rounded-md border text-left transition-colors ${
-                                    fileMode === opt.value
-                                        ? 'border-(--accent) bg-(--accent)/10'
-                                        : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
-                                }`}
-                            >
-                                <div className={`text-sm font-medium ${fileMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
-                                    {opt.label}
-                                </div>
+                            <button key={opt.value} type="button" onClick={() => setFileMode(opt.value)}
+                                className={`p-3 rounded-md border text-left transition-colors ${fileMode === opt.value ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
+                                <div className={`text-sm font-medium ${fileMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
                                 <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
                             </button>
                         ))}
                     </div>
                 </div>
 
-                {/* IP-hiding info callout */}
-                <div className={`flex items-start gap-3 p-3 rounded-md border ${
-                    routingMode === 'gateway' && fileMode === 'beam'
-                        ? 'border-(--success)/30 bg-(--success)/5'
-                        : 'border-(--base-04) bg-(--base-02)'
-                }`}>
+                <div className={`flex items-start gap-3 p-3 rounded-md border ${routingMode === 'gateway' && fileMode === 'beam' ? 'border-(--success)/30 bg-(--success)/5' : 'border-(--base-04) bg-(--base-02)'}`}>
                     <EyeOff size={15} className={`mt-0.5 shrink-0 ${routingMode === 'gateway' && fileMode === 'beam' ? 'text-(--success-light)' : 'text-(--base-06)'}`} />
                     <p className="text-xs text-(--base-07)">
-                        The public Node IP is only fully hidden when both{' '}
-                        <span className="text-(--base-09) font-medium">Game Traffic</span> is set to{' '}
-                        <span className="text-(--base-09) font-medium">Gateway</span> and{' '}
-                        <span className="text-(--base-09) font-medium">File Access</span> is set to{' '}
-                        <span className="text-(--base-09) font-medium">Beam</span>.
-                        {routingMode === 'gateway' && fileMode === 'beam' && (
-                            <span className="text-(--success-light) font-medium ml-1">Node IPs are currently fully hidden.</span>
-                        )}
+                        The public Node IP is only fully hidden when both <span className="text-(--base-09) font-medium">Game Traffic</span> is set to <span className="text-(--base-09) font-medium">Gateway</span> and <span className="text-(--base-09) font-medium">File Access</span> is set to <span className="text-(--base-09) font-medium">Beam</span>.
+                        {routingMode === 'gateway' && fileMode === 'beam' && <span className="text-(--success-light) font-medium ml-1">Node IPs are currently fully hidden.</span>}
                     </p>
                 </div>
 
-                {/* Migration progress */}
                 {migration && (
                     <div className="p-3 rounded-md bg-(--base-02) border border-(--base-04) space-y-2">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <RefreshCw size={13} className={`${migration.running ? 'animate-spin' : ''} text-(--accent-light)`} />
-                                <span className="text-xs text-(--base-09)">
-                                    {migration.running ? 'Redeploying servers...' : 'Redeploy complete'}
-                                </span>
+                                <span className="text-xs text-(--base-09)">{migration.running ? 'Redeploying servers...' : 'Redeploy complete'}</span>
                             </div>
-                            <span className="font-mono text-xs text-(--base-06)">
-                                {migration.done} / {migration.total} done{migration.failed > 0 ? ` · ${migration.failed} failed` : ''}
-                            </span>
+                            <span className="font-mono text-xs text-(--base-06)">{migration.done} / {migration.total} done{migration.failed > 0 ? ` · ${migration.failed} failed` : ''}</span>
                         </div>
                         <div className="h-1.5 rounded-full bg-(--base-03) overflow-hidden">
-                            <div
-                                className={`h-full rounded-full transition-all duration-300 ${migration.failed > 0 ? 'bg-(--error-light)' : 'bg-(--accent)'}`}
-                                style={{ width: migration.total > 0 ? `${Math.round((migration.done / migration.total) * 100)}%` : '0%' }}
-                            />
+                            <div className={`h-full rounded-full transition-all duration-300 ${migration.failed > 0 ? 'bg-(--error-light)' : 'bg-(--accent)'}`}
+                                style={{ width: migration.total > 0 ? `${Math.round((migration.done / migration.total) * 100)}%` : '0%' }} />
                         </div>
                     </div>
                 )}
 
-                {/* Save routing */}
                 <div className="flex items-center gap-3 pt-1 border-t border-(--base-03)">
-                    <button
-                        onClick={() => setConfirmModal(true)}
-                        disabled={!routingChanged || savingRouting}
-                        className="btn btn-primary px-5 py-2 text-sm disabled:opacity-40"
-                    >
+                    <button onClick={() => setConfirmModal(true)} disabled={!routingChanged || savingRouting}
+                        className="btn btn-primary px-5 py-2 text-sm disabled:opacity-40">
                         <Save size={14} />
                         {savingRouting ? 'Applying...' : 'Apply Routing'}
                     </button>
@@ -295,11 +391,8 @@ export default function GatewayTab() {
 
             {/* Redis Connection */}
             <div className="card overflow-hidden">
-                <button
-                    type="button"
-                    onClick={() => setRedisOpen(!redisOpen)}
-                    className="w-full p-5 flex items-center gap-3 hover:bg-(--base-02) transition-colors"
-                >
+                <button type="button" onClick={() => setRedisOpen(!redisOpen)}
+                    className="w-full p-5 flex items-center gap-3 hover:bg-(--base-02) transition-colors">
                     <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
                         <Database size={18} className="text-(--accent-light)" />
                     </div>
@@ -310,10 +403,7 @@ export default function GatewayTab() {
                             {!isSeparate && settings.redisDb > 0 && ` · DB ${settings.redisDb}`}
                         </div>
                     </div>
-                    <ChevronDown
-                        size={16}
-                        className={`text-(--base-06) transition-transform duration-200 ${redisOpen ? 'rotate-180' : ''}`}
-                    />
+                    <ChevronDown size={16} className={`text-(--base-06) transition-transform duration-200 ${redisOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {redisOpen && (
@@ -323,66 +413,33 @@ export default function GatewayTab() {
                                 <p className="text-sm text-(--base-09)">Use separate Redis</p>
                                 <p className="text-xs text-(--base-06)">Connect to a dedicated Redis instance instead of the shared Core Redis</p>
                             </div>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={isSeparate}
-                                onClick={toggleRedisMode}
-                                className={`toggle-track ${isSeparate ? 'toggle-track-on' : 'toggle-track-off'}`}
-                            >
+                            <button type="button" role="switch" aria-checked={isSeparate} onClick={toggleRedisMode}
+                                className={`toggle-track ${isSeparate ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                 <span className={`toggle-knob ${isSeparate ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                             </button>
                         </div>
-
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Redis DB Index</label>
-                            <select
-                                value={settings.redisDb}
-                                onChange={e => setSettings(prev => ({ ...prev, redisDb: Number(e.target.value) }))}
-                                className="input-mono w-full"
-                            >
-                                {Array.from({ length: 16 }, (_, i) => (
-                                    <option key={i} value={i}>{i}{i === 0 ? ' (default)' : ''}</option>
-                                ))}
+                            <select value={settings.redisDb} onChange={e => setSettings(prev => ({ ...prev, redisDb: Number(e.target.value) }))} className="input-mono w-full">
+                                {Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i}{i === 0 ? ' (default)' : ''}</option>)}
                             </select>
                             <p className="text-xs text-(--base-06)">
-                                {isSeparate
-                                    ? 'Database index on the separate Redis instance.'
-                                    : 'Use a different DB index on the shared Redis to isolate gateway data.'}
+                                {isSeparate ? 'Database index on the separate Redis instance.' : 'Use a different DB index on the shared Redis to isolate gateway data.'}
                             </p>
                         </div>
-
                         {isSeparate && (
                             <div className="grid grid-cols-2 gap-4 pt-2 border-t border-(--base-03)">
                                 <div className="flex flex-col gap-[5px]">
                                     <label className="input-label">Redis Address</label>
-                                    <input
-                                        type="text"
-                                        value={settings.redisAddr}
-                                        onChange={e => setSettings(prev => ({ ...prev, redisAddr: e.target.value }))}
-                                        placeholder="localhost:6379"
-                                        className="input-mono w-full"
-                                    />
+                                    <input type="text" value={settings.redisAddr} onChange={e => setSettings(prev => ({ ...prev, redisAddr: e.target.value }))} placeholder="localhost:6379" className="input-mono w-full" />
                                 </div>
                                 <div className="flex flex-col gap-[5px]">
                                     <label className="input-label">Redis User</label>
-                                    <input
-                                        type="text"
-                                        value={settings.redisUser}
-                                        onChange={e => setSettings(prev => ({ ...prev, redisUser: e.target.value }))}
-                                        placeholder="default"
-                                        className="input-mono w-full"
-                                    />
+                                    <input type="text" value={settings.redisUser} onChange={e => setSettings(prev => ({ ...prev, redisUser: e.target.value }))} placeholder="default" className="input-mono w-full" />
                                 </div>
                                 <div className="col-span-2 flex flex-col gap-[5px]">
                                     <label className="input-label">Redis Password</label>
-                                    <input
-                                        type="password"
-                                        value={settings.redisPass ?? ''}
-                                        onChange={e => setSettings(prev => ({ ...prev, redisPass: e.target.value }))}
-                                        placeholder="••••••••"
-                                        className="input-mono w-full"
-                                    />
+                                    <input type="password" value={settings.redisPass ?? ''} onChange={e => setSettings(prev => ({ ...prev, redisPass: e.target.value }))} placeholder="••••••••" className="input-mono w-full" />
                                 </div>
                             </div>
                         )}
@@ -401,16 +458,10 @@ export default function GatewayTab() {
                         <div className="text-xs text-(--base-06)">Default link container image</div>
                     </div>
                 </div>
-
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Default Link Image</label>
-                    <input
-                        type="text"
-                        value={settings.defaultLinkImage}
-                        onChange={e => setSettings(prev => ({ ...prev, defaultLinkImage: e.target.value }))}
-                        placeholder="ghcr.io/bartis-dev/dylaris-link:latest"
-                        className="input-mono w-full"
-                    />
+                    <input type="text" value={settings.defaultLinkImage} onChange={e => setSettings(prev => ({ ...prev, defaultLinkImage: e.target.value }))}
+                        placeholder="ghcr.io/bartis-dev/dylaris-link:latest" className="input-mono w-full" />
                     <p className="text-xs text-(--base-06) mt-0.5">Docker image used for new link containers when no override is specified.</p>
                 </div>
             </div>
@@ -427,7 +478,6 @@ export default function GatewayTab() {
                     </div>
                 </div>
 
-                {/* Route Allocation */}
                 <div>
                     <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Route Allocation</h3>
                     <div className="space-y-3">
@@ -439,22 +489,13 @@ export default function GatewayTab() {
                                 </div>
                                 <div className="flex items-center gap-3 shrink-0">
                                     {!isUnlimited(key) && (
-                                        <input
-                                            type="number"
-                                            min={0}
-                                            value={settings.limits[key]}
+                                        <input type="number" min={0} value={settings.limits[key]}
                                             onChange={e => setLimit(key, Number(e.target.value))}
-                                            className="input-mono w-20 text-center"
-                                        />
+                                            className="input-mono w-20 text-center" />
                                     )}
                                     <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                        <button
-                                            type="button"
-                                            role="switch"
-                                            aria-checked={isUnlimited(key)}
-                                            onClick={() => toggleUnlimited(key)}
-                                            className={`toggle-track ${isUnlimited(key) ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                        >
+                                        <button type="button" role="switch" aria-checked={isUnlimited(key)} onClick={() => toggleUnlimited(key)}
+                                            className={`toggle-track ${isUnlimited(key) ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                             <span className={`toggle-knob ${isUnlimited(key) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                         </button>
                                         <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
@@ -466,27 +507,19 @@ export default function GatewayTab() {
                     <p className="text-xs text-(--base-05) mt-2">0 = zero routes allowed. Per-user overrides can be set in user settings.</p>
                 </div>
 
-                {/* Port Configuration */}
                 <div className="border-t border-(--base-03) pt-5">
                     <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Port Configuration</h3>
                     <div className="space-y-3">
-                        {/* MC Port 25565 */}
+                        {/* MC Port */}
                         <div className={`p-3 rounded-md bg-(--base-02) ${!settings.limits.portMcEnabled ? 'opacity-60' : ''}`}>
                             <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center gap-2">
                                     <span className="text-sm font-semibold text-(--base-09)">Minecraft</span>
                                     <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-(--base-03) text-(--base-06)">25565</span>
                                 </div>
-                                <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={settings.limits.portMcEnabled}
-                                    onClick={() => setSettings(prev => ({
-                                        ...prev,
-                                        limits: { ...prev.limits, portMcEnabled: !prev.limits.portMcEnabled }
-                                    }))}
-                                    className={`toggle-track ${settings.limits.portMcEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                >
+                                <button type="button" role="switch" aria-checked={settings.limits.portMcEnabled}
+                                    onClick={() => setSettings(prev => ({ ...prev, limits: { ...prev.limits, portMcEnabled: !prev.limits.portMcEnabled } }))}
+                                    className={`toggle-track ${settings.limits.portMcEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                     <span className={`toggle-knob ${settings.limits.portMcEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                 </button>
                             </div>
@@ -495,22 +528,13 @@ export default function GatewayTab() {
                                     <span className="text-xs text-(--base-06)">Max routes on this port</span>
                                     <div className="flex items-center gap-3">
                                         {!isUnlimited('portMc') && (
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                value={settings.limits.portMc}
+                                            <input type="number" min={0} value={settings.limits.portMc}
                                                 onChange={e => setLimit('portMc', Number(e.target.value))}
-                                                className="input-mono w-20 text-center"
-                                            />
+                                                className="input-mono w-20 text-center" />
                                         )}
                                         <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                            <button
-                                                type="button"
-                                                role="switch"
-                                                aria-checked={isUnlimited('portMc')}
-                                                onClick={() => toggleUnlimited('portMc')}
-                                                className={`toggle-track ${isUnlimited('portMc') ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                            >
+                                            <button type="button" role="switch" aria-checked={isUnlimited('portMc')} onClick={() => toggleUnlimited('portMc')}
+                                                className={`toggle-track ${isUnlimited('portMc') ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                                 <span className={`toggle-knob ${isUnlimited('portMc') ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                             </button>
                                             <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
@@ -520,23 +544,16 @@ export default function GatewayTab() {
                             )}
                         </div>
 
-                        {/* HTTPS Port 443 */}
+                        {/* HTTPS Port */}
                         <div className={`p-3 rounded-md bg-(--base-02) ${!settings.limits.portHttpsEnabled ? 'opacity-60' : ''}`}>
                             <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center gap-2">
                                     <span className="text-sm font-semibold text-(--base-09)">HTTPS</span>
                                     <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-(--base-03) text-(--base-06)">443</span>
                                 </div>
-                                <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={settings.limits.portHttpsEnabled}
-                                    onClick={() => setSettings(prev => ({
-                                        ...prev,
-                                        limits: { ...prev.limits, portHttpsEnabled: !prev.limits.portHttpsEnabled }
-                                    }))}
-                                    className={`toggle-track ${settings.limits.portHttpsEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                >
+                                <button type="button" role="switch" aria-checked={settings.limits.portHttpsEnabled}
+                                    onClick={() => setSettings(prev => ({ ...prev, limits: { ...prev.limits, portHttpsEnabled: !prev.limits.portHttpsEnabled } }))}
+                                    className={`toggle-track ${settings.limits.portHttpsEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                     <span className={`toggle-knob ${settings.limits.portHttpsEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                 </button>
                             </div>
@@ -545,22 +562,13 @@ export default function GatewayTab() {
                                     <span className="text-xs text-(--base-06)">Max routes on this port</span>
                                     <div className="flex items-center gap-3">
                                         {!isUnlimited('portHttps') && (
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                value={settings.limits.portHttps}
+                                            <input type="number" min={0} value={settings.limits.portHttps}
                                                 onChange={e => setLimit('portHttps', Number(e.target.value))}
-                                                className="input-mono w-20 text-center"
-                                            />
+                                                className="input-mono w-20 text-center" />
                                         )}
                                         <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                            <button
-                                                type="button"
-                                                role="switch"
-                                                aria-checked={isUnlimited('portHttps')}
-                                                onClick={() => toggleUnlimited('portHttps')}
-                                                className={`toggle-track ${isUnlimited('portHttps') ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                            >
+                                            <button type="button" role="switch" aria-checked={isUnlimited('portHttps')} onClick={() => toggleUnlimited('portHttps')}
+                                                className={`toggle-track ${isUnlimited('portHttps') ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                                 <span className={`toggle-knob ${isUnlimited('portHttps') ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                             </button>
                                             <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
@@ -574,19 +582,14 @@ export default function GatewayTab() {
                 </div>
             </div>
 
-            {/* Save */}
             <div className="flex gap-3 pt-2">
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50"
-                >
+                <button onClick={handleSave} disabled={saving} className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50">
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}
                 </button>
             </div>
 
-            {/* Confirmation Modal */}
+            {/* Routing confirmation modal */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                     <div className="card p-6 max-w-md w-full mx-4 space-y-4">
@@ -599,7 +602,6 @@ export default function GatewayTab() {
                                 <p className="text-xs text-(--base-06) mt-0.5">This action will redeploy all active servers</p>
                             </div>
                         </div>
-
                         <div className="space-y-2 text-sm text-(--base-07)">
                             {routingMode === 'gateway' && origRoutingMode !== 'gateway' && (
                                 <p>Switching to <span className="text-(--base-09) font-medium">Gateway</span> mode: all host port bindings will be removed and servers will be redeployed without exposed ports.</p>
@@ -615,26 +617,57 @@ export default function GatewayTab() {
                             )}
                             <p className="text-(--base-06) text-xs pt-1">Servers are redeployed in batches of 4 with 15s between batches. Each container has a 60s timeout before a force-kill is issued.</p>
                         </div>
-
                         <div className="flex gap-3 pt-2">
-                            <button
-                                onClick={handleSaveRouting}
-                                className="btn btn-primary px-5 py-2 text-sm flex-1"
-                            >
-                                Confirm & Apply
-                            </button>
-                            <button
-                                onClick={() => setConfirmModal(false)}
-                                className="btn px-5 py-2 text-sm flex-1"
-                            >
-                                Cancel
-                            </button>
+                            <button onClick={handleSaveRouting} className="btn btn-primary px-5 py-2 text-sm flex-1">Confirm & Apply</button>
+                            <button onClick={() => setConfirmModal(false)} className="btn px-5 py-2 text-sm flex-1">Cancel</button>
                         </div>
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
 
-            {/* Toast */}
+// ─────────────────────────────────────────────
+// Main export: Gateway + Beam with left-nav
+// ─────────────────────────────────────────────
+
+export default function GatewayTab() {
+    const [subTab, setSubTab] = useState<SubTab>('gateway');
+    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+    const showToast = (msg: string, ok = true) => {
+        setToast({ msg, ok });
+        setTimeout(() => setToast(null), 3500);
+    };
+
+    return (
+        <div className="flex gap-0 h-full">
+            {/* Left nav */}
+            <nav className="w-44 shrink-0 border-r border-(--base-03) pr-4 flex flex-col gap-1 pt-1">
+                {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+                    <button
+                        key={id}
+                        onClick={() => setSubTab(id)}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left ${
+                            subTab === id
+                                ? 'bg-(--accent)/10 text-(--accent-light)'
+                                : 'text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
+                        }`}
+                    >
+                        <Icon size={15} className={subTab === id ? 'text-(--accent-light)' : 'text-(--base-06)'} />
+                        {label}
+                    </button>
+                ))}
+            </nav>
+
+            {/* Right content */}
+            <div className="flex-1 pl-6 overflow-y-auto">
+                {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
+                {subTab === 'beam' && <BeamPanel showToast={showToast} />}
+            </div>
+
+            {/* Shared toast */}
             {toast && (
                 <div className="toast-container">
                     <div className="toast">

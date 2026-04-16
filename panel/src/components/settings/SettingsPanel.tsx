@@ -10,8 +10,6 @@ import FileManagerTab from './FileManagerTab';
 import FeaturesTab from './FeaturesTab';
 import GatewayTab from './GatewayTab';
 import ServersTab from './ServersTab';
-import BeamTab from './BeamTab';
-
 interface SettingsPanelProps {
     modules: AppModule[];
     onModulesChange: () => void;
@@ -27,7 +25,6 @@ const ALL_TABS = [
     { id: 'servers', label: 'Servers', always: true },
     { id: 'features', label: 'Features', always: true },
     { id: 'gateway', label: 'Gateway', always: false, module: 'Gateway' },
-    { id: 'beam', label: 'Beam', always: true },
 ] as const;
 
 type TabId = typeof ALL_TABS[number]['id'];
@@ -93,9 +90,6 @@ export default function SettingsPanel({ modules, onModulesChange, currentUser }:
                 )}
                 {activeTab === 'gateway' && (
                     <GatewayTab />
-                )}
-                {activeTab === 'beam' && (
-                    <BeamTab />
                 )}
             </div>
         </div>

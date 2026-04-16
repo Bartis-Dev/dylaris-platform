@@ -58,6 +58,8 @@ export default function Dashboard() {
     const [editRam, setEditRam] = useState(0);
     const [editCpuLimit, setEditCpuLimit] = useState(0);
     const [editDiskLimit, setEditDiskLimit] = useState(0);
+    const [editCpusetCpus, setEditCpusetCpus] = useState('');
+    const [editResourcesAdvancedOpen, setEditResourcesAdvancedOpen] = useState(false);
 
     // Storage migration state (admin only)
     const [storageCurrentPath, setStorageCurrentPath] = useState('');
@@ -249,6 +251,8 @@ export default function Dashboard() {
         setEditDiskLimit((selectedServer.diskLimit || 0) / 1024);
         setEditHostPort(selectedServer.hostPort || 0);
         setEditContainerPort(selectedServer.containerPort || 25565);
+        setEditCpusetCpus(selectedServer.cpusetCpus || '');
+        setEditResourcesAdvancedOpen(false);
         setStorageCurrentPath('');
         setStoragePaths([]);
         setStorageMigrateTarget('');
@@ -271,7 +275,7 @@ export default function Dashboard() {
     const handleSaveResources = async () => {
         if (!selectedServer) return;
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
-        await updateServerResources(selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0, ports);
+        await updateServerResources(selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0, ports, editCpusetCpus || undefined);
         setShowEditResourcesPopup(false);
         refreshServers();
     };
@@ -887,6 +891,33 @@ export default function Dashboard() {
                                             )}
                                             <p className="text-xs text-(--base-06)">Server will be stopped during migration. Restart it manually after.</p>
                                         </>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Advanced — CPU Pinning (admin only) */}
+                            {user?.isAdmin && (
+                                <div className="border-t border-(--base-03) pt-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditResourcesAdvancedOpen(o => !o)}
+                                        className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-08) transition-colors w-full"
+                                    >
+                                        <ChevronDown size={13} className={`transition-transform ${editResourcesAdvancedOpen ? 'rotate-180' : ''}`} />
+                                        Advanced
+                                    </button>
+                                    {editResourcesAdvancedOpen && (
+                                        <div className="mt-3 flex flex-col gap-[5px]">
+                                            <label className="input-label">CPU Pinning (cpuset)</label>
+                                            <input
+                                                type="text"
+                                                value={editCpusetCpus}
+                                                onChange={e => setEditCpusetCpus(e.target.value)}
+                                                placeholder="e.g. 0-7 or 0,2,4,6 — empty = no pinning"
+                                                className="input-mono w-full"
+                                            />
+                                            <p className="text-xs text-(--base-06)">Pin this container to specific CPU cores (useful for AMD 3D V-Cache). Resets if the server is migrated to a different node.</p>
+                                        </div>
                                     )}
                                 </div>
                             )}

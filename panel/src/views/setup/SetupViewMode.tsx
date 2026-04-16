@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Server } from '@/lib/api';
-import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Server, getServerRoutes, createServerRoute, deleteServerRoute, GatewayRoute } from '@/lib/api';
+import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle, Globe, Trash2, AlertCircle } from 'lucide-react';
 import { JAVA_IMAGES } from './JavaVersionPicker';
 
 interface SetupViewModeProps {
@@ -26,6 +26,53 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
     const javaNote = JAVA_IMAGES.find(j => j.id === server.image)?.note || '';
     const hasFlags = !!server.extraJvmFlags;
     const flagCount = server.extraJvmFlags ? server.extraJvmFlags.split(' ').filter(Boolean).length : 0;
+
+    // Routes state
+    const [routes, setRoutes] = useState<GatewayRoute[]>([]);
+    const [routesLoading, setRoutesLoading] = useState(false);
+    const [newDomain, setNewDomain] = useState('');
+    const [newPort, setNewPort] = useState(25565);
+    const [routeError, setRouteError] = useState('');
+    const [routeCreating, setRouteCreating] = useState(false);
+    const [confirmDeleteRoute, setConfirmDeleteRoute] = useState<number | null>(null);
+
+    const loadRoutes = useCallback(async () => {
+        setRoutesLoading(true);
+        try {
+            const res = await getServerRoutes(server.id);
+            if (res.routes) setRoutes(res.routes);
+            else if (Array.isArray(res)) setRoutes(res);
+            else setRoutes([]);
+        } catch { setRoutes([]); }
+        setRoutesLoading(false);
+    }, [server.id]);
+
+    useEffect(() => { loadRoutes(); }, [loadRoutes]);
+
+    const handleCreateRoute = async () => {
+        setRouteError('');
+        const domain = newDomain.trim().toLowerCase();
+        if (!domain) { setRouteError('Domain is required'); return; }
+        if (!/^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(domain)) {
+            setRouteError('Invalid domain format');
+            return;
+        }
+        setRouteCreating(true);
+        try {
+            const res = await createServerRoute(server.id, { domain, targetPort: newPort });
+            if (res.error) { setRouteError(res.error); }
+            else { setNewDomain(''); setNewPort(25565); loadRoutes(); }
+        } catch { setRouteError('Failed to create route'); }
+        setRouteCreating(false);
+    };
+
+    const handleDeleteRoute = async (routeId: number) => {
+        try {
+            await deleteServerRoute(server.id, routeId);
+            setRoutes(prev => prev.filter(r => r.ID !== routeId));
+        } catch { /* ignore */ }
+        setConfirmDeleteRoute(null);
+    };
 
     return (
         <div className="flex-1 card flex flex-col overflow-hidden min-w-0">
@@ -124,6 +171,93 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                         )}
                     </div>
                 )}
+
+                {/* Routes / Domains */}
+                <div className="border-t border-(--base-03) pt-5">
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-(--base-09) mb-1">
+                        <Globe size={14} className="text-(--accent-light)" />
+                        Routes / Domains
+                    </h4>
+                    <p className="text-xs text-(--base-06) mb-3">Map custom domains to this server through the gateway.</p>
+
+                    {routesLoading ? (
+                        <p className="text-sm text-(--base-07)">Loading routes...</p>
+                    ) : routes.length > 0 ? (
+                        <div className="space-y-2 mb-3">
+                            {routes.map(route => (
+                                <div key={route.ID} className="flex items-center justify-between bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
+                                    <div className="flex items-center gap-2.5">
+                                        <Globe size={12} className="text-(--accent-light) shrink-0" />
+                                        <div>
+                                            <div className="text-sm font-medium text-(--base-09)">{route.domain}</div>
+                                            <div className="font-mono text-[10px] text-(--base-06) uppercase tracking-[0.08em]">
+                                                Port {route.target_port}
+                                                {route.link_name && <> &middot; Link: {route.link_name}</>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {confirmDeleteRoute === route.ID ? (
+                                        <div className="flex gap-2">
+                                            <button onClick={() => handleDeleteRoute(route.ID)} className="btn btn-danger px-2.5 py-1 text-xs">Delete</button>
+                                            <button onClick={() => setConfirmDeleteRoute(null)} className="btn btn-secondary px-2.5 py-1 text-xs">Cancel</button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => setConfirmDeleteRoute(route.ID)}
+                                            className="text-(--error-light) hover:text-(--error) transition-colors p-1"
+                                            title="Delete route"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-(--base-06) italic mb-3">No routes configured.</p>
+                    )}
+
+                    <div className="bg-(--base-03) rounded-md border border-(--base-04) p-3">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-2">Add Route</div>
+                        <div className="flex gap-2 items-end">
+                            <div className="flex-1">
+                                <input
+                                    type="text"
+                                    value={newDomain}
+                                    onChange={e => { setNewDomain(e.target.value); setRouteError(''); }}
+                                    onKeyDown={e => e.key === 'Enter' && handleCreateRoute()}
+                                    placeholder="play.example.com"
+                                    className="input-field w-full text-sm"
+                                />
+                            </div>
+                            <div className="w-32">
+                                <select
+                                    value={newPort}
+                                    onChange={e => setNewPort(Number(e.target.value))}
+                                    className="input-field w-full text-sm"
+                                >
+                                    <option value={25565}>MC (25565)</option>
+                                    <option value={80}>HTTP (80)</option>
+                                    <option value={443}>HTTPS (443)</option>
+                                </select>
+                            </div>
+                            <button
+                                onClick={handleCreateRoute}
+                                disabled={routeCreating || !newDomain.trim()}
+                                className="btn btn-primary text-xs px-3 py-2.5 disabled:opacity-50"
+                            >
+                                <Plus size={13} />
+                                Add
+                            </button>
+                        </div>
+                        {routeError && (
+                            <div className="flex items-center gap-1.5 mt-2 text-xs text-(--error-light)">
+                                <AlertCircle size={12} />
+                                {routeError}
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
         </div>
     );

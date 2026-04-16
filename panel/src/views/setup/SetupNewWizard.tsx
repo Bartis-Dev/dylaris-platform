@@ -134,7 +134,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                                 <option value={443}>HTTPS (443)</option>
                             </select>
                         </div>
-                        <p className="text-xs text-(--base-06)">Can also be configured later in Network tab.</p>
+                        <p className="text-xs text-(--base-06)">Can also be configured later in the Setup tab.</p>
                     </div>
                 </div>
 
