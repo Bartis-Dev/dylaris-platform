@@ -173,6 +173,7 @@ func main() {
 	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.CreateModuleHandler)).Methods("POST")
 	api.HandleFunc("/modules/{id:[0-9]+}", authHandler.AuthMiddleware(moduleHandler.DeleteModuleHandler)).Methods("DELETE")
 	api.HandleFunc("/modules/{id:[0-9]+}/toggle", authHandler.AuthMiddleware(moduleHandler.ToggleModuleHandler)).Methods("PATCH")
+	api.HandleFunc("/modules/{id:[0-9]+}/position", authHandler.AuthMiddleware(moduleHandler.UpdateModulePositionHandler)).Methods("PATCH")
 
 	api.HandleFunc("/nodes", authHandler.AuthMiddleware(nodeHandler.GetNodes)).Methods("GET")
 	api.HandleFunc("/nodes", authHandler.AuthMiddleware(nodeHandler.CreateNode)).Methods("POST")
@@ -181,6 +182,12 @@ func main() {
 	api.HandleFunc("/nodes/{id:[0-9]+}/servers", authHandler.AuthMiddleware(nodeHandler.GetNodeServers)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(nodeHandler.ForceDeleteNode)).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
+
+	// Admin endpoints
+	api.HandleFunc("/admin/servers", authHandler.AuthMiddleware(serverHandler.GetAdminServers)).Methods("GET")
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/owner", authHandler.AuthMiddleware(serverHandler.AdminUpdateServerOwner)).Methods("PATCH")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(nodeHandler.GetDiskAnalysis)).Methods("GET")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(nodeHandler.DeleteOrphanedFolder)).Methods("DELETE")
 
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
@@ -207,6 +214,7 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(serverHandler.UnlinkServerFromProxy)).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/storage-path", authHandler.AuthMiddleware(serverHandler.GetServerStoragePath)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/migrate-storage", authHandler.AuthMiddleware(serverHandler.MigrateServerStorage)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/sftp-credentials", authHandler.AuthMiddleware(serverHandler.GetSftpCredentials)).Methods("GET")
 
 	api.HandleFunc("/versions/software", versionHandler.GetSoftwareList).Methods("GET")
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")

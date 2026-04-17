@@ -3,9 +3,12 @@ package handlers
 import (
 	"dylaris-core/models"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
+
+	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -245,5 +248,146 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"storage": storage,
+	})
+}
+
+// storageHeartbeatEntry is used to parse storage entries from the node discovery heartbeat.
+type storageHeartbeatEntry struct {
+	Path        string   `json:"path"`
+	ServerUUIDs []string `json:"server_uuids"`
+}
+
+// GetDiskAnalysis cross-references disk folders on a node with DB servers.
+// GET /api/admin/nodes/{id}/disk-analysis
+func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	node, err := h.state.Store.GetNodeByID(id)
+	if err != nil || node == nil {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
+
+	dbServers, err := h.state.Store.ListServersByNode(id)
+	if err != nil {
+		sendJSONError(w, "Failed to load servers", 500)
+		return
+	}
+
+	dbByUUID := make(map[string]models.Server)
+	for _, s := range dbServers {
+		dbByUUID[s.UUID] = s
+	}
+
+	diskUUIDs := make(map[string]bool)
+	if h.state.Redis != nil {
+		key := "dylaris:discovery:" + node.Token
+		if val, redisErr := h.state.Redis.Get(r.Context(), key).Result(); redisErr == nil {
+			var hb struct {
+				Storage []storageHeartbeatEntry `json:"storage"`
+			}
+			if json.Unmarshal([]byte(val), &hb) == nil {
+				for _, entry := range hb.Storage {
+					for _, u := range entry.ServerUUIDs {
+						diskUUIDs[u] = true
+					}
+				}
+			}
+		}
+	}
+
+	type matchedEntry struct {
+		UUID   string `json:"uuid"`
+		Name   string `json:"serverName"`
+		Owner  string `json:"ownerName"`
+		Status string `json:"status"`
+	}
+	type orphanedEntry struct {
+		UUID string `json:"uuid"`
+	}
+	type missingEntry struct {
+		UUID string `json:"uuid"`
+		Name string `json:"serverName"`
+	}
+
+	matched := []matchedEntry{}
+	orphaned := []orphanedEntry{}
+	missing := []missingEntry{}
+
+	for u := range diskUUIDs {
+		if srv, ok := dbByUUID[u]; ok {
+			matched = append(matched, matchedEntry{UUID: u, Name: srv.Name, Owner: srv.OwnerName, Status: srv.Status})
+		} else {
+			orphaned = append(orphaned, orphanedEntry{UUID: u})
+		}
+	}
+	for u, srv := range dbByUUID {
+		if !diskUUIDs[u] {
+			missing = append(missing, missingEntry{UUID: u, Name: srv.Name})
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"matched":  matched,
+		"orphaned": orphaned,
+		"missing":  missing,
+	})
+}
+
+// DeleteOrphanedFolder deletes an orphaned UUID folder from a node via gRPC.
+// DELETE /api/admin/nodes/{id}/orphan?uuid=
+func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	vars := mux.Vars(r)
+	nodeID, _ := strconv.Atoi(vars["id"])
+
+	orphanUUID := r.URL.Query().Get("uuid")
+	if orphanUUID == "" {
+		sendJSONError(w, "uuid query param required", 400)
+		return
+	}
+	if _, err := uuid.Parse(orphanUUID); err != nil {
+		sendJSONError(w, "Invalid UUID format", 400)
+		return
+	}
+
+	// Safety check: ensure it is NOT in the DB
+	srv, _ := h.state.Store.GetServerByUUID(orphanUUID)
+	if srv != nil {
+		sendJSONError(w, "Server exists in database — use normal delete", 400)
+		return
+	}
+
+	if h.state.GRPCRegistry == nil {
+		sendJSONError(w, "gRPC not available", 503)
+		return
+	}
+
+	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+		RequestId:  fmt.Sprintf("orphan-del-%s", orphanUUID),
+		ServerUuid: orphanUUID,
+		Payload:    &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: "."}},
+	}, 30*time.Second)
+	if err != nil {
+		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		return
+	}
+	if errResp := resp.GetError(); errResp != nil {
+		sendJSONError(w, errResp.Message, 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Orphaned folder %s deleted", orphanUUID),
 	})
 }

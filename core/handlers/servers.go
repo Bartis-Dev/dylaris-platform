@@ -1205,3 +1205,120 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 		"message": "Migration queued. Server will be stopped and data moved to the new path.",
 	})
 }
+
+// GetAdminServers GET /api/admin/servers — returns all DB servers with optional search filter
+func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+
+	servers, err := h.state.Store.ListServersForUser(0, true)
+	if err != nil {
+		sendJSONError(w, "Database error", 500)
+		return
+	}
+	if servers == nil {
+		servers = []models.Server{}
+	}
+
+	search := strings.ToLower(r.URL.Query().Get("search"))
+	if search != "" {
+		filtered := servers[:0]
+		for _, s := range servers {
+			if strings.Contains(strings.ToLower(s.Name), search) ||
+				strings.Contains(strings.ToLower(s.UUID), search) ||
+				strings.Contains(strings.ToLower(s.OwnerName), search) {
+				filtered = append(filtered, s)
+			}
+		}
+		servers = filtered
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"servers": servers,
+	})
+}
+
+// AdminUpdateServerOwner PATCH /api/admin/servers/{id}/owner — reassigns a server to a different user
+func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	vars := mux.Vars(r)
+	serverID, _ := strconv.Atoi(vars["id"])
+
+	var req struct {
+		UserID int `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == 0 {
+		sendJSONError(w, "userId required", 400)
+		return
+	}
+
+	if _, err := h.state.Store.GetUserByID(req.UserID); err != nil {
+		sendJSONError(w, "User not found", 404)
+		return
+	}
+
+	if err := h.state.Store.UpdateServerOwner(serverID, &req.UserID); err != nil {
+		sendJSONError(w, "Failed to update owner", 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// GetSftpCredentials GET /api/servers/{id}/sftp-credentials
+// Returns SFTP connection info. When fileAccessMode == "beam", returns empty to avoid node IP exposure.
+func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, _ := strconv.Atoi(vars["id"])
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(int)
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
+		sendJSONError(w, "Access denied", 403)
+		return
+	}
+
+	// If file mode is beam-only, do not expose node IP
+	fileMode, _ := h.state.Store.GetSetting("file_access_mode")
+	if fileMode == "beam" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"host":    "",
+			"port":    0,
+			"username": "",
+			"path":    "",
+		})
+		return
+	}
+
+	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	if err != nil || node == nil {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
+
+	host := node.Address
+	if node.PublicIP != "" {
+		host = node.PublicIP
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"host":     host,
+		"port":     2222,
+		"username": username,
+		"path":     "/" + srv.UUID,
+	})
+}

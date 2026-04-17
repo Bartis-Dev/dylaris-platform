@@ -5,7 +5,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { Server, ServerStats, DiskUsage, getStatsHistory, getDiskUsage } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 
-import { Cpu, MemoryStick, AlertTriangle, HardDrive, Download, MonitorDown } from 'lucide-react';
+import { Cpu, MemoryStick, AlertTriangle, HardDrive } from 'lucide-react';
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
@@ -66,7 +66,6 @@ export default function OverviewView({ server }: OverviewViewProps) {
   const [historyData, setHistoryData] = useState<ServerStats[]>([]);
   const [historyRange, setHistoryRange] = useState('24h');
   const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
-  const [beamDownloadError, setBeamDownloadError] = useState('');
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -106,34 +105,6 @@ export default function OverviewView({ server }: OverviewViewProps) {
     }, 15000);
     return () => clearInterval(interval);
   }, [server.id]);
-
-  const downloadBeam = async (platform: string) => {
-    const filename = platform === 'windows' ? 'DylarisBeam.exe' : 'DylarisBeam';
-    setBeamDownloadError('');
-    try {
-      const res = await fetch(`${API_URL}/tools/beam?platform=${platform}`);
-      if (!res.ok) {
-        setBeamDownloadError('Binary not available yet — build Beam first.');
-        return;
-      }
-      const contentType = res.headers.get('Content-Type') ?? '';
-      if (contentType.includes('application/json')) {
-        setBeamDownloadError('Binary not available yet — build Beam first.');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch {
-      setBeamDownloadError('Download failed.');
-    }
-  };
 
   const chartData = mode === 'live' ? liveData : historyData;
   const timeFormatter = mode === 'live' ? formatTime : formatTimeShort;
@@ -369,41 +340,6 @@ export default function OverviewView({ server }: OverviewViewProps) {
           </div>
         );
       })()}
-
-      {/* Beam Desktop App */}
-      <div className="card p-5">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-md bg-(--accent-ghost) border border-(--accent-border) flex items-center justify-center shrink-0">
-            <MonitorDown size={20} className="text-(--accent-light)" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="input-label flex items-center gap-1.5 mb-1">
-              Beam Desktop App
-              <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--accent-light) bg-(--accent-ghost) border border-(--accent-border) px-1.5 py-0.5 rounded-sm">Beta</span>
-            </h3>
-            <p className="text-xs text-(--base-06)">
-              Transfer large files, bulk upload/download server data directly — faster than SFTP.
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <div className="flex items-center gap-2">
-              {(['windows', 'linux', 'macos-arm'] as const).map(platform => (
-                <button
-                  key={platform}
-                  onClick={() => downloadBeam(platform)}
-                  className="btn btn-secondary px-3 py-2 text-xs flex items-center gap-1.5"
-                >
-                  <Download size={12} />
-                  {platform === 'windows' ? 'Windows' : platform === 'linux' ? 'Linux' : 'macOS'}
-                </button>
-              ))}
-            </div>
-            {beamDownloadError && (
-              <span className="text-[11px] text-(--error-light) font-mono">{beamDownloadError}</span>
-            )}
-          </div>
-        </div>
-      </div>
 
     </div>
   );

@@ -201,28 +201,29 @@ func seedSystemModules(db *sql.DB) {
 	modules := []struct {
 		name, typ, icon, url string
 		position             int
-		enabled              bool
+		enabled, system      bool
 	}{
-		{"Servers", "internal", "server", "/servers", 1, true},
-		{"Gateway", "internal", "globe", "/gateway", 20, true},
-		{"Library", "internal", "folder_open", "/library", 30, false},
-		{"Modpacks", "internal", "package", "/modpacks", 35, false},
-		{"Infrastructure", "internal", "cpu", "/infrastructure", 40, true},
+		{"Servers", "internal", "server", "/servers", 1, true, true},
+		{"Admin", "internal", "shield-check", "/admin", 2, true, true},
+		{"Infrastructure", "internal", "cpu", "/infrastructure", 3, true, true},
+		{"Gateway", "internal", "globe", "/gateway", 4, true, false},
+		{"Library", "internal", "folder-open", "/library", 5, false, false},
 	}
 	for _, m := range modules {
 		db.Exec(`
 			INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position)
-			SELECT $1, $2, $3, $4, $6, TRUE, $5
-			WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = $1 AND is_system = TRUE)
-		`, m.name, m.typ, m.icon, m.url, m.position, m.enabled)
+			SELECT $1, $2, $3, $4, $6, $7, $5
+			WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = $1)
+		`, m.name, m.typ, m.icon, m.url, m.position, m.enabled, m.system)
 	}
 
-	// Migrate existing deployments: ensure correct positions and state
-	db.Exec(`UPDATE modules SET position = 1, is_enabled = TRUE WHERE name = 'Servers' AND is_system = TRUE`)
-	db.Exec(`UPDATE modules SET position = 20, is_enabled = TRUE WHERE name = 'Gateway' AND is_system = TRUE`)
-	db.Exec(`UPDATE modules SET position = 30 WHERE name = 'Library' AND is_system = TRUE`)
-	db.Exec(`UPDATE modules SET icon = 'cpu' WHERE name = 'Infrastructure' AND is_system = TRUE AND icon = 'server'`)
-	db.Exec(`DELETE FROM modules WHERE name = 'Console' AND is_system = TRUE`)
+	// Migrate existing deployments: ensure correct positions, icons, and system flags
+	db.Exec(`UPDATE modules SET position = 1, is_enabled = TRUE, is_system = TRUE WHERE name = 'Servers'`)
+	db.Exec(`INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position) SELECT 'Admin', 'internal', 'shield-check', '/admin', TRUE, TRUE, 2 WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Admin')`)
+	db.Exec(`UPDATE modules SET position = 3, is_system = TRUE, icon = 'cpu' WHERE name = 'Infrastructure'`)
+	db.Exec(`UPDATE modules SET position = 4, is_system = FALSE, is_enabled = TRUE WHERE name = 'Gateway'`)
+	db.Exec(`UPDATE modules SET position = 5, is_system = FALSE, icon = 'folder-open' WHERE name = 'Library'`)
+	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files', 'Tickets') AND is_system = TRUE`)
 
 	// Migrate route limits: old semantics had 0 = unlimited, new semantics use -1 = unlimited
 	db.Exec(`UPDATE gateway_route_limits SET max_routes = -1 WHERE max_routes = 0`)

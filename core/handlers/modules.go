@@ -32,14 +32,11 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 	// === AUTO-SEED LOGIK ===
 	if len(modules) == 0 {
 		defaultModules := []models.Module{
-			// Servers is the only module that MUST be active by default
 			{Name: "Servers", Type: "internal", Icon: "server", URL: "/servers", IsEnabled: true, IsSystem: true, Position: 1},
-
-			// The rest are "hidden" (IsEnabled: false) and not deletable (IsSystem: true)
-			{Name: "Gateway", Type: "internal", Icon: "globe", URL: "/gateway", IsEnabled: true, IsSystem: true, Position: 20},
-			{Name: "Files", Type: "internal", Icon: "folder", URL: "/files", IsEnabled: false, IsSystem: true, Position: 50},
-			{Name: "Tickets", Type: "internal", Icon: "ticket", URL: "/tickets", IsEnabled: false, IsSystem: true, Position: 60},
-			{Name: "Modpacks", Type: "iframe", Icon: "package-open", URL: "", IsEnabled: false, IsSystem: true, Position: 70},
+			{Name: "Admin", Type: "internal", Icon: "shield-check", URL: "/admin", IsEnabled: true, IsSystem: true, Position: 2},
+			{Name: "Infrastructure", Type: "internal", Icon: "cpu", URL: "/infrastructure", IsEnabled: true, IsSystem: true, Position: 3},
+			{Name: "Gateway", Type: "internal", Icon: "globe", URL: "/gateway", IsEnabled: true, IsSystem: false, Position: 4},
+			{Name: "Library", Type: "internal", Icon: "folder-open", URL: "/library", IsEnabled: false, IsSystem: false, Position: 5},
 		}
 
 		for _, m := range defaultModules {
@@ -113,6 +110,35 @@ func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// UpdateModulePositionHandler PATCH /modules/{id}/position
+func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	var req struct {
+		Position int `json:"position"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	if err := h.state.Store.UpdateModulePosition(id, req.Position); err != nil {
+		sendJSONError(w, "Update failed", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
 // ToggleModuleHandler for enabling/disabling modules
 func (h *ModuleHandler) ToggleModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -141,7 +167,7 @@ func (h *ModuleHandler) ToggleModuleHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Module not found", 404)
 		return
 	}
-	if (mod.Name == "Servers" || mod.Name == "Gateway") && !req.IsEnabled {
+	if mod.IsSystem && !req.IsEnabled {
 		sendJSONError(w, mod.Name+" module cannot be disabled", 400)
 		return
 	}

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { logout, getProfile, updateProfile as apiUpdateProfile, getModules, getServers, deleteServer, updateServerName, updateServerResources, serverPower, getFeatureSettings, getServerStoragePath, migrateServerStorage, getServerRoutes, getRoutingMode, GatewayRoute, AppModule, Server, User, TabPermissions, ServerStats, StoragePathInfo, RoutingMode, FileAccessMode } from '@/lib/api';
+import { logout, getProfile, updateProfile as apiUpdateProfile, getModules, getServers, deleteServer, updateServerName, updateServerResources, serverPower, getFeatureSettings, getServerStoragePath, migrateServerStorage, getServerRoutes, getRoutingMode, getBeamSettings, GatewayRoute, AppModule, Server, User, TabPermissions, ServerStats, StoragePathInfo, RoutingMode, FileAccessMode, BeamSettings } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { Server as ServerIcon, PlusCircle, Wrench, ChevronDown, UserCog, LogOut, Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull, House, Terminal, FolderOpen, Settings, Users, HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
@@ -21,6 +21,7 @@ import LibraryView from '@/views/LibraryView';
 import NetworkView from '@/views/NetworkView';
 import GatewayView from '@/views/GatewayView';
 import InfrastructureView from '@/views/InfrastructureView';
+import AdminView from '@/views/AdminView';
 
 // Components
 import CreateServerWizard from '@/components/CreateServerWizard';
@@ -86,6 +87,7 @@ export default function Dashboard() {
     // Routing mode
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>('sftp');
+    const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
 
     // Edit resources — port fields
     const [editHostPort, setEditHostPort] = useState(0);
@@ -137,6 +139,10 @@ export default function Dashboard() {
                      setRoutingMode(res.mode || 'ip_port');
                      setFileAccessMode(res.fileMode || 'sftp');
                  }
+             });
+
+             getBeamSettings().then(res => {
+                 if (res.success && res.settings) setBeamSettings(res.settings);
              });
 
         } else {
@@ -379,6 +385,10 @@ export default function Dashboard() {
             return <InfrastructureView />;
         }
 
+        if (activeModule.name === 'Admin') {
+            return <AdminView />;
+        }
+
         if (activeModule.name === 'Servers') {
             if (!selectedServer) return (
                 <div className="flex h-full items-center justify-center text-(--base-06) flex-col">
@@ -397,20 +407,58 @@ export default function Dashboard() {
                 case 'console': return <ConsoleView server={selectedServer} liveStats={liveStats} />;
                 case 'file-browser': return (
                     <div className="flex flex-col gap-3 h-full">
-                        {fileAccessMode !== 'beam' && selectedServer.nodeAddress && (
-                            <div className="flex items-center gap-3 px-3 py-2 bg-(--base-02) border border-(--base-03) rounded-lg shrink-0">
-                                <Terminal size={13} className="text-(--base-06) shrink-0" />
-                                <code className="text-xs font-mono text-(--base-07) flex-1 min-w-0 truncate">
-                                    sftp {user?.username}@{selectedServer.nodeAddress} -p 2222
-                                </code>
-                                <button
-                                    onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${selectedServer.nodeAddress} -p 2222`)}
-                                    className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0"
-                                    title="Copy SFTP command"
-                                >
-                                    <Copy size={12} />
-                                </button>
-                                <span className="text-xs text-(--base-05) shrink-0 hidden sm:block">Password = your Dylaris password</span>
+                        {/* Connection info bar */}
+                        {(fileAccessMode === 'sftp' || fileAccessMode === 'both' || beamSettings?.downloadLink) && (
+                            <div className="card px-4 py-3 flex flex-wrap items-center gap-4 shrink-0">
+                                {/* SFTP section */}
+                                {(fileAccessMode === 'sftp' || fileAccessMode === 'both') && selectedServer.nodeAddress && (
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <Terminal size={14} className="text-(--base-06) shrink-0" />
+                                        <div className="min-w-0">
+                                            <div className="input-label mb-0.5">SFTP</div>
+                                            <div className="flex items-center gap-2 font-mono text-xs text-(--base-08)">
+                                                <span>{selectedServer.nodeAddress}</span>
+                                                <span className="text-(--base-05)">:</span>
+                                                <span>2222</span>
+                                                <span className="text-(--base-05)">·</span>
+                                                <span>{user?.username}</span>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${selectedServer.nodeAddress} -p 2222`)}
+                                            className="text-(--base-05) hover:text-(--base-09) transition-colors shrink-0 p-1 rounded"
+                                            title="Copy SFTP command"
+                                        >
+                                            <Copy size={13} />
+                                        </button>
+                                    </div>
+                                )}
+                                {/* Separator */}
+                                {(fileAccessMode === 'both') && beamSettings?.relayAddress && (
+                                    <div className="w-px h-8 bg-(--base-03) hidden sm:block" />
+                                )}
+                                {/* Beam section */}
+                                {(fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.relayAddress && (
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <Globe size={14} className="text-(--accent-light) shrink-0" />
+                                        <div className="min-w-0">
+                                            <div className="input-label mb-0.5">Beam Relay</div>
+                                            <div className="font-mono text-xs text-(--base-08)">{beamSettings.relayAddress}</div>
+                                        </div>
+                                    </div>
+                                )}
+                                {/* Download link (always show if set) */}
+                                {beamSettings?.downloadLink && (
+                                    <a
+                                        href={beamSettings.downloadLink}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="btn btn-secondary text-xs px-3 py-1.5 ml-auto shrink-0"
+                                    >
+                                        <FolderOpen size={12} />
+                                        Download Beam
+                                    </a>
+                                )}
                             </div>
                         )}
                         <FileBrowserView serverUuid={selectedServer.uuid} currentServerPath={selectedServer.activeSubServer || ''} />

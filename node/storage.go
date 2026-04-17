@@ -24,11 +24,12 @@ type StorageManager struct {
 
 // StorageInfo holds disk usage information for a single storage path.
 type StorageInfo struct {
-	Path        string `json:"path"`
-	TotalBytes  uint64 `json:"total_bytes"`
-	FreeBytes   uint64 `json:"free_bytes"`
-	UsedBytes   uint64 `json:"used_bytes"`
-	ServerCount int    `json:"server_count"`
+	Path        string   `json:"path"`
+	TotalBytes  uint64   `json:"total_bytes"`
+	FreeBytes   uint64   `json:"free_bytes"`
+	UsedBytes   uint64   `json:"used_bytes"`
+	ServerCount int      `json:"server_count"`
+	ServerUUIDs []string `json:"server_uuids"` // Top-level UUID directories on disk
 }
 
 // NewStorageManager creates a StorageManager with the given paths.
@@ -230,12 +231,14 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 			info.UsedBytes = total - free
 		}
 
-		// Count server directories
+		// Count and list server directories (UUID folders)
 		entries, err := os.ReadDir(p)
+		info.ServerUUIDs = []string{}
 		if err == nil {
 			for _, e := range entries {
 				if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 					info.ServerCount++
+					info.ServerUUIDs = append(info.ServerUUIDs, e.Name())
 				}
 			}
 		}

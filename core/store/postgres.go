@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"dylaris-core/models"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -406,6 +407,14 @@ func (s *PostgresStore) UpdateServerProxyID(id int, proxyID *int) error {
 	return err
 }
 
+func (s *PostgresStore) UpdateServerOwner(id int, ownerID *int) error {
+	if ownerID == nil {
+		return fmt.Errorf("owner_id cannot be null (use DeleteServer to remove orphaned DB entries)")
+	}
+	_, err := s.db.Exec("UPDATE servers SET owner_id = $1 WHERE id = $2", *ownerID, id)
+	return err
+}
+
 func (s *PostgresStore) CountServersByOwner(ownerID int) (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM servers WHERE owner_id = $1", ownerID).Scan(&count)
@@ -629,6 +638,11 @@ func (s *PostgresStore) DeleteModule(id int) error {
 
 func (s *PostgresStore) UpdateModuleStatus(id int, isEnabled bool) error {
 	_, err := s.db.Exec("UPDATE modules SET is_enabled = $1 WHERE id = $2", isEnabled, id)
+	return err
+}
+
+func (s *PostgresStore) UpdateModulePosition(id int, position int) error {
+	_, err := s.db.Exec("UPDATE modules SET position = $1 WHERE id = $2", position, id)
 	return err
 }
 

@@ -288,6 +288,8 @@ type GatewayLimits struct {
 	PortMcEnabled    bool `json:"portMcEnabled"`
 	PortHttps        int  `json:"portHttps"`
 	PortHttpsEnabled bool `json:"portHttpsEnabled"`
+	PortHttp         int  `json:"portHttp"`
+	PortHttpEnabled  bool `json:"portHttpEnabled"`
 }
 
 // GetGatewaySettings GET /api/settings/gateway
@@ -340,6 +342,8 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 			PortMcEnabled:    getSetting("gateway_port_mc_enabled") != "false",
 			PortHttps:        getLimit("port:443"),
 			PortHttpsEnabled: getSetting("gateway_port_https_enabled") != "false",
+			PortHttp:         getLimit("port:80"),
+			PortHttpEnabled:  getSetting("gateway_port_http_enabled") == "true",
 		},
 	}
 
@@ -389,6 +393,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	portSettings := []struct{ k, v string }{
 		{"gateway_port_mc_enabled", fmt.Sprintf("%t", req.Limits.PortMcEnabled)},
 		{"gateway_port_https_enabled", fmt.Sprintf("%t", req.Limits.PortHttpsEnabled)},
+		{"gateway_port_http_enabled", fmt.Sprintf("%t", req.Limits.PortHttpEnabled)},
 	}
 	for _, p := range portSettings {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -407,6 +412,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		{"per_server", req.Limits.PerServer},
 		{"port:25565", req.Limits.PortMc},
 		{"port:443", req.Limits.PortHttps},
+		{"port:80", req.Limits.PortHttp},
 	}
 	for _, l := range limits {
 		if err := h.state.Store.SetGatewayRouteLimit(l.scope, l.max); err != nil {
@@ -526,16 +532,11 @@ type BeamSettings struct {
 	RelayAddress string `json:"relayAddress"` // Public BeamRelay address for clients
 	BwLimit      int64  `json:"bwLimit"`      // Bytes/sec, 0 = unlimited
 	Enabled      bool   `json:"enabled"`
+	DownloadLink string `json:"downloadLink"` // Optional download URL shown in Files tab
 }
 
-// GetBeamSettings GET /api/settings/beam
+// GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)
 func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	settings := h.LoadBeamSettings()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -566,6 +567,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.relay_address", req.RelayAddress},
 		{"beam.bw_limit", fmt.Sprintf("%d", req.BwLimit)},
 		{"beam.enabled", enabledStr},
+		{"beam.download_link", req.DownloadLink},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -594,6 +596,7 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 
 	settings := BeamSettings{
 		RelayAddress: getSetting("beam.relay_address"),
+		DownloadLink: getSetting("beam.download_link"),
 		Enabled:      true,
 	}
 

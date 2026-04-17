@@ -60,6 +60,7 @@ type Store interface {
 	GetAllActiveServers() ([]models.Server, error)
 	CountServersByOwner(ownerID int) (int, error)
 	UpdateServerProxyID(id int, proxyID *int) error
+	UpdateServerOwner(id int, ownerID *int) error
 
 	// --- Server Invites ---
 	CreateInvite(serverID, userID, invitedBy int, permissions map[string]bool) error
@@ -75,6 +76,7 @@ type Store interface {
 	CreateModule(mod *models.Module) (int, error)
 	DeleteModule(id int) error
 	UpdateModuleStatus(id int, isEnabled bool) error
+	UpdateModulePosition(id int, position int) error
 
 	// --- Settings ---
 	GetSetting(key string) (string, error)

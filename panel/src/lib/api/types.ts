@@ -134,6 +134,7 @@ export const getModules = () => fetchAPI('/modules');
 export const createModule = (data: Partial<AppModule>) => fetchAPI('/modules', { method: 'POST', body: JSON.stringify(data) });
 export const deleteModule = (id: number) => fetchAPI(`/modules/${id}`, { method: 'DELETE' });
 export const toggleModule = (id: number, isEnabled: boolean) => fetchAPI(`/modules/${id}/toggle`, { method: 'PATCH', body: JSON.stringify({ isEnabled }) });
+export const updateModulePosition = (id: number, position: number) => fetchAPI(`/modules/${id}/position`, { method: 'PATCH', body: JSON.stringify({ position }) });
 
 // --- USERS ---
 export const getUsers = () => fetchAPI('/users');
@@ -355,6 +356,8 @@ export interface GatewayLimits {
     portMcEnabled: boolean;
     portHttps: number;
     portHttpsEnabled: boolean;
+    portHttp: number;
+    portHttpEnabled: boolean;
 }
 
 export interface GatewaySettings {
@@ -395,3 +398,40 @@ export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessM
 export const getServerRoutes = (serverId: number) => fetchAPI(`/servers/${serverId}/routes`);
 export const createServerRoute = (serverId: number, data: { domain: string; targetPort: number }) => fetchAPI(`/servers/${serverId}/routes`, { method: 'POST', body: JSON.stringify(data) });
 export const deleteServerRoute = (serverId: number, routeId: number) => fetchAPI(`/servers/${serverId}/routes/${routeId}`, { method: 'DELETE' });
+
+// --- BEAM SETTINGS ---
+export interface BeamSettings {
+    relayAddress: string;
+    bwLimit: number;
+    enabled: boolean;
+    downloadLink?: string;
+}
+export const getBeamSettings = (): Promise<{ success: boolean; settings?: BeamSettings }> => fetchAPI('/settings/beam');
+export const saveBeamSettings = (data: BeamSettings) => fetchAPI('/settings/beam', { method: 'POST', body: JSON.stringify(data) });
+
+// --- ADMIN API ---
+export interface AdminServer {
+    id: number;
+    uuid: string;
+    name: string;
+    owner?: string;    // json:"owner" from models.Server.OwnerName
+    node?: string;     // json:"node" from models.Server.NodeName
+    nodeId?: number;
+    status: string;
+    activeSubServer?: string;
+}
+export interface DiskAnalysis {
+    matched: { uuid: string; serverName: string; ownerName: string; status: string }[];
+    orphaned: { uuid: string }[];
+    missing: { uuid: string; serverName: string }[];
+}
+export const getAdminServers = (params?: { search?: string; orphaned?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.search) q.set('search', params.search);
+    if (params?.orphaned) q.set('orphaned', 'true');
+    return fetchAPI(`/admin/servers${q.toString() ? '?' + q.toString() : ''}`);
+};
+export const getAdminDiskAnalysis = (nodeId: number): Promise<{ success: boolean } & DiskAnalysis> => fetchAPI(`/admin/nodes/${nodeId}/disk-analysis`);
+export const updateServerOwner = (serverId: number, userId: number | null) => fetchAPI(`/admin/servers/${serverId}/owner`, { method: 'PATCH', body: JSON.stringify({ userId }) });
+export const getAdminFiles = (nodeId: number, uuid: string, path?: string) => fetchAPI(`/admin/files?nodeId=${nodeId}&uuid=${encodeURIComponent(uuid)}${path ? `&path=${encodeURIComponent(path)}` : ''}`);
+export const deleteOrphanedFolder = (nodeId: number, uuid: string) => fetchAPI(`/admin/nodes/${nodeId}/orphan?uuid=${encodeURIComponent(uuid)}`, { method: 'DELETE' });

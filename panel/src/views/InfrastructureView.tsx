@@ -14,6 +14,7 @@ interface StorageInfo {
   free_bytes: number;
   used_bytes: number;
   server_count: number;
+  server_uuids?: string[];
 }
 
 async function fetchNodeStorage(nodeId: number): Promise<StorageInfo[]> {
@@ -149,12 +150,28 @@ function NodeCard({ node, onDelete }: { node: NodeInfo; onDelete: (node: NodeInf
       </div>
 
       {/* Info row */}
-      <div className="flex items-center gap-4 pt-2 border-t border-(--base-03)">
+      <div className="flex items-center gap-4 pt-2 border-t border-(--base-03) flex-wrap">
         <div className="flex items-center gap-1.5">
           <Server size={11} className="text-(--base-05)" />
           <span className="text-xs font-mono text-(--base-07)">
             <span className="text-(--base-09) font-semibold">{serverCount}</span>
-            <span className="text-(--base-06)"> server{serverCount !== 1 ? 's' : ''}</span>
+            <span className="text-(--base-06)"> db</span>
+            {storageData && (() => {
+              const diskCount = storageData.reduce((sum, s) => sum + (s.server_uuids?.length ?? s.server_count), 0);
+              const orphaned = Math.max(0, diskCount - serverCount);
+              return (
+                <>
+                  <span className="text-(--base-04)"> / </span>
+                  <span className="text-(--base-09) font-semibold">{diskCount}</span>
+                  <span className="text-(--base-06)"> disk</span>
+                  {orphaned > 0 && (
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-0 rounded text-[9px] font-mono bg-(--warning-ghost) text-(--warning) border border-(--warning-border)">
+                      {orphaned} orphaned
+                    </span>
+                  )}
+                </>
+              );
+            })()}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
