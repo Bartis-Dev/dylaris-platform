@@ -421,9 +421,10 @@ export interface AdminServer {
     activeSubServer?: string;
 }
 export interface DiskAnalysis {
+    nodeOnline?: boolean;
     matched: { uuid: string; serverName: string; ownerName: string; status: string }[];
     orphaned: { uuid: string }[];
-    missing: { uuid: string; serverName: string }[];
+    missing: { id: number; uuid: string; serverName: string }[];
 }
 export const getAdminServers = (params?: { search?: string; orphaned?: boolean }) => {
     const q = new URLSearchParams();

@@ -112,7 +112,17 @@ function StatCard({ label, value, sub, icon }: { label: string; value: string | 
   );
 }
 
-function NodeCard({ node, onDelete }: { node: NodeInfo; onDelete: (node: NodeInfo) => void }) {
+function NodeCard({
+  node,
+  onDelete,
+  gatewayEnabled,
+  onNavigateToAdminDisk,
+}: {
+  node: NodeInfo;
+  onDelete: (node: NodeInfo) => void;
+  gatewayEnabled: boolean;
+  onNavigateToAdminDisk: (nodeId: number) => void;
+}) {
   const isOnline = node.status === 'online';
   const displayName = node.token || node.name;
   const serverCount = node.serverCount ?? 0;
@@ -150,38 +160,50 @@ function NodeCard({ node, onDelete }: { node: NodeInfo; onDelete: (node: NodeInf
       </div>
 
       {/* Info row */}
-      <div className="flex items-center gap-4 pt-2 border-t border-(--base-03) flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <Server size={11} className="text-(--base-05)" />
-          <span className="text-xs font-mono text-(--base-07)">
-            <span className="text-(--base-09) font-semibold">{serverCount}</span>
-            <span className="text-(--base-06)"> db</span>
-            {storageData && (() => {
-              const diskCount = storageData.reduce((sum, s) => sum + (s.server_uuids?.length ?? s.server_count), 0);
-              const orphaned = Math.max(0, diskCount - serverCount);
-              return (
-                <>
-                  <span className="text-(--base-04)"> / </span>
-                  <span className="text-(--base-09) font-semibold">{diskCount}</span>
-                  <span className="text-(--base-06)"> disk</span>
-                  {orphaned > 0 && (
-                    <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-0 rounded text-[9px] font-mono bg-(--warning-ghost) text-(--warning) border border-(--warning-border)">
-                      {orphaned} orphaned
-                    </span>
-                  )}
-                </>
-              );
-            })()}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Link2 size={11} className="text-(--base-05)" />
-          <span className="text-xs font-mono text-(--base-07)">
-            <span className="text-(--base-09) font-semibold">{linkCount}</span>
-            <span className="text-(--base-06)"> link{linkCount !== 1 ? 's' : ''}</span>
-          </span>
-        </div>
-      </div>
+      {(() => {
+        const diskCount = storageData
+          ? storageData.reduce((sum, s) => sum + (s.server_uuids?.length ?? s.server_count), 0)
+          : null;
+        const orphaned = diskCount !== null ? Math.max(0, diskCount - serverCount) : 0;
+        return (
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-(--base-03)">
+            {/* Server count + orphaned button */}
+            <div className="flex items-center gap-2 min-w-0">
+              <Server size={11} className="text-(--base-05) shrink-0" />
+              <span className="text-xs font-mono text-(--base-07)">
+                <span className="text-(--base-09) font-semibold">{serverCount}</span>
+                {diskCount !== null && (
+                  <>
+                    <span className="text-(--base-04)">/</span>
+                    <span className="text-(--base-09) font-semibold">{diskCount}</span>
+                  </>
+                )}
+                <span className="text-(--base-06)"> server</span>
+              </span>
+              {orphaned > 0 && (
+                <button
+                  onClick={() => onNavigateToAdminDisk(node.id)}
+                  className="px-1.5 py-0.5 rounded border border-(--warning-border) bg-(--warning-ghost) text-(--warning) text-[10px] font-mono hover:bg-(--warning-border)/30 transition-colors cursor-pointer"
+                  title="In Disk Analysis öffnen"
+                >
+                  {orphaned} orphaned
+                </button>
+              )}
+            </div>
+
+            {/* Links — only when Gateway module is enabled */}
+            {gatewayEnabled && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Link2 size={11} className="text-(--base-05)" />
+                <span className="text-xs font-mono text-(--base-07)">
+                  <span className="text-(--base-09) font-semibold">{linkCount}</span>
+                  <span className="text-(--base-06)"> link{linkCount !== 1 ? 's' : ''}</span>
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* CPU */}
       {hasStats && node.cpuUsage !== undefined && (
@@ -353,7 +375,15 @@ function GateCard({ gate }: { gate: GatewayGate }) {
   );
 }
 
-export default function InfrastructureView() {
+interface InfrastructureViewProps {
+  gatewayEnabled?: boolean;
+  onNavigateToAdminDisk?: (nodeId: number) => void;
+}
+
+export default function InfrastructureView({
+  gatewayEnabled = false,
+  onNavigateToAdminDisk = () => {},
+}: InfrastructureViewProps = {}) {
   const [data, setData] = useState<InfrastructureData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -512,7 +542,13 @@ export default function InfrastructureView() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {nodes.map(node => (
-              <NodeCard key={node.id} node={node} onDelete={openDeleteModal} />
+              <NodeCard
+                key={node.id}
+                node={node}
+                onDelete={openDeleteModal}
+                gatewayEnabled={gatewayEnabled}
+                onNavigateToAdminDisk={onNavigateToAdminDisk}
+              />
             ))}
           </div>
         )

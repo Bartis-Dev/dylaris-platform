@@ -285,9 +285,11 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	diskUUIDs := make(map[string]bool)
+	nodeOnline := false
 	if h.state.Redis != nil {
 		key := "dylaris:discovery:" + node.Token
 		if val, redisErr := h.state.Redis.Get(r.Context(), key).Result(); redisErr == nil {
+			nodeOnline = true
 			var hb struct {
 				Storage []storageHeartbeatEntry `json:"storage"`
 			}
@@ -311,6 +313,7 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 		UUID string `json:"uuid"`
 	}
 	type missingEntry struct {
+		ID   int    `json:"id"`
 		UUID string `json:"uuid"`
 		Name string `json:"serverName"`
 	}
@@ -326,17 +329,21 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 			orphaned = append(orphaned, orphanedEntry{UUID: u})
 		}
 	}
-	for u, srv := range dbByUUID {
-		if !diskUUIDs[u] {
-			missing = append(missing, missingEntry{UUID: u, Name: srv.Name})
+	// Heartbeat-Safety: missing list nur bei online Node berechnen
+	if nodeOnline {
+		for u, srv := range dbByUUID {
+			if !diskUUIDs[u] {
+				missing = append(missing, missingEntry{ID: srv.ID, UUID: u, Name: srv.Name})
+			}
 		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"matched":  matched,
-		"orphaned": orphaned,
-		"missing":  missing,
+		"success":    true,
+		"nodeOnline": nodeOnline,
+		"matched":    matched,
+		"orphaned":   orphaned,
+		"missing":    missing,
 	})
 }
 

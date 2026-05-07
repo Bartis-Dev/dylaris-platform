@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-    Search, RefreshCw, Trash2, UserCheck, AlertTriangle, HardDrive,
+    Search, RefreshCw, Trash2, UserCheck, AlertTriangle,
     ChevronDown, ChevronRight, Loader2, X, Check
 } from 'lucide-react';
 import {
     getAdminServers, getAdminDiskAnalysis, updateServerOwner, deleteOrphanedFolder,
-    getNodes, getUsers, AdminServer, DiskAnalysis, Node, User
+    deleteServer, getNodes, getUsers, AdminServer, DiskAnalysis, Node, User
 } from '@/lib/api';
 
 // ----------------------------------------------------------------
@@ -125,10 +125,21 @@ function AssignOwnerModal({
 // ----------------------------------------------------------------
 // Disk Analysis Panel (per node, on-demand)
 // ----------------------------------------------------------------
-function DiskAnalysisPanel({ node, onOrphanDeleted }: { node: Node; onOrphanDeleted: () => void }) {
+function DiskAnalysisPanel({
+    node,
+    onOrphanDeleted,
+    autoLoad,
+    onAutoLoadConsumed,
+}: {
+    node: Node;
+    onOrphanDeleted: () => void;
+    autoLoad?: boolean;
+    onAutoLoadConsumed?: () => void;
+}) {
     const [data, setData] = useState<DiskAnalysis | null>(null);
     const [loading, setLoading] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
+    const [deletingDbId, setDeletingDbId] = useState<number | null>(null);
     const [expanded, setExpanded] = useState(false);
 
     const load = async () => {
@@ -136,10 +147,23 @@ function DiskAnalysisPanel({ node, onOrphanDeleted }: { node: Node; onOrphanDele
         const res = await getAdminDiskAnalysis(node.id);
         setLoading(false);
         if (res.success) {
-            setData({ matched: res.matched ?? [], orphaned: res.orphaned ?? [], missing: res.missing ?? [] });
+            setData({
+                nodeOnline: res.nodeOnline,
+                matched: res.matched ?? [],
+                orphaned: res.orphaned ?? [],
+                missing: res.missing ?? [],
+            });
             setExpanded(true);
         }
     };
+
+    // Auto-load + expand when navigated to from Infrastructure NodeCard
+    useEffect(() => {
+        if (autoLoad && !data && !loading) {
+            load();
+            onAutoLoadConsumed?.();
+        }
+    }, [autoLoad]);
 
     const handleDelete = async (orphanUUID: string) => {
         if (!confirm(`Delete orphaned folder ${orphanUUID} from node "${node.name}"? This cannot be undone.`)) return;
@@ -148,6 +172,19 @@ function DiskAnalysisPanel({ node, onOrphanDeleted }: { node: Node; onOrphanDele
         setDeleting(null);
         if (res.success) {
             setData(prev => prev ? { ...prev, orphaned: prev.orphaned.filter(o => o.uuid !== orphanUUID) } : prev);
+            onOrphanDeleted();
+        } else {
+            alert(res.message ?? 'Delete failed');
+        }
+    };
+
+    const handleDeleteDbLeiche = async (m: { id: number; serverName: string }) => {
+        if (!confirm(`"${m.serverName}" aus DB entfernen? Der Disk-Folder existiert nicht mehr — der DB-Eintrag ist eine Leiche.`)) return;
+        setDeletingDbId(m.id);
+        const res = await deleteServer(m.id);
+        setDeletingDbId(null);
+        if (res.success) {
+            setData(prev => prev ? { ...prev, missing: prev.missing.filter(x => x.id !== m.id) } : prev);
             onOrphanDeleted();
         } else {
             alert(res.message ?? 'Delete failed');
@@ -210,17 +247,35 @@ function DiskAnalysisPanel({ node, onOrphanDeleted }: { node: Node; onOrphanDele
                         </div>
                     )}
 
-                    {/* Missing from disk */}
-                    {data.missing.length > 0 && (
+                    {/* Heartbeat-Safety Warning when node is not online */}
+                    {data.nodeOnline === false && (
+                        <div className="flex items-start gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2.5 text-xs text-(--warning)">
+                            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                            <span>Node ist offline / kein Heartbeat — DB-Leichen können nicht zuverlässig erkannt werden.</span>
+                        </div>
+                    )}
+
+                    {/* Missing from disk (DB-Leichen) — nur anzeigen wenn Node online war */}
+                    {data.nodeOnline !== false && data.missing.length > 0 && (
                         <div>
                             <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) mb-2">
-                                Missing from disk (DB only)
+                                Missing from disk (DB-Leichen)
                             </p>
                             <div className="space-y-1">
                                 {data.missing.map(m => (
                                     <div key={m.uuid} className="flex items-center justify-between px-3 py-2 bg-(--base-02) rounded-md border border-(--base-03)">
-                                        <span className="text-sm text-(--base-07)">{m.serverName}</span>
-                                        <span className="font-mono text-[10px] text-(--base-05) ml-3">{m.uuid}</span>
+                                        <div className="min-w-0">
+                                            <span className="text-sm text-(--base-07)">{m.serverName}</span>
+                                            <span className="font-mono text-[10px] text-(--base-05) ml-2">{m.uuid}</span>
+                                        </div>
+                                        <button
+                                            onClick={() => handleDeleteDbLeiche(m)}
+                                            disabled={deletingDbId === m.id}
+                                            className="flex items-center gap-1.5 text-[11px] text-(--error-light) hover:bg-(--error-ghost) px-2 py-1 rounded transition-colors ml-3 shrink-0"
+                                        >
+                                            {deletingDbId === m.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                            Aus DB entfernen
+                                        </button>
                                     </div>
                                 ))}
                             </div>
@@ -228,7 +283,7 @@ function DiskAnalysisPanel({ node, onOrphanDeleted }: { node: Node; onOrphanDele
                     )}
 
                     {/* Matched */}
-                    {data.orphaned.length === 0 && data.missing.length === 0 && (
+                    {data.nodeOnline !== false && data.orphaned.length === 0 && data.missing.length === 0 && (
                         <p className="text-xs text-(--success-light) flex items-center gap-1.5">
                             <Check size={13} />
                             All {data.matched.length} server folders match DB records
@@ -245,7 +300,12 @@ function DiskAnalysisPanel({ node, onOrphanDeleted }: { node: Node; onOrphanDele
 // ----------------------------------------------------------------
 type AdminTab = 'servers' | 'disk';
 
-export default function AdminView() {
+interface AdminViewProps {
+    initialFocus?: { tab: 'disk'; nodeId: number } | null;
+    onFocusConsumed?: () => void;
+}
+
+export default function AdminView({ initialFocus, onFocusConsumed }: AdminViewProps = {}) {
     const [tab, setTab] = useState<AdminTab>('servers');
     const [servers, setServers] = useState<AdminServer[]>([]);
     const [nodes, setNodes] = useState<Node[]>([]);
@@ -253,10 +313,19 @@ export default function AdminView() {
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
     const [assignTarget, setAssignTarget] = useState<AdminServer | null>(null);
-    const [deletingId, setDeletingId] = useState<number | null>(null);
+    const [autoExpandNodeId, setAutoExpandNodeId] = useState<number | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
 
     const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
+
+    // Deep-link from Infrastructure → Admin/Disk Analysis
+    useEffect(() => {
+        if (initialFocus?.tab === 'disk') {
+            setTab('disk');
+            setAutoExpandNodeId(initialFocus.nodeId);
+            onFocusConsumed?.();
+        }
+    }, [initialFocus]);
 
     useEffect(() => {
         setLoading(true);
@@ -416,7 +485,13 @@ export default function AdminView() {
                             <p className="text-sm text-(--base-05) text-center py-8">No nodes registered</p>
                         ) : (
                             nodes.map(n => (
-                                <DiskAnalysisPanel key={n.id} node={n} onOrphanDeleted={refresh} />
+                                <DiskAnalysisPanel
+                                    key={n.id}
+                                    node={n}
+                                    onOrphanDeleted={refresh}
+                                    autoLoad={autoExpandNodeId === n.id}
+                                    onAutoLoadConsumed={() => setAutoExpandNodeId(null)}
+                                />
                             ))
                         )}
                     </div>

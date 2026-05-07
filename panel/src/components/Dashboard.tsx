@@ -33,6 +33,7 @@ export default function Dashboard() {
     
     const [modules, setModules] = useState<AppModule[]>([]);
     const [activeModuleId, setActiveModuleId] = useState<string>('servers');
+    const [pendingAdminFocus, setPendingAdminFocus] = useState<{ tab: 'disk'; nodeId: number } | null>(null);
     
     // Server State
     const [servers, setServers] = useState<Server[]>([]);
@@ -382,11 +383,26 @@ export default function Dashboard() {
         }
 
         if (activeModule.name === 'Infrastructure') {
-            return <InfrastructureView />;
+            return (
+                <InfrastructureView
+                    gatewayEnabled={gatewayModuleEnabled}
+                    onNavigateToAdminDisk={(nodeId) => {
+                        const adminMod = modules.find(m => m.name === 'Admin');
+                        if (!adminMod) return;
+                        setPendingAdminFocus({ tab: 'disk', nodeId });
+                        setActiveModuleId(String(adminMod.id));
+                    }}
+                />
+            );
         }
 
         if (activeModule.name === 'Admin') {
-            return <AdminView />;
+            return (
+                <AdminView
+                    initialFocus={pendingAdminFocus}
+                    onFocusConsumed={() => setPendingAdminFocus(null)}
+                />
+            );
         }
 
         if (activeModule.name === 'Servers') {
