@@ -1,17 +1,15 @@
 "use client";
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { login } from '../lib/api/auth';
 
-interface LoginFormProps {
-  onLoginSuccess: () => void;
-}
-
-export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
+export default function LoginForm() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,10 +20,11 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
       const result = await login(username, password);
 
       if (result.success) {
-        localStorage.setItem('authToken', result.token);
-        onLoginSuccess();
+        const target = sessionStorage.getItem('postLoginRedirect') || '/servers';
+        sessionStorage.removeItem('postLoginRedirect');
+        router.push(target);
       } else {
-        setError(result.message || "Login failed.");
+        setError(result.message || 'Login failed.');
         setLoading(false);
       }
     } catch (err) {
@@ -49,9 +48,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
 
       <form onSubmit={handleLogin} className="space-y-5">
         <div className="flex flex-col gap-[5px]">
-          <label htmlFor="username" className="input-label">
-            Username
-          </label>
+          <label htmlFor="username" className="input-label">Username</label>
           <input
             type="text"
             id="username"
@@ -62,9 +59,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
           />
         </div>
         <div className="flex flex-col gap-[5px]">
-          <label htmlFor="password" className="input-label">
-            Password
-          </label>
+          <label htmlFor="password" className="input-label">Password</label>
           <input
             type="password"
             id="password"

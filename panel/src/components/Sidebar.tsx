@@ -1,16 +1,14 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import { Server, User } from '../lib/api';
-import { ShieldCheck, Search, X, ChevronDown, ChevronRight, PlusCircle, Network, Server as ServerIcon } from 'lucide-react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { Server } from '../lib/api';
+import { ShieldCheck, Search, X, ChevronDown, ChevronRight, PlusCircle, Network } from 'lucide-react';
+import { useAppData } from '@/lib/AppDataContext';
 
 interface SidebarProps {
-  servers: Server[];
-  activeServerId: number | null;
-  onServerSelect: (id: number) => void;
   onNewServer?: () => void;
-  currentUser?: User;
-  proxiesEnabled?: boolean;
 }
 
 interface ProxyGroup {
@@ -36,14 +34,12 @@ function buildProxyHierarchy(servers: Server[]) {
   const proxyMap = new Map<number, ProxyGroup>();
   const standaloneServers: Server[] = [];
 
-  // First pass: identify all proxies
   for (const s of servers) {
     if (s.serverType === 'proxy') {
       proxyMap.set(s.id, { proxy: s, children: [] });
     }
   }
 
-  // Second pass: assign children or standalone
   for (const s of servers) {
     if (s.serverType === 'proxy') continue;
     if (s.proxyId && proxyMap.has(s.proxyId)) {
@@ -56,7 +52,11 @@ function buildProxyHierarchy(servers: Server[]) {
   return { proxyGroups: Array.from(proxyMap.values()), standaloneServers };
 }
 
-export default function Sidebar({ servers, activeServerId, onServerSelect, onNewServer, currentUser, proxiesEnabled = true }: SidebarProps) {
+export default function Sidebar({ onNewServer }: SidebarProps) {
+  const { servers, user: currentUser, proxiesEnabled } = useAppData();
+  const params = useParams();
+  const activeServerId = params?.id ? Number(params.id) : null;
+
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,7 +66,6 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
 
   const isAdmin = currentUser?.isAdmin ?? false;
 
-  // Search filter: if a child matches, include its proxy for context
   const filteredServers = useMemo(() => {
     if (!searchQuery.trim()) return servers;
     const q = searchQuery.toLowerCase();
@@ -81,9 +80,7 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
 
       if (matches) {
         directMatches.add(s.id);
-        // If this is a child, also include its proxy
         if (s.proxyId) neededProxyIds.add(s.proxyId);
-        // If this is a proxy, include it
         if (s.serverType === 'proxy') neededProxyIds.add(s.id);
       }
     }
@@ -111,6 +108,7 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
 
   const toggleProxyCollapse = (proxyId: number, e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     setCollapsedProxies(prev => {
       const next = new Set(prev);
       if (next.has(proxyId)) next.delete(proxyId);
@@ -124,9 +122,9 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
     const isProxy = server.serverType === 'proxy';
     const roleLabel = server.role === 'inherited' ? 'Inherited' : server.role === 'invited' ? 'Invited' : isProxy ? 'Proxy' : 'Owner';
     return (
-      <button
+      <Link
         key={server.id}
-        onClick={() => onServerSelect(server.id)}
+        href={`/servers/${server.id}`}
         className={`w-full flex items-center justify-between gap-2.5 ${isChild ? 'py-[7px] px-2.5' : 'py-[9px] px-3'} rounded-md transition-all group ${
           isActive
             ? 'bg-(--base-04) border border-(--accent-border)'
@@ -142,7 +140,7 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
           </div>
         </div>
         <div className={`badge-dot ${getStatusDot(server.status)}`} title={server.status}></div>
-      </button>
+      </Link>
     );
   };
 
@@ -152,14 +150,13 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
 
     return (
       <div key={`proxy-${group.proxy.id}`} className="mb-1.5">
-        {/* Proxy Header */}
-        <div
+        <Link
+          href={`/servers/${group.proxy.id}`}
           className={`w-full flex items-center gap-2 py-[9px] px-3 rounded-md transition-all cursor-pointer group border-l-2 ${
             isProxyActive
               ? 'bg-(--base-04) border-l-(--accent) border border-(--accent-border)'
               : 'bg-(--base-02) border-l-(--accent)/40 border border-(--base-03) hover:bg-(--base-03) hover:border-(--base-04)'
           }`}
-          onClick={() => onServerSelect(group.proxy.id)}
         >
           <Network size={15} className="text-(--accent-light) shrink-0" />
           <div className="min-w-0 flex-1">
@@ -173,6 +170,7 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
           <span className="text-[10px] font-mono text-(--base-05) mr-1">({group.children.length})</span>
           <div className={`badge-dot ${getStatusDot(group.proxy.status)}`} title={group.proxy.status}></div>
           <button
+            type="button"
             onClick={(e) => toggleProxyCollapse(group.proxy.id, e)}
             className="p-0.5 rounded-md hover:bg-(--base-04) transition-colors"
           >
@@ -181,9 +179,8 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
               : <ChevronDown size={14} className="text-(--base-06)" />
             }
           </button>
-        </div>
+        </Link>
 
-        {/* Children */}
         {!isCollapsed && group.children.length > 0 && (
           <div className="ml-3 mt-1 pl-3 border-l border-(--base-04) space-y-1">
             {group.children.map(child => renderServerItem(child, true))}
@@ -218,7 +215,6 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
     );
   };
 
-  // Admin mode: group by owner, then apply proxy hierarchy within each group
   const renderAdminList = () => {
     const groups: Record<string, Server[]> = {};
     for (const s of filteredServers) {
@@ -252,17 +248,12 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
 
   return (
     <aside className="w-72 bg-(--base-01) border-r border-(--base-03) flex flex-col h-full shrink-0 z-20">
-      {/* Header */}
       <div className="shrink-0 px-4 pt-4 pb-2 border-b border-(--base-03)">
         <div className="flex items-center justify-between mb-2">
           {isAdmin ? (
             <button
               onClick={() => setIsAdminMode(!isAdminMode)}
-              className={`btn text-xs px-2.5 py-1 ${
-                isAdminMode
-                  ? 'btn-primary'
-                  : 'btn-secondary'
-              }`}
+              className={`btn text-xs px-2.5 py-1 ${isAdminMode ? 'btn-primary' : 'btn-secondary'}`}
             >
               <ShieldCheck size={14} />
               Admin
@@ -315,11 +306,8 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
         )}
       </div>
 
-      {/* Server List */}
       <div className="flex-1 overflow-y-auto px-3 pt-3 pb-2">
-        {isAdminMode ? (
-          renderAdminList()
-        ) : (
+        {isAdminMode ? renderAdminList() : (
           <>
             {activeTab === 'mine' && renderServerList(myServers)}
             {activeTab === 'invited' && (
@@ -331,7 +319,6 @@ export default function Sidebar({ servers, activeServerId, onServerSelect, onNew
         )}
       </div>
 
-      {/* New Server Button */}
       <div className="shrink-0 border-t border-(--base-03)">
         <button
           onClick={onNewServer}

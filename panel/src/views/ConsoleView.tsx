@@ -60,11 +60,11 @@ const COMMANDS = [
 
 interface ConsoleViewProps {
   server: Server;
-  liveStats?: ServerStats | null;
 }
 
-export default function ConsoleView({ server, liveStats }: ConsoleViewProps) {
+export default function ConsoleView({ server }: ConsoleViewProps) {
   const [lines, setLines] = useState<string[]>([]);
+  const [liveStats, setLiveStats] = useState<ServerStats | null>(null);
   const [command, setCommand] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +74,18 @@ export default function ConsoleView({ server, liveStats }: ConsoleViewProps) {
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
 
   const activeSubServer = server.activeSubServer || '';
+
+  // Stats stream (was passed as prop from Dashboard previously)
+  useEffect(() => {
+    setLiveStats(null);
+    const token = localStorage.getItem('token') || localStorage.getItem('authToken') || '';
+    const url = `${API_URL}/servers/${server.id}/stats/stream?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    es.onmessage = (e) => {
+      try { setLiveStats(JSON.parse(e.data) as ServerStats); } catch { /* ignore */ }
+    };
+    return () => { es.close(); };
+  }, [server.id]);
 
   useEffect(() => {
     setLines([]);
