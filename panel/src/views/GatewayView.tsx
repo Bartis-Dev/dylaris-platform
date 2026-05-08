@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     getGatewayRoutes, getGatewayGates, getGatewayLinks,
     deleteGatewayRoute, triggerGatewaySync,
     GatewayRoute, GatewayGate, GatewayLink
 } from '@/lib/api';
-import { Globe, Trash2, RefreshCw, AlertTriangle, X, ChevronDown, ExternalLink, Zap } from 'lucide-react';
+import {
+    Globe, Trash2, RefreshCw, AlertTriangle, X, ExternalLink, Zap,
+    Network, Server, Activity, Search, Copy, Check
+} from 'lucide-react';
 
 interface Toast {
     id: number;
@@ -14,15 +17,29 @@ interface Toast {
     type: 'success' | 'error';
 }
 
+function StatCard({ label, value, sub, icon }: { label: string; value: string | number; sub?: string; icon: React.ReactNode }) {
+    return (
+        <div className="card p-4 flex flex-col gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">{label}</span>
+            <div className="flex items-baseline gap-1.5">
+                <div className="text-(--accent-light) flex items-center" style={{ marginBottom: 1 }}>{icon}</div>
+                <span className="font-display text-2xl font-bold text-(--base-09) tabular-nums leading-none">{value}</span>
+                {sub && <span className="text-sm font-normal text-(--base-05)">{sub}</span>}
+            </div>
+        </div>
+    );
+}
+
 export default function GatewayView() {
     const [loading, setLoading] = useState(true);
     const [routes, setRoutes] = useState<GatewayRoute[]>([]);
     const [gates, setGates] = useState<GatewayGate[]>([]);
     const [links, setLinks] = useState<GatewayLink[]>([]);
+    const [search, setSearch] = useState('');
     const [deleteModal, setDeleteModal] = useState<GatewayRoute | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [toasts, setToasts] = useState<Toast[]>([]);
-    const [infoExpanded, setInfoExpanded] = useState(false);
+    const [copiedIP, setCopiedIP] = useState<string | null>(null);
     const toastCounter = useRef(0);
 
     const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
@@ -85,18 +102,62 @@ export default function GatewayView() {
         }
     };
 
+    const copyToClipboard = async (text: string) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopiedIP(text);
+            setTimeout(() => setCopiedIP(null), 1500);
+        } catch {
+            showToast('Copy failed', 'error');
+        }
+    };
+
+    const onlineGates = gates.filter(g => g.status === 'online');
+    const onlineLinks = links.filter(l => l.online);
+    const totalTunnels = gates.reduce((sum, g) => sum + ((g.stats as any)?.active_tunnels ?? 0), 0);
+    const gatewayDeployed = gates.length > 0 || links.length > 0;
+
+    const filteredRoutes = useMemo(() => {
+        if (!search.trim()) return routes;
+        const q = search.toLowerCase();
+        return routes.filter(r =>
+            r.domain.toLowerCase().includes(q) ||
+            (r.target_ip || '').toLowerCase().includes(q) ||
+            (r.link_name || '').toLowerCase().includes(q) ||
+            (r.server_name || '').toLowerCase().includes(q) ||
+            (r.owner_name || '').toLowerCase().includes(q),
+        );
+    }, [routes, search]);
+
     if (loading) {
         return <div className="flex items-center justify-center h-64 text-(--base-07)">Loading gateway...</div>;
     }
 
-    const gatewayDeployed = gates.length > 0 || links.length > 0;
-
     return (
-        <div className="max-w-5xl mx-auto">
+        <div className="h-full flex flex-col gap-4 overflow-y-auto">
 
-            {/* No gateway deployed — big info banner */}
+            {/* Header */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <Globe size={18} className="text-(--accent-light)" />
+                    </div>
+                    <h1 className="font-display text-xl font-bold text-(--base-09)">Gateway</h1>
+                </div>
+                {gatewayDeployed && (
+                    <button
+                        onClick={handleSync}
+                        className="btn px-3 py-1.5 rounded-md bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors flex items-center gap-1.5 text-sm"
+                    >
+                        <RefreshCw size={14} />
+                        Sync
+                    </button>
+                )}
+            </div>
+
+            {/* No gateway deployed — info card */}
             {!gatewayDeployed && (
-                <div className="card p-8 flex flex-col gap-5 mb-6 border-(--accent-border)/40">
+                <div className="card p-8 flex flex-col gap-5 border-(--accent-border)/40">
                     <div className="flex items-start gap-4">
                         <div className="w-10 h-10 rounded-lg bg-(--accent-ghost) flex items-center justify-center shrink-0 mt-0.5">
                             <Zap size={20} className="text-(--accent-light)" />
@@ -125,85 +186,127 @@ export default function GatewayView() {
                 </div>
             )}
 
-            {/* Gateway deployed — small collapsible info */}
-            {gatewayDeployed && (
-                <div className="mb-4">
-                    <button
-                        onClick={() => setInfoExpanded(v => !v)}
-                        className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-07) transition-colors"
-                    >
-                        <ChevronDown
-                            size={13}
-                            className="transition-transform duration-150"
-                            style={{ transform: infoExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-                        />
-                        Gateway info — {gates.length} gate{gates.length !== 1 ? 's' : ''}, {links.filter(l => l.online).length}/{links.length} links online
-                    </button>
-                    {infoExpanded && (
-                        <div className="mt-2 px-3 py-2.5 bg-(--base-02) border border-(--base-03) rounded-lg text-xs text-(--base-07) leading-relaxed">
-                            Traffic is routed through Gate servers via Link tunnels.
-                            Gates and Links auto-register via Redis — manage them from the Gateway infrastructure.
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Routes table — always shown when gateway is deployed */}
             {gatewayDeployed && (
                 <>
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="modal-title flex items-center gap-2">
-                            <Globe size={20} />
-                            Routes ({routes.length})
-                        </h2>
-                        <button
-                            onClick={handleSync}
-                            className="btn btn-secondary flex items-center gap-2 px-4 py-2 text-sm"
-                        >
-                            <RefreshCw size={14} />
-                            Sync
-                        </button>
+                    {/* Summary cards */}
+                    <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+                        <StatCard label="Routes" value={routes.length} icon={<Globe size={16} />} />
+                        <StatCard label="Gates" value={onlineGates.length} sub={`/ ${gates.length}`} icon={<Server size={16} />} />
+                        <StatCard label="Links" value={onlineLinks.length} sub={`/ ${links.length}`} icon={<Network size={16} />} />
+                        <StatCard label="Tunnels" value={totalTunnels} icon={<Activity size={16} />} />
                     </div>
 
-                    <div className="card p-6">
-                        {routes.length === 0 ? (
-                            <p className="text-(--base-06) text-sm italic">No routes configured</p>
-                        ) : (
-                            <div className="overflow-x-auto">
+                    {/* DNS Targets — Gate IPs to point DNS to */}
+                    {onlineGates.length > 0 && (
+                        <div className="card p-4 flex flex-col gap-2.5">
+                            <div className="flex items-center gap-2">
+                                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">DNS Targets</span>
+                                <span className="text-[11px] text-(--base-05)">— point your domains to one or more of these gate IPs</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {onlineGates.map(gate => (
+                                    <button
+                                        key={gate.gate_id}
+                                        onClick={() => copyToClipboard(gate.ip)}
+                                        className="group flex items-center gap-2 px-3 py-1.5 rounded-md bg-(--base-02) border border-(--base-03) hover:border-(--accent-border) transition-colors"
+                                        title={`${gate.name} — click to copy`}
+                                    >
+                                        <div className="w-1.5 h-1.5 rounded-full bg-(--success-light) shadow-[0_0_5px_var(--success-light)]" />
+                                        <span className="font-mono text-xs text-(--base-09)">{gate.ip}</span>
+                                        <span className="text-[10px] text-(--base-06) font-mono">{gate.name}</span>
+                                        {copiedIP === gate.ip
+                                            ? <Check size={12} className="text-(--success-light)" />
+                                            : <Copy size={12} className="text-(--base-05) group-hover:text-(--base-08) transition-colors" />
+                                        }
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Routes table */}
+                    <div className="card p-4 flex-1 flex flex-col gap-3 min-h-0">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-2">
+                                <h2 className="font-display text-base font-bold text-(--base-09)">Routes</h2>
+                                <span className="text-xs text-(--base-06)">
+                                    ({filteredRoutes.length}{search ? ` of ${routes.length}` : ''})
+                                </span>
+                            </div>
+                            <div className="relative max-w-sm flex-1 min-w-[180px]">
+                                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
+                                <input
+                                    type="text"
+                                    placeholder="Search domain, target, link, server, owner..."
+                                    value={search}
+                                    onChange={e => setSearch(e.target.value)}
+                                    className="input-field w-full pl-8 text-sm"
+                                />
+                                {search && (
+                                    <button
+                                        onClick={() => setSearch('')}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-(--base-05) hover:text-(--base-07) p-0.5"
+                                    >
+                                        <X size={13} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-auto min-h-0">
+                            {routes.length === 0 ? (
+                                <p className="text-(--base-06) text-sm italic py-8 text-center">No routes configured. Add a route from a Server's Network tab.</p>
+                            ) : filteredRoutes.length === 0 ? (
+                                <p className="text-(--base-06) text-sm italic py-8 text-center">No routes match „{search}"</p>
+                            ) : (
                                 <table className="w-full text-sm">
-                                    <thead>
+                                    <thead className="sticky top-0 bg-(--base-02) z-10">
                                         <tr className="border-b border-(--base-03)">
-                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-3 pr-4">Domain</th>
-                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-3 pr-4">Target</th>
-                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-3 pr-4">Link</th>
-                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-3 pr-4">Server</th>
-                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-3 pr-4">Owner</th>
-                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-3 w-10"></th>
+                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4">Domain</th>
+                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4">Target</th>
+                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4 hidden md:table-cell">Link</th>
+                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4 hidden lg:table-cell">Server</th>
+                                            <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4 hidden lg:table-cell">Owner</th>
+                                            <th className="pb-2 w-10"></th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {routes.map(route => (
-                                            <tr key={route.ID} className="border-b border-(--base-03)/50 hover:bg-(--base-03)/30 transition-colors">
-                                                <td className="py-3 pr-4 text-(--base-09) font-medium">{route.domain}</td>
-                                                <td className="py-3 pr-4 text-(--base-07) font-mono text-xs">{route.target_ip}:{route.target_port}</td>
-                                                <td className="py-3 pr-4 text-(--base-07)">{route.link_name || '—'}</td>
-                                                <td className="py-3 pr-4 text-(--base-07)">{route.server_name || '—'}</td>
-                                                <td className="py-3 pr-4 text-(--base-07)">{route.owner_name || '—'}</td>
-                                                <td className="py-3">
+                                        {filteredRoutes.map(route => (
+                                            <tr key={route.ID} className="border-b border-(--base-03)/50 hover:bg-(--base-03)/30 transition-colors group">
+                                                <td className="py-2.5 pr-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-(--base-09) font-medium">{route.domain}</span>
+                                                        <button
+                                                            onClick={() => copyToClipboard(route.domain)}
+                                                            className="text-(--base-05) hover:text-(--base-08) opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+                                                            title="Copy domain"
+                                                        >
+                                                            {copiedIP === route.domain
+                                                                ? <Check size={11} className="text-(--success-light)" />
+                                                                : <Copy size={11} />
+                                                            }
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                                <td className="py-2.5 pr-4 text-(--base-07) font-mono text-xs">{route.target_ip}:{route.target_port}</td>
+                                                <td className="py-2.5 pr-4 text-(--base-07) hidden md:table-cell">{route.link_name || '—'}</td>
+                                                <td className="py-2.5 pr-4 text-(--base-07) hidden lg:table-cell">{route.server_name || '—'}</td>
+                                                <td className="py-2.5 pr-4 text-(--base-07) hidden lg:table-cell">{route.owner_name || '—'}</td>
+                                                <td className="py-2.5">
                                                     <button
                                                         onClick={() => setDeleteModal(route)}
-                                                        className="text-(--base-05) hover:text-(--error-light) transition-colors"
+                                                        className="text-(--base-05) hover:text-(--error-light) transition-colors p-1"
                                                         title="Delete route"
                                                     >
-                                                        <Trash2 size={15} />
+                                                        <Trash2 size={14} />
                                                     </button>
                                                 </td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
                 </>
             )}

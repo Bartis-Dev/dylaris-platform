@@ -1,0 +1,132 @@
+name: CI — Build All (Manual)
+
+# Manual-only workflow that builds every service unconditionally.
+# Use when you want to rebuild everything regardless of which paths changed
+# (e.g. after dependency bumps, base-image updates, or to repush a clean set
+# of images). For normal pushes, ci.yml handles change-detection.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: bartis-dev/dylaris
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Core
+  # ──────────────────────────────────────────────
+  build-core:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine tags
+        id: tags
+        run: |
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "TAG_PRIMARY=latest" >> $GITHUB_OUTPUT
+            echo "TAG_SHA=sha-${SHA}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_PRIMARY=dev" >> $GITHUB_OUTPUT
+            echo "TAG_SHA=dev-sha-${SHA}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_PAT }}
+
+      - name: Build and push Core
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core:${{ steps.tags.outputs.TAG_PRIMARY }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core:${{ steps.tags.outputs.TAG_SHA }}
+          build-args: |
+            ENTRY_PATH=./core/
+
+  # ──────────────────────────────────────────────
+  # Node, Panel
+  # ──────────────────────────────────────────────
+  build-node:
+    uses: ./.github/workflows/build-service.yml
+    with:
+      component: node
+      entry_path: ./node/
+      extra_build_args: "INSTALL_QUOTA=1"
+    secrets: inherit
+
+  build-panel:
+    uses: ./.github/workflows/build-service.yml
+    with:
+      component: panel
+      dockerfile: ./panel/Dockerfile
+      context: .
+    secrets: inherit
+
+  # ──────────────────────────────────────────────
+  # Log-Shipper (MC server image)
+  # ──────────────────────────────────────────────
+  build-log-shipper:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: log-shipper/go.sum
+
+      - name: Build log-shipper binary
+        run: |
+          chmod +x ./build_shipper.sh
+          ./build_shipper.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_PAT }}
+
+      - name: Determine tags
+        id: tags
+        run: |
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "TAG_PRIMARY=latest" >> $GITHUB_OUTPUT
+            echo "TAG_SHA=sha-${SHA}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_PRIMARY=dev" >> $GITHUB_OUTPUT
+            echo "TAG_SHA=dev-sha-${SHA}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push java21
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/mc-server
+          file: docker/mc-server/Dockerfile.java21
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java21:${{ steps.tags.outputs.TAG_PRIMARY }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java21:${{ steps.tags.outputs.TAG_SHA }}
