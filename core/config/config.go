@@ -31,6 +31,8 @@ type Config struct {
 	RedisPass string
 	RedisDB   int
 
+	// Dev only: drop all tables + flush Redis on startup
+	ClearDev bool
 }
 
 func LoadConfig() (Config, error) {
@@ -67,6 +69,7 @@ func LoadConfig() (Config, error) {
 		RedisPass: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:   redisDB,
 
+		ClearDev: getEnv("DYLARIS_CLEAR_DEV", "") == "true",
 	}
 
 	return cfg, nil
