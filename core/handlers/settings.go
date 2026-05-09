@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 type SettingsHandler struct {
@@ -271,7 +272,10 @@ func (h *SettingsHandler) LoadFeatureSettings() FeatureSettings {
 // --- Gateway Settings ---
 
 type GatewaySettings struct {
-	Limits GatewayLimits `json:"limits"`
+	Limits               GatewayLimits  `json:"limits"`
+	HosterDomains        []HosterDomain `json:"hosterDomains"`
+	CustomDomainsEnabled bool           `json:"customDomainsEnabled"`
+	CnameTarget          string         `json:"cnameTarget"`
 }
 
 type GatewayLimits struct {
@@ -284,6 +288,20 @@ type GatewayLimits struct {
 	PortHttpsEnabled bool `json:"portHttpsEnabled"`
 	PortHttp         int  `json:"portHttp"`
 	PortHttpEnabled  bool `json:"portHttpEnabled"`
+}
+
+// HosterDomain is one of the platform-provided base domains under which a
+// user can register a route by entering only a subdomain. The validation
+// mode controls what characters are accepted in that subdomain field.
+type HosterDomain struct {
+	Domain     string `json:"domain"`     // e.g. "dylaris.com"
+	Validation string `json:"validation"` // "letters" | "alphanumeric" | "dns"
+}
+
+// validHosterValidation returns true for the three accepted modes —
+// kept narrow on purpose so future modes have to be added explicitly.
+func validHosterValidation(v string) bool {
+	return v == "letters" || v == "alphanumeric" || v == "dns"
 }
 
 // GetGatewaySettings GET /api/settings/gateway
@@ -318,11 +336,52 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 			PortHttp:         getLimit("port:80"),
 			PortHttpEnabled:  getSetting("gateway_port_http_enabled") == "true",
 		},
+		HosterDomains:        h.loadHosterDomains(),
+		CustomDomainsEnabled: getSetting("gateway_custom_domains_enabled") == "true",
+		CnameTarget:          getSetting("gateway_cname_target"),
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": settings,
+	})
+}
+
+// loadHosterDomains parses the persisted hoster-domain list from settings.
+// Returns an empty slice if unset or malformed.
+func (h *SettingsHandler) loadHosterDomains() []HosterDomain {
+	raw, _ := h.state.Store.GetSetting("gateway_hoster_domains")
+	if raw == "" {
+		return []HosterDomain{}
+	}
+	var out []HosterDomain
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return []HosterDomain{}
+	}
+	return out
+}
+
+// LoadGatewayDomainConfig is the read-side helper for code paths that need
+// just the domain configuration (route create handler, public route-options
+// endpoint) without re-running the admin-only GetGatewaySettings.
+func (h *SettingsHandler) LoadGatewayDomainConfig() (hosters []HosterDomain, customEnabled bool, cnameTarget string) {
+	hosters = h.loadHosterDomains()
+	v, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
+	customEnabled = v == "true"
+	cnameTarget, _ = h.state.Store.GetSetting("gateway_cname_target")
+	return
+}
+
+// GetGatewayRouteOptions GET /api/gateway/route-options
+// Available to all authenticated users — the user-facing route form needs
+// the hoster list + custom-domain config to render itself.
+func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.Request) {
+	hosters, customEnabled, cname := h.LoadGatewayDomainConfig()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":              true,
+		"hosterDomains":        hosters,
+		"customDomainsEnabled": customEnabled,
+		"cnameTarget":          cname,
 	})
 }
 
@@ -339,11 +398,39 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Validate + normalize hoster domains
+	cleaned := make([]HosterDomain, 0, len(req.HosterDomains))
+	seen := map[string]bool{}
+	for _, hd := range req.HosterDomains {
+		dom := strings.ToLower(strings.TrimSpace(hd.Domain))
+		if dom == "" {
+			continue
+		}
+		if !domainRegex.MatchString(dom) {
+			sendJSONError(w, "Invalid hoster domain: "+dom, http.StatusBadRequest)
+			return
+		}
+		if seen[dom] {
+			sendJSONError(w, "Duplicate hoster domain: "+dom, http.StatusBadRequest)
+			return
+		}
+		seen[dom] = true
+		val := strings.ToLower(strings.TrimSpace(hd.Validation))
+		if !validHosterValidation(val) {
+			val = "alphanumeric"
+		}
+		cleaned = append(cleaned, HosterDomain{Domain: dom, Validation: val})
+	}
+	hostersJSON, _ := json.Marshal(cleaned)
+
 	// Save port-enable settings
 	portSettings := []struct{ k, v string }{
 		{"gateway_port_mc_enabled", fmt.Sprintf("%t", req.Limits.PortMcEnabled)},
 		{"gateway_port_https_enabled", fmt.Sprintf("%t", req.Limits.PortHttpsEnabled)},
 		{"gateway_port_http_enabled", fmt.Sprintf("%t", req.Limits.PortHttpEnabled)},
+		{"gateway_hoster_domains", string(hostersJSON)},
+		{"gateway_custom_domains_enabled", fmt.Sprintf("%t", req.CustomDomainsEnabled)},
+		{"gateway_cname_target", strings.TrimSpace(req.CnameTarget)},
 	}
 	for _, p := range portSettings {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {

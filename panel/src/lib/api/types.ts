@@ -362,8 +362,25 @@ export interface GatewayLimits {
     portHttpEnabled: boolean;
 }
 
+export type HosterValidation = 'letters' | 'alphanumeric' | 'dns';
+
+export interface HosterDomain {
+    domain: string;
+    validation: HosterValidation;
+}
+
 export interface GatewaySettings {
     limits: GatewayLimits;
+    hosterDomains: HosterDomain[];
+    customDomainsEnabled: boolean;
+    cnameTarget: string;
+}
+
+export interface GatewayRouteOptions {
+    success: boolean;
+    hosterDomains: HosterDomain[];
+    customDomainsEnabled: boolean;
+    cnameTarget: string;
 }
 
 // Gateway Admin API (read-only for links/gates — they auto-register via Redis)
@@ -392,8 +409,18 @@ export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessM
 
 // Gateway User API (per-server routes)
 export const getServerRoutes = (serverId: number) => fetchAPI(`/servers/${serverId}/routes`);
-export const createServerRoute = (serverId: number, data: { domain: string; targetPort: number }) => fetchAPI(`/servers/${serverId}/routes`, { method: 'POST', body: JSON.stringify(data) });
+export interface CreateRouteRequest {
+    targetPort: number;
+    // Either a hoster-picker pair, a custom-domain string, or a raw domain (legacy/admin).
+    subdomain?: string;
+    hosterDomain?: string;
+    customDomain?: string;
+    domain?: string;
+}
+export const createServerRoute = (serverId: number, data: CreateRouteRequest) =>
+    fetchAPI(`/servers/${serverId}/routes`, { method: 'POST', body: JSON.stringify(data) });
 export const deleteServerRoute = (serverId: number, routeId: number) => fetchAPI(`/servers/${serverId}/routes/${routeId}`, { method: 'DELETE' });
+export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchAPI('/gateway/route-options');
 
 // --- BEAM SETTINGS ---
 export interface BeamSettings {

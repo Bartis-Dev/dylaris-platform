@@ -287,6 +287,7 @@ func main() {
 	api.HandleFunc("/settings/features", authHandler.AuthMiddleware(settingsHandler.SaveFeatureSettings)).Methods("POST")
 	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(settingsHandler.GetGatewaySettings)).Methods("GET")
 	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(settingsHandler.SaveGatewaySettings)).Methods("POST")
+	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.GetServerSettings)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")
 	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(settingsHandler.GetBeamSettings)).Methods("GET")

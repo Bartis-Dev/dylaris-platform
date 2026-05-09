@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Server, getServerRoutes, createServerRoute, deleteServerRoute, GatewayRoute } from '@/lib/api';
-import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle, Globe, Trash2, AlertCircle } from 'lucide-react';
+import { Server, getServerRoutes, createServerRoute, deleteServerRoute, GatewayRoute, CreateRouteRequest } from '@/lib/api';
+import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle, Globe, Trash2 } from 'lucide-react';
 import { JAVA_IMAGES } from './JavaVersionPicker';
+import RouteDomainPicker from '@/components/RouteDomainPicker';
 
 interface SetupViewModeProps {
     server: Server;
@@ -30,8 +31,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
     // Routes state
     const [routes, setRoutes] = useState<GatewayRoute[]>([]);
     const [routesLoading, setRoutesLoading] = useState(false);
-    const [newDomain, setNewDomain] = useState('');
-    const [newPort, setNewPort] = useState(25565);
+    const [newRoute, setNewRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
     const [routeError, setRouteError] = useState('');
     const [routeCreating, setRouteCreating] = useState(false);
     const [confirmDeleteRoute, setConfirmDeleteRoute] = useState<number | null>(null);
@@ -49,19 +49,16 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
 
     useEffect(() => { loadRoutes(); }, [loadRoutes]);
 
+    const hasRouteInput = !!(newRoute.subdomain || newRoute.customDomain || newRoute.domain);
+
     const handleCreateRoute = async () => {
         setRouteError('');
-        const domain = newDomain.trim().toLowerCase();
-        if (!domain) { setRouteError('Domain is required'); return; }
-        if (!/^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(domain)) {
-            setRouteError('Invalid domain format');
-            return;
-        }
+        if (!hasRouteInput) { setRouteError('Domain is required'); return; }
         setRouteCreating(true);
         try {
-            const res = await createServerRoute(server.id, { domain, targetPort: newPort });
+            const res = await createServerRoute(server.id, newRoute);
             if (res.error) { setRouteError(res.error); }
-            else { setNewDomain(''); setNewPort(25565); loadRoutes(); }
+            else { setNewRoute({ targetPort: 25565 }); loadRoutes(); }
         } catch { setRouteError('Failed to create route'); }
         setRouteCreating(false);
     };
@@ -217,45 +214,34 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                         <p className="text-xs text-(--base-06) italic mb-3">No routes configured.</p>
                     )}
 
-                    <div className="bg-(--base-03) rounded-md border border-(--base-04) p-3">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-2">Add Route</div>
-                        <div className="flex gap-2 items-end">
-                            <div className="flex-1">
-                                <input
-                                    type="text"
-                                    value={newDomain}
-                                    onChange={e => { setNewDomain(e.target.value); setRouteError(''); }}
-                                    onKeyDown={e => e.key === 'Enter' && handleCreateRoute()}
-                                    placeholder="play.example.com"
-                                    className="input-field w-full text-sm"
-                                />
-                            </div>
-                            <div className="w-32">
-                                <select
-                                    value={newPort}
-                                    onChange={e => setNewPort(Number(e.target.value))}
-                                    className="input-field w-full text-sm"
-                                >
-                                    <option value={25565}>MC (25565)</option>
-                                    <option value={80}>HTTP (80)</option>
-                                    <option value={443}>HTTPS (443)</option>
-                                </select>
-                            </div>
-                            <button
-                                onClick={handleCreateRoute}
-                                disabled={routeCreating || !newDomain.trim()}
-                                className="btn btn-primary text-xs px-3 py-2.5 disabled:opacity-50"
-                            >
-                                <Plus size={13} />
-                                Add
-                            </button>
-                        </div>
-                        {routeError && (
-                            <div className="flex items-center gap-1.5 mt-2 text-xs text-(--error-light)">
-                                <AlertCircle size={12} />
-                                {routeError}
-                            </div>
-                        )}
+                    <div className="bg-(--base-03) rounded-md border border-(--base-04) p-3 space-y-2">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Add Route</div>
+                        <RouteDomainPicker
+                            value={newRoute}
+                            onChange={next => { setNewRoute(next); setRouteError(''); }}
+                            error={routeError}
+                            portChildren={
+                                <div className="flex gap-2">
+                                    <select
+                                        value={newRoute.targetPort}
+                                        onChange={e => setNewRoute(r => ({ ...r, targetPort: Number(e.target.value) }))}
+                                        className="input-field text-sm w-32"
+                                    >
+                                        <option value={25565}>MC (25565)</option>
+                                        <option value={80}>HTTP (80)</option>
+                                        <option value={443}>HTTPS (443)</option>
+                                    </select>
+                                    <button
+                                        onClick={handleCreateRoute}
+                                        disabled={routeCreating || !hasRouteInput}
+                                        className="btn btn-primary text-xs px-3 disabled:opacity-50"
+                                    >
+                                        <Plus size={13} />
+                                        Add
+                                    </button>
+                                </div>
+                            }
+                        />
                     </div>
                 </div>
             </div>

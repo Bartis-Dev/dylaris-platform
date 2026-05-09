@@ -23,6 +23,32 @@ func NewGatewayHandler(state *AppState) *GatewayHandler {
 
 var domainRegex = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
+// Per-hoster subdomain validation regexes — kept narrow on purpose so the
+// admin's choice in settings actually constrains what users can register.
+var (
+	subRegexLetters      = regexp.MustCompile(`^[a-z]+$`)
+	subRegexAlphanumeric = regexp.MustCompile(`^[a-z0-9]+$`)
+	subRegexDNS          = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+)
+
+// validateSubdomain matches a user-entered subdomain against the validation
+// mode the admin picked for that hoster domain.
+func validateSubdomain(sub, mode string) bool {
+	if sub == "" || len(sub) > 63 {
+		return false
+	}
+	switch mode {
+	case "letters":
+		return subRegexLetters.MatchString(sub)
+	case "alphanumeric":
+		return subRegexAlphanumeric.MatchString(sub)
+	case "dns":
+		return subRegexDNS.MatchString(sub)
+	default:
+		return false
+	}
+}
+
 func (h *GatewayHandler) ctx() context.Context {
 	return context.Background()
 }
@@ -167,11 +193,18 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	userID := r.Context().Value("userID").(int)
 
+	// Three input shapes, listed in priority order:
+	//   1. {subdomain, hosterDomain}      — user picked from the admin's hoster list
+	//   2. {customDomain}                 — user brings their own domain (CNAME path)
+	//   3. {domain}                       — legacy / admin / scripts; raw FQDN
 	var req struct {
-		Domain     string `json:"domain"`
-		TargetPort int    `json:"targetPort"`
+		Domain       string `json:"domain"`
+		Subdomain    string `json:"subdomain"`
+		HosterDomain string `json:"hosterDomain"`
+		CustomDomain string `json:"customDomain"`
+		TargetPort   int    `json:"targetPort"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Domain == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
@@ -180,17 +213,18 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		req.TargetPort = 25565
 	}
 
-	if !domainRegex.MatchString(req.Domain) {
-		http.Error(w, "Invalid domain format", http.StatusBadRequest)
+	finalDomain, err := h.resolveRouteDomain(&req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if len(req.Domain) > 2 && req.Domain[:2] == "*." && req.TargetPort != 80 && req.TargetPort != 443 {
+	if len(finalDomain) > 2 && finalDomain[:2] == "*." && req.TargetPort != 80 && req.TargetPort != 443 {
 		http.Error(w, "Wildcard domains are only allowed for port 80/443", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.state.Gateway.CreateServerRoute(uint(serverID), uint(userID), req.Domain, req.TargetPort); err != nil {
+	if err := h.state.Gateway.CreateServerRoute(uint(serverID), uint(userID), finalDomain, req.TargetPort); err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") {
 			http.Error(w, errMsg, http.StatusNotFound)
@@ -205,8 +239,93 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "Route creation queued",
-		"domain":  req.Domain,
+		"domain":  finalDomain,
 	})
+}
+
+// resolveRouteDomain inspects the three accepted input shapes and returns the
+// final lowercase FQDN to register. It enforces the admin's hoster-domain
+// configuration: subdomains must match the per-hoster validation mode, custom
+// domains may only be used when the admin enabled them and may not collide
+// with any hoster domain.
+func (h *GatewayHandler) resolveRouteDomain(req *struct {
+	Domain       string `json:"domain"`
+	Subdomain    string `json:"subdomain"`
+	HosterDomain string `json:"hosterDomain"`
+	CustomDomain string `json:"customDomain"`
+	TargetPort   int    `json:"targetPort"`
+}) (string, error) {
+	hosters, customEnabled, _ := h.loadGatewayDomainConfig()
+
+	// 1) Hoster-picker path
+	if req.Subdomain != "" || req.HosterDomain != "" {
+		sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
+		host := strings.ToLower(strings.TrimSpace(req.HosterDomain))
+		if sub == "" || host == "" {
+			return "", fmt.Errorf("subdomain and hosterDomain must both be set")
+		}
+		var hd *HosterDomain
+		for i := range hosters {
+			if hosters[i].Domain == host {
+				hd = &hosters[i]
+				break
+			}
+		}
+		if hd == nil {
+			return "", fmt.Errorf("hoster domain not configured: %s", host)
+		}
+		if !validateSubdomain(sub, hd.Validation) {
+			return "", fmt.Errorf("subdomain does not match the allowed format for %s", host)
+		}
+		return sub + "." + host, nil
+	}
+
+	// 2) Custom-domain path
+	if req.CustomDomain != "" {
+		if !customEnabled {
+			return "", fmt.Errorf("custom domains are not enabled")
+		}
+		dom := strings.ToLower(strings.TrimSpace(req.CustomDomain))
+		if !domainRegex.MatchString(dom) || strings.HasPrefix(dom, "*.") {
+			return "", fmt.Errorf("invalid custom domain format")
+		}
+		labels := strings.Split(dom, ".")
+		// Apex (mc.de = 2 labels) up to apex + 2 subdomains (a.b.c.d = 4 labels)
+		if len(labels) < 2 || len(labels) > 4 {
+			return "", fmt.Errorf("custom domain may have at most two subdomain levels")
+		}
+		for _, h := range hosters {
+			if dom == h.Domain || strings.HasSuffix(dom, "."+h.Domain) {
+				return "", fmt.Errorf("custom domain may not be a subdomain of a hoster domain (%s) — use the subdomain picker instead", h.Domain)
+			}
+		}
+		return dom, nil
+	}
+
+	// 3) Legacy raw-domain path (admin tools, scripts, backwards compat)
+	if req.Domain != "" {
+		dom := strings.ToLower(strings.TrimSpace(req.Domain))
+		if !domainRegex.MatchString(dom) {
+			return "", fmt.Errorf("invalid domain format")
+		}
+		return dom, nil
+	}
+
+	return "", fmt.Errorf("no domain provided")
+}
+
+// loadGatewayDomainConfig reads the hoster-domain list + custom flag straight
+// from the settings store. Mirrors SettingsHandler.LoadGatewayDomainConfig
+// but inlined here so GatewayHandler doesn't need a SettingsHandler reference.
+func (h *GatewayHandler) loadGatewayDomainConfig() ([]HosterDomain, bool, string) {
+	raw, _ := h.state.Store.GetSetting("gateway_hoster_domains")
+	var hosters []HosterDomain
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &hosters)
+	}
+	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
+	cname, _ := h.state.Store.GetSetting("gateway_cname_target")
+	return hosters, enabled == "true", cname
 }
 
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {

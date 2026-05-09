@@ -2,11 +2,13 @@
 
 import React, { useMemo } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
+import { CreateRouteRequest } from '@/lib/api';
 import JavaVersionPicker, { recommendJavaForVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
+import RouteDomainPicker from '@/components/RouteDomainPicker';
 
 const nameRegex = /^[a-zA-Z0-9\-_+]+$/;
 function sanitizeName(raw: string): string {
@@ -57,11 +59,9 @@ interface SetupNewWizardProps {
     onUploadStatusChange: (s: string) => void;
     serverId: number;
     onFileTooLarge?: (tooLarge: boolean) => void;
-    // Gateway domain (optional)
-    gatewayDomain?: string;
-    onGatewayDomainChange?: (domain: string) => void;
-    gatewayPort?: number;
-    onGatewayPortChange?: (port: number) => void;
+    // Gateway route (optional)
+    gatewayRoute?: CreateRouteRequest;
+    onGatewayRouteChange?: (next: CreateRouteRequest) => void;
     // Actions
     onSubmit: () => void;
     onClose: () => void;
@@ -92,50 +92,47 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6 space-y-5 min-h-0">
-                {/* Row 1: Name + Domain Route side by side */}
-                <div className="grid grid-cols-[1fr_1fr] gap-4">
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Server Slot Name</label>
-                        <input
-                            type="text"
-                            value={props.subName}
-                            onChange={e => props.onSubNameChange(e.target.value)}
-                            placeholder="e.g. Survival"
-                            className={`input-mono w-full ${props.subNameError ? 'input-field-error' : ''}`}
-                            autoFocus
-                        />
-                        {props.subNameError && <p className="text-xs text-(--error-light)">{props.subNameError}</p>}
-                        {props.subName && !props.subNameError && (
-                            <p className="text-xs text-(--base-07) font-mono">
-                                Stored as: <span className="text-(--primary-light)">/data/{sanitized}/</span>
-                            </p>
-                        )}
-                    </div>
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label flex items-center gap-1.5">
-                            <Globe size={12} className="text-(--accent-light)" /> Domain Route
-                            <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1 py-0.5 rounded-sm ml-1">Optional</span>
-                        </label>
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                value={props.gatewayDomain || ''}
-                                onChange={e => props.onGatewayDomainChange?.(e.target.value)}
-                                placeholder="play.example.com"
-                                className="input-field flex-1 text-sm"
-                            />
+                {/* Row 1: Name */}
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Server Slot Name</label>
+                    <input
+                        type="text"
+                        value={props.subName}
+                        onChange={e => props.onSubNameChange(e.target.value)}
+                        placeholder="e.g. Survival"
+                        className={`input-mono w-full md:w-1/2 ${props.subNameError ? 'input-field-error' : ''}`}
+                        autoFocus
+                    />
+                    {props.subNameError && <p className="text-xs text-(--error-light)">{props.subNameError}</p>}
+                    {props.subName && !props.subNameError && (
+                        <p className="text-xs text-(--base-07) font-mono">
+                            Stored as: <span className="text-(--primary-light)">/data/{sanitized}/</span>
+                        </p>
+                    )}
+                </div>
+
+                {/* Row 2: Optional gateway route */}
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label flex items-center gap-1.5">
+                        <Globe size={12} className="text-(--accent-light)" /> Domain Route
+                        <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1 py-0.5 rounded-sm ml-1">Optional</span>
+                    </label>
+                    <RouteDomainPicker
+                        value={props.gatewayRoute || { targetPort: 25565 }}
+                        onChange={next => props.onGatewayRouteChange?.(next)}
+                        portChildren={
                             <select
-                                value={props.gatewayPort || 25565}
-                                onChange={e => props.onGatewayPortChange?.(Number(e.target.value))}
-                                className="input-field w-28 text-sm"
+                                value={props.gatewayRoute?.targetPort || 25565}
+                                onChange={e => props.onGatewayRouteChange?.({ ...(props.gatewayRoute || {}), targetPort: Number(e.target.value) })}
+                                className="input-field text-sm w-28"
                             >
                                 <option value={25565}>MC (25565)</option>
                                 <option value={80}>HTTP (80)</option>
                                 <option value={443}>HTTPS (443)</option>
                             </select>
-                        </div>
-                        <p className="text-xs text-(--base-06)">Can also be configured later in the Setup tab.</p>
-                    </div>
+                        }
+                    />
+                    <p className="text-xs text-(--base-06)">Can also be configured later in the Setup tab.</p>
                 </div>
 
                 {/* Row 2: Java Version (full width) */}

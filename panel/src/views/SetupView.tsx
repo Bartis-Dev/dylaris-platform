@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings } from '@/lib/api';
+import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, CreateRouteRequest } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
 import { JAVA_IMAGES, recommendJavaForVersion } from './setup/JavaVersionPicker';
@@ -113,9 +113,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
 
-    // Gateway domain (optional, for setup wizard)
-    const [gatewayDomain, setGatewayDomain] = useState('');
-    const [gatewayPort, setGatewayPort] = useState(25565);
+    // Gateway route (optional, for setup wizard)
+    const [gatewayRoute, setGatewayRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
 
     // Delete sub-server
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -317,13 +316,13 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         });
 
         if (res.success) {
-            // Create gateway route if domain was specified
-            if (gatewayDomain.trim()) {
+            // Create gateway route if any domain field was filled
+            const hasDomain = !!(gatewayRoute.subdomain || gatewayRoute.customDomain || gatewayRoute.domain);
+            if (hasDomain) {
                 try {
-                    await createServerRoute(server.id, { domain: gatewayDomain.trim().toLowerCase(), targetPort: gatewayPort });
+                    await createServerRoute(server.id, gatewayRoute);
                 } catch { /* non-fatal */ }
-                setGatewayDomain('');
-                setGatewayPort(25565);
+                setGatewayRoute({ targetPort: 25565 });
             }
             await loadSubServers();
             onSetupComplete();
@@ -434,10 +433,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                     error={error}
                     hasSubServers={subServers.length > 0}
                     isFirstSetup={subServers.length === 0}
-                    gatewayDomain={gatewayDomain}
-                    onGatewayDomainChange={setGatewayDomain}
-                    gatewayPort={gatewayPort}
-                    onGatewayPortChange={setGatewayPort}
+                    gatewayRoute={gatewayRoute}
+                    onGatewayRouteChange={setGatewayRoute}
                 />
             )}
 

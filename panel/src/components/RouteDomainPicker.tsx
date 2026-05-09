@@ -1,0 +1,208 @@
+"use client";
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { CreateRouteRequest, GatewayRouteOptions, getGatewayRouteOptions, HosterValidation } from '@/lib/api';
+import { Globe, AlertCircle } from 'lucide-react';
+
+interface Props {
+    value: CreateRouteRequest;
+    onChange: (next: CreateRouteRequest) => void;
+    error?: string;
+    portChildren?: React.ReactNode; // The port select rendered next to the domain
+}
+
+const VALIDATION_HINT: Record<HosterValidation, string> = {
+    letters: 'letters only',
+    alphanumeric: 'letters + numbers',
+    dns: 'letters, numbers and -',
+};
+
+const VALIDATION_REGEX: Record<HosterValidation, RegExp> = {
+    letters: /^[a-z]+$/,
+    alphanumeric: /^[a-z0-9]+$/,
+    dns: /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
+};
+
+// Up to apex + 2 subdomains (a.b.c.d = 4 labels max)
+const CUSTOM_DOMAIN_REGEX = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
+function customDomainLabelsOk(d: string) {
+    const labels = d.split('.').filter(Boolean);
+    return labels.length >= 2 && labels.length <= 4;
+}
+
+/**
+ * RouteDomainPicker is the user-facing domain entry for new routes.
+ *
+ * Renders one of three modes based on what the admin enabled:
+ *   - hoster picker: subdomain text input + dropdown of base domains
+ *   - custom domain: full-FQDN input + CNAME hint
+ *   - legacy fallback: plain domain input (only when admin set up nothing)
+ *
+ * The component owns the mode toggle and writes the right shape into
+ * `value` so the caller can post the request as-is.
+ */
+export default function RouteDomainPicker({ value, onChange, error, portChildren }: Props) {
+    const [opts, setOpts] = useState<GatewayRouteOptions | null>(null);
+    const [mode, setMode] = useState<'hoster' | 'custom' | 'legacy'>('legacy');
+    const [subdomain, setSubdomain] = useState('');
+    const [hosterDomain, setHosterDomain] = useState('');
+    const [customDomain, setCustomDomain] = useState('');
+
+    useEffect(() => {
+        getGatewayRouteOptions().then(res => {
+            setOpts(res);
+            const hosters = res.hosterDomains || [];
+            if (hosters.length > 0) {
+                setMode('hoster');
+                setHosterDomain(hosters[0].domain);
+            } else if (res.customDomainsEnabled) {
+                setMode('custom');
+            } else {
+                setMode('legacy');
+            }
+        });
+    }, []);
+
+    const activeHoster = useMemo(
+        () => (opts?.hosterDomains || []).find(h => h.domain === hosterDomain),
+        [opts, hosterDomain],
+    );
+
+    // Push state up whenever any of the inputs change.
+    useEffect(() => {
+        if (mode === 'hoster') {
+            onChange({ ...value, subdomain, hosterDomain, customDomain: undefined, domain: undefined });
+        } else if (mode === 'custom') {
+            onChange({ ...value, customDomain, subdomain: undefined, hosterDomain: undefined, domain: undefined });
+        } else {
+            onChange({ ...value, domain: customDomain, subdomain: undefined, hosterDomain: undefined, customDomain: undefined });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mode, subdomain, hosterDomain, customDomain]);
+
+    if (!opts) {
+        return <div className="h-10 bg-(--base-02) rounded-md animate-pulse" />;
+    }
+
+    const hosters = opts.hosterDomains || [];
+    const showHosterMode = hosters.length > 0;
+    const showCustomMode = opts.customDomainsEnabled;
+
+    // Live validation hint
+    let hint: string | null = null;
+    if (mode === 'hoster' && subdomain && activeHoster) {
+        const ok = VALIDATION_REGEX[activeHoster.validation].test(subdomain.toLowerCase());
+        if (!ok) hint = `Allowed: ${VALIDATION_HINT[activeHoster.validation]}`;
+    } else if (mode === 'custom' && customDomain) {
+        const lower = customDomain.toLowerCase();
+        if (!CUSTOM_DOMAIN_REGEX.test(lower) || !customDomainLabelsOk(lower)) {
+            hint = 'Format: yourdomain.com — up to 2 subdomain levels (e.g. play.mc.example.com)';
+        } else if (hosters.some(h => lower === h.domain || lower.endsWith('.' + h.domain))) {
+            hint = `${lower} is on a hoster domain — use the subdomain picker instead.`;
+        }
+    }
+
+    return (
+        <div className="space-y-2">
+            {/* Mode tabs (only when both hoster and custom are available) */}
+            {showHosterMode && showCustomMode && (
+                <div className="flex bg-(--base-03) p-1 rounded-md w-fit">
+                    <button
+                        type="button"
+                        onClick={() => setMode('hoster')}
+                        className={`px-3 py-1 text-xs rounded-md transition-colors ${mode === 'hoster' ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'}`}
+                    >
+                        Subdomain
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setMode('custom')}
+                        className={`px-3 py-1 text-xs rounded-md transition-colors ${mode === 'custom' ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'}`}
+                    >
+                        Custom Domain
+                    </button>
+                </div>
+            )}
+
+            {/* Hoster mode */}
+            {mode === 'hoster' && showHosterMode && (
+                <div className="flex gap-2 items-stretch">
+                    <input
+                        type="text"
+                        value={subdomain}
+                        onChange={e => setSubdomain(e.target.value.toLowerCase())}
+                        placeholder="play"
+                        className="input-field flex-1 text-sm"
+                    />
+                    <span className="flex items-center text-(--base-06) text-sm font-mono px-1">.</span>
+                    <select
+                        value={hosterDomain}
+                        onChange={e => setHosterDomain(e.target.value)}
+                        className="input-field text-sm w-44"
+                    >
+                        {hosters.map(h => (
+                            <option key={h.domain} value={h.domain}>{h.domain}</option>
+                        ))}
+                    </select>
+                    {portChildren}
+                </div>
+            )}
+
+            {/* Custom mode */}
+            {mode === 'custom' && showCustomMode && (
+                <div className="space-y-2">
+                    <div className="flex gap-2 items-stretch">
+                        <div className="flex-1 flex items-center gap-2">
+                            <Globe size={14} className="text-(--accent-light) shrink-0" />
+                            <input
+                                type="text"
+                                value={customDomain}
+                                onChange={e => setCustomDomain(e.target.value.toLowerCase())}
+                                placeholder="play.example.com"
+                                className="input-field flex-1 text-sm"
+                            />
+                        </div>
+                        {portChildren}
+                    </div>
+                    {opts.cnameTarget && (
+                        <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--accent)/5 border border-(--accent)/20 text-xs">
+                            <AlertCircle size={12} className="text-(--accent-light) shrink-0 mt-0.5" />
+                            <span className="text-(--base-07)">
+                                Set a CNAME record on your domain pointing to{' '}
+                                <code className="font-mono text-(--accent-light) bg-(--base-02) px-1.5 py-0.5 rounded">{opts.cnameTarget}</code>
+                                {' '}before saving — otherwise the route will not resolve.
+                            </span>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Legacy fallback (no hoster, no custom) */}
+            {mode === 'legacy' && !showHosterMode && !showCustomMode && (
+                <div className="flex gap-2 items-stretch">
+                    <input
+                        type="text"
+                        value={customDomain}
+                        onChange={e => setCustomDomain(e.target.value.toLowerCase())}
+                        placeholder="play.example.com"
+                        className="input-field flex-1 text-sm"
+                    />
+                    {portChildren}
+                </div>
+            )}
+
+            {hint && (
+                <div className="flex items-center gap-1.5 text-xs text-(--warning-light)">
+                    <AlertCircle size={12} />
+                    {hint}
+                </div>
+            )}
+            {error && (
+                <div className="flex items-center gap-1.5 text-xs text-(--error-light)">
+                    <AlertCircle size={12} />
+                    {error}
+                </div>
+            )}
+        </div>
+    );
+}

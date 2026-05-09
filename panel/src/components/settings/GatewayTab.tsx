@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    getGatewaySettings, saveGatewaySettings, GatewaySettings,
+    getGatewaySettings, saveGatewaySettings, GatewaySettings, HosterDomain, HosterValidation,
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2 } from 'lucide-react';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -228,6 +228,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             portHttps: -1, portHttpsEnabled: true,
             portHttp: -1, portHttpEnabled: false,
         },
+        hosterDomains: [],
+        customDomainsEnabled: false,
+        cnameTarget: '',
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -244,7 +247,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     useEffect(() => {
         Promise.all([getGatewaySettings(), getRoutingMode()]).then(([gwRes, rmRes]) => {
             if (gwRes.success && gwRes.settings) {
-                setSettings(gwRes.settings);
+                setSettings({
+                    ...gwRes.settings,
+                    hosterDomains: gwRes.settings.hosterDomains || [],
+                    customDomainsEnabled: !!gwRes.settings.customDomainsEnabled,
+                    cnameTarget: gwRes.settings.cnameTarget || '',
+                });
             }
             if (rmRes.success) {
                 const m: RoutingMode = rmRes.mode || 'ip_port';
@@ -296,6 +304,31 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     const isUnlimited = (key: LimitKey) => settings.limits[key] === -1;
     const toggleUnlimited = (key: LimitKey) => setLimit(key, isUnlimited(key) ? 0 : -1);
     const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
+
+    const addHoster = () => {
+        setSettings(prev => ({
+            ...prev,
+            hosterDomains: [...prev.hosterDomains, { domain: '', validation: 'alphanumeric' }],
+        }));
+    };
+    const removeHoster = (idx: number) => {
+        setSettings(prev => ({
+            ...prev,
+            hosterDomains: prev.hosterDomains.filter((_, i) => i !== idx),
+        }));
+    };
+    const updateHoster = (idx: number, patch: Partial<HosterDomain>) => {
+        setSettings(prev => ({
+            ...prev,
+            hosterDomains: prev.hosterDomains.map((h, i) => i === idx ? { ...h, ...patch } : h),
+        }));
+    };
+
+    const VALIDATION_LABELS: Record<HosterValidation, string> = {
+        letters: 'Letters only',
+        alphanumeric: 'Letters + numbers',
+        dns: 'Full DNS (a-z, 0-9, -)',
+    };
 
     const allocationFields: { key: LimitKey; label: string; desc: string }[] = [
         { key: 'global', label: 'Global Max Routes', desc: 'Total routes across all users and servers' },
@@ -385,6 +418,99 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             <AlertTriangle size={12} className="text-(--warning-light)" />
                             Changing routing mode will trigger a server redeploy
                         </span>
+                    )}
+                </div>
+            </div>
+
+            {/* Hoster Domains + Custom Domains */}
+            <div className="card p-5 space-y-5">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <Globe size={18} className="text-(--accent-light)" />
+                    </div>
+                    <div>
+                        <div className="font-medium text-sm text-(--base-09)">Domains</div>
+                        <div className="text-xs text-(--base-06)">Hoster domains users pick from + optional custom-domain support</div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Hoster Domains</h3>
+                    <p className="text-xs text-(--base-06) mb-3">
+                        Users only enter a subdomain — these base domains appear as a dropdown next to the input. Pick which characters are allowed in the subdomain per domain.
+                    </p>
+                    <div className="space-y-2">
+                        {settings.hosterDomains.length === 0 && (
+                            <p className="text-xs text-(--base-05) italic px-3 py-3 rounded-md bg-(--base-02)">
+                                No hoster domains configured. Add one to enable the subdomain picker.
+                            </p>
+                        )}
+                        {settings.hosterDomains.map((hd, idx) => (
+                            <div key={idx} className="flex items-center gap-2 p-2 rounded-md bg-(--base-02)">
+                                <input
+                                    type="text"
+                                    value={hd.domain}
+                                    onChange={e => updateHoster(idx, { domain: e.target.value.toLowerCase().trim() })}
+                                    placeholder="dylaris.com"
+                                    className="input-field input-mono flex-1 text-sm"
+                                />
+                                <select
+                                    value={hd.validation}
+                                    onChange={e => updateHoster(idx, { validation: e.target.value as HosterValidation })}
+                                    className="input-field text-sm w-52"
+                                >
+                                    {(Object.keys(VALIDATION_LABELS) as HosterValidation[]).map(k => (
+                                        <option key={k} value={k}>{VALIDATION_LABELS[k]}</option>
+                                    ))}
+                                </select>
+                                <button
+                                    type="button"
+                                    onClick={() => removeHoster(idx)}
+                                    className="text-(--base-06) hover:text-(--error-light) transition-colors p-2"
+                                    title="Remove"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={addHoster}
+                        className="btn btn-secondary px-3 py-1.5 text-xs mt-3"
+                    >
+                        <Plus size={12} /> Add domain
+                    </button>
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5 space-y-4">
+                    <div className="flex items-center justify-between gap-4">
+                        <div>
+                            <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Custom Domains</h3>
+                            <p className="text-xs text-(--base-06) mt-1">Allow users to bring their own domain via a CNAME record.</p>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={settings.customDomainsEnabled}
+                            onClick={() => setSettings(prev => ({ ...prev, customDomainsEnabled: !prev.customDomainsEnabled }))}
+                            className={`toggle-track ${settings.customDomainsEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        >
+                            <span className={`toggle-knob ${settings.customDomainsEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                        </button>
+                    </div>
+                    {settings.customDomainsEnabled && (
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label">CNAME Target</label>
+                            <input
+                                type="text"
+                                value={settings.cnameTarget}
+                                onChange={e => setSettings(prev => ({ ...prev, cnameTarget: e.target.value }))}
+                                placeholder="route.dylaris.com"
+                                className="input-field input-mono text-sm"
+                            />
+                            <p className="text-xs text-(--base-06)">Shown to users as the CNAME record they need to point their domain at.</p>
+                        </div>
                     )}
                 </div>
             </div>
