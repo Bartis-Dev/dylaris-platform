@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
+
+// orphanNameRegex restricts orphan folder names to safe filename chars.
+// Permits standard UUIDs and legacy folder names (e.g. "test-server-1")
+// while rejecting path traversal attempts ('/', '..', etc.).
+var orphanNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+func isSafeOrphanName(name string) bool {
+	return orphanNameRegex.MatchString(name)
+}
 
 type NodeHandler struct {
 	state *AppState
@@ -362,8 +372,12 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "uuid query param required", 400)
 		return
 	}
-	if _, err := uuid.Parse(orphanUUID); err != nil {
-		sendJSONError(w, "Invalid UUID format", 400)
+	// Path-traversal guard: orphan folder names must be safe filename chars only.
+	// Standard UUIDs match, but so do legacy/test folders (e.g. "test-server-1").
+	// We don't strictly require UUIDv4 since orphans are scanned from disk and
+	// may have non-UUID names from manual setups.
+	if !isSafeOrphanName(orphanUUID) {
+		sendJSONError(w, "Invalid folder name (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
 		return
 	}
 

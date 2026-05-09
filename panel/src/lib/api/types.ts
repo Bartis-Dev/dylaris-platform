@@ -361,12 +361,6 @@ export interface GatewayLimits {
 }
 
 export interface GatewaySettings {
-    redisMode: 'shared' | 'separate';
-    redisAddr: string;
-    redisUser: string;
-    redisPass?: string;
-    redisDb: number;
-    defaultLinkImage: string;
     limits: GatewayLimits;
 }
 

@@ -271,13 +271,7 @@ func (h *SettingsHandler) LoadFeatureSettings() FeatureSettings {
 // --- Gateway Settings ---
 
 type GatewaySettings struct {
-	RedisMode        string        `json:"redisMode"` // "shared" or "separate"
-	RedisAddr        string        `json:"redisAddr"`
-	RedisUser        string        `json:"redisUser"`
-	RedisPass        string        `json:"redisPass,omitempty"`
-	RedisDb          int           `json:"redisDb"`
-	DefaultLinkImage string        `json:"defaultLinkImage"`
-	Limits           GatewayLimits `json:"limits"`
+	Limits GatewayLimits `json:"limits"`
 }
 
 type GatewayLimits struct {
@@ -303,16 +297,6 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		val, _ := h.state.Store.GetSetting(key)
 		return val
 	}
-	getInt := func(key string) int {
-		val, _ := h.state.Store.GetSetting(key)
-		n, _ := fmt.Sscanf(val, "%d", new(int))
-		if n == 0 {
-			return 0
-		}
-		var v int
-		fmt.Sscanf(val, "%d", &v)
-		return v
-	}
 
 	getLimit := func(scope string) int {
 		l, err := h.state.Store.GetGatewayRouteLimit(scope)
@@ -322,18 +306,7 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		return l.MaxRoutes
 	}
 
-	redisMode := getSetting("gateway_redis_mode")
-	if redisMode == "" {
-		redisMode = "shared"
-	}
-
 	settings := GatewaySettings{
-		RedisMode:        redisMode,
-		RedisAddr:        getSetting("gateway_redis_addr"),
-		RedisUser:        getSetting("gateway_redis_user"),
-		// RedisPass intentionally omitted from response
-		RedisDb:          getInt("gateway_redis_db"),
-		DefaultLinkImage: getSetting("gateway_link_image"),
 		Limits: GatewayLimits{
 			Global:           getLimit("global"),
 			UserDefault:      getLimit("user_default"),
@@ -364,29 +337,6 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
-	}
-
-	redisMode := req.RedisMode
-	if redisMode == "" {
-		redisMode = "shared"
-	}
-
-	pairs := []struct{ k, v string }{
-		{"gateway_redis_mode", redisMode},
-		{"gateway_redis_addr", req.RedisAddr},
-		{"gateway_redis_user", req.RedisUser},
-		{"gateway_redis_db", fmt.Sprintf("%d", req.RedisDb)},
-		{"gateway_link_image", req.DefaultLinkImage},
-	}
-	// Only save password if non-empty (don't overwrite with blank)
-	if req.RedisPass != "" {
-		pairs = append(pairs, struct{ k, v string }{"gateway_redis_pass", req.RedisPass})
-	}
-	for _, p := range pairs {
-		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
-			return
-		}
 	}
 
 	// Save port-enable settings

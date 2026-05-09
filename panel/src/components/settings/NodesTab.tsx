@@ -24,24 +24,12 @@ export default function NodesTab() {
                 <h3 className="text-base font-display font-bold text-(--accent-light) mb-2 flex items-center gap-2">
                     <Network size={18} /> Auto-Discovery Active
                 </h3>
-                <p className="text-sm text-(--base-07) mb-4">
-                    New nodes automatically connect to the Core when started with the correct Cluster Secret.
+                <p className="text-sm text-(--base-07)">
+                    New nodes register automatically when the <code className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-08) font-mono text-xs">dylaris-platform</code> stack is deployed on a node-labeled host with the cluster secret. No manual setup needed — the Node service picks the label up via Docker Swarm and registers itself with Core via Redis.
                 </p>
-
-                <div className="bg-(--base-01) p-4 rounded-md border border-(--base-04) font-mono text-sm mb-4">
-                    <div className="input-label mb-1">Your Cluster Secret</div>
-                    <div className="flex justify-between items-center text-(--success-light)">
-                        <span className="select-all">dylaris-cluster-secret</span>
-                        <span className="text-[10px] text-(--base-06)">(See Core .env)</span>
-                    </div>
-                </div>
-
-                <div className="text-sm text-(--base-07)">
-                    Start Node:<br/>
-                    <code className="bg-(--base-03) px-2 py-1 rounded-sm text-(--base-08) font-mono text-xs mt-2 inline-block">
-                        ./dylaris-node -secret &quot;dylaris-cluster-secret&quot;
-                    </code>
-                </div>
+                <p className="text-xs text-(--base-06) mt-3">
+                    Label a Swarm host as a node: <code className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-08) font-mono text-xs">docker node update --label-add role=node &lt;hostname&gt;</code>
+                </p>
             </div>
 
             <h3 className="text-base font-display font-bold text-(--base-09) mb-4">Connected Nodes</h3>

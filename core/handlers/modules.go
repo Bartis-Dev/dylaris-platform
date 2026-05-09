@@ -90,6 +90,17 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "module": req})
 }
 
+// builtInModules cannot be deleted (only toggled if !is_system).
+// They're seeded by Core and re-created on every start anyway, so deleting
+// them just causes confusion + the next restart re-creates them.
+var builtInModules = map[string]bool{
+	"Servers":        true,
+	"Admin":          true,
+	"Infrastructure": true,
+	"Gateway":        true,
+	"Library":        true,
+}
+
 func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -102,6 +113,16 @@ func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Reque
 
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
+
+	mod, err := h.state.Store.GetModuleByID(id)
+	if err != nil || mod == nil {
+		sendJSONError(w, "Module not found", 404)
+		return
+	}
+	if mod.IsSystem || builtInModules[mod.Name] {
+		sendJSONError(w, "Built-in modules cannot be deleted", 400)
+		return
+	}
 
 	if err := h.state.Store.DeleteModule(id); err != nil {
 		sendJSONError(w, "Delete failed", 500)

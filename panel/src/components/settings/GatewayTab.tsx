@@ -6,7 +6,7 @@ import {
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Shield, Router, Database, ChevronDown, AlertTriangle, EyeOff, Radio } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio } from 'lucide-react';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -222,12 +222,6 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
 
 function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
     const [settings, setSettings] = useState<GatewaySettings>({
-        redisMode: 'shared',
-        redisAddr: '',
-        redisUser: '',
-        redisPass: '',
-        redisDb: 0,
-        defaultLinkImage: '',
         limits: {
             global: -1, userDefault: -1, perServer: -1,
             portMc: -1, portMcEnabled: true,
@@ -237,7 +231,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [redisOpen, setRedisOpen] = useState(false);
 
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileMode, setFileMode] = useState<FileAccessMode>('sftp');
@@ -252,7 +245,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         Promise.all([getGatewaySettings(), getRoutingMode()]).then(([gwRes, rmRes]) => {
             if (gwRes.success && gwRes.settings) {
                 setSettings(gwRes.settings);
-                if (gwRes.settings.redisMode === 'separate') setRedisOpen(true);
             }
             if (rmRes.success) {
                 const m: RoutingMode = rmRes.mode || 'ip_port';
@@ -303,11 +295,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         setSettings(prev => ({ ...prev, limits: { ...prev.limits, [key]: value } }));
     const isUnlimited = (key: LimitKey) => settings.limits[key] === -1;
     const toggleUnlimited = (key: LimitKey) => setLimit(key, isUnlimited(key) ? 0 : -1);
-    const isSeparate = settings.redisMode === 'separate';
-    const toggleRedisMode = () => {
-        if (isSeparate) setSettings(prev => ({ ...prev, redisMode: 'shared' }));
-        else { setSettings(prev => ({ ...prev, redisMode: 'separate' })); setRedisOpen(true); }
-    };
     const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
 
     const allocationFields: { key: LimitKey; label: string; desc: string }[] = [
@@ -399,83 +386,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             Changing routing mode will trigger a server redeploy
                         </span>
                     )}
-                </div>
-            </div>
-
-            {/* Redis Connection */}
-            <div className="card overflow-hidden">
-                <button type="button" onClick={() => setRedisOpen(!redisOpen)}
-                    className="w-full p-5 flex items-center gap-3 hover:bg-(--base-02) transition-colors">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                        <Database size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div className="flex-1 text-left">
-                        <div className="font-medium text-sm text-(--base-09)">Redis Connection</div>
-                        <div className="text-xs text-(--base-06)">
-                            {isSeparate ? 'Using separate Redis instance' : 'Using shared Redis (Core)'}
-                            {!isSeparate && settings.redisDb > 0 && ` · DB ${settings.redisDb}`}
-                        </div>
-                    </div>
-                    <ChevronDown size={16} className={`text-(--base-06) transition-transform duration-200 ${redisOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {redisOpen && (
-                    <div className="px-5 pb-5 space-y-4 border-t border-(--base-03)">
-                        <div className="flex items-center justify-between pt-4">
-                            <div>
-                                <p className="text-sm text-(--base-09)">Use separate Redis</p>
-                                <p className="text-xs text-(--base-06)">Connect to a dedicated Redis instance instead of the shared Core Redis</p>
-                            </div>
-                            <button type="button" role="switch" aria-checked={isSeparate} onClick={toggleRedisMode}
-                                className={`toggle-track ${isSeparate ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                <span className={`toggle-knob ${isSeparate ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                            </button>
-                        </div>
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Redis DB Index</label>
-                            <select value={settings.redisDb} onChange={e => setSettings(prev => ({ ...prev, redisDb: Number(e.target.value) }))} className="input-mono w-full">
-                                {Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i}{i === 0 ? ' (default)' : ''}</option>)}
-                            </select>
-                            <p className="text-xs text-(--base-06)">
-                                {isSeparate ? 'Database index on the separate Redis instance.' : 'Use a different DB index on the shared Redis to isolate gateway data.'}
-                            </p>
-                        </div>
-                        {isSeparate && (
-                            <div className="grid grid-cols-2 gap-4 pt-2 border-t border-(--base-03)">
-                                <div className="flex flex-col gap-[5px]">
-                                    <label className="input-label">Redis Address</label>
-                                    <input type="text" value={settings.redisAddr} onChange={e => setSettings(prev => ({ ...prev, redisAddr: e.target.value }))} placeholder="localhost:6379" className="input-mono w-full" />
-                                </div>
-                                <div className="flex flex-col gap-[5px]">
-                                    <label className="input-label">Redis User</label>
-                                    <input type="text" value={settings.redisUser} onChange={e => setSettings(prev => ({ ...prev, redisUser: e.target.value }))} placeholder="default" className="input-mono w-full" />
-                                </div>
-                                <div className="col-span-2 flex flex-col gap-[5px]">
-                                    <label className="input-label">Redis Password</label>
-                                    <input type="password" value={settings.redisPass ?? ''} onChange={e => setSettings(prev => ({ ...prev, redisPass: e.target.value }))} placeholder="••••••••" className="input-mono w-full" />
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-
-            {/* General */}
-            <div className="card p-5 space-y-4">
-                <div className="flex items-center gap-3 mb-2">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Shield size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <div className="font-medium text-sm text-(--base-09)">General</div>
-                        <div className="text-xs text-(--base-06)">Default link container image</div>
-                    </div>
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Default Link Image</label>
-                    <input type="text" value={settings.defaultLinkImage} onChange={e => setSettings(prev => ({ ...prev, defaultLinkImage: e.target.value }))}
-                        placeholder="ghcr.io/bartis-dev/dylaris-link:latest" className="input-mono w-full" />
-                    <p className="text-xs text-(--base-06) mt-0.5">Docker image used for new link containers when no override is specified.</p>
                 </div>
             </div>
 

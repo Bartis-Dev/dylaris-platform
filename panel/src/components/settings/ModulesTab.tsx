@@ -25,6 +25,10 @@ interface ModulesTabProps {
     onModulesChange: () => void;
 }
 
+// Built-in modules cannot be deleted (kept in sync with Core's seed list +
+// builtInModules check in handlers/modules.go).
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Gateway', 'Library']);
+
 interface SortableModuleCardProps {
     module: AppModule;
     onToggle: (id: number, current: boolean) => void;
@@ -83,7 +87,7 @@ function SortableModuleCard({ module: m, onToggle, onDelete }: SortableModuleCar
                     </button>
                 )}
 
-                {!m.isSystem && (
+                {!m.isSystem && !BUILTIN_MODULES.has(m.name) && (
                     <button onClick={() => onDelete(m.id)} className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors" title="Delete">
                         <Trash2 size={18} />
                     </button>
