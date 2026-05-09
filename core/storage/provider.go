@@ -11,9 +11,10 @@ import (
 
 // FileInfo represents a file or directory in the storage
 type FileInfo struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"is_dir"`
-	Size  int64  `json:"size"`
+	Name    string `json:"name"`
+	IsDir   bool   `json:"is_dir"`
+	Size    int64  `json:"size"`
+	Enabled bool   `json:"enabled"` // false when admin has disabled this path
 }
 
 // StorageProvider is the interface for all library storage backends
@@ -78,9 +79,10 @@ func (p *LocalProvider) ListFiles(path string) ([]FileInfo, error) {
 			continue
 		}
 		files = append(files, FileInfo{
-			Name:  e.Name(),
-			IsDir: e.IsDir(),
-			Size:  info.Size(),
+			Name:    e.Name(),
+			IsDir:   e.IsDir(),
+			Size:    info.Size(),
+			Enabled: true, // default; library handler overrides based on disabled set
 		})
 	}
 	if files == nil {

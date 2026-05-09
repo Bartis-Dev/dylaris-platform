@@ -1,13 +1,15 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { getLibraryFiles, deleteLibraryPath, createLibraryDir, uploadLibraryFiles, getLibraryDownloadUrl } from '@/lib/api';
-import { FolderPlus, Upload, RefreshCw, ArrowUp, FolderOpen, Folder, Archive, Trash2 } from 'lucide-react';
+import { getLibraryFiles, deleteLibraryPath, createLibraryDir, uploadLibraryFiles, getLibraryDownloadUrl, toggleLibraryPath } from '@/lib/api';
+import { useAppData } from '@/lib/AppDataContext';
+import { FolderPlus, Upload, RefreshCw, ArrowUp, FolderOpen, Folder, Archive, Trash2, Eye, EyeOff } from 'lucide-react';
 
 interface FileEntry {
     name: string;
     is_dir: boolean;
     size: number;
+    enabled?: boolean;
 }
 
 const formatBytes = (bytes: number): string => {
@@ -19,6 +21,8 @@ const formatBytes = (bytes: number): string => {
 };
 
 export default function LibraryView() {
+    const { user } = useAppData();
+    const isAdmin = !!user?.isAdmin;
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [currentPath, setCurrentPath] = useState('');
     const [loading, setLoading] = useState(false);
@@ -88,6 +92,20 @@ export default function LibraryView() {
             fetchFiles(currentPath);
         } else {
             showToast(res.message || 'Delete failed');
+        }
+    };
+
+    const handleToggleEnabled = async (entry: FileEntry, e: React.MouseEvent) => {
+        e.stopPropagation();
+        const path = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+        const next = entry.enabled === false; // disabled → flip to enabled
+        // Optimistic update
+        setFiles(curr => curr.map(f => f.name === entry.name ? { ...f, enabled: next } : f));
+        const res = await toggleLibraryPath(path, next);
+        if (!res.success) {
+            // Revert
+            setFiles(curr => curr.map(f => f.name === entry.name ? { ...f, enabled: !next } : f));
+            showToast(res.message || 'Failed to toggle');
         }
     };
 
@@ -183,27 +201,46 @@ export default function LibraryView() {
                                     Library is empty. Upload files to get started.
                                 </td></tr>
                             )}
-                            {files.map(f => (
+                            {files.map(f => {
+                                const dimmed = isAdmin && f.enabled === false;
+                                return (
                                 <tr key={f.name} className="table-tr table-tr-hover cursor-pointer" onClick={() => navigate(f.name, f.is_dir)}>
-                                    <td className="table-td">
+                                    <td className={`table-td ${dimmed ? 'opacity-50' : ''}`}>
                                         <div className="flex items-center gap-2">
                                             {f.is_dir ? <Folder size={14} className="text-(--warning)" /> : <Archive size={14} className="text-(--base-06)" />}
                                             <span className="font-mono text-sm">{f.name}</span>
+                                            {dimmed && (
+                                                <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-(--base-06) bg-(--base-02) border border-(--base-04) rounded px-1.5 py-0.5">
+                                                    hidden
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
-                                    <td className="table-td text-right text-sm text-(--base-07)">
+                                    <td className={`table-td text-right text-sm text-(--base-07) ${dimmed ? 'opacity-50' : ''}`}>
                                         {f.is_dir ? '—' : formatBytes(f.size)}
                                     </td>
                                     <td className="table-td text-right">
-                                        <button
-                                            onClick={e => { e.stopPropagation(); setDeleteTarget(f); }}
-                                            className="text-(--base-06) hover:text-(--error-light) transition-colors"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        <div className="flex items-center justify-end gap-3">
+                                            {isAdmin && (
+                                                <button
+                                                    onClick={e => handleToggleEnabled(f, e)}
+                                                    className={`transition-colors ${f.enabled === false ? 'text-(--base-06) hover:text-(--accent-light)' : 'text-(--accent-light) hover:text-(--base-06)'}`}
+                                                    title={f.enabled === false ? 'Enable for users' : 'Hide from users'}
+                                                >
+                                                    {f.enabled === false ? <EyeOff size={14} /> : <Eye size={14} />}
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={e => { e.stopPropagation(); setDeleteTarget(f); }}
+                                                className="text-(--base-06) hover:text-(--error-light) transition-colors"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 )}

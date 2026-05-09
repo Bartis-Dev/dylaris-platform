@@ -45,6 +45,12 @@ func (h *LibraryHandler) RefreshProvider() {
 }
 
 // GetLibraryHandler GET /api/library?path=
+//
+// Admins see all entries with their `enabled` flag set per-path so the UI can
+// render a toggle. Non-admins:
+//   - get an empty list when the requested path itself OR any ancestor is
+//     marked disabled (strict AND semantics — "all the way up must be on")
+//   - have disabled children silently filtered out of the listing
 func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
@@ -57,10 +63,129 @@ func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	disabledSet := h.disabledPathSet()
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+
+	if !isAdmin && isPathBlocked(path, disabledSet) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"files":   []interface{}{},
+		})
+		return
+	}
+
+	out := files[:0]
+	for _, f := range files {
+		full := joinLibraryPath(path, f.Name)
+		_, isDisabled := disabledSet[normalizeLibraryPath(full)]
+		if isDisabled {
+			if !isAdmin {
+				continue
+			}
+			f.Enabled = false
+		}
+		out = append(out, f)
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"files":   files,
+		"files":   out,
 	})
+}
+
+// ToggleLibraryPathHandler POST /api/library/toggle (Admin only)
+// Body: { "path": "...", "enabled": false }
+func (h *LibraryHandler) ToggleLibraryPathHandler(w http.ResponseWriter, r *http.Request) {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if !isAdmin {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Path    string `json:"path"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.Path = normalizeLibraryPath(req.Path)
+	if req.Path == "" || req.Path == "/" {
+		sendJSONError(w, "Cannot toggle the library root", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.state.Store.SetLibraryPathDisabled(req.Path, !req.Enabled); err != nil {
+		sendJSONError(w, "Toggle failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// disabledPathSet loads all disabled library paths into a lookup set,
+// keyed by the normalized path string.
+func (h *LibraryHandler) disabledPathSet() map[string]struct{} {
+	set := map[string]struct{}{}
+	if h.state.Store == nil {
+		return set
+	}
+	paths, err := h.state.Store.ListDisabledLibraryPaths()
+	if err != nil {
+		return set
+	}
+	for _, p := range paths {
+		set[normalizeLibraryPath(p)] = struct{}{}
+	}
+	return set
+}
+
+// normalizeLibraryPath strips leading/trailing slashes so paths from
+// different sources (admin clicks, listing joins, DB rows) compare equal.
+func normalizeLibraryPath(p string) string {
+	p = strings.TrimSpace(p)
+	for strings.HasPrefix(p, "/") {
+		p = p[1:]
+	}
+	for strings.HasSuffix(p, "/") {
+		p = p[:len(p)-1]
+	}
+	return p
+}
+
+// joinLibraryPath joins a parent listing path with a child entry name,
+// producing a normalized library-relative path.
+func joinLibraryPath(parent, name string) string {
+	parent = normalizeLibraryPath(parent)
+	if parent == "" {
+		return name
+	}
+	return parent + "/" + name
+}
+
+// isPathBlocked returns true when `path` itself or any ancestor (excluding
+// root) is in the disabled set — meaning a non-admin should see nothing here.
+func isPathBlocked(path string, disabled map[string]struct{}) bool {
+	cur := normalizeLibraryPath(path)
+	if cur == "" {
+		return false // root itself is never blockable (toggle handler refuses it)
+	}
+	for cur != "" {
+		if _, ok := disabled[cur]; ok {
+			return true
+		}
+		idx := strings.LastIndex(cur, "/")
+		if idx < 0 {
+			break
+		}
+		cur = cur[:idx]
+	}
+	return false
 }
 
 // DeleteLibraryHandler POST /api/library/delete (Admin only)

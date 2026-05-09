@@ -93,6 +93,10 @@ type Store interface {
 	InsertStatsBatch(stats []models.ServerStatRow) error
 	GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error)
 
+	// --- Library Disabled Paths ---
+	ListDisabledLibraryPaths() ([]string, error)
+	SetLibraryPathDisabled(path string, disabled bool) error
+
 	// --- Gateway Route Limits (still managed by Core, not Hub) ---
 	GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error)
 	SetGatewayRouteLimit(scope string, max int) error

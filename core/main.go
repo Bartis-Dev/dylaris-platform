@@ -274,6 +274,7 @@ func main() {
 	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(libraryHandler.MkdirLibraryHandler)).Methods("POST")
 	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(libraryHandler.UploadLibraryHandler)).Methods("POST")
 	api.HandleFunc("/library/download", authHandler.AuthMiddleware(libraryHandler.DownloadLibraryHandler)).Methods("GET")
+	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(libraryHandler.ToggleLibraryPathHandler)).Methods("POST")
 
 	// Settings Endpunkte
 	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(settingsHandler.GetLibrarySettings)).Methods("GET")

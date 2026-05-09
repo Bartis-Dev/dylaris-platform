@@ -58,6 +58,9 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 	if err := createGatewayTables(db); err != nil {
 		return nil, err
 	}
+	if err := createLibraryDisabledTable(db); err != nil {
+		return nil, err
+	}
 
 	if err := migrateSchema(db); err != nil {
 		return nil, err
@@ -342,6 +345,18 @@ func createGatewayTables(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// library_disabled stores paths (relative to the library root) that admins
+// have hidden from non-admin users. A path is enabled IFF no row exists for
+// it AND no row exists for any of its ancestors. Defaulting to "enabled when
+// absent" keeps the table small — only the curated exclusions are persisted.
+func createLibraryDisabledTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS library_disabled (
+		path TEXT PRIMARY KEY,
+		disabled_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+	)`)
+	return err
 }
 
 func createServerStatsTable(db *sql.DB) error {

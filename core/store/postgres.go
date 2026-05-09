@@ -790,6 +790,41 @@ func (s *PostgresStore) DeleteGatewayRouteLimit(scope string) error {
 }
 
 // ==========================================
+// LIBRARY DISABLED PATHS
+// ==========================================
+
+func (s *PostgresStore) ListDisabledLibraryPaths() ([]string, error) {
+	rows, err := s.db.Query(`SELECT path FROM library_disabled`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			continue
+		}
+		paths = append(paths, p)
+	}
+	return paths, nil
+}
+
+// SetLibraryPathDisabled inserts the path when disabled=true and removes it
+// when disabled=false. Idempotent in either direction.
+func (s *PostgresStore) SetLibraryPathDisabled(path string, disabled bool) error {
+	if disabled {
+		_, err := s.db.Exec(
+			`INSERT INTO library_disabled (path) VALUES ($1) ON CONFLICT (path) DO NOTHING`,
+			path,
+		)
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM library_disabled WHERE path = $1`, path)
+	return err
+}
+
+// ==========================================
 // SFTP
 // ==========================================
 

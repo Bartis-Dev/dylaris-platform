@@ -215,6 +215,8 @@ export const removeServerMember = (serverId: number, userId: number) =>
 export const getLibraryFiles = (path?: string) => fetchAPI(`/library${path ? `?path=${encodeURIComponent(path)}` : ''}`);
 export const deleteLibraryPath = (path: string) => fetchAPI('/library/delete', { method: 'POST', body: JSON.stringify({ path }) });
 export const createLibraryDir = (path: string) => fetchAPI('/library/mkdir', { method: 'POST', body: JSON.stringify({ path }) });
+export const toggleLibraryPath = (path: string, enabled: boolean) =>
+    fetchAPI('/library/toggle', { method: 'POST', body: JSON.stringify({ path, enabled }) });
 export const getLibrarySettings = () => fetchAPI('/settings/library');
 export const saveLibrarySettings = (data: LibrarySettings) => fetchAPI('/settings/library', { method: 'POST', body: JSON.stringify(data) });
 export const testLibraryConnection = () => fetchAPI('/settings/library/test');
