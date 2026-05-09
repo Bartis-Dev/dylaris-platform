@@ -4,6 +4,7 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -70,6 +71,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	req.Password = string(hashed)
 
 	if err := h.state.Store.CreateUser(&req); err != nil {
+		log.Printf("CreateUser failed for username=%q: %v", req.Username, err)
 		sendJSONError(w, "Could not create user", 409)
 		return
 	}

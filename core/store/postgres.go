@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -24,16 +25,22 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 // totp_secret + totp_backup_codes which are needed for 2FA verification.
 // These two are scrubbed from JSON responses via the json:"-" tag on the model.
 const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''),
-	is_admin, is_2fa_enabled, COALESCE(totp_secret, ''), COALESCE(totp_backup_codes::text, '[]'),
+	is_admin, COALESCE(is_2fa_enabled, FALSE), COALESCE(totp_secret, ''), COALESCE(totp_backup_codes::text, '[]'),
 	COALESCE(permissions, ''), COALESCE(public_id, ''), created_at`
 
 func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
-	var u models.User
+	var (
+		u         models.User
+		createdAt sql.NullTime
+	)
 	err := scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.MinecraftUsername,
 		&u.IsAdmin, &u.Is2FAEnabled, &u.TOTPSecret, &u.TOTPBackupCodes,
-		&u.Permissions, &u.PublicID, &u.CreatedAt)
+		&u.Permissions, &u.PublicID, &createdAt)
 	if err != nil {
 		return nil, err
+	}
+	if createdAt.Valid {
+		u.CreatedAt = createdAt.Time
 	}
 	return &u, nil
 }
@@ -49,8 +56,15 @@ func (s *PostgresStore) GetUserByID(id int) (*models.User, error) {
 }
 
 func (s *PostgresStore) CreateUser(u *models.User) error {
-	query := `INSERT INTO users (username, password, email, minecraft_username, is_admin, is_2fa_enabled, permissions, public_id) 
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
+	// Explicit defaults for totp_* — older deployments may have these columns
+	// added via migration without the JSONB default actually being applied to
+	// freshly inserted rows in some Postgres versions. Writing the values
+	// explicitly avoids relying on the schema default at all.
+	query := `INSERT INTO users
+		(username, password, email, minecraft_username, is_admin, is_2fa_enabled,
+		 totp_secret, totp_backup_codes, permissions, public_id)
+		VALUES ($1, $2, $3, $4, $5, $6, '', '[]'::jsonb, $7, $8)
+		RETURNING id`
 	return s.db.QueryRow(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.PublicID).Scan(&u.ID)
 }
 
@@ -82,9 +96,16 @@ func (s *PostgresStore) ListUsers() ([]models.User, error) {
 	for rows.Next() {
 		u, err := scanUser(rows.Scan)
 		if err != nil {
-			continue
+			// Surface scan failures instead of dropping rows silently —
+			// a single bad row used to make freshly-created users vanish
+			// from the admin list.
+			log.Printf("ListUsers: scan failed: %v", err)
+			return nil, err
 		}
 		users = append(users, *u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return users, nil
 }
