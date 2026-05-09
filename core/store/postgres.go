@@ -20,24 +20,32 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 // USERS
 // ==========================================
 
-func (s *PostgresStore) GetUserByUsername(username string) (*models.User, error) {
+// userSelectCols is the canonical column list for User reads. Includes
+// totp_secret + totp_backup_codes which are needed for 2FA verification.
+// These two are scrubbed from JSON responses via the json:"-" tag on the model.
+const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''),
+	is_admin, is_2fa_enabled, COALESCE(totp_secret, ''), COALESCE(totp_backup_codes::text, '[]'),
+	COALESCE(permissions, ''), COALESCE(public_id, ''), created_at`
+
+func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 	var u models.User
-	query := `SELECT id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''), is_admin, is_2fa_enabled, COALESCE(permissions, ''), COALESCE(public_id, ''), created_at FROM users WHERE username = $1`
-	err := s.db.QueryRow(query, username).Scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.MinecraftUsername, &u.IsAdmin, &u.Is2FAEnabled, &u.Permissions, &u.PublicID, &u.CreatedAt)
+	err := scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.MinecraftUsername,
+		&u.IsAdmin, &u.Is2FAEnabled, &u.TOTPSecret, &u.TOTPBackupCodes,
+		&u.Permissions, &u.PublicID, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &u, nil
 }
 
+func (s *PostgresStore) GetUserByUsername(username string) (*models.User, error) {
+	query := `SELECT ` + userSelectCols + ` FROM users WHERE username = $1`
+	return scanUser(s.db.QueryRow(query, username).Scan)
+}
+
 func (s *PostgresStore) GetUserByID(id int) (*models.User, error) {
-	var u models.User
-	query := `SELECT id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''), is_admin, is_2fa_enabled, COALESCE(permissions, ''), COALESCE(public_id, ''), created_at FROM users WHERE id = $1`
-	err := s.db.QueryRow(query, id).Scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.MinecraftUsername, &u.IsAdmin, &u.Is2FAEnabled, &u.Permissions, &u.PublicID, &u.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
+	query := `SELECT ` + userSelectCols + ` FROM users WHERE id = $1`
+	return scanUser(s.db.QueryRow(query, id).Scan)
 }
 
 func (s *PostgresStore) CreateUser(u *models.User) error {
@@ -63,7 +71,7 @@ func (s *PostgresStore) DeleteUser(id int) error {
 }
 
 func (s *PostgresStore) ListUsers() ([]models.User, error) {
-	query := `SELECT id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''), is_admin, is_2fa_enabled, COALESCE(permissions, ''), COALESCE(public_id, ''), created_at FROM users ORDER BY id ASC`
+	query := `SELECT ` + userSelectCols + ` FROM users ORDER BY id ASC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -72,11 +80,11 @@ func (s *PostgresStore) ListUsers() ([]models.User, error) {
 
 	var users []models.User
 	for rows.Next() {
-		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.MinecraftUsername, &u.IsAdmin, &u.Is2FAEnabled, &u.Permissions, &u.PublicID, &u.CreatedAt); err != nil {
+		u, err := scanUser(rows.Scan)
+		if err != nil {
 			continue
 		}
-		users = append(users, u)
+		users = append(users, *u)
 	}
 	return users, nil
 }
@@ -85,6 +93,26 @@ func (s *PostgresStore) CountUsers() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
 	return count, err
+}
+
+// SetUserTOTP stores the TOTP secret + hashed backup codes JSON for a user
+// and sets is_2fa_enabled accordingly. enabled=true means 2FA is now active.
+func (s *PostgresStore) SetUserTOTP(id int, secret, backupCodesJSON string, enabled bool) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET totp_secret = $1, totp_backup_codes = $2::jsonb, is_2fa_enabled = $3 WHERE id = $4`,
+		secret, backupCodesJSON, enabled, id,
+	)
+	return err
+}
+
+// DisableUserTOTP wipes the secret + backup codes and sets is_2fa_enabled to false.
+// Used by user-self-disable and admin-reset.
+func (s *PostgresStore) DisableUserTOTP(id int) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET totp_secret = '', totp_backup_codes = '[]'::jsonb, is_2fa_enabled = FALSE WHERE id = $1`,
+		id,
+	)
+	return err
 }
 
 // ==========================================

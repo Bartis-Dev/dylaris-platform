@@ -12,6 +12,8 @@ type User struct {
 	MinecraftUsername string    `json:"minecraftUsername"`
 	IsAdmin           bool      `json:"isAdmin"`
 	Is2FAEnabled      bool      `json:"is2FAEnabled"`
+	TOTPSecret        string    `json:"-"` // never sent to clients
+	TOTPBackupCodes   string    `json:"-"` // JSON array of bcrypt-hashed codes
 	Permissions       string    `json:"permissions"`
 	PublicID          string    `json:"publicId"`
 	CreatedAt         time.Time `json:"createdAt"`

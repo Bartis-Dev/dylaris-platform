@@ -166,6 +166,8 @@ func migrateSchema(db *sql.DB) error {
 	cols := []struct{ table, col, def string }{
 		{"users", "email", "TEXT"},
 		{"users", "is_2fa_enabled", "BOOLEAN DEFAULT FALSE"},
+		{"users", "totp_secret", "TEXT DEFAULT ''"},
+		{"users", "totp_backup_codes", "JSONB DEFAULT '[]'"},
 		{"users", "permissions", "TEXT"},
 		{"nodes", "tags", "TEXT"},
 		{"nodes", "link_enabled", "BOOLEAN DEFAULT FALSE"},

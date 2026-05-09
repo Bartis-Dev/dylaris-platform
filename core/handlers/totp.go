@@ -1,0 +1,258 @@
+package handlers
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"dylaris-core/models"
+
+	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
+)
+
+// totpIssuer appears in the user's Authenticator app entry.
+const totpIssuer = "Dylaris"
+
+// backupCodeCount is the number of single-use codes generated when 2FA is set up.
+const backupCodeCount = 10
+
+// SetupTOTPRequest is the empty body of /auth/2fa/setup — auth is via JWT.
+type SetupTOTPResponse struct {
+	Success bool   `json:"success"`
+	Secret  string `json:"secret"`     // base32, raw — the user types/scans this
+	OTPAuth string `json:"otpAuthURL"` // otpauth://... — frontend renders as QR
+	Issuer  string `json:"issuer"`
+	Account string `json:"account"`
+}
+
+// SetupTOTPHandler — POST /api/auth/2fa/setup
+// Generates a fresh TOTP secret + otpauth URI for the authenticated user.
+// The secret is NOT yet persisted — frontend must call /verify with a code
+// derived from the same secret to confirm possession.
+func (h *AuthHandler) SetupTOTPHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      totpIssuer,
+		AccountName: user.Username,
+	})
+	if err != nil {
+		sendJSONError(w, "Failed to generate secret", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(SetupTOTPResponse{
+		Success: true,
+		Secret:  key.Secret(),
+		OTPAuth: key.URL(),
+		Issuer:  totpIssuer,
+		Account: user.Username,
+	})
+}
+
+type VerifyTOTPRequest struct {
+	Secret string `json:"secret"`
+	Code   string `json:"code"`
+}
+
+type VerifyTOTPResponse struct {
+	Success     bool     `json:"success"`
+	BackupCodes []string `json:"backupCodes"` // shown ONCE, never returned again
+	Message     string   `json:"message,omitempty"`
+}
+
+// VerifyTOTPHandler — POST /api/auth/2fa/verify
+// Validates the user's 6-digit code against the freshly-generated secret.
+// On success: persists secret, generates + hashes backup codes, enables 2FA.
+// Backup codes are returned in cleartext exactly once — never retrievable later.
+func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	var req VerifyTOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.Code = strings.TrimSpace(req.Code)
+	req.Secret = strings.TrimSpace(req.Secret)
+
+	if req.Secret == "" || req.Code == "" {
+		sendJSONError(w, "Secret and code required", http.StatusBadRequest)
+		return
+	}
+
+	if !totp.Validate(req.Code, req.Secret) {
+		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate 10 single-use backup codes (16 hex chars each).
+	plainCodes := make([]string, backupCodeCount)
+	hashed := make([]string, backupCodeCount)
+	for i := 0; i < backupCodeCount; i++ {
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
+			return
+		}
+		plainCodes[i] = hex.EncodeToString(b)
+		// bcrypt cost 10 — light enough for 10 hashes here, strong enough
+		// since the codes already have ~64 bits of entropy.
+		h, err := bcrypt.GenerateFromPassword([]byte(plainCodes[i]), 10)
+		if err != nil {
+			sendJSONError(w, "Failed to hash backup code", http.StatusInternalServerError)
+			return
+		}
+		hashed[i] = string(h)
+	}
+	hashedJSON, _ := json.Marshal(hashed)
+
+	if err := h.state.Store.SetUserTOTP(user.ID, req.Secret, string(hashedJSON), true); err != nil {
+		sendJSONError(w, "Failed to enable 2FA", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(VerifyTOTPResponse{
+		Success:     true,
+		BackupCodes: plainCodes,
+	})
+}
+
+type DisableTOTPRequest struct {
+	Password string `json:"password"`
+	Code     string `json:"code"` // current TOTP or backup code (defence in depth)
+}
+
+// DisableTOTPHandler — POST /api/auth/2fa/disable
+// User-initiated 2FA disable. Requires both the current password and a valid
+// TOTP/backup code to mitigate session-hijack risk.
+func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !user.Is2FAEnabled {
+		sendJSONError(w, "2FA is not enabled", http.StatusBadRequest)
+		return
+	}
+
+	var req DisableTOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		sendJSONError(w, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+	ok, err := h.verifyTOTPOrBackup(user, req.Code)
+	if err != nil {
+		sendJSONError(w, "Verification failed", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	if err := h.state.Store.DisableUserTOTP(user.ID); err != nil {
+		sendJSONError(w, "Failed to disable 2FA", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// AdminResetTOTPHandler — DELETE /api/users/{id}/2fa  (admin-only)
+// Wipes a user's 2FA without their password — for the case when the user
+// has lost both their authenticator AND their backup codes. After this
+// the user logs in with just their password and can re-enable 2FA.
+func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	idStr = strings.TrimSuffix(idStr, "/2fa")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id <= 0 {
+		sendJSONError(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.DisableUserTOTP(id); err != nil {
+		sendJSONError(w, "Reset failed", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// verifyTOTPOrBackup checks `code` against the user's TOTP secret first
+// (most common path for normal logins), then falls back to matching against
+// any unconsumed backup code. A successful backup-code match is destructive:
+// the matched code is removed and the updated list is persisted, ensuring
+// it can't be reused.
+func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, error) {
+	code = strings.TrimSpace(code)
+	if code == "" || user == nil {
+		return false, nil
+	}
+
+	// 1) TOTP — fast path for the regular case
+	if user.TOTPSecret != "" && totp.Validate(code, user.TOTPSecret) {
+		return true, nil
+	}
+
+	// 2) Backup codes — bcrypt-compare each, drop the matched one on success
+	if user.TOTPBackupCodes == "" || user.TOTPBackupCodes == "[]" {
+		return false, nil
+	}
+	var hashed []string
+	if err := json.Unmarshal([]byte(user.TOTPBackupCodes), &hashed); err != nil {
+		return false, err
+	}
+	for i, hashedCode := range hashed {
+		if bcrypt.CompareHashAndPassword([]byte(hashedCode), []byte(code)) == nil {
+			// Match — drop this code and persist the new list so it
+			// can't be reused.
+			remaining := append(hashed[:i], hashed[i+1:]...)
+			out, _ := json.Marshal(remaining)
+			if err := h.state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(out), user.Is2FAEnabled); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	}
+	return false, nil
+}

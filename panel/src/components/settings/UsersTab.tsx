@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, User } from '@/lib/api';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert } from 'lucide-react';
+import { adminResetTOTP } from '@/lib/api/auth';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff } from 'lucide-react';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -25,6 +26,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [routeMax, setRouteMax] = useState(5);
     const [routeSaving, setRouteSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [resetting2FA, setResetting2FA] = useState(false);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -84,6 +86,24 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             showToast(res.message || 'Failed to reset password', false);
         }
         setPwSaving(false);
+    };
+
+    const handleReset2FA = async () => {
+        if (!settingsUser) return;
+        if (!confirm(`Reset 2FA for "${settingsUser.username}"? They will be able to log in with just their password until they re-enable 2FA.`)) return;
+        setResetting2FA(true);
+        try {
+            const res = await adminResetTOTP(settingsUser.id);
+            if (res?.success) {
+                showToast('2FA reset for user');
+                setSettingsUser({ ...settingsUser, is2FAEnabled: false });
+                loadUsers();
+            } else {
+                showToast(res?.message || 'Failed to reset 2FA', false);
+            }
+        } finally {
+            setResetting2FA(false);
+        }
     };
 
     const handleSaveRouteLimit = async () => {
@@ -226,7 +246,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                         {/* Tab Content */}
                         <div className="p-5 overflow-y-auto flex-1">
                             {settingsTab === 'general' && (
-                                <div className="space-y-4">
+                                <div className="space-y-5">
                                     <div>
                                         <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Reset Password</h4>
                                         <div className="flex gap-2">
@@ -243,6 +263,31 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 className="btn btn-primary px-4 py-2 text-sm disabled:opacity-50 shrink-0"
                                             >
                                                 {pwSaving ? 'Saving...' : 'Reset'}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Two-Factor Authentication</h4>
+                                        <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+                                            <div className="text-sm">
+                                                <p className="text-(--base-09)">
+                                                    {settingsUser.is2FAEnabled ? 'Enabled' : 'Not enabled'}
+                                                </p>
+                                                <p className="text-xs text-(--base-06)">
+                                                    {settingsUser.is2FAEnabled
+                                                        ? 'Use this if the user lost their authenticator and backup codes.'
+                                                        : 'Reset is only available when 2FA is enabled.'}
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleReset2FA}
+                                                disabled={!settingsUser.is2FAEnabled || resetting2FA}
+                                                className="btn btn-danger px-3 py-1.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed shrink-0 inline-flex items-center gap-1.5"
+                                            >
+                                                <ShieldOff size={12} />
+                                                {resetting2FA ? 'Resetting…' : 'Reset 2FA'}
                                             </button>
                                         </div>
                                     </div>

@@ -24,6 +24,10 @@ type Store interface {
 	ListUsers() ([]models.User, error)
 	CountUsers() (int, error)
 
+	// --- 2FA (TOTP + Backup Codes) ---
+	SetUserTOTP(id int, secret string, backupCodesJSON string, enabled bool) error
+	DisableUserTOTP(id int) error
+
 	// --- Nodes ---
 	GetNodeByID(id int) (*models.Node, error)
 	GetNodeByToken(token string) (*models.Node, error)

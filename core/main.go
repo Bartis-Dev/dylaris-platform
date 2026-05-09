@@ -172,6 +172,10 @@ func main() {
 	// --- PROTECTED ENDPOINTS ---
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.UpdateProfileHandler)).Methods("PUT")
+	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
+	api.HandleFunc("/auth/2fa/verify", authHandler.AuthMiddleware(authHandler.VerifyTOTPHandler)).Methods("POST")
+	api.HandleFunc("/auth/2fa/disable", authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)).Methods("POST")
+	api.HandleFunc("/users/{id:[0-9]+}/2fa", authHandler.AuthMiddleware(authHandler.AdminResetTOTPHandler)).Methods("DELETE")
 
 	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.GetAllUsers)).Methods("GET")
 	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.CreateUser)).Methods("POST")

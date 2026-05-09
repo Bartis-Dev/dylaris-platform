@@ -1,30 +1,72 @@
 import { API_URL, getAuthHeader, handleResponse, handleError } from './core';
 
-export const login = async (username: string, password: string) => {
+export const login = async (username: string, password: string, totpCode?: string) => {
   try {
+    const body: Record<string, string> = { username, password };
+    if (totpCode) body.totpCode = totpCode;
     const res = await fetch(`${API_URL}/auth/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ username, password }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
-    
+
+    // 401 with requires2FA flag is the "password OK, give me the TOTP code" path
+    if (res.status === 401) {
+      const data = await res.json().catch(() => ({}));
+      if (data.requires2FA) return { success: false, requires2FA: true, message: data.message };
+    }
+
     const data = await handleResponse(res);
-    
-    // ULTIMATE FIX: We store the token under BOTH keys.
-    // This way it doesn't matter whether the UI looks for "token" or "authToken".
+
+    // Store the token under BOTH keys ("token" and "authToken") so neither
+    // older nor newer code paths break when reading.
     if (data.success && data.token) {
       if (typeof window !== 'undefined') {
         localStorage.setItem('token', data.token);
         localStorage.setItem('authToken', data.token);
       }
     }
-    
+
     return data;
   } catch (err) {
     return handleError(err);
   }
+};
+
+// --- 2FA / TOTP ---
+
+export const setupTOTP = async () => {
+  const res = await fetch(`${API_URL}/auth/2fa/setup`, {
+    method: 'POST',
+    headers: getAuthHeader(),
+  });
+  return handleResponse(res);
+};
+
+export const verifyTOTP = async (secret: string, code: string) => {
+  const res = await fetch(`${API_URL}/auth/2fa/verify`, {
+    method: 'POST',
+    headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret, code }),
+  });
+  return handleResponse(res);
+};
+
+export const disableTOTP = async (password: string, code: string) => {
+  const res = await fetch(`${API_URL}/auth/2fa/disable`, {
+    method: 'POST',
+    headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, code }),
+  });
+  return handleResponse(res);
+};
+
+export const adminResetTOTP = async (userId: number) => {
+  const res = await fetch(`${API_URL}/users/${userId}/2fa`, {
+    method: 'DELETE',
+    headers: getAuthHeader(),
+  });
+  return handleResponse(res);
 };
 
 export const getProfile = async () => {

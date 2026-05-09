@@ -30,6 +30,7 @@ type Claims struct {
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	TOTPCode string `json:"totpCode,omitempty"` // 6-digit TOTP or 8-char backup code
 }
 type UpdateRequest struct {
 	OldPassword       string  `json:"oldPassword"`
@@ -37,7 +38,8 @@ type UpdateRequest struct {
 	NewPassword       *string `json:"newPassword,omitempty"`
 	MinecraftUsername *string `json:"minecraftUsername,omitempty"`
 	Email             *string `json:"email,omitempty"`
-	Is2FAEnabled      *bool   `json:"is2FAEnabled,omitempty"`
+	// Note: 2FA is NOT toggled via this endpoint — use /auth/2fa/setup + /auth/2fa/verify
+	// (or /auth/2fa/disable) so the user must prove possession of the secret.
 }
 
 func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -99,6 +101,31 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 		sendJSONError(w, "Invalid Password", http.StatusUnauthorized)
 		return
+	}
+
+	// 2FA gate: if the user has 2FA enabled, require a valid TOTP or backup code.
+	if user.Is2FAEnabled {
+		if req.TOTPCode == "" {
+			// Signal to the frontend that a code is needed without leaking
+			// whether the password was correct (it was — but we still
+			// expose this fact since 2FA is the user's chosen second factor).
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":     false,
+				"requires2FA": true,
+				"message":     "2FA code required",
+			})
+			return
+		}
+		ok, err := h.verifyTOTPOrBackup(user, req.TOTPCode)
+		if err != nil {
+			sendJSONError(w, "2FA verification failed", http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	expirationTime := time.Now().Add(24 * time.Hour)
@@ -169,9 +196,6 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	}
 	if req.MinecraftUsername != nil {
 		user.MinecraftUsername = *req.MinecraftUsername
-	}
-	if req.Is2FAEnabled != nil {
-		user.Is2FAEnabled = *req.Is2FAEnabled
 	}
 
 	// Save via Store
