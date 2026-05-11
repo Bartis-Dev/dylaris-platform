@@ -163,55 +163,60 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     <form onSubmit={(e) => e.preventDefault()}>
 
                         {step === 1 && (
-                            <div className="space-y-5 animate-fade-in">
-                                {/* Server Type Selection */}
-                                <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Server Type</h3>
-                                <div className={`grid gap-3 ${proxiesEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                    <button
-                                        type="button"
-                                        onClick={() => setServerType('game')}
-                                        className={`card text-left p-4 cursor-pointer transition-all flex items-center gap-3 ${
-                                            serverType === 'game'
-                                                ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                : 'hover:border-(--base-05)'
-                                        }`}
-                                    >
-                                        <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
-                                            <Server size={20} className="text-(--primary-light)" />
-                                        </div>
-                                        <div>
-                                            <div className="font-medium text-sm text-(--base-09)">Game Server</div>
-                                            <div className="text-xs text-(--base-06)">Minecraft, Paper, Forge, etc.</div>
-                                        </div>
-                                        {serverType === 'game' && <CircleCheck size={16} className="text-(--accent-light) ml-auto" />}
-                                    </button>
-                                    {proxiesEnabled && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setServerType('proxy')}
-                                            className={`card text-left p-4 cursor-pointer transition-all flex items-center gap-3 ${
-                                                serverType === 'proxy'
-                                                    ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                    : 'hover:border-(--base-05)'
-                                            }`}
-                                        >
-                                            <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
-                                                <Network size={20} className="text-(--accent-light)" />
-                                            </div>
-                                            <div>
-                                                <div className="font-medium text-sm text-(--base-09)">Proxy Server</div>
-                                                <div className="text-xs text-(--base-06)">BungeeCord, Waterfall, Velocity</div>
-                                            </div>
-                                            {serverType === 'proxy' && <CircleCheck size={16} className="text-(--accent-light) ml-auto" />}
-                                        </button>
-                                    )}
-                                </div>
-
-                                <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">1. Target Node</h3>
-
-                                <div className="space-y-3">
+                            <div className="space-y-6 animate-fade-in">
+                                {/* Owner */}
+                                <section className="space-y-2">
+                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2">
+                                        <h3 className="text-base font-display font-bold text-(--base-09)">Assign Owner</h3>
+                                        <span className="font-mono text-[10px] text-(--base-06)">
+                                            {filteredUsers.length} / {users.length}
+                                        </span>
+                                    </div>
                                     <input
                                         autoFocus
+                                        type="text"
+                                        placeholder="Search user..."
+                                        value={searchTerm}
+                                        onChange={e => setSearchTerm(e.target.value)}
+                                        className="input-field w-full"
+                                    />
+                                    <div className="flex flex-col gap-1 max-h-56 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                        {filteredUsers.length === 0 ? (
+                                            <p className="text-xs text-(--base-06) text-center py-6 italic">No matching users.</p>
+                                        ) : (
+                                            filteredUsers.map(user => {
+                                                const selected = ownerId === user.id;
+                                                return (
+                                                    <button
+                                                        key={user.id}
+                                                        type="button"
+                                                        onClick={() => setOwnerId(user.id)}
+                                                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
+                                                            selected
+                                                                ? 'bg-(--accent-ghost) border border-(--accent-border)'
+                                                                : 'border border-transparent hover:bg-(--base-03)'
+                                                        }`}
+                                                    >
+                                                        <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center font-medium text-xs text-(--base-08) shrink-0">
+                                                            {user.username.charAt(0).toUpperCase()}
+                                                        </div>
+                                                        <span className="flex-1 truncate text-sm text-(--base-09)">{user.username}</span>
+                                                        {user.isAdmin && (
+                                                            <span className="font-mono text-[9px] uppercase text-(--accent-light)">admin</span>
+                                                        )}
+                                                        {selected && <CircleCheck size={14} className="text-(--accent-light) shrink-0" />}
+                                                    </button>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                </section>
+
+                                {/* Target Node */}
+                                <section className="space-y-3">
+                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Target Node</h3>
+
+                                    <input
                                         type="text"
                                         placeholder="Search nodes by name or address..."
                                         value={nodeSearch}
@@ -236,62 +241,105 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             ))}
                                         </div>
                                     )}
-                                </div>
 
-                                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
-                                    {filteredNodes.length === 0 ? (
-                                        <div className="col-span-full text-center py-8 text-(--base-06)">
-                                            <Server size={30} className="mb-2 block opacity-40 mx-auto" />
-                                            <p className="text-sm">No online nodes found{nodeSearch || activeTagFilters.length > 0 ? ' matching your filters' : ' — add a Node in Settings first'}.</p>
-                                        </div>
-                                    ) : (
-                                        filteredNodes.map(node => {
-                                            const isSelected = nodeId === String(node.id);
-                                            const tags = (node.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-                                            return (
-                                                <button
-                                                    key={node.id}
-                                                    type="button"
-                                                    onClick={() => setNodeId(String(node.id))}
-                                                    className={`card text-left p-4 cursor-pointer transition-all ${
-                                                        isSelected
-                                                            ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                            : 'hover:border-(--base-05)'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center justify-between mb-1">
-                                                        <span className="font-medium text-sm truncate text-(--base-09)">{node.name}</span>
-                                                        {isSelected && <CircleCheck size={14} className="text-(--accent-light)" />}
-                                                    </div>
-                                                    {node.serverCount !== undefined && (
-                                                        <p className="text-xs text-(--base-06) mb-2">{node.serverCount} server{node.serverCount !== 1 ? 's' : ''}</p>
-                                                    )}
-                                                    {tags.length > 0 && (
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {tags.map(tag => (
-                                                                <span key={tag} className="badge badge-accent text-[9px]">
-                                                                    {tag}
-                                                                </span>
-                                                            ))}
+                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
+                                        {filteredNodes.length === 0 ? (
+                                            <div className="col-span-full text-center py-8 text-(--base-06)">
+                                                <Server size={30} className="mb-2 block opacity-40 mx-auto" />
+                                                <p className="text-sm">No online nodes found{nodeSearch || activeTagFilters.length > 0 ? ' matching your filters' : ' — add a Node in Settings first'}.</p>
+                                            </div>
+                                        ) : (
+                                            filteredNodes.map(node => {
+                                                const isSelected = nodeId === String(node.id);
+                                                const tags = (node.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+                                                return (
+                                                    <button
+                                                        key={node.id}
+                                                        type="button"
+                                                        onClick={() => setNodeId(String(node.id))}
+                                                        className={`card text-left p-4 cursor-pointer transition-all ${
+                                                            isSelected
+                                                                ? 'border-(--accent-border) bg-(--accent-ghost)'
+                                                                : 'hover:border-(--base-05)'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <span className="font-medium text-sm truncate text-(--base-09)">{node.name}</span>
+                                                            {isSelected && <CircleCheck size={14} className="text-(--accent-light)" />}
                                                         </div>
-                                                    )}
-                                                </button>
-                                            );
-                                        })
-                                    )}
-                                </div>
+                                                        {node.serverCount !== undefined && (
+                                                            <p className="text-xs text-(--base-06) mb-2">{node.serverCount} server{node.serverCount !== 1 ? 's' : ''}</p>
+                                                        )}
+                                                        {tags.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {tags.map(tag => (
+                                                                    <span key={tag} className="badge badge-accent text-[9px]">
+                                                                        {tag}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                </section>
                             </div>
                         )}
 
                         {step === 2 && (
-                            <div className="space-y-5 animate-fade-in">
-                                <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">2. Resources & Owner</h3>
+                            <div className="space-y-6 animate-fade-in">
+                                {/* Server Type */}
+                                <section className="space-y-3">
+                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Server Type</h3>
+                                    <div className={`grid gap-3 ${proxiesEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setServerType('game')}
+                                            className={`card text-left p-4 cursor-pointer transition-all flex items-center gap-3 ${
+                                                serverType === 'game'
+                                                    ? 'border-(--accent-border) bg-(--accent-ghost)'
+                                                    : 'hover:border-(--base-05)'
+                                            }`}
+                                        >
+                                            <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
+                                                <Server size={20} className="text-(--primary-light)" />
+                                            </div>
+                                            <div>
+                                                <div className="font-medium text-sm text-(--base-09)">Game Server</div>
+                                                <div className="text-xs text-(--base-06)">Minecraft, Paper, Forge, etc.</div>
+                                            </div>
+                                            {serverType === 'game' && <CircleCheck size={16} className="text-(--accent-light) ml-auto" />}
+                                        </button>
+                                        {proxiesEnabled && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setServerType('proxy')}
+                                                className={`card text-left p-4 cursor-pointer transition-all flex items-center gap-3 ${
+                                                    serverType === 'proxy'
+                                                        ? 'border-(--accent-border) bg-(--accent-ghost)'
+                                                        : 'hover:border-(--base-05)'
+                                                }`}
+                                            >
+                                                <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
+                                                    <Network size={20} className="text-(--accent-light)" />
+                                                </div>
+                                                <div>
+                                                    <div className="font-medium text-sm text-(--base-09)">Proxy Server</div>
+                                                    <div className="text-xs text-(--base-06)">BungeeCord, Waterfall, Velocity</div>
+                                                </div>
+                                                {serverType === 'proxy' && <CircleCheck size={16} className="text-(--accent-light) ml-auto" />}
+                                            </button>
+                                        )}
+                                    </div>
+                                </section>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    {/* Left column: Resources */}
-                                    <div className="space-y-4">
-                                        <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Resources</h4>
+                                {/* Resources */}
+                                <section className="space-y-4">
+                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Resources</h3>
 
+                                    <div className="grid grid-cols-3 gap-4">
                                         <div className="flex flex-col gap-[5px]">
                                             <label className="input-label">RAM Limit (MB)</label>
                                             <div className="relative">
@@ -305,7 +353,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             </div>
                                             <p className="text-xs text-(--base-06)">+512 MB OOM buffer added automatically</p>
                                         </div>
-
                                         <div className="flex flex-col gap-[5px]">
                                             <label className="input-label">CPU Limit (Cores)</label>
                                             <div className="relative">
@@ -320,7 +367,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             </div>
                                             <p className="text-xs text-(--base-06)">0 = no limit</p>
                                         </div>
-
                                         <div className="flex flex-col gap-[5px]">
                                             <label className="input-label">Storage Limit (GB)</label>
                                             <div className="relative">
@@ -336,78 +382,30 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             </div>
                                             <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                         </div>
-
-                                        {/* Storage Path Selection */}
-                                        {storagePaths.length > 1 && (
-                                            <div className="flex flex-col gap-[5px]">
-                                                <label className="input-label flex items-center gap-1.5">
-                                                    <HardDrive size={13} /> Storage Path
-                                                </label>
-                                                <select
-                                                    value={storagePath}
-                                                    onChange={e => setStoragePath(e.target.value)}
-                                                    className="input-field"
-                                                >
-                                                    <option value="auto">Auto (most free space)</option>
-                                                    {storagePaths.map(s => (
-                                                        <option key={s.path} value={s.path}>
-                                                            {s.path} ({fmtGB(s.free_bytes)} GB free, {s.server_count} servers)
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <p className="text-xs text-(--base-06)">Auto distributes servers evenly across storage paths.</p>
-                                            </div>
-                                        )}
                                     </div>
 
-                                    {/* Right column: Assign Owner — flex-col so the list grows
-                                        to match the left column's height (grid stretches by default). */}
-                                    <div className="flex flex-col gap-2 min-h-80">
-                                        <div className="flex items-center justify-between">
-                                            <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Assign Owner</h4>
-                                            <span className="font-mono text-[10px] text-(--base-06)">
-                                                {filteredUsers.length} / {users.length}
-                                            </span>
+                                    {/* Storage Path Selection */}
+                                    {storagePaths.length > 1 && (
+                                        <div className="flex flex-col gap-[5px]">
+                                            <label className="input-label flex items-center gap-1.5">
+                                                <HardDrive size={13} /> Storage Path
+                                            </label>
+                                            <select
+                                                value={storagePath}
+                                                onChange={e => setStoragePath(e.target.value)}
+                                                className="input-field"
+                                            >
+                                                <option value="auto">Auto (most free space)</option>
+                                                {storagePaths.map(s => (
+                                                    <option key={s.path} value={s.path}>
+                                                        {s.path} ({fmtGB(s.free_bytes)} GB free, {s.server_count} servers)
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="text-xs text-(--base-06)">Auto distributes servers evenly across storage paths.</p>
                                         </div>
-                                        <input
-                                            type="text"
-                                            placeholder="Search user..."
-                                            value={searchTerm}
-                                            onChange={e => setSearchTerm(e.target.value)}
-                                            className="input-field w-full"
-                                        />
-                                        <div className="flex-1 flex flex-col gap-1 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
-                                            {filteredUsers.length === 0 ? (
-                                                <p className="text-xs text-(--base-06) text-center py-6 italic">No matching users.</p>
-                                            ) : (
-                                                filteredUsers.map(user => {
-                                                    const selected = ownerId === user.id;
-                                                    return (
-                                                        <button
-                                                            key={user.id}
-                                                            type="button"
-                                                            onClick={() => setOwnerId(user.id)}
-                                                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
-                                                                selected
-                                                                    ? 'bg-(--accent-ghost) border border-(--accent-border)'
-                                                                    : 'border border-transparent hover:bg-(--base-03)'
-                                                            }`}
-                                                        >
-                                                            <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center font-medium text-xs text-(--base-08) shrink-0">
-                                                                {user.username.charAt(0).toUpperCase()}
-                                                            </div>
-                                                            <span className="flex-1 truncate text-sm text-(--base-09)">{user.username}</span>
-                                                            {user.isAdmin && (
-                                                                <span className="font-mono text-[9px] uppercase text-(--accent-light)">admin</span>
-                                                            )}
-                                                            {selected && <CircleCheck size={14} className="text-(--accent-light) shrink-0" />}
-                                                        </button>
-                                                    );
-                                                })
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
+                                    )}
+                                </section>
 
                                 <div className="bg-(--primary-ghost) p-3 rounded-lg border border-(--primary-border) text-sm text-(--base-07)">
                                     <Info size={14} className="inline align-middle mr-1 text-(--primary-light)" />
@@ -429,6 +427,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     {step < 2 ? (
                         <button
                             onClick={() => {
+                                if (!ownerId) return alert("Please assign an owner.");
                                 if (!nodeId) return alert("Please select a node.");
                                 setStep(2);
                             }}
