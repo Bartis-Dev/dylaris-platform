@@ -39,6 +39,12 @@ type Node struct {
 
 	ServerCount int `json:"serverCount,omitempty"`
 
+	// Placement / overcommit (persisted)
+	CPUOvercommitRatio float64 `json:"cpuOvercommitRatio"`
+	RAMOvercommitRatio float64 `json:"ramOvercommitRatio"`
+	TotalCPU           float64 `json:"totalCpu"`   // physical cores (cached from heartbeat)
+	TotalRAMMB         int64   `json:"totalRamMb"` // physical RAM in MB (cached from heartbeat)
+
 	// Live stats from heartbeat (not persisted, -1 = not available)
 	CPUUsage  float64 `json:"cpuUsage"`
 	RAMFree   int64   `json:"ramFree"`
@@ -73,6 +79,7 @@ type Server struct {
 	ContainerPort   int             `json:"containerPort"`
 	ServerType      string          `json:"serverType"`
 	ProxyID         *int            `json:"proxyId"`
+	AutoMove        bool            `json:"autoMove"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	Role            string          `json:"role,omitempty"`
 	Permissions     *TabPermissions `json:"permissions,omitempty"`

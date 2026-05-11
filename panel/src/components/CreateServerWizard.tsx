@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { getUsers, User, createServer, getNodes, Node } from '../lib/api';
-import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive } from 'lucide-react';
+import { getUsers, User, createServer, getNodes, Node, getAvailableTags, pickNode, NodeCandidate } from '../lib/api';
+import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move } from 'lucide-react';
 
 interface StoragePathInfo {
     path: string;
@@ -45,7 +45,14 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
     const [nodeId, setNodeId] = useState("");
     const [nodeSearch, setNodeSearch] = useState("");
-    const [activeTagFilters, setActiveTagFilters] = useState<string[]>([]);
+
+    // Target mode: pick a specific node OR pick a tag and let the
+    // scheduler choose the best node from that tag's pool.
+    const [targetMode, setTargetMode] = useState<'node' | 'tag'>('node');
+    const [selectedTag, setSelectedTag] = useState<string>('');
+    const [availableTags, setAvailableTags] = useState<string[]>([]);
+    const [tagPreview, setTagPreview] = useState<NodeCandidate | null>(null);
+    const [tagPreviewReason, setTagPreviewReason] = useState<string>('');
 
     const [ownerId, setOwnerId] = useState<number | null>(null);
     const [serverType, setServerType] = useState<'game' | 'proxy'>('game');
@@ -54,12 +61,15 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [diskLimit, setDiskLimit] = useState(20);
     const [storagePath, setStoragePath] = useState('auto');
     const [storagePaths, setStoragePaths] = useState<StoragePathInfo[]>([]);
+    const [autoMove, setAutoMove] = useState(false);
 
     useEffect(() => {
         if (!isOpen) return;
         setStep(1);
         setNodeId(""); setOwnerId(null); setServerType('game'); setRam(2048); setCpuLimit(0); setDiskLimit(20);
-        setSearchTerm(""); setNodeSearch(""); setActiveTagFilters([]);
+        setSearchTerm(""); setNodeSearch("");
+        setTargetMode('node'); setSelectedTag(''); setTagPreview(null); setTagPreviewReason('');
+        setAutoMove(false);
 
         getUsers().then(res => {
             if (res.success && res.users) {
@@ -75,7 +85,39 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 if (online.length > 0) setNodeId(String(online[0].id));
             }
         });
+
+        getAvailableTags().then(res => {
+            if (res.success) {
+                setAvailableTags(res.tags || []);
+                if (res.tags && res.tags.length > 0) setSelectedTag(res.tags[0]);
+            }
+        });
     }, [isOpen]);
+
+    // Tag-preview: ask the scheduler which node it would pick whenever the
+    // tag, resource shape, or mode changes. Surfaces the choice + reason in the
+    // wizard so admins aren't deploying blind.
+    useEffect(() => {
+        if (targetMode !== 'tag' || !selectedTag) {
+            setTagPreview(null);
+            setTagPreviewReason('');
+            return;
+        }
+        let cancelled = false;
+        pickNode({ tag: selectedTag, ramMb: ram, cpuCores: cpuLimit, diskGb: diskLimit }).then(res => {
+            if (cancelled) return;
+            if (res.success && res.picked) {
+                setTagPreview(res.picked);
+                setTagPreviewReason(res.reason || '');
+            } else {
+                setTagPreview(null);
+                setTagPreviewReason(res.reason || 'No eligible node');
+            }
+        }).catch(() => {
+            if (!cancelled) { setTagPreview(null); setTagPreviewReason('Preview failed'); }
+        });
+        return () => { cancelled = true; };
+    }, [targetMode, selectedTag, ram, cpuLimit, diskLimit]);
 
     // Load storage paths when node changes
     useEffect(() => {
@@ -86,21 +128,14 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
     const onlineNodes = useMemo(() => nodes.filter(n => n.status === 'online'), [nodes]);
 
-    const allTags = useMemo(() =>
-        [...new Set(onlineNodes.flatMap(n => (n.tags || '').split(',').map(t => t.trim()).filter(Boolean)))],
-        [onlineNodes]
-    );
-
     const filteredNodes = useMemo(() =>
-        onlineNodes
-            .filter(n => !nodeSearch || n.name.toLowerCase().includes(nodeSearch.toLowerCase()) || n.address.includes(nodeSearch))
-            .filter(n => activeTagFilters.length === 0 || activeTagFilters.every(tag => (n.tags || '').split(',').map(t => t.trim()).includes(tag))),
-        [onlineNodes, nodeSearch, activeTagFilters]
+        onlineNodes.filter(n =>
+            !nodeSearch ||
+            n.name.toLowerCase().includes(nodeSearch.toLowerCase()) ||
+            n.address.includes(nodeSearch)
+        ),
+        [onlineNodes, nodeSearch]
     );
-
-    const toggleTagFilter = (tag: string) => {
-        setActiveTagFilters(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
-    };
 
     const filteredUsers = useMemo(() =>
         users.filter(u => u.username.toLowerCase().includes(searchTerm.toLowerCase())),
@@ -109,8 +144,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
     const handleCreate = async () => {
         setLoading(true);
-        if (!nodeId) { alert("Please select a Node."); setLoading(false); return; }
         if (!ownerId) { alert("Please select an owner."); setLoading(false); return; }
+        if (targetMode === 'node' && !nodeId) { alert("Please select a Node."); setLoading(false); return; }
+        if (targetMode === 'tag' && !selectedTag) { alert("Please select a tag."); setLoading(false); return; }
 
         const randomPart = Math.random().toString(36).substring(2, 14);
         const serverUuid = `${ownerId}_${randomPart}`;
@@ -118,11 +154,16 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         const payload: Record<string, unknown> = {
             uuid: serverUuid,
             name: "",
-            nodeId,
             ownerId,
             serverType,
+            autoMove,
             docker: { ram, cpuLimit, diskLimit: diskLimit > 0 ? diskLimit * 1024 : 0 },
         };
+        if (targetMode === 'node') {
+            payload.nodeId = nodeId;
+        } else {
+            payload.tag = selectedTag;
+        }
         if (storagePath !== 'auto') {
             payload.storagePath = storagePath;
         }
@@ -163,9 +204,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     <form onSubmit={(e) => e.preventDefault()}>
 
                         {step === 1 && (
-                            <div className="space-y-6 animate-fade-in">
-                                {/* Owner */}
-                                <section className="space-y-2">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                                {/* Left: Owner */}
+                                <section className="space-y-2 min-h-80 flex flex-col">
                                     <div className="flex items-center justify-between border-b border-(--base-03) pb-2">
                                         <h3 className="text-base font-display font-bold text-(--base-09)">Assign Owner</h3>
                                         <span className="font-mono text-[10px] text-(--base-06)">
@@ -180,7 +221,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         onChange={e => setSearchTerm(e.target.value)}
                                         className="input-field w-full"
                                     />
-                                    <div className="flex flex-col gap-1 max-h-56 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                    <div className="flex-1 flex flex-col gap-1 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
                                         {filteredUsers.length === 0 ? (
                                             <p className="text-xs text-(--base-06) text-center py-6 italic">No matching users.</p>
                                         ) : (
@@ -212,78 +253,134 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     </div>
                                 </section>
 
-                                {/* Target Node */}
-                                <section className="space-y-3">
-                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Target Node</h3>
-
-                                    <input
-                                        type="text"
-                                        placeholder="Search nodes by name or address..."
-                                        value={nodeSearch}
-                                        onChange={e => setNodeSearch(e.target.value)}
-                                        className="input-field w-full"
-                                    />
-                                    {allTags.length > 0 && (
-                                        <div className="flex flex-wrap gap-2">
-                                            {allTags.map(tag => (
-                                                <button
-                                                    key={tag}
-                                                    type="button"
-                                                    onClick={() => toggleTagFilter(tag)}
-                                                    className={`badge transition-all ${
-                                                        activeTagFilters.includes(tag)
-                                                            ? 'bg-(--accent) text-white border-(--accent)'
-                                                            : 'badge-accent hover:bg-(--accent)/20'
-                                                    }`}
-                                                >
-                                                    {tag}
-                                                </button>
-                                            ))}
+                                {/* Right: Target (Node | Tag) */}
+                                <section className="space-y-2 min-h-80 flex flex-col">
+                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2">
+                                        <h3 className="text-base font-display font-bold text-(--base-09)">Target</h3>
+                                        <div className="flex bg-(--base-03) p-0.5 rounded-md">
+                                            <button
+                                                type="button"
+                                                onClick={() => setTargetMode('node')}
+                                                className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors inline-flex items-center gap-1 ${targetMode === 'node' ? 'bg-(--accent) text-white' : 'text-(--base-07)'}`}
+                                            >
+                                                <Server size={11} /> Node
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTargetMode('tag')}
+                                                className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors inline-flex items-center gap-1 ${targetMode === 'tag' ? 'bg-(--accent) text-white' : 'text-(--base-07)'}`}
+                                            >
+                                                <TagIcon size={11} /> Tag
+                                            </button>
                                         </div>
+                                    </div>
+
+                                    {targetMode === 'node' && (
+                                        <>
+                                            <input
+                                                type="text"
+                                                placeholder="Search nodes..."
+                                                value={nodeSearch}
+                                                onChange={e => setNodeSearch(e.target.value)}
+                                                className="input-field w-full"
+                                            />
+                                            <div className="flex-1 flex flex-col gap-1 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                                {filteredNodes.length === 0 ? (
+                                                    <p className="text-xs text-(--base-06) text-center py-6 italic">
+                                                        No online nodes{nodeSearch ? ' matching search' : ''}.
+                                                    </p>
+                                                ) : (
+                                                    filteredNodes.map(node => {
+                                                        const isSelected = nodeId === String(node.id);
+                                                        const tags = (node.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+                                                        return (
+                                                            <button
+                                                                key={node.id}
+                                                                type="button"
+                                                                onClick={() => setNodeId(String(node.id))}
+                                                                className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
+                                                                    isSelected
+                                                                        ? 'bg-(--accent-ghost) border border-(--accent-border)'
+                                                                        : 'border border-transparent hover:bg-(--base-03)'
+                                                                }`}
+                                                            >
+                                                                <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                                                    <Server size={14} className="text-(--accent-light)" />
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="text-sm text-(--base-09) truncate">{node.name}</div>
+                                                                    <div className="text-[10px] font-mono text-(--base-06) truncate">
+                                                                        {node.address}
+                                                                        {node.serverCount !== undefined && ` · ${node.serverCount} servers`}
+                                                                    </div>
+                                                                </div>
+                                                                {tags.length > 0 && (
+                                                                    <div className="hidden md:flex flex-wrap gap-1 max-w-[40%] justify-end">
+                                                                        {tags.slice(0, 2).map(t => (
+                                                                            <span key={t} className="badge badge-accent text-[9px]">{t}</span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                                {isSelected && <CircleCheck size={14} className="text-(--accent-light) shrink-0" />}
+                                                            </button>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
+                                        </>
                                     )}
 
-                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
-                                        {filteredNodes.length === 0 ? (
-                                            <div className="col-span-full text-center py-8 text-(--base-06)">
-                                                <Server size={30} className="mb-2 block opacity-40 mx-auto" />
-                                                <p className="text-sm">No online nodes found{nodeSearch || activeTagFilters.length > 0 ? ' matching your filters' : ' — add a Node in Settings first'}.</p>
-                                            </div>
-                                        ) : (
-                                            filteredNodes.map(node => {
-                                                const isSelected = nodeId === String(node.id);
-                                                const tags = (node.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-                                                return (
-                                                    <button
-                                                        key={node.id}
-                                                        type="button"
-                                                        onClick={() => setNodeId(String(node.id))}
-                                                        className={`card text-left p-4 cursor-pointer transition-all ${
-                                                            isSelected
-                                                                ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                                : 'hover:border-(--base-05)'
-                                                        }`}
+                                    {targetMode === 'tag' && (
+                                        <>
+                                            {availableTags.length === 0 ? (
+                                                <div className="flex-1 flex items-center justify-center rounded-md border border-dashed border-(--base-04) bg-(--base-02) p-6 text-center">
+                                                    <p className="text-xs text-(--base-06)">
+                                                        No tags advertised by any online node.<br/>
+                                                        Tag nodes in <span className="font-mono">Settings → Nodes</span> first.
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <select
+                                                        value={selectedTag}
+                                                        onChange={e => setSelectedTag(e.target.value)}
+                                                        className="input-field w-full"
                                                     >
-                                                        <div className="flex items-center justify-between mb-1">
-                                                            <span className="font-medium text-sm truncate text-(--base-09)">{node.name}</span>
-                                                            {isSelected && <CircleCheck size={14} className="text-(--accent-light)" />}
-                                                        </div>
-                                                        {node.serverCount !== undefined && (
-                                                            <p className="text-xs text-(--base-06) mb-2">{node.serverCount} server{node.serverCount !== 1 ? 's' : ''}</p>
-                                                        )}
-                                                        {tags.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1">
-                                                                {tags.map(tag => (
-                                                                    <span key={tag} className="badge badge-accent text-[9px]">
-                                                                        {tag}
-                                                                    </span>
-                                                                ))}
+                                                        {availableTags.map(t => (
+                                                            <option key={t} value={t}>{t}</option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="flex-1 rounded-md border border-(--base-03) bg-(--base-02) p-3 text-sm">
+                                                        {tagPreview ? (
+                                                            <div className="space-y-2">
+                                                                <div className="flex items-center gap-2 text-(--base-09)">
+                                                                    <CircleCheck size={14} className="text-(--success-light)" />
+                                                                    <span className="font-medium">Will be placed on:</span>
+                                                                </div>
+                                                                <div className="font-mono text-base text-(--accent-light)">{tagPreview.nodeName}</div>
+                                                                <div className="text-xs text-(--base-06)">{tagPreviewReason}</div>
+                                                                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-(--base-03) text-xs">
+                                                                    <div>
+                                                                        <span className="text-(--base-06)">RAM </span>
+                                                                        <span className="font-mono text-(--base-08)">{tagPreview.allocRamMb} / {(tagPreview.totalRamMb * tagPreview.overcommitRam).toFixed(0)} MB</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="text-(--base-06)">CPU </span>
+                                                                        <span className="font-mono text-(--base-08)">{tagPreview.allocCpu.toFixed(1)} / {(tagPreview.totalCpu * tagPreview.overcommitCpu).toFixed(1)} cores</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-2 text-xs text-(--warning-light)">
+                                                                <Info size={12} />
+                                                                {tagPreviewReason || 'Computing placement…'}
                                                             </div>
                                                         )}
-                                                    </button>
-                                                );
-                                            })
-                                        )}
-                                    </div>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </>
+                                    )}
                                 </section>
                             </div>
                         )}
@@ -407,6 +504,27 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     )}
                                 </section>
 
+                                <section className="card p-3 flex items-center justify-between gap-4">
+                                    <div className="flex items-start gap-2.5 min-w-0">
+                                        <Move size={16} className={`shrink-0 mt-0.5 ${autoMove ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                        <div className="min-w-0">
+                                            <div className="text-sm font-medium text-(--base-09)">Auto-Move enabled</div>
+                                            <p className="text-xs text-(--base-06)">
+                                                Allow the rebalance worker to migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle. Default off.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={autoMove}
+                                        onClick={() => setAutoMove(v => !v)}
+                                        className={`shrink-0 toggle-track ${autoMove ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                    >
+                                        <span className={`toggle-knob ${autoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                    </button>
+                                </section>
+
                                 <div className="bg-(--primary-ghost) p-3 rounded-lg border border-(--primary-border) text-sm text-(--base-07)">
                                     <Info size={14} className="inline align-middle mr-1 text-(--primary-light)" />
                                     Java version, Minecraft software, and server name are configured in the Setup tab after deployment.
@@ -428,7 +546,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                         <button
                             onClick={() => {
                                 if (!ownerId) return alert("Please assign an owner.");
-                                if (!nodeId) return alert("Please select a node.");
+                                if (targetMode === 'node' && !nodeId) return alert("Please select a node.");
+                                if (targetMode === 'tag' && !selectedTag) return alert("Please select a tag.");
                                 setStep(2);
                             }}
                             className="btn btn-primary px-8 py-2 text-sm"

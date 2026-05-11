@@ -5,12 +5,12 @@ import { useParams, usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
     Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull,
-    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown,
+    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
     deleteServer, updateServerName, updateServerResources, serverPower,
-    getServerStoragePath, migrateServerStorage, getServerRoutes,
+    getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
@@ -38,6 +38,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [editResourcesAdvancedOpen, setEditResourcesAdvancedOpen] = useState(false);
     const [editHostPort, setEditHostPort] = useState(0);
     const [editContainerPort, setEditContainerPort] = useState(25565);
+    const [editAutoMove, setEditAutoMove] = useState(false);
 
     const [storageCurrentPath, setStorageCurrentPath] = useState('');
     const [storagePaths, setStoragePaths] = useState<StoragePathInfo[]>([]);
@@ -125,6 +126,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         setEditHostPort(selectedServer.hostPort || 0);
         setEditContainerPort(selectedServer.containerPort || 25565);
         setEditCpusetCpus((selectedServer as any).cpusetCpus || '');
+        setEditAutoMove(!!(selectedServer as any).autoMove);
         setEditResourcesAdvancedOpen(false);
         setStorageCurrentPath('');
         setStoragePaths([]);
@@ -151,6 +153,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
             selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0,
             ports, editCpusetCpus || undefined,
         );
+        // Auto-move is a separate field — flip only when it actually changed.
+        if (editAutoMove !== !!(selectedServer as any).autoMove) {
+            await setServerAutoMove(selectedServer.id, editAutoMove);
+        }
         setShowEditResourcesPopup(false);
         refreshServers();
     };
@@ -499,6 +505,27 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 <label className="input-label">Storage Limit (GB)</label>
                                 <input type="number" min={0} step={1} value={editDiskLimit} onChange={e => setEditDiskLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
                                 <p className="text-xs text-(--base-06)">0 = unlimited</p>
+                            </div>
+
+                            <div className="border-t border-(--base-03) pt-4 flex items-center justify-between gap-4">
+                                <div className="flex items-start gap-2.5 min-w-0">
+                                    <Move size={14} className={`shrink-0 mt-0.5 ${editAutoMove ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-medium text-(--base-09)">Auto-Move</div>
+                                        <p className="text-xs text-(--base-06)">
+                                            Let the rebalance worker migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle.
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={editAutoMove}
+                                    onClick={() => setEditAutoMove(v => !v)}
+                                    className={`shrink-0 toggle-track ${editAutoMove ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                >
+                                    <span className={`toggle-knob ${editAutoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                </button>
                             </div>
 
                             {user?.isAdmin && (

@@ -19,15 +19,53 @@ type DiscoveryService struct {
 
 // Payload that the Node writes to Redis
 type NodeHeartbeat struct {
-	ID            string  `json:"id"`            // Unique ID (e.g. hostname)
-	Name          string  `json:"name"`          // Display name
-	IP            string  `json:"ip"`            // IP for display
-	ClusterSecret string  `json:"clusterSecret"` // For validation
-	Tags          string  `json:"tags"`
-	IPs           NodeIPs `json:"ips"`
-	CPUUsage      float64 `json:"cpuUsage"`
-	RAMFree       int64   `json:"ramFree"`
-	RAMTotal      uint64  `json:"ramTotal"`
+	ID            string                 `json:"id"`            // Unique ID (e.g. hostname)
+	Name          string                 `json:"name"`          // Display name
+	IP            string                 `json:"ip"`            // IP for display
+	ClusterSecret string                 `json:"clusterSecret"` // For validation
+	Tags          string                 `json:"tags"`
+	IPs           NodeIPs                `json:"ips"`
+	CPUUsage      float64                `json:"cpuUsage"`
+	RAMFree       int64                  `json:"ramFree"`
+	RAMTotal      uint64                 `json:"ramTotal"`
+	TotalCPU      float64                `json:"totalCpu"`
+	Storage       []HeartbeatStoragePath `json:"storage"`
+}
+
+// HeartbeatStoragePath is one storage path reported by the node.
+type HeartbeatStoragePath struct {
+	Path        string `json:"path"`
+	TotalBytes  int64  `json:"total_bytes"`
+	FreeBytes   int64  `json:"free_bytes"`
+	UsedBytes   int64  `json:"used_bytes"`
+	ServerCount int    `json:"server_count"`
+}
+
+// LoadHeartbeats reads every node heartbeat currently in Redis and
+// returns a map keyed by node token (= heartbeat ID). Used by callers
+// that need to inspect more than one node at a time (scheduler, infra
+// overview, capacity sync).
+func LoadHeartbeats(ctx context.Context, r *redis.Client) map[string]*NodeHeartbeat {
+	out := map[string]*NodeHeartbeat{}
+	if r == nil {
+		return out
+	}
+	keys, err := r.Keys(ctx, "dylaris:discovery:*").Result()
+	if err != nil {
+		return out
+	}
+	for _, key := range keys {
+		val, err := r.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		var hb NodeHeartbeat
+		if err := json.Unmarshal([]byte(val), &hb); err != nil {
+			continue
+		}
+		out[hb.ID] = &hb
+	}
+	return out
 }
 
 type NodeIPs struct {
@@ -151,6 +189,17 @@ func (s *DiscoveryService) scanNodes() {
 				if hb.IPs.Public != node.PublicIP || !slicesEqual(hb.IPs.Private, node.PrivateIPs) {
 					s.store.SetNodeIPs(node.ID, hb.IPs.Public, hb.IPs.Private)
 				}
+			}
+
+			// Cache physical capacity for the scheduler. Older nodes may
+			// not yet report total_cpu — we still update RAM in that case.
+			totalRAMMB := int64(hb.RAMTotal / (1024 * 1024))
+			if totalRAMMB != node.TotalRAMMB || (hb.TotalCPU > 0 && hb.TotalCPU != node.TotalCPU) {
+				cpu := hb.TotalCPU
+				if cpu == 0 {
+					cpu = node.TotalCPU // keep last known
+				}
+				s.store.UpdateNodeCapacity(node.ID, cpu, totalRAMMB)
 			}
 		}
 	}

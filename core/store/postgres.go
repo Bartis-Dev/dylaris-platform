@@ -142,13 +142,16 @@ func (s *PostgresStore) DisableUserTOTP(id int) error {
 
 const nodeSelectCols = `id, name, address, token, status, is_local, COALESCE(tags, ''),
 	link_enabled, link_instances, COALESCE(link_secret, ''), COALESCE(cpuset_cpus, ''), created_at,
-	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at`
+	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at,
+	COALESCE(cpu_overcommit_ratio, 1.0), COALESCE(ram_overcommit_ratio, 1.0),
+	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0)`
 
 func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var n models.Node
 	var privateIPsJSON []byte
 	err := scan(&n.ID, &n.Name, &n.Address, &n.Token, &n.Status, &n.IsLocal, &n.Tags,
-		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt)
+		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt,
+		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB)
 	if err != nil {
 		return nil, err
 	}
@@ -295,11 +298,49 @@ func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) (int, er
 
 func (s *PostgresStore) CreateServer(srv *models.Server) (int64, error) {
 	var id int64
-	query := `INSERT INTO servers (uuid, name, node_id, owner_id, game_image, port, memory, cpu_limit, start_command, status, is_fixed, active_sub_server, extra_jvm_flags, disk_limit, server_type, proxy_id)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`
+	query := `INSERT INTO servers (uuid, name, node_id, owner_id, game_image, port, memory, cpu_limit, start_command, status, is_fixed, active_sub_server, extra_jvm_flags, disk_limit, server_type, proxy_id, auto_move)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`
 
-	err := s.db.QueryRow(query, srv.UUID, srv.Name, srv.NodeID, srv.OwnerID, srv.GameImage, srv.Port, srv.Memory, srv.CPULimit, srv.StartCommand, srv.Status, srv.IsFixed, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.DiskLimit, srv.ServerType, srv.ProxyID).Scan(&id)
+	err := s.db.QueryRow(query, srv.UUID, srv.Name, srv.NodeID, srv.OwnerID, srv.GameImage, srv.Port, srv.Memory, srv.CPULimit, srv.StartCommand, srv.Status, srv.IsFixed, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.DiskLimit, srv.ServerType, srv.ProxyID, srv.AutoMove).Scan(&id)
 	return id, err
+}
+
+// SetServerAutoMove flips the auto-move opt-in for a single server.
+// The migration worker only ever considers servers with auto_move=true.
+func (s *PostgresStore) SetServerAutoMove(id int, enabled bool) error {
+	_, err := s.db.Exec("UPDATE servers SET auto_move = $1 WHERE id = $2", enabled, id)
+	return err
+}
+
+// SumAllocatedByNode returns the total memory (MB) and cpu_limit (cores)
+// allocated across every server on a node, regardless of running state.
+// Used by the scheduler to enforce capacity * overcommit_ratio.
+func (s *PostgresStore) SumAllocatedByNode(nodeID int) (totalRAMMB int64, totalCPU float64, err error) {
+	err = s.db.QueryRow(
+		`SELECT COALESCE(SUM(memory), 0), COALESCE(SUM(cpu_limit), 0) FROM servers WHERE node_id = $1`,
+		nodeID,
+	).Scan(&totalRAMMB, &totalCPU)
+	return
+}
+
+// SetNodePlacement persists the admin-configured overcommit ratios for a node.
+func (s *PostgresStore) SetNodePlacement(id int, cpuRatio, ramRatio float64) error {
+	_, err := s.db.Exec(
+		`UPDATE nodes SET cpu_overcommit_ratio = $1, ram_overcommit_ratio = $2 WHERE id = $3`,
+		cpuRatio, ramRatio, id,
+	)
+	return err
+}
+
+// UpdateNodeCapacity caches the physical totals reported in the node's
+// heartbeat so the scheduler does not need a live ping to compute available
+// resources. Called from the discovery service when stats land.
+func (s *PostgresStore) UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error {
+	_, err := s.db.Exec(
+		`UPDATE nodes SET total_cpu = $1, total_ram_mb = $2 WHERE id = $3`,
+		totalCPU, totalRAMMB, id,
+	)
+	return err
 }
 
 func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error) {
@@ -339,13 +380,13 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565)
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.auto_move, FALSE)
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.id = $1
 	`
-	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort)
+	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.AutoMove)
 	if err != nil {
 		return nil, err
 	}

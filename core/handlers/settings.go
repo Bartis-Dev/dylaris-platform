@@ -461,6 +461,117 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// --- Placement Settings ---
+
+// PlacementSettings holds the global defaults used when a new node is
+// registered. Per-node overrides are stored directly on the nodes row.
+type PlacementSettings struct {
+	CPUOvercommitDefault float64 `json:"cpuOvercommitDefault"`
+	RAMOvercommitDefault float64 `json:"ramOvercommitDefault"`
+	DiskBufferGB         int     `json:"diskBufferGb"`
+	RebalanceEnabled     bool    `json:"rebalanceEnabled"`
+	RebalanceThreshold   int     `json:"rebalanceThreshold"` // % at which a node is considered overloaded
+}
+
+var defaultPlacementSettings = PlacementSettings{
+	CPUOvercommitDefault: 2.0,  // CPU is time-shared, 2x is conservative
+	RAMOvercommitDefault: 1.0,  // RAM has no defaults overcommit (safer)
+	DiskBufferGB:         5,
+	RebalanceEnabled:     false,
+	RebalanceThreshold:   90,
+}
+
+// GetPlacementSettings GET /api/settings/placement
+func (h *SettingsHandler) GetPlacementSettings(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	s := h.LoadPlacementSettings()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"settings": s,
+	})
+}
+
+// SavePlacementSettings POST /api/settings/placement
+func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req PlacementSettings
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.CPUOvercommitDefault <= 0 || req.RAMOvercommitDefault <= 0 {
+		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
+		return
+	}
+	if req.DiskBufferGB < 0 {
+		req.DiskBufferGB = 0
+	}
+	if req.RebalanceThreshold < 50 {
+		req.RebalanceThreshold = 50
+	}
+	if req.RebalanceThreshold > 100 {
+		req.RebalanceThreshold = 100
+	}
+
+	pairs := []struct{ k, v string }{
+		{"placement.cpu_overcommit_default", fmt.Sprintf("%g", req.CPUOvercommitDefault)},
+		{"placement.ram_overcommit_default", fmt.Sprintf("%g", req.RAMOvercommitDefault)},
+		{"placement.disk_buffer_gb", fmt.Sprintf("%d", req.DiskBufferGB)},
+		{"placement.rebalance_enabled", fmt.Sprintf("%t", req.RebalanceEnabled)},
+		{"placement.rebalance_threshold", fmt.Sprintf("%d", req.RebalanceThreshold)},
+	}
+	for _, p := range pairs {
+		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
+			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// LoadPlacementSettings reads placement settings with sensible defaults.
+func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
+	s := defaultPlacementSettings
+
+	getStr := func(k string) string { v, _ := h.state.Store.GetSetting(k); return v }
+
+	if v := getStr("placement.cpu_overcommit_default"); v != "" {
+		var f float64
+		if _, err := fmt.Sscanf(v, "%g", &f); err == nil && f > 0 {
+			s.CPUOvercommitDefault = f
+		}
+	}
+	if v := getStr("placement.ram_overcommit_default"); v != "" {
+		var f float64
+		if _, err := fmt.Sscanf(v, "%g", &f); err == nil && f > 0 {
+			s.RAMOvercommitDefault = f
+		}
+	}
+	if v := getStr("placement.disk_buffer_gb"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+			s.DiskBufferGB = n
+		}
+	}
+	if v := getStr("placement.rebalance_enabled"); v != "" {
+		s.RebalanceEnabled = v == "true"
+	}
+	if v := getStr("placement.rebalance_threshold"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 50 && n <= 100 {
+			s.RebalanceThreshold = n
+		}
+	}
+	return s
+}
+
 // --- Server Settings ---
 
 type ServerSettings struct {

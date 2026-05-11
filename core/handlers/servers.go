@@ -100,9 +100,11 @@ type CreateServerRequest struct {
 	UUID       string `json:"uuid"`
 	Name       string `json:"name"`
 	NodeID     string `json:"nodeId"`
+	Tag        string `json:"tag"`      // when set, scheduler picks a node from this tag pool
 	OwnerID    int    `json:"ownerId"`
 	IsFixed    *bool  `json:"isFixed"`
 	ServerType string `json:"serverType"`
+	AutoMove   bool   `json:"autoMove"` // opt-in to load-balancing migrations
 	Docker     struct {
 		RAM       int     `json:"ram"`
 		CPULimit  float64 `json:"cpuLimit"`
@@ -185,6 +187,24 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	var nodeIDInt int
 	fmt.Sscanf(req.NodeID, "%d", &nodeIDInt)
 
+	// Tag-based auto-placement: when the caller passes a tag instead of a
+	// concrete nodeId, let the scheduler pick the best fit. The explicit
+	// nodeId path still works for admins who want to pin a server.
+	if nodeIDInt == 0 && strings.TrimSpace(req.Tag) != "" {
+		pick := (&PlacementHandler{state: h.state}).pickNode(r.Context(), PickNodeRequest{
+			Tag:      req.Tag,
+			RAMMB:    req.Docker.RAM,
+			CPUCores: req.Docker.CPULimit,
+			DiskGB:   int(req.Docker.DiskLimit / 1024),
+		})
+		if !pick.Success || pick.Picked == nil {
+			sendJSONError(w, "No node available for tag '"+req.Tag+"': "+pick.Reason, http.StatusServiceUnavailable)
+			return
+		}
+		nodeIDInt = pick.Picked.NodeID
+		log.Printf("Placement: picked node %d (%s) for tag=%q — %s", nodeIDInt, pick.Picked.NodeName, req.Tag, pick.Picked.Reason)
+	}
+
 	node, err := h.state.Store.GetNodeByID(nodeIDInt)
 	if err != nil {
 		sendJSONError(w, "Node not found", 404)
@@ -239,6 +259,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		ExtraJvmFlags:   "",
 		DiskLimit:       req.Docker.DiskLimit,
 		ServerType:      serverType,
+		AutoMove:        req.AutoMove,
 	}
 
 	serverID, err := h.state.Store.CreateServer(srv)
@@ -886,6 +907,41 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// SetServerAutoMove PATCH /api/servers/{id}/automove
+// Flips the auto-move opt-in flag. Migration itself is handled by the
+// rebalance worker — this endpoint only stores intent.
+func (h *ServerHandler) SetServerAutoMove(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	username := r.Context().Value("username").(string)
+	isAdmin := r.Context().Value("isAdmin").(bool)
+	if !isAdmin && srv.OwnerName != username {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	if err := h.state.Store.SetServerAutoMove(serverID, req.Enabled); err != nil {
+		sendJSONError(w, "Failed to update auto-move", 500)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

@@ -1,0 +1,294 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+
+	"dylaris-core/models"
+	"dylaris-core/services"
+)
+
+// PlacementHandler picks the best node for a new server based on tag,
+// per-node overcommit ratios and observed allocation. The decision is
+// transparent — the API returns the chosen node plus the runner-up
+// scores so admins can see why.
+type PlacementHandler struct {
+	state *AppState
+}
+
+func NewPlacementHandler(state *AppState) *PlacementHandler {
+	return &PlacementHandler{state: state}
+}
+
+// PickNodeRequest describes the resource shape a new server needs.
+// Either `Tag` or `NodeID` should be provided; if both are empty the
+// scheduler picks across all online nodes.
+type PickNodeRequest struct {
+	Tag       string  `json:"tag"`
+	NodeID    int     `json:"nodeId"` // honored for capacity-check only
+	RAMMB     int     `json:"ramMb"`
+	CPUCores  float64 `json:"cpuCores"`
+	DiskGB    int     `json:"diskGb"`
+}
+
+// NodeCandidate is one node considered for placement. `Available` means
+// the server would fit inside `physical * overcommit_ratio` after the
+// addition. Score is "lower is better" — sum of relative load + spare-
+// disk-percent penalty + server-count tiebreaker.
+type NodeCandidate struct {
+	NodeID         int     `json:"nodeId"`
+	NodeName       string  `json:"nodeName"`
+	Available      bool    `json:"available"`
+	Reason         string  `json:"reason"`
+	Score          float64 `json:"score"`
+	AllocRAMMB     int64   `json:"allocRamMb"`
+	AllocCPU       float64 `json:"allocCpu"`
+	TotalRAMMB     int64   `json:"totalRamMb"`
+	TotalCPU       float64 `json:"totalCpu"`
+	OvercommitRAM  float64 `json:"overcommitRam"`
+	OvercommitCPU  float64 `json:"overcommitCpu"`
+	ServerCount    int     `json:"serverCount"`
+}
+
+type PickNodeResponse struct {
+	Success    bool            `json:"success"`
+	Picked     *NodeCandidate  `json:"picked,omitempty"`
+	Candidates []NodeCandidate `json:"candidates"`
+	Reason     string          `json:"reason"`
+}
+
+// PickNode POST /api/placement/pick — admin-only.
+// Used by the deploy wizard to preview which node would be chosen and
+// internally by CreateServer when the request specifies a tag instead
+// of an explicit nodeId.
+func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+
+	var req PickNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	resp := h.pickNode(r.Context(), req)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// pickNode is the core scheduling logic, also callable from CreateServer.
+func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) PickNodeResponse {
+	all, err := h.state.Store.ListNodes()
+	if err != nil {
+		return PickNodeResponse{Reason: "store error: " + err.Error()}
+	}
+
+	tag := strings.TrimSpace(strings.ToLower(req.Tag))
+
+	// Roll up live heartbeat into a token→stats lookup so we don't ping
+	// each node individually inside the loop.
+	heartbeats := services.LoadHeartbeats(ctx, h.state.Redis)
+
+	candidates := make([]NodeCandidate, 0, len(all))
+	for i := range all {
+		n := &all[i]
+		if n.Status != "online" {
+			continue
+		}
+		if req.NodeID > 0 && n.ID != req.NodeID {
+			continue
+		}
+		if tag != "" && !nodeHasTag(n, tag) {
+			continue
+		}
+
+		c := h.scoreNode(n, req, heartbeats[n.Token])
+		candidates = append(candidates, c)
+	}
+
+	// Sort by Available DESC (eligible first), then Score ASC.
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Available != candidates[j].Available {
+			return candidates[i].Available
+		}
+		return candidates[i].Score < candidates[j].Score
+	})
+
+	resp := PickNodeResponse{Candidates: candidates}
+	for i := range candidates {
+		if candidates[i].Available {
+			resp.Picked = &candidates[i]
+			resp.Success = true
+			resp.Reason = candidates[i].Reason
+			return resp
+		}
+	}
+	resp.Reason = "no eligible node found"
+	if tag != "" {
+		resp.Reason += " for tag " + tag
+	}
+	return resp
+}
+
+// scoreNode evaluates one node against the request. Available=false when
+// adding the new server would push allocation past physical*overcommit.
+// Score is normalized 0..3 (sum of three 0..1 components), lower is better.
+func (h *PlacementHandler) scoreNode(n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
+	allocRAM, allocCPU, _ := h.state.Store.SumAllocatedByNode(n.ID)
+	serverCount, _ := h.state.Store.CountServersByNode(n.ID)
+
+	cand := NodeCandidate{
+		NodeID:        n.ID,
+		NodeName:      n.Name,
+		AllocRAMMB:    allocRAM,
+		AllocCPU:      allocCPU,
+		TotalRAMMB:    n.TotalRAMMB,
+		TotalCPU:      n.TotalCPU,
+		OvercommitRAM: n.RAMOvercommitRatio,
+		OvercommitCPU: n.CPUOvercommitRatio,
+		ServerCount:   serverCount,
+		Available:     true,
+	}
+
+	// RAM capacity check
+	if n.TotalRAMMB > 0 {
+		cap := float64(n.TotalRAMMB) * n.RAMOvercommitRatio
+		if float64(allocRAM+int64(req.RAMMB)) > cap {
+			cand.Available = false
+			cand.Reason = fmt.Sprintf("RAM full: %d + %d > %.0f (overcommit %.2fx)",
+				allocRAM, req.RAMMB, cap, n.RAMOvercommitRatio)
+		}
+	}
+	// CPU capacity check (only enforced when a positive limit is requested)
+	if cand.Available && req.CPUCores > 0 && n.TotalCPU > 0 {
+		cap := n.TotalCPU * n.CPUOvercommitRatio
+		if allocCPU+req.CPUCores > cap {
+			cand.Available = false
+			cand.Reason = fmt.Sprintf("CPU full: %.2f + %.2f > %.2f (overcommit %.2fx)",
+				allocCPU, req.CPUCores, cap, n.CPUOvercommitRatio)
+		}
+	}
+	// Disk floor — heartbeat reports free bytes per storage path. We pick
+	// the largest single path because servers go on one disk, not split.
+	if cand.Available && req.DiskGB > 0 && hb != nil {
+		maxFreeGB := int64(0)
+		for _, sp := range hb.Storage {
+			gb := sp.FreeBytes / (1024 * 1024 * 1024)
+			if gb > maxFreeGB {
+				maxFreeGB = gb
+			}
+		}
+		// 5 GB buffer so we never fill a disk to 0.
+		if maxFreeGB > 0 && maxFreeGB < int64(req.DiskGB)+5 {
+			cand.Available = false
+			cand.Reason = fmt.Sprintf("disk full: %d GB free, need %d GB + 5 GB buffer", maxFreeGB, req.DiskGB)
+		}
+	}
+
+	// Score components (each 0..1, lower is better).
+	ramLoad := 0.0
+	if n.TotalRAMMB > 0 {
+		ramLoad = float64(allocRAM) / (float64(n.TotalRAMMB) * n.RAMOvercommitRatio)
+	}
+	cpuLoad := 0.0
+	if n.TotalCPU > 0 {
+		cpuLoad = allocCPU / (n.TotalCPU * n.CPUOvercommitRatio)
+	}
+	countPenalty := float64(serverCount) / 100.0 // mild tiebreaker
+
+	cand.Score = ramLoad + cpuLoad + countPenalty
+	if cand.Available && cand.Reason == "" {
+		cand.Reason = fmt.Sprintf("RAM %.0f%%, CPU %.0f%%, %d servers",
+			ramLoad*100, cpuLoad*100, serverCount)
+	}
+	return cand
+}
+
+func nodeHasTag(n *models.Node, tag string) bool {
+	for _, t := range strings.Split(n.Tags, ",") {
+		if strings.EqualFold(strings.TrimSpace(t), tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetNodePlacementRequest is the body for PUT /api/nodes/{id}/placement.
+type SetNodePlacementRequest struct {
+	CPUOvercommitRatio float64 `json:"cpuOvercommitRatio"`
+	RAMOvercommitRatio float64 `json:"ramOvercommitRatio"`
+}
+
+// SetNodePlacement PUT /api/nodes/{id}/placement — admin-only.
+// Lets admins override the global defaults for a single node.
+func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	id := mustAtoi(extractIDFromPath(r, "/api/nodes/", "/placement"))
+	if id <= 0 {
+		sendJSONError(w, "Invalid node id", http.StatusBadRequest)
+		return
+	}
+	var req SetNodePlacementRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.CPUOvercommitRatio <= 0 || req.RAMOvercommitRatio <= 0 {
+		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetNodePlacement(id, req.CPUOvercommitRatio, req.RAMOvercommitRatio); err != nil {
+		sendJSONError(w, "Failed to update placement", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// extractIDFromPath pulls an integer between a prefix and suffix in r.URL.Path.
+// We use this instead of mux.Vars to avoid a route-pattern change.
+func extractIDFromPath(r *http.Request, prefix, suffix string) string {
+	p := r.URL.Path
+	p = strings.TrimPrefix(p, prefix)
+	p = strings.TrimSuffix(p, suffix)
+	return p
+}
+
+// AvailableTagsHandler GET /api/placement/tags — returns the union of all
+// tags currently advertised by online nodes, so the deploy wizard can
+// populate its tag dropdown.
+func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.state.Store.ListNodes()
+	if err != nil {
+		sendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
+		return
+	}
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		if n.Status != "online" {
+			continue
+		}
+		for _, t := range strings.Split(n.Tags, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				seen[t] = true
+			}
+		}
+	}
+	tags := make([]string, 0, len(seen))
+	for t := range seen {
+		tags = append(tags, t)
+	}
+	sort.Strings(tags)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"tags":    tags,
+	})
+}

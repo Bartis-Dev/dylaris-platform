@@ -196,6 +196,18 @@ func migrateSchema(db *sql.DB) error {
 		{"nodes", "last_seen_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"},
 		{"servers", "host_port", "INT DEFAULT 0"},
 		{"servers", "container_port", "INT DEFAULT 25565"},
+		// Auto-move: when true, the rebalance loop is allowed to migrate this
+		// server to another node when the current node is overloaded.
+		// Migration only happens while the server is stopped/idle.
+		{"servers", "auto_move", "BOOLEAN DEFAULT FALSE"},
+		// Per-node placement: overcommit ratios + observed capacity floor.
+		// 1.0 = no overcommit, 1.5 = allow 50% over physical capacity.
+		// total_* are last-known physical totals reported by the node's
+		// heartbeat — cached so the scheduler does not need a live ping.
+		{"nodes", "cpu_overcommit_ratio", "REAL DEFAULT 1.0"},
+		{"nodes", "ram_overcommit_ratio", "REAL DEFAULT 1.0"},
+		{"nodes", "total_cpu", "REAL DEFAULT 0"},
+		{"nodes", "total_ram_mb", "BIGINT DEFAULT 0"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)

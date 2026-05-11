@@ -42,6 +42,9 @@ type Store interface {
 	SetNodeIPs(id int, publicIP string, privateIPs []string) error
 	UpdateNodeCpusetCpus(id int, cpusetCpus string) error
 	SetNodeLastSeen(id int) error
+	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
+	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error
+	SumAllocatedByNode(nodeID int) (totalRAMMB int64, totalCPU float64, err error)
 	CountServersByNode(nodeID int) (int, error)
 	ListServersByNode(nodeID int) ([]models.Server, error)
 	DeleteServersByNode(nodeID int) error
@@ -65,6 +68,7 @@ type Store interface {
 	CountServersByOwner(ownerID int) (int, error)
 	UpdateServerProxyID(id int, proxyID *int) error
 	UpdateServerOwner(id int, ownerID *int) error
+	SetServerAutoMove(id int, enabled bool) error
 
 	// --- Server Invites ---
 	CreateInvite(serverID, userID, invitedBy int, permissions map[string]bool) error

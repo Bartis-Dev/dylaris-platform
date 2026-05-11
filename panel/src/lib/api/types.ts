@@ -38,6 +38,15 @@ export interface Node {
     publicIp?: string;
     privateIps?: string[];
     serverCount?: number;
+    // Placement (persisted)
+    cpuOvercommitRatio?: number;
+    ramOvercommitRatio?: number;
+    totalCpu?: number;
+    totalRamMb?: number;
+    // Live (from heartbeat, set by infrastructure overview)
+    cpuUsage?: number;
+    ramFree?: number;
+    ramTotal?: number;
 }
 
 export interface TabPermissions {
@@ -395,6 +404,46 @@ export const getGatewayErrors = (service?: string) => fetchAPI(`/gateway/errors$
 
 export const getGatewaySettings = () => fetchAPI('/settings/gateway');
 export const saveGatewaySettings = (data: GatewaySettings) => fetchAPI('/settings/gateway', { method: 'POST', body: JSON.stringify(data) });
+
+// --- PLACEMENT / SCHEDULING ---
+export interface PlacementSettings {
+    cpuOvercommitDefault: number;
+    ramOvercommitDefault: number;
+    diskBufferGb: number;
+    rebalanceEnabled: boolean;
+    rebalanceThreshold: number;
+}
+export interface NodeCandidate {
+    nodeId: number;
+    nodeName: string;
+    available: boolean;
+    reason: string;
+    score: number;
+    allocRamMb: number;
+    allocCpu: number;
+    totalRamMb: number;
+    totalCpu: number;
+    overcommitRam: number;
+    overcommitCpu: number;
+    serverCount: number;
+}
+export interface PickNodeResponse {
+    success: boolean;
+    picked?: NodeCandidate;
+    candidates: NodeCandidate[];
+    reason: string;
+}
+export const getPlacementSettings = () => fetchAPI('/settings/placement');
+export const savePlacementSettings = (data: PlacementSettings) =>
+    fetchAPI('/settings/placement', { method: 'POST', body: JSON.stringify(data) });
+export const getAvailableTags = (): Promise<{ success: boolean; tags: string[] }> =>
+    fetchAPI('/placement/tags');
+export const pickNode = (data: { tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number }): Promise<PickNodeResponse> =>
+    fetchAPI('/placement/pick', { method: 'POST', body: JSON.stringify(data) });
+export const setNodePlacement = (nodeId: number, data: { cpuOvercommitRatio: number; ramOvercommitRatio: number }) =>
+    fetchAPI(`/nodes/${nodeId}/placement`, { method: 'PUT', body: JSON.stringify(data) });
+export const setServerAutoMove = (serverId: number, enabled: boolean) =>
+    fetchAPI(`/servers/${serverId}/automove`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');
