@@ -284,103 +284,129 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                         )}
 
                         {step === 2 && (
-                            <div className="space-y-6 animate-fade-in">
-                                <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">2. Owner & Resources</h3>
+                            <div className="space-y-5 animate-fade-in">
+                                <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">2. Resources & Owner</h3>
 
-                                <div>
-                                    <label className="input-label mb-2 block">Assign Owner</label>
-                                    <input
-                                        type="text"
-                                        placeholder="Search user..."
-                                        value={searchTerm}
-                                        onChange={e => setSearchTerm(e.target.value)}
-                                        className="input-field w-full mb-3"
-                                    />
-                                    <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                                        {filteredUsers.map(user => (
-                                            <div
-                                                key={user.id}
-                                                onClick={() => setOwnerId(user.id)}
-                                                className={`card p-2.5 cursor-pointer flex items-center gap-2 transition-all ${ownerId === user.id ? 'border-(--accent-border) bg-(--accent-ghost)' : 'hover:border-(--base-05)'}`}
-                                            >
-                                                <div className="w-8 h-8 rounded-md bg-(--base-03) flex items-center justify-center font-medium text-(--base-08) shrink-0">
-                                                    {user.username.charAt(0).toUpperCase()}
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <div className="font-medium truncate text-sm text-(--base-09)">{user.username}</div>
-                                                </div>
-                                                {ownerId === user.id && <CircleCheck size={14} className="text-(--accent-light) ml-auto" />}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {/* Left column: Resources */}
+                                    <div className="space-y-4">
+                                        <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Resources</h4>
+
+                                        <div className="flex flex-col gap-[5px]">
+                                            <label className="input-label">RAM Limit (MB)</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="number"
+                                                    value={ram}
+                                                    onChange={e => setRam(Number(e.target.value))}
+                                                    className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                />
+                                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">MB</span>
                                             </div>
-                                        ))}
+                                            <p className="text-xs text-(--base-06)">+512 MB OOM buffer added automatically</p>
+                                        </div>
+
+                                        <div className="flex flex-col gap-[5px]">
+                                            <label className="input-label">CPU Limit (Cores)</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="number"
+                                                    step="0.5"
+                                                    value={cpuLimit}
+                                                    onChange={e => setCpuLimit(Number(e.target.value))}
+                                                    className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                />
+                                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">Cores</span>
+                                            </div>
+                                            <p className="text-xs text-(--base-06)">0 = no limit</p>
+                                        </div>
+
+                                        <div className="flex flex-col gap-[5px]">
+                                            <label className="input-label">Storage Limit (GB)</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    step={1}
+                                                    value={diskLimit}
+                                                    onChange={e => setDiskLimit(Number(e.target.value))}
+                                                    className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                />
+                                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
+                                            </div>
+                                            <p className="text-xs text-(--base-06)">0 = unlimited</p>
+                                        </div>
+
+                                        {/* Storage Path Selection */}
+                                        {storagePaths.length > 1 && (
+                                            <div className="flex flex-col gap-[5px]">
+                                                <label className="input-label flex items-center gap-1.5">
+                                                    <HardDrive size={13} /> Storage Path
+                                                </label>
+                                                <select
+                                                    value={storagePath}
+                                                    onChange={e => setStoragePath(e.target.value)}
+                                                    className="input-field"
+                                                >
+                                                    <option value="auto">Auto (most free space)</option>
+                                                    {storagePaths.map(s => (
+                                                        <option key={s.path} value={s.path}>
+                                                            {s.path} ({fmtGB(s.free_bytes)} GB free, {s.server_count} servers)
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <p className="text-xs text-(--base-06)">Auto distributes servers evenly across storage paths.</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Right column: Assign Owner */}
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Assign Owner</h4>
+                                            <span className="font-mono text-[10px] text-(--base-06)">
+                                                {filteredUsers.length} / {users.length}
+                                            </span>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="Search user..."
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                            className="input-field w-full"
+                                        />
+                                        <div className="flex flex-col gap-1 max-h-[280px] overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                            {filteredUsers.length === 0 ? (
+                                                <p className="text-xs text-(--base-06) text-center py-6 italic">No matching users.</p>
+                                            ) : (
+                                                filteredUsers.map(user => {
+                                                    const selected = ownerId === user.id;
+                                                    return (
+                                                        <button
+                                                            key={user.id}
+                                                            type="button"
+                                                            onClick={() => setOwnerId(user.id)}
+                                                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
+                                                                selected
+                                                                    ? 'bg-(--accent-ghost) border border-(--accent-border)'
+                                                                    : 'border border-transparent hover:bg-(--base-03)'
+                                                            }`}
+                                                        >
+                                                            <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center font-medium text-xs text-(--base-08) shrink-0">
+                                                                {user.username.charAt(0).toUpperCase()}
+                                                            </div>
+                                                            <span className="flex-1 truncate text-sm text-(--base-09)">{user.username}</span>
+                                                            {user.isAdmin && (
+                                                                <span className="font-mono text-[9px] uppercase text-(--accent-light)">admin</span>
+                                                            )}
+                                                            {selected && <CircleCheck size={14} className="text-(--accent-light) shrink-0" />}
+                                                        </button>
+                                                    );
+                                                })
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">RAM Limit (MB)</label>
-                                        <div className="relative">
-                                            <input
-                                                type="number"
-                                                value={ram}
-                                                onChange={e => setRam(Number(e.target.value))}
-                                                className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                            />
-                                            <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">MB</span>
-                                        </div>
-                                        <p className="text-xs text-(--base-06)">+512 MB OOM buffer added automatically</p>
-                                    </div>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">CPU Limit (Cores)</label>
-                                        <div className="relative">
-                                            <input
-                                                type="number"
-                                                step="0.5"
-                                                value={cpuLimit}
-                                                onChange={e => setCpuLimit(Number(e.target.value))}
-                                                className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                            />
-                                            <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">Cores</span>
-                                        </div>
-                                        <p className="text-xs text-(--base-06)">0 = no limit</p>
-                                    </div>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">Storage Limit (GB)</label>
-                                        <div className="relative">
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                step={1}
-                                                value={diskLimit}
-                                                onChange={e => setDiskLimit(Number(e.target.value))}
-                                                className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                            />
-                                            <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
-                                        </div>
-                                        <p className="text-xs text-(--base-06)">0 = unlimited</p>
-                                    </div>
-                                </div>
-
-                                {/* Storage Path Selection */}
-                                {storagePaths.length > 1 && (
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label flex items-center gap-1.5">
-                                            <HardDrive size={13} /> Storage Path
-                                        </label>
-                                        <select
-                                            value={storagePath}
-                                            onChange={e => setStoragePath(e.target.value)}
-                                            className="input-field"
-                                        >
-                                            <option value="auto">Auto (most free space)</option>
-                                            {storagePaths.map(s => (
-                                                <option key={s.path} value={s.path}>
-                                                    {s.path} ({fmtGB(s.free_bytes)} GB free, {s.server_count} servers)
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <p className="text-xs text-(--base-06)">Auto distributes servers evenly across storage paths.</p>
-                                    </div>
-                                )}
 
                                 <div className="bg-(--primary-ghost) p-3 rounded-lg border border-(--primary-border) text-sm text-(--base-07)">
                                     <Info size={14} className="inline align-middle mr-1 text-(--primary-light)" />
