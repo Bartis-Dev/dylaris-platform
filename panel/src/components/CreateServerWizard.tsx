@@ -360,8 +360,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         )}
                                     </div>
 
-                                    {/* Right column: Assign Owner */}
-                                    <div className="space-y-2">
+                                    {/* Right column: Assign Owner — flex-col so the list grows
+                                        to match the left column's height (grid stretches by default). */}
+                                    <div className="flex flex-col gap-2 min-h-80">
                                         <div className="flex items-center justify-between">
                                             <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Assign Owner</h4>
                                             <span className="font-mono text-[10px] text-(--base-06)">
@@ -375,7 +376,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             onChange={e => setSearchTerm(e.target.value)}
                                             className="input-field w-full"
                                         />
-                                        <div className="flex flex-col gap-1 max-h-[280px] overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                        <div className="flex-1 flex flex-col gap-1 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
                                             {filteredUsers.length === 0 ? (
                                                 <p className="text-xs text-(--base-06) text-center py-6 italic">No matching users.</p>
                                             ) : (
