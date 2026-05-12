@@ -237,16 +237,24 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
                         {step === 1 && (
                             <div className="space-y-5 animate-fade-in">
-                                {/* Region pills (hidden when no online node advertises a region) */}
-                                {availableRegions.length > 0 && (
-                                    <section className="space-y-2">
-                                        <div className="flex items-center gap-2">
-                                            <MapPin size={14} className="text-(--accent-light)" />
-                                            <h3 className="text-base font-display font-bold text-(--base-09)">Region</h3>
-                                            <span className="font-mono text-[10px] text-(--base-06) ml-auto">
-                                                {selectedRegion ? regionLabel(selectedRegion) : 'any'}
-                                            </span>
+                                {/* Region pills */}
+                                <section className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <MapPin size={14} className="text-(--accent-light)" />
+                                        <h3 className="text-base font-display font-bold text-(--base-09)">Region</h3>
+                                        <span className="font-mono text-[10px] text-(--base-06) ml-auto">
+                                            {availableRegions.length === 0
+                                                ? 'no regions configured'
+                                                : selectedRegion ? regionLabel(selectedRegion) : 'any'}
+                                        </span>
+                                    </div>
+                                    {availableRegions.length === 0 ? (
+                                        <div className="rounded-md border border-dashed border-(--base-04) bg-(--base-02) px-3 py-2.5 text-xs text-(--base-06)">
+                                            No node currently reports a region. Set{' '}
+                                            <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">DYLARIS_REGION=eu-central</code>{' '}
+                                            on a node and redeploy it — the pill bar will appear once a heartbeat lands.
                                         </div>
+                                    ) : (
                                         <div className="flex flex-wrap gap-2">
                                             <button
                                                 type="button"
@@ -275,13 +283,13 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 </button>
                                             ))}
                                         </div>
-                                    </section>
-                                )}
+                                    )}
+                                </section>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Left: Owner */}
                                 <section className="space-y-2 min-h-80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2">
+                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2 min-h-9">
                                         <h3 className="text-base font-display font-bold text-(--base-09)">Assign Owner</h3>
                                         <span className="font-mono text-[10px] text-(--base-06)">
                                             {filteredUsers.length} / {users.length}
@@ -329,7 +337,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
                                 {/* Right: Target (Node | Tag) */}
                                 <section className="space-y-2 min-h-80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2">
+                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2 min-h-9">
                                         <h3 className="text-base font-display font-bold text-(--base-09)">Target</h3>
                                         <div className="flex bg-(--base-03) p-0.5 rounded-md">
                                             <button
