@@ -3,6 +3,7 @@
 import React, { useMemo } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
 import { CreateRouteRequest } from '@/lib/api';
+import { useAppData } from '@/lib/AppDataContext';
 import JavaVersionPicker, { recommendJavaForVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
@@ -76,6 +77,12 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
     const sanitized = sanitizeName(props.subName);
     const recommendedJava = useMemo(() => recommendJavaForVersion(props.selectedMajor), [props.selectedMajor]);
 
+    // Domain row only matters when the gateway actually handles traffic.
+    // In ip_port mode players connect via Node IP + port, so showing a
+    // domain input here is confusing — hide it.
+    const { routingMode } = useAppData();
+    const showDomainField = routingMode !== 'ip_port';
+
     return (
         <div className="flex-1 card flex flex-col overflow-hidden min-w-0">
             {/* Header */}
@@ -111,29 +118,31 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     )}
                 </div>
 
-                {/* Row 2: Optional gateway route */}
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label flex items-center gap-1.5">
-                        <Globe size={12} className="text-(--accent-light)" /> Domain Route
-                        <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1 py-0.5 rounded-sm ml-1">Optional</span>
-                    </label>
-                    <RouteDomainPicker
-                        value={props.gatewayRoute || { targetPort: 25565 }}
-                        onChange={next => props.onGatewayRouteChange?.(next)}
-                        portChildren={
-                            <select
-                                value={props.gatewayRoute?.targetPort || 25565}
-                                onChange={e => props.onGatewayRouteChange?.({ ...(props.gatewayRoute || {}), targetPort: Number(e.target.value) })}
-                                className="input-field text-sm w-28"
-                            >
-                                <option value={25565}>MC (25565)</option>
-                                <option value={80}>HTTP (80)</option>
-                                <option value={443}>HTTPS (443)</option>
-                            </select>
-                        }
-                    />
-                    <p className="text-xs text-(--base-06)">Can also be configured later in the Setup tab.</p>
-                </div>
+                {/* Row 2: Optional gateway route (only when gateway routes traffic) */}
+                {showDomainField && (
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label flex items-center gap-1.5">
+                            <Globe size={12} className="text-(--accent-light)" /> Domain Route
+                            <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1 py-0.5 rounded-sm ml-1">Optional</span>
+                        </label>
+                        <RouteDomainPicker
+                            value={props.gatewayRoute || { targetPort: 25565 }}
+                            onChange={next => props.onGatewayRouteChange?.(next)}
+                            portChildren={
+                                <select
+                                    value={props.gatewayRoute?.targetPort || 25565}
+                                    onChange={e => props.onGatewayRouteChange?.({ ...(props.gatewayRoute || {}), targetPort: Number(e.target.value) })}
+                                    className="input-field text-sm w-28"
+                                >
+                                    <option value={25565}>MC (25565)</option>
+                                    <option value={80}>HTTP (80)</option>
+                                    <option value={443}>HTTPS (443)</option>
+                                </select>
+                            }
+                        />
+                        <p className="text-xs text-(--base-06)">Can also be configured later in the Setup tab.</p>
+                    </div>
+                )}
 
                 {/* Row 2: Java Version (full width) */}
                 <JavaVersionPicker

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Server, getServerRoutes, createServerRoute, deleteServerRoute, GatewayRoute, CreateRouteRequest } from '@/lib/api';
+import { useAppData } from '@/lib/AppDataContext';
 import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle, Globe, Trash2 } from 'lucide-react';
 import { JAVA_IMAGES } from './JavaVersionPicker';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
@@ -22,6 +23,8 @@ const formatInstallerType = (type?: string) => {
 };
 
 export default function SetupViewMode({ server, activeServerMissing, onEdit, onAddNew, hasSubServers }: SetupViewModeProps) {
+    const { routingMode } = useAppData();
+    const showRoutes = routingMode !== 'ip_port';
     const [flagsOpen, setFlagsOpen] = useState(false);
     const javaLabel = JAVA_IMAGES.find(j => j.id === server.image)?.label || 'Unknown';
     const javaNote = JAVA_IMAGES.find(j => j.id === server.image)?.note || '';
@@ -169,7 +172,10 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                     </div>
                 )}
 
-                {/* Routes / Domains */}
+                {/* Routes / Domains — only shown when gateway actually routes traffic.
+                    Existing routes stay in the DB even in ip_port mode so they're
+                    preserved when an admin re-enables gateway routing later. */}
+                {showRoutes && (
                 <div className="border-t border-(--base-03) pt-5">
                     <h4 className="flex items-center gap-2 text-sm font-semibold text-(--base-09) mb-1">
                         <Globe size={14} className="text-(--accent-light)" />
@@ -244,6 +250,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                         />
                     </div>
                 </div>
+                )}
             </div>
         </div>
     );

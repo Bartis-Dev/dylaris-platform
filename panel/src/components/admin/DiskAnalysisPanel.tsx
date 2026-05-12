@@ -2,12 +2,18 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-    Trash2, AlertTriangle, ChevronDown, ChevronRight, Loader2, Check,
+    Trash2, AlertTriangle, ChevronDown, ChevronRight, Loader2, Check, X,
 } from 'lucide-react';
 import {
     getAdminDiskAnalysis, deleteOrphanedFolder, deleteServer,
     DiskAnalysis, Node,
 } from '@/lib/api';
+
+// Single confirm modal handles both flows (orphan folder + DB stray).
+// `target` describes what's being deleted; null means closed.
+type DeleteTarget =
+    | { kind: 'orphan'; uuid: string }
+    | { kind: 'dbStray'; id: number; serverName: string };
 
 interface DiskAnalysisPanelProps {
     node: Node;
@@ -24,6 +30,8 @@ export function DiskAnalysisPanel({
     const [deleting, setDeleting] = useState<string | null>(null);
     const [deletingDbId, setDeletingDbId] = useState<number | null>(null);
     const [expanded, setExpanded] = useState(false);
+    const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
+    const [deleteError, setDeleteError] = useState<string>('');
 
     const load = async () => {
         setLoading(true);
@@ -47,29 +55,43 @@ export function DiskAnalysisPanel({
         }
     }, [autoLoad]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const handleDelete = async (orphanUUID: string) => {
-        if (!confirm(`Delete orphaned folder ${orphanUUID} from node "${node.name}"? This cannot be undone.`)) return;
-        setDeleting(orphanUUID);
-        const res = await deleteOrphanedFolder(node.id, orphanUUID);
-        setDeleting(null);
-        if (res.success) {
-            setData(prev => prev ? { ...prev, orphaned: prev.orphaned.filter(o => o.uuid !== orphanUUID) } : prev);
-            onOrphanDeleted();
-        } else {
-            alert(res.message ?? 'Delete failed');
-        }
+    const handleDelete = (orphanUUID: string) => {
+        setDeleteError('');
+        setPendingDelete({ kind: 'orphan', uuid: orphanUUID });
     };
 
-    const handleDeleteDbLeiche = async (m: { id: number; serverName: string }) => {
-        if (!confirm(`"${m.serverName}" aus DB entfernen? Der Disk-Folder existiert nicht mehr — der DB-Eintrag ist eine Leiche.`)) return;
-        setDeletingDbId(m.id);
-        const res = await deleteServer(m.id);
-        setDeletingDbId(null);
-        if (res.success) {
-            setData(prev => prev ? { ...prev, missing: prev.missing.filter(x => x.id !== m.id) } : prev);
-            onOrphanDeleted();
+    const handleDeleteDbLeiche = (m: { id: number; serverName: string }) => {
+        setDeleteError('');
+        setPendingDelete({ kind: 'dbStray', id: m.id, serverName: m.serverName });
+    };
+
+    const confirmDelete = async () => {
+        if (!pendingDelete) return;
+        setDeleteError('');
+        if (pendingDelete.kind === 'orphan') {
+            setDeleting(pendingDelete.uuid);
+            const res = await deleteOrphanedFolder(node.id, pendingDelete.uuid);
+            setDeleting(null);
+            if (res.success) {
+                const uuid = pendingDelete.uuid;
+                setData(prev => prev ? { ...prev, orphaned: prev.orphaned.filter(o => o.uuid !== uuid) } : prev);
+                onOrphanDeleted();
+                setPendingDelete(null);
+            } else {
+                setDeleteError(res.message ?? 'Delete failed');
+            }
         } else {
-            alert(res.message ?? 'Delete failed');
+            setDeletingDbId(pendingDelete.id);
+            const res = await deleteServer(pendingDelete.id);
+            setDeletingDbId(null);
+            if (res.success) {
+                const id = pendingDelete.id;
+                setData(prev => prev ? { ...prev, missing: prev.missing.filter(x => x.id !== id) } : prev);
+                onOrphanDeleted();
+                setPendingDelete(null);
+            } else {
+                setDeleteError(res.message ?? 'Delete failed');
+            }
         }
     };
 
@@ -167,6 +189,72 @@ export function DiskAnalysisPanel({
                             All {data.matched.length} server folders match DB records
                         </p>
                     )}
+                </div>
+            )}
+
+            {pendingDelete && (
+                <div className="modal-overlay animate-fade-in">
+                    <div className="modal-panel w-full max-w-md">
+                        <div className="modal-header flex items-center justify-between">
+                            <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
+                                <AlertTriangle size={18} />
+                                {pendingDelete.kind === 'orphan' ? 'Delete Orphaned Folder' : 'Remove Stale DB Entry'}
+                            </h3>
+                            <button onClick={() => setPendingDelete(null)} className="text-(--base-06) hover:text-(--error-light)">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            {deleteError && (
+                                <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md text-sm">
+                                    {deleteError}
+                                </div>
+                            )}
+                            {pendingDelete.kind === 'orphan' ? (
+                                <>
+                                    <p className="text-sm text-(--base-08)">
+                                        Permanently delete this orphaned folder from{' '}
+                                        <span className="font-mono text-(--base-09)">{node.name}</span>?
+                                    </p>
+                                    <div className="bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 font-mono text-xs text-(--base-07) break-all">
+                                        {pendingDelete.uuid}
+                                    </div>
+                                    <p className="text-xs text-(--base-06)">
+                                        The folder has no matching DB record. Its contents will be removed from disk and cannot be recovered.
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-sm text-(--base-08)">
+                                        Remove the database entry for{' '}
+                                        <span className="font-mono text-(--base-09)">{pendingDelete.serverName}</span>?
+                                    </p>
+                                    <p className="text-xs text-(--base-06)">
+                                        The on-disk folder no longer exists on this node — the DB row is a leftover. Removing it cleans up dashboards and stats; nothing is touched on disk.
+                                    </p>
+                                </>
+                            )}
+                        </div>
+                        <div className="modal-footer">
+                            <button
+                                type="button"
+                                onClick={() => setPendingDelete(null)}
+                                className="btn btn-secondary px-4 py-1.5 text-sm"
+                                disabled={!!deleting || !!deletingDbId}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmDelete}
+                                disabled={!!deleting || !!deletingDbId}
+                                className="btn btn-danger px-4 py-1.5 text-sm disabled:opacity-50 inline-flex items-center gap-1.5"
+                            >
+                                {deleting || deletingDbId ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                {pendingDelete.kind === 'orphan' ? 'Delete folder' : 'Remove entry'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
