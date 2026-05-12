@@ -31,14 +31,14 @@ services:
     depends_on:
       - redis
     environment:
-      DYLARIS_NODE_ID: "${NODE_ID:-node-01}"
-      DYLARIS_CLUSTER_SECRET: "${CLUSTER_SECRET}"
-      DYLARIS_TAGS: "${NODE_TAGS:-}"
-      DYLARIS_REGION: "${NODE_REGION:-}"
+      NODE_ID: "${NODE_ID:-node-01}"
+      CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      NODE_TAGS: "${NODE_TAGS:-}"
+      NODE_REGION: "${NODE_REGION:-}"
       REDIS_ADDR: "redis:6379"
       GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
-      DYLARIS_PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
-      DYLARIS_PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
+      PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
+      PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data

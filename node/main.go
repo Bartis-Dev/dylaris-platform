@@ -179,18 +179,18 @@ func parseConfig() {
 	}
 
 	// 1. Node Basics
-	nodeID = os.Getenv("DYLARIS_NODE_ID")
-	clusterSecret = os.Getenv("DYLARIS_CLUSTER_SECRET")
-	nodeTags = os.Getenv("DYLARIS_TAGS")
-	nodeRegion = os.Getenv("DYLARIS_REGION")
+	nodeID = os.Getenv("NODE_ID")
+	clusterSecret = os.Getenv("CLUSTER_SECRET")
+	nodeTags = os.Getenv("NODE_TAGS")
+	nodeRegion = os.Getenv("NODE_REGION")
 
 	if clusterSecret == "" {
-		log.Fatal("FATAL: DYLARIS_CLUSTER_SECRET is missing!")
+		log.Fatal("FATAL: CLUSTER_SECRET is missing!")
 	}
 	if nodeID == "" {
 		hostname, err := os.Hostname()
 		if err != nil || hostname == "" {
-			log.Fatal("FATAL: DYLARIS_NODE_ID is missing and hostname could not be determined!")
+			log.Fatal("FATAL: NODE_ID is missing and hostname could not be determined!")
 		}
 		nodeID = hostname
 		log.Printf("No Node ID provided. Automatically using system hostname: '%s'", nodeID)
@@ -262,12 +262,14 @@ func parseConfig() {
 	}
 
 	// Storage paths (comma-separated, default: ./dylaris_data/servers)
-	storagePaths = os.Getenv("DYLARIS_STORAGE_PATHS")
+	storagePaths = os.Getenv("STORAGE_PATHS")
 
+	// Port range stays env-only because firewall rules on the host must
+	// match. Allocation strategy + container port move to admin settings
+	// (published to Redis by Core) and are loaded later in loadModesFromRedis.
 	portRangeStart = 25600
 	portRangeEnd = 30000
-	// DYLARIS_PORT_RANGE takes priority ("start-end" format)
-	if v := os.Getenv("DYLARIS_PORT_RANGE"); v != "" {
+	if v := os.Getenv("PORT_RANGE"); v != "" {
 		parts := strings.SplitN(v, "-", 2)
 		if len(parts) == 2 {
 			if s, err := strconv.Atoi(parts[0]); err == nil {
@@ -278,29 +280,20 @@ func parseConfig() {
 			}
 		}
 	} else {
-		// Legacy separate vars
-		if v := os.Getenv("DYLARIS_PORT_RANGE_START"); v != "" {
+		if v := os.Getenv("PORT_RANGE_START"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				portRangeStart = n
 			}
 		}
-		if v := os.Getenv("DYLARIS_PORT_RANGE_END"); v != "" {
+		if v := os.Getenv("PORT_RANGE_END"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				portRangeEnd = n
 			}
 		}
 	}
-	portMode = os.Getenv("DYLARIS_PORT_MODE")
-	if portMode == "" {
-		portMode = "sequential"
-	}
-	containerPort = 25565
-	if v := os.Getenv("DYLARIS_CONTAINER_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			containerPort = n
-		}
-	}
-	log.Printf("Port config: mode=%s, range=%d-%d, container port=%d", portMode, portRangeStart, portRangeEnd, containerPort)
+	portMode = "sequential"     // default until loadModesFromRedis overrides
+	containerPort = 25565        // default MC port; admin can change globally in Settings → Nodes → Placement
+	log.Printf("Port config: range=%d-%d (mode/container_port load from settings)", portRangeStart, portRangeEnd)
 
 	sftpPort = os.Getenv("SFTP_PORT")
 	if sftpPort == "" {
@@ -341,14 +334,23 @@ func getOutboundIP() string {
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
-// loadModesFromRedis reads routing_mode and file_access_mode from Redis.
-// Called on startup and every 30s so the node reacts to admin mode changes without restart.
+// loadModesFromRedis reads routing_mode, file_access_mode, port_mode and
+// container_port from Redis. Called on startup and every 30s so the node
+// reacts to admin setting changes without a restart.
 func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 	if v, err := rdb.Get(ctx, "dylaris:routing_mode").Result(); err == nil && v != "" {
 		routingMode = v
 	}
 	if v, err := rdb.Get(ctx, "dylaris:file_access_mode").Result(); err == nil && v != "" {
 		fileAccessMode = v
+	}
+	if v, err := rdb.Get(ctx, "dylaris:placement:port_mode").Result(); err == nil && (v == "sequential" || v == "random") {
+		portMode = v
+	}
+	if v, err := rdb.Get(ctx, "dylaris:placement:container_port").Result(); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+			containerPort = n
+		}
 	}
 }
 

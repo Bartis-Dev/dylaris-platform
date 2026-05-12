@@ -471,6 +471,8 @@ type PlacementSettings struct {
 	DiskBufferGB         int     `json:"diskBufferGb"`
 	RebalanceEnabled     bool    `json:"rebalanceEnabled"`
 	RebalanceThreshold   int     `json:"rebalanceThreshold"` // % at which a node is considered overloaded
+	PortMode             string  `json:"portMode"`           // "sequential" | "random" — host-port allocation strategy
+	ContainerPort        int     `json:"containerPort"`      // default MC port inside the container (usually 25565)
 }
 
 var defaultPlacementSettings = PlacementSettings{
@@ -479,6 +481,8 @@ var defaultPlacementSettings = PlacementSettings{
 	DiskBufferGB:         5,
 	RebalanceEnabled:     false,
 	RebalanceThreshold:   90,
+	PortMode:             "sequential",
+	ContainerPort:        25565,
 }
 
 // GetPlacementSettings GET /api/settings/placement
@@ -518,6 +522,12 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 	if req.RebalanceThreshold > 100 {
 		req.RebalanceThreshold = 100
 	}
+	if req.PortMode != "sequential" && req.PortMode != "random" {
+		req.PortMode = "sequential"
+	}
+	if req.ContainerPort <= 0 || req.ContainerPort > 65535 {
+		req.ContainerPort = 25565
+	}
 
 	pairs := []struct{ k, v string }{
 		{"placement.cpu_overcommit_default", fmt.Sprintf("%g", req.CPUOvercommitDefault)},
@@ -525,12 +535,22 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		{"placement.disk_buffer_gb", fmt.Sprintf("%d", req.DiskBufferGB)},
 		{"placement.rebalance_enabled", fmt.Sprintf("%t", req.RebalanceEnabled)},
 		{"placement.rebalance_threshold", fmt.Sprintf("%d", req.RebalanceThreshold)},
+		{"placement.port_mode", req.PortMode},
+		{"placement.container_port", fmt.Sprintf("%d", req.ContainerPort)},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
 			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
 			return
 		}
+	}
+
+	// Publish to Redis so nodes pick up the new values via loadModesFromRedis
+	// without needing a redeploy. Best-effort — nodes also re-read every 30s.
+	if h.state.Redis != nil {
+		ctx := r.Context()
+		h.state.Redis.Set(ctx, "dylaris:placement:port_mode", req.PortMode, 0)
+		h.state.Redis.Set(ctx, "dylaris:placement:container_port", fmt.Sprintf("%d", req.ContainerPort), 0)
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -567,6 +587,15 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 50 && n <= 100 {
 			s.RebalanceThreshold = n
+		}
+	}
+	if v := getStr("placement.port_mode"); v == "sequential" || v == "random" {
+		s.PortMode = v
+	}
+	if v := getStr("placement.container_port"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 && n <= 65535 {
+			s.ContainerPort = n
 		}
 	}
 	return s

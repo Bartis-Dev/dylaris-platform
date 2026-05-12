@@ -413,6 +413,8 @@ export interface PlacementSettings {
     diskBufferGb: number;
     rebalanceEnabled: boolean;
     rebalanceThreshold: number;
+    portMode: 'sequential' | 'random';
+    containerPort: number;
 }
 export interface NodeCandidate {
     nodeId: number;

@@ -270,6 +270,8 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         diskBufferGb: 5,
         rebalanceEnabled: false,
         rebalanceThreshold: 90,
+        portMode: 'sequential',
+        containerPort: 25565,
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -357,6 +359,42 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                             <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
                         </div>
                         <p className="text-xs text-(--base-06)">Reserved free space the scheduler must leave on every node, on top of the server&apos;s own disk request.</p>
+                    </div>
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5">
+                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Host-Port Allocation</h3>
+                    <p className="text-xs text-(--base-06) mb-4">
+                        How nodes pick a host port from their range when a server is created. Applies cluster-wide;
+                        per-node port range stays in the node&apos;s <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">PORT_RANGE</code> env.
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label">Port Mode</label>
+                            <select
+                                value={settings.portMode}
+                                onChange={e => setSettings(s => ({ ...s, portMode: e.target.value as 'sequential' | 'random' }))}
+                                className="input-field w-full"
+                            >
+                                <option value="sequential">Sequential</option>
+                                <option value="random">Random</option>
+                            </select>
+                            <p className="text-xs text-(--base-06)">
+                                Sequential = first-free port. Random = uniform over the range — useful when you want to obscure server adjacency.
+                            </p>
+                        </div>
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label">Default Container Port</label>
+                            <input
+                                type="number"
+                                min={1}
+                                max={65535}
+                                value={settings.containerPort}
+                                onChange={e => setSettings(s => ({ ...s, containerPort: Number(e.target.value) }))}
+                                className="input-field w-full"
+                            />
+                            <p className="text-xs text-(--base-06)">MC default is 25565. Change only when your server image binds elsewhere.</p>
+                        </div>
                     </div>
                 </div>
 
