@@ -294,6 +294,7 @@ func main() {
 	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(settingsHandler.SavePlacementSettings)).Methods("POST")
 	api.HandleFunc("/placement/pick", authHandler.AuthMiddleware(placementHandler.PickNode)).Methods("POST")
 	api.HandleFunc("/placement/tags", authHandler.AuthMiddleware(placementHandler.AvailableTagsHandler)).Methods("GET")
+	api.HandleFunc("/placement/regions", authHandler.AuthMiddleware(placementHandler.AvailableRegionsHandler)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(placementHandler.SetNodePlacement)).Methods("PUT")
 
 	// Server auto-move toggle

@@ -32,6 +32,7 @@ export interface Node {
     status: string;
     isLocal: boolean;
     tags?: string;
+    region?: string;
     linkEnabled?: boolean;
     linkInstances?: number;
     cpusetCpus?: string;
@@ -436,9 +437,11 @@ export interface PickNodeResponse {
 export const getPlacementSettings = () => fetchAPI('/settings/placement');
 export const savePlacementSettings = (data: PlacementSettings) =>
     fetchAPI('/settings/placement', { method: 'POST', body: JSON.stringify(data) });
-export const getAvailableTags = (): Promise<{ success: boolean; tags: string[] }> =>
-    fetchAPI('/placement/tags');
-export const pickNode = (data: { tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number }): Promise<PickNodeResponse> =>
+export const getAvailableTags = (region?: string): Promise<{ success: boolean; tags: string[] }> =>
+    fetchAPI(`/placement/tags${region ? `?region=${encodeURIComponent(region)}` : ''}`);
+export const getAvailableRegions = (): Promise<{ success: boolean; regions: string[] }> =>
+    fetchAPI('/placement/regions');
+export const pickNode = (data: { region?: string; tags?: string[]; tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number }): Promise<PickNodeResponse> =>
     fetchAPI('/placement/pick', { method: 'POST', body: JSON.stringify(data) });
 export const setNodePlacement = (nodeId: number, data: { cpuOvercommitRatio: number; ramOvercommitRatio: number }) =>
     fetchAPI(`/nodes/${nodeId}/placement`, { method: 'PUT', body: JSON.stringify(data) });

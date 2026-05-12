@@ -44,6 +44,7 @@ type Store interface {
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error
+	SetNodeRegion(id int, region string) error
 	SumAllocatedByNode(nodeID int) (totalRAMMB int64, totalCPU float64, err error)
 	CountServersByNode(nodeID int) (int, error)
 	ListServersByNode(nodeID int) ([]models.Server, error)

@@ -24,6 +24,7 @@ type NodeHeartbeat struct {
 	IP            string                 `json:"ip"`            // IP for display
 	ClusterSecret string                 `json:"clusterSecret"` // For validation
 	Tags          string                 `json:"tags"`
+	Region        string                 `json:"region"` // DYLARIS_REGION env, e.g. "eu-central"
 	IPs           NodeIPs                `json:"ips"`
 	CPUUsage      float64                `json:"cpuUsage"`
 	RAMFree       int64                  `json:"ramFree"`
@@ -154,6 +155,7 @@ func (s *DiscoveryService) scanNodes() {
 				Status:        "online",
 				IsLocal:       false,
 				Tags:          tags,
+				Region:        hb.Region,
 				LinkEnabled:   true,
 				LinkInstances: 1,
 			}
@@ -200,6 +202,13 @@ func (s *DiscoveryService) scanNodes() {
 					cpu = node.TotalCPU // keep last known
 				}
 				s.store.UpdateNodeCapacity(node.ID, cpu, totalRAMMB)
+			}
+
+			// Region — only update when the heartbeat actually carries one.
+			// Legacy nodes without DYLARIS_REGION keep whatever the admin set.
+			if hb.Region != "" && hb.Region != node.Region {
+				log.Printf("Node region updated for %s: %q → %q", node.Name, node.Region, hb.Region)
+				s.store.SetNodeRegion(node.ID, hb.Region)
 			}
 		}
 	}

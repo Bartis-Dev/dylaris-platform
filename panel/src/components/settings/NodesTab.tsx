@@ -6,6 +6,7 @@ import {
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement,
 } from '@/lib/api';
+import { regionLabel, regionFlag } from '@/lib/regions';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save, RefreshCw,
     CircleCheck, CircleAlert, Pencil, X,
@@ -175,6 +176,12 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
+                    {node.region && (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title="Region (DYLARIS_REGION env)">
+                            <span>{regionFlag(node.region)}</span>
+                            <span>{regionLabel(node.region)}</span>
+                        </span>
+                    )}
                     {node.tags && node.tags !== 'auto-discovered' && (
                         <div className="flex flex-wrap gap-1.5">
                             {node.tags.split(',').map(tag => {

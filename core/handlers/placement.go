@@ -25,14 +25,21 @@ func NewPlacementHandler(state *AppState) *PlacementHandler {
 }
 
 // PickNodeRequest describes the resource shape a new server needs.
-// Either `Tag` or `NodeID` should be provided; if both are empty the
-// scheduler picks across all online nodes.
+//
+// Filters are AND-combined: Region (exact match), Tags (every tag must be
+// present on the node), NodeID (single-node pin). Any combination is valid;
+// an empty PickNodeRequest considers every online node.
+//
+// `Tag` (singular) is kept for backward-compat with older callers — it is
+// folded into Tags on entry.
 type PickNodeRequest struct {
-	Tag       string  `json:"tag"`
-	NodeID    int     `json:"nodeId"` // honored for capacity-check only
-	RAMMB     int     `json:"ramMb"`
-	CPUCores  float64 `json:"cpuCores"`
-	DiskGB    int     `json:"diskGb"`
+	Region   string   `json:"region"`
+	Tags     []string `json:"tags"`
+	Tag      string   `json:"tag"`    // deprecated, single-tag legacy field
+	NodeID   int      `json:"nodeId"` // honored for capacity-check only
+	RAMMB    int      `json:"ramMb"`
+	CPUCores float64  `json:"cpuCores"`
+	DiskGB   int      `json:"diskGb"`
 }
 
 // NodeCandidate is one node considered for placement. `Available` means
@@ -88,7 +95,13 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 		return PickNodeResponse{Reason: "store error: " + err.Error()}
 	}
 
-	tag := strings.TrimSpace(strings.ToLower(req.Tag))
+	// Normalize filter inputs once.
+	region := strings.ToLower(strings.TrimSpace(req.Region))
+	tags := normalizeTagList(req.Tags)
+	if req.Tag != "" {
+		tags = append(tags, strings.ToLower(strings.TrimSpace(req.Tag)))
+	}
+	tags = dedupe(tags)
 
 	// Roll up live heartbeat into a token→stats lookup so we don't ping
 	// each node individually inside the loop.
@@ -103,7 +116,10 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 		if req.NodeID > 0 && n.ID != req.NodeID {
 			continue
 		}
-		if tag != "" && !nodeHasTag(n, tag) {
+		if region != "" && !strings.EqualFold(n.Region, region) {
+			continue
+		}
+		if len(tags) > 0 && !nodeHasAllTags(n, tags) {
 			continue
 		}
 
@@ -128,11 +144,42 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 			return resp
 		}
 	}
-	resp.Reason = "no eligible node found"
-	if tag != "" {
-		resp.Reason += " for tag " + tag
+	parts := []string{}
+	if region != "" {
+		parts = append(parts, "region="+region)
+	}
+	if len(tags) > 0 {
+		parts = append(parts, "tags="+strings.Join(tags, "+"))
+	}
+	if len(parts) > 0 {
+		resp.Reason = "no eligible node found for " + strings.Join(parts, ", ")
+	} else {
+		resp.Reason = "no eligible node found"
 	}
 	return resp
+}
+
+func normalizeTagList(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // scoreNode evaluates one node against the request. Available=false when
@@ -218,6 +265,17 @@ func nodeHasTag(n *models.Node, tag string) bool {
 	return false
 }
 
+// nodeHasAllTags returns true when every required tag is present on the node.
+// Used for AND-semantics multi-tag filtering.
+func nodeHasAllTags(n *models.Node, required []string) bool {
+	for _, t := range required {
+		if !nodeHasTag(n, t) {
+			return false
+		}
+	}
+	return true
+}
+
 // SetNodePlacementRequest is the body for PUT /api/nodes/{id}/placement.
 type SetNodePlacementRequest struct {
 	CPUOvercommitRatio float64 `json:"cpuOvercommitRatio"`
@@ -261,10 +319,11 @@ func extractIDFromPath(r *http.Request, prefix, suffix string) string {
 	return p
 }
 
-// AvailableTagsHandler GET /api/placement/tags — returns the union of all
-// tags currently advertised by online nodes, so the deploy wizard can
-// populate its tag dropdown.
+// AvailableTagsHandler GET /api/placement/tags[?region=...] — returns the
+// union of all tags currently advertised by online nodes, optionally scoped
+// to a single region. Populates the deploy wizard's multi-select chip list.
 func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.Request) {
+	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
 	nodes, err := h.state.Store.ListNodes()
 	if err != nil {
 		sendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
@@ -273,6 +332,9 @@ func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.R
 	seen := map[string]bool{}
 	for _, n := range nodes {
 		if n.Status != "online" {
+			continue
+		}
+		if region != "" && !strings.EqualFold(n.Region, region) {
 			continue
 		}
 		for _, t := range strings.Split(n.Tags, ",") {
@@ -290,5 +352,32 @@ func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"tags":    tags,
+	})
+}
+
+// AvailableRegionsHandler GET /api/placement/regions — returns the union of
+// region keys currently advertised by online nodes. The wizard hides the
+// region picker when this list is empty.
+func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.state.Store.ListNodes()
+	if err != nil {
+		sendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
+		return
+	}
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		if n.Status != "online" || n.Region == "" {
+			continue
+		}
+		seen[n.Region] = true
+	}
+	regions := make([]string, 0, len(seen))
+	for r := range seen {
+		regions = append(regions, r)
+	}
+	sort.Strings(regions)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"regions": regions,
 	})
 }

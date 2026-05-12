@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -39,6 +40,7 @@ var (
 	mcRedisDB   string
 
 	nodeTags          string
+	nodeRegion        string
 	defaultCpusetCpus string
 	statsBufferMaxLen int64
 	statsStreamMaxLen int64
@@ -148,7 +150,7 @@ func main() {
 		}()
 	}
 
-	go startDiscoveryLoop(ctx, rdb, nodeID, clusterSecret, nodeTags, mon, dockerMgr)
+	go startDiscoveryLoop(ctx, rdb, nodeID, clusterSecret, nodeTags, nodeRegion, mon, dockerMgr)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
@@ -180,6 +182,7 @@ func parseConfig() {
 	nodeID = os.Getenv("DYLARIS_NODE_ID")
 	clusterSecret = os.Getenv("DYLARIS_CLUSTER_SECRET")
 	nodeTags = os.Getenv("DYLARIS_TAGS")
+	nodeRegion = os.Getenv("DYLARIS_REGION")
 
 	if clusterSecret == "" {
 		log.Fatal("FATAL: DYLARIS_CLUSTER_SECRET is missing!")
@@ -366,21 +369,21 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 // storageManager is set during init and used by heartbeat to publish storage info.
 var globalStorageMgr *StorageManager
 
-func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, secret, tags string, mon *agent.Monitor, dm *DockerManager) {
+func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, secret, tags, region string, mon *agent.Monitor, dm *DockerManager) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	sendHeartbeat(ctx, rdb, id, secret, tags, mon, dm)
+	sendHeartbeat(ctx, rdb, id, secret, tags, region, mon, dm)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sendHeartbeat(ctx, rdb, id, secret, tags, mon, dm)
+			sendHeartbeat(ctx, rdb, id, secret, tags, region, mon, dm)
 		}
 	}
 }
 
-func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags string, mon *agent.Monitor, dm *DockerManager) {
+func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, region string, mon *agent.Monitor, dm *DockerManager) {
 	key := fmt.Sprintf("dylaris:discovery:%s", id)
 
 	// IP-hiding: only expose public IP when at least one mode uses direct access
@@ -392,7 +395,7 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags stri
 
 	data := map[string]interface{}{
 		"id": id, "name": id, "ip": publicIP,
-		"clusterSecret": secret, "tags": tags, "timestamp": time.Now().Unix(),
+		"clusterSecret": secret, "tags": tags, "region": region, "timestamp": time.Now().Unix(),
 		"ips": map[string]interface{}{
 			"public":  publicIP,
 			"private": getPrivateIPs(),
@@ -405,6 +408,7 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags stri
 			data["cpuUsage"] = snap.CPUPercent
 			data["ramFree"] = int64(snap.RAMTotal) - int64(snap.RAMUsed)
 			data["ramTotal"] = snap.RAMTotal
+			data["totalCpu"] = float64(runtime.NumCPU())
 		}
 	}
 

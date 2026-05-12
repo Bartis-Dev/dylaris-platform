@@ -97,14 +97,16 @@ func sanitizeServerName(name string) string {
 // ==========================================
 
 type CreateServerRequest struct {
-	UUID       string `json:"uuid"`
-	Name       string `json:"name"`
-	NodeID     string `json:"nodeId"`
-	Tag        string `json:"tag"`      // when set, scheduler picks a node from this tag pool
-	OwnerID    int    `json:"ownerId"`
-	IsFixed    *bool  `json:"isFixed"`
-	ServerType string `json:"serverType"`
-	AutoMove   bool   `json:"autoMove"` // opt-in to load-balancing migrations
+	UUID       string   `json:"uuid"`
+	Name       string   `json:"name"`
+	NodeID     string   `json:"nodeId"`
+	Region     string   `json:"region"` // optional scheduler filter (e.g. "eu-central")
+	Tags       []string `json:"tags"`   // AND-filter when scheduler picks a node
+	Tag        string   `json:"tag"`    // deprecated, single-tag legacy field; folded into Tags
+	OwnerID    int      `json:"ownerId"`
+	IsFixed    *bool    `json:"isFixed"`
+	ServerType string   `json:"serverType"`
+	AutoMove   bool     `json:"autoMove"` // opt-in to load-balancing migrations
 	Docker     struct {
 		RAM       int     `json:"ram"`
 		CPULimit  float64 `json:"cpuLimit"`
@@ -187,22 +189,26 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	var nodeIDInt int
 	fmt.Sscanf(req.NodeID, "%d", &nodeIDInt)
 
-	// Tag-based auto-placement: when the caller passes a tag instead of a
-	// concrete nodeId, let the scheduler pick the best fit. The explicit
-	// nodeId path still works for admins who want to pin a server.
-	if nodeIDInt == 0 && strings.TrimSpace(req.Tag) != "" {
+	// Auto-placement: when no explicit nodeId is given, defer to the
+	// scheduler. Region and tags (AND-filtered) narrow the candidate
+	// pool. With both empty the scheduler considers every online node.
+	hasFilters := strings.TrimSpace(req.Region) != "" || len(req.Tags) > 0 || strings.TrimSpace(req.Tag) != ""
+	if nodeIDInt == 0 && hasFilters {
 		pick := (&PlacementHandler{state: h.state}).pickNode(r.Context(), PickNodeRequest{
+			Region:   req.Region,
+			Tags:     req.Tags,
 			Tag:      req.Tag,
 			RAMMB:    req.Docker.RAM,
 			CPUCores: req.Docker.CPULimit,
 			DiskGB:   int(req.Docker.DiskLimit / 1024),
 		})
 		if !pick.Success || pick.Picked == nil {
-			sendJSONError(w, "No node available for tag '"+req.Tag+"': "+pick.Reason, http.StatusServiceUnavailable)
+			sendJSONError(w, "No node available: "+pick.Reason, http.StatusServiceUnavailable)
 			return
 		}
 		nodeIDInt = pick.Picked.NodeID
-		log.Printf("Placement: picked node %d (%s) for tag=%q — %s", nodeIDInt, pick.Picked.NodeName, req.Tag, pick.Picked.Reason)
+		log.Printf("Placement: picked node %d (%s) region=%q tags=%v — %s",
+			nodeIDInt, pick.Picked.NodeName, req.Region, req.Tags, pick.Picked.Reason)
 	}
 
 	node, err := h.state.Store.GetNodeByID(nodeIDInt)

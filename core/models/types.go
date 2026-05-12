@@ -33,6 +33,7 @@ type Node struct {
 	Address    string   `json:"address"`
 	Status     string   `json:"status"`
 	Tags       string   `json:"tags"`
+	Region     string   `json:"region"`
 	IsLocal    bool     `json:"isLocal"`
 	PublicIP   string   `json:"publicIp"`
 	PrivateIPs []string `json:"privateIps"`

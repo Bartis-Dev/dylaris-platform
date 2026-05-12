@@ -208,6 +208,11 @@ func migrateSchema(db *sql.DB) error {
 		{"nodes", "ram_overcommit_ratio", "REAL DEFAULT 1.0"},
 		{"nodes", "total_cpu", "REAL DEFAULT 0"},
 		{"nodes", "total_ram_mb", "BIGINT DEFAULT 0"},
+		// Region key (e.g. "eu-central"). Set via DYLARIS_REGION on the node
+		// and reported in the heartbeat. Treated as first-class metadata,
+		// orthogonal to tags — tags describe capability/tier, region the
+		// physical location for latency-based placement.
+		{"nodes", "region", "TEXT DEFAULT ''"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)

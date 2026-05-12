@@ -144,14 +144,14 @@ const nodeSelectCols = `id, name, address, token, status, is_local, COALESCE(tag
 	link_enabled, link_instances, COALESCE(link_secret, ''), COALESCE(cpuset_cpus, ''), created_at,
 	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at,
 	COALESCE(cpu_overcommit_ratio, 1.0), COALESCE(ram_overcommit_ratio, 1.0),
-	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0)`
+	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, '')`
 
 func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var n models.Node
 	var privateIPsJSON []byte
 	err := scan(&n.ID, &n.Name, &n.Address, &n.Token, &n.Status, &n.IsLocal, &n.Tags,
 		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt,
-		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB)
+		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +199,9 @@ func (s *PostgresStore) ListNodes() ([]models.Node, error) {
 }
 
 func (s *PostgresStore) CreateNode(n *models.Node) error {
-	query := `INSERT INTO nodes (name, address, token, status, is_local, tags, link_enabled, link_instances, link_secret) 
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
-	return s.db.QueryRow(query, n.Name, n.Address, n.Token, n.Status, n.IsLocal, n.Tags, n.LinkEnabled, n.LinkInstances, n.LinkSecret).Scan(&n.ID)
+	query := `INSERT INTO nodes (name, address, token, status, is_local, tags, link_enabled, link_instances, link_secret, region)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
+	return s.db.QueryRow(query, n.Name, n.Address, n.Token, n.Status, n.IsLocal, n.Tags, n.LinkEnabled, n.LinkInstances, n.LinkSecret, n.Region).Scan(&n.ID)
 }
 
 func (s *PostgresStore) DeleteNode(id int) error {
@@ -340,6 +340,13 @@ func (s *PostgresStore) UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB 
 		`UPDATE nodes SET total_cpu = $1, total_ram_mb = $2 WHERE id = $3`,
 		totalCPU, totalRAMMB, id,
 	)
+	return err
+}
+
+// SetNodeRegion persists the canonical region key reported by a node's
+// DYLARIS_REGION env. Empty string clears the region (node is "anywhere").
+func (s *PostgresStore) SetNodeRegion(id int, region string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET region = $1 WHERE id = $2`, region, id)
 	return err
 }
 

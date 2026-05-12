@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { getUsers, User, createServer, getNodes, Node, getAvailableTags, pickNode, NodeCandidate } from '../lib/api';
-import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move } from 'lucide-react';
+import {
+    getUsers, User, createServer, getNodes, Node,
+    getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
+} from '../lib/api';
+import { regionLabel, regionFlag } from '../lib/regions';
+import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin } from 'lucide-react';
 
 interface StoragePathInfo {
     path: string;
@@ -46,13 +50,18 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [nodeId, setNodeId] = useState("");
     const [nodeSearch, setNodeSearch] = useState("");
 
-    // Target mode: pick a specific node OR pick a tag and let the
-    // scheduler choose the best node from that tag's pool.
+    // Target mode: pick a specific node OR pick tag(s) and let the scheduler
+    // choose the best node from the intersection (AND-semantics).
     const [targetMode, setTargetMode] = useState<'node' | 'tag'>('node');
-    const [selectedTag, setSelectedTag] = useState<string>('');
+    const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [availableTags, setAvailableTags] = useState<string[]>([]);
     const [tagPreview, setTagPreview] = useState<NodeCandidate | null>(null);
     const [tagPreviewReason, setTagPreviewReason] = useState<string>('');
+
+    // Region — first-class, env-driven on the node side. Empty string means
+    // "any region" (the scheduler ignores the region filter).
+    const [selectedRegion, setSelectedRegion] = useState<string>('');
+    const [availableRegions, setAvailableRegions] = useState<string[]>([]);
 
     const [ownerId, setOwnerId] = useState<number | null>(null);
     const [serverType, setServerType] = useState<'game' | 'proxy'>('game');
@@ -68,7 +77,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         setStep(1);
         setNodeId(""); setOwnerId(null); setServerType('game'); setRam(2048); setCpuLimit(0); setDiskLimit(20);
         setSearchTerm(""); setNodeSearch("");
-        setTargetMode('node'); setSelectedTag(''); setTagPreview(null); setTagPreviewReason('');
+        setTargetMode('node'); setSelectedTags([]); setTagPreview(null); setTagPreviewReason('');
+        setSelectedRegion(''); setAvailableRegions([]);
         setAutoMove(false);
 
         getUsers().then(res => {
@@ -86,25 +96,42 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             }
         });
 
-        getAvailableTags().then(res => {
-            if (res.success) {
-                setAvailableTags(res.tags || []);
-                if (res.tags && res.tags.length > 0) setSelectedTag(res.tags[0]);
-            }
+        getAvailableRegions().then(res => {
+            if (res.success) setAvailableRegions(res.regions || []);
         });
     }, [isOpen]);
 
-    // Tag-preview: ask the scheduler which node it would pick whenever the
-    // tag, resource shape, or mode changes. Surfaces the choice + reason in the
+    // Region changed → reload the tag list scoped to that region so admins
+    // can't pick a tag that doesn't exist for the chosen region.
+    useEffect(() => {
+        if (!isOpen) return;
+        getAvailableTags(selectedRegion || undefined).then(res => {
+            if (res.success) {
+                const tags = res.tags || [];
+                setAvailableTags(tags);
+                // Drop any selected tags that are no longer in the pool.
+                setSelectedTags(prev => prev.filter(t => tags.includes(t)));
+            }
+        });
+    }, [isOpen, selectedRegion]);
+
+    // Scheduler preview: ask which node would be picked whenever region,
+    // tags, or resource shape changes. Surfaces the choice + reason in the
     // wizard so admins aren't deploying blind.
     useEffect(() => {
-        if (targetMode !== 'tag' || !selectedTag) {
+        if (targetMode !== 'tag') {
             setTagPreview(null);
             setTagPreviewReason('');
             return;
         }
         let cancelled = false;
-        pickNode({ tag: selectedTag, ramMb: ram, cpuCores: cpuLimit, diskGb: diskLimit }).then(res => {
+        pickNode({
+            region: selectedRegion || undefined,
+            tags: selectedTags.length > 0 ? selectedTags : undefined,
+            ramMb: ram,
+            cpuCores: cpuLimit,
+            diskGb: diskLimit,
+        }).then(res => {
             if (cancelled) return;
             if (res.success && res.picked) {
                 setTagPreview(res.picked);
@@ -117,7 +144,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             if (!cancelled) { setTagPreview(null); setTagPreviewReason('Preview failed'); }
         });
         return () => { cancelled = true; };
-    }, [targetMode, selectedTag, ram, cpuLimit, diskLimit]);
+    }, [targetMode, selectedRegion, selectedTags, ram, cpuLimit, diskLimit]);
 
     // Load storage paths when node changes
     useEffect(() => {
@@ -146,7 +173,11 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         setLoading(true);
         if (!ownerId) { alert("Please select an owner."); setLoading(false); return; }
         if (targetMode === 'node' && !nodeId) { alert("Please select a Node."); setLoading(false); return; }
-        if (targetMode === 'tag' && !selectedTag) { alert("Please select a tag."); setLoading(false); return; }
+        if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
+            alert("Please select a region or at least one tag.");
+            setLoading(false);
+            return;
+        }
 
         const randomPart = Math.random().toString(36).substring(2, 14);
         const serverUuid = `${ownerId}_${randomPart}`;
@@ -162,7 +193,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         if (targetMode === 'node') {
             payload.nodeId = nodeId;
         } else {
-            payload.tag = selectedTag;
+            if (selectedRegion) payload.region = selectedRegion;
+            if (selectedTags.length > 0) payload.tags = selectedTags;
         }
         if (storagePath !== 'auto') {
             payload.storagePath = storagePath;
@@ -204,7 +236,49 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     <form onSubmit={(e) => e.preventDefault()}>
 
                         {step === 1 && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                            <div className="space-y-5 animate-fade-in">
+                                {/* Region pills (hidden when no online node advertises a region) */}
+                                {availableRegions.length > 0 && (
+                                    <section className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                            <MapPin size={14} className="text-(--accent-light)" />
+                                            <h3 className="text-base font-display font-bold text-(--base-09)">Region</h3>
+                                            <span className="font-mono text-[10px] text-(--base-06) ml-auto">
+                                                {selectedRegion ? regionLabel(selectedRegion) : 'any'}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedRegion('')}
+                                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors border ${
+                                                    !selectedRegion
+                                                        ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
+                                                        : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:text-(--base-09) hover:border-(--base-05)'
+                                                }`}
+                                            >
+                                                🌐 Any
+                                            </button>
+                                            {availableRegions.map(r => (
+                                                <button
+                                                    key={r}
+                                                    type="button"
+                                                    onClick={() => setSelectedRegion(r)}
+                                                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1.5 border ${
+                                                        selectedRegion === r
+                                                            ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
+                                                            : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:text-(--base-09) hover:border-(--base-05)'
+                                                    }`}
+                                                >
+                                                    <span>{regionFlag(r)}</span>
+                                                    <span>{regionLabel(r)}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Left: Owner */}
                                 <section className="space-y-2 min-h-80 flex flex-col">
                                     <div className="flex items-center justify-between border-b border-(--base-03) pb-2">
@@ -335,21 +409,40 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             {availableTags.length === 0 ? (
                                                 <div className="flex-1 flex items-center justify-center rounded-md border border-dashed border-(--base-04) bg-(--base-02) p-6 text-center">
                                                     <p className="text-xs text-(--base-06)">
-                                                        No tags advertised by any online node.<br/>
-                                                        Tag nodes in <span className="font-mono">Settings → Nodes</span> first.
+                                                        {selectedRegion
+                                                            ? <>No tags in region <span className="font-mono">{regionLabel(selectedRegion)}</span>.</>
+                                                            : <>No tags advertised by any online node.<br/>Tag nodes in <span className="font-mono">Settings → Nodes</span> first.</>}
                                                     </p>
                                                 </div>
                                             ) : (
                                                 <>
-                                                    <select
-                                                        value={selectedTag}
-                                                        onChange={e => setSelectedTag(e.target.value)}
-                                                        className="input-field w-full"
-                                                    >
-                                                        {availableTags.map(t => (
-                                                            <option key={t} value={t}>{t}</option>
-                                                        ))}
-                                                    </select>
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {availableTags.map(t => {
+                                                            const active = selectedTags.includes(t);
+                                                            return (
+                                                                <button
+                                                                    key={t}
+                                                                    type="button"
+                                                                    onClick={() => setSelectedTags(prev =>
+                                                                        prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]
+                                                                    )}
+                                                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors border ${
+                                                                        active
+                                                                            ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
+                                                                            : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:text-(--base-09)'
+                                                                    }`}
+                                                                >
+                                                                    {active && <CircleCheck size={11} className="inline mr-1 -mt-0.5" />}
+                                                                    {t}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+                                                        {selectedTags.length === 0
+                                                            ? 'any tag — all nodes in the region are candidates'
+                                                            : `${selectedTags.length} selected — node must have all of them (AND)`}
+                                                    </p>
                                                     <div className="flex-1 rounded-md border border-(--base-03) bg-(--base-02) p-3 text-sm">
                                                         {tagPreview ? (
                                                             <div className="space-y-2">
@@ -382,6 +475,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         </>
                                     )}
                                 </section>
+                                </div>
                             </div>
                         )}
 
@@ -547,7 +641,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                             onClick={() => {
                                 if (!ownerId) return alert("Please assign an owner.");
                                 if (targetMode === 'node' && !nodeId) return alert("Please select a node.");
-                                if (targetMode === 'tag' && !selectedTag) return alert("Please select a tag.");
+                                if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
+                                    return alert("Please select a region or at least one tag.");
+                                }
                                 setStep(2);
                             }}
                             className="btn btn-primary px-8 py-2 text-sm"
