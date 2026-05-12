@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { createModule, deleteModule, toggleModule, updateModulePosition, AppModule } from '@/lib/api';
-import { Plus, Trash2, GripVertical } from 'lucide-react';
+import { createModule, deleteModule, toggleModule, updateModulePosition, setModuleAccessRole, AppModule } from '@/lib/api';
+import { Plus, Trash2, GripVertical, ShieldCheck, Users } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
     DndContext,
@@ -33,9 +33,10 @@ interface SortableModuleCardProps {
     module: AppModule;
     onToggle: (id: number, current: boolean) => void;
     onDelete: (id: number) => void;
+    onRoleChange: (id: number, role: 'all' | 'admin') => void;
 }
 
-function SortableModuleCard({ module: m, onToggle, onDelete }: SortableModuleCardProps) {
+function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: SortableModuleCardProps) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: m.id });
 
     const style = {
@@ -73,8 +74,32 @@ function SortableModuleCard({ module: m, onToggle, onDelete }: SortableModuleCar
                 </div>
             </div>
             <div className="flex items-center gap-2">
-                {m.isSystem ? (
-                    <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title="System module — cannot be disabled">
+                {/* Role toggle — Servers is hard-locked to "all" */}
+                {m.name === 'Servers' ? (
+                    <div className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) px-2 py-1 rounded-md bg-(--base-03)" title="Always visible to all users">
+                        <Users size={11} /> All
+                    </div>
+                ) : (
+                    <div className="flex bg-(--base-03) p-0.5 rounded-md" title="Who can see this module">
+                        <button
+                            type="button"
+                            onClick={() => onRoleChange(m.id, 'all')}
+                            className={`px-2 py-1 text-[10px] rounded-sm transition-colors inline-flex items-center gap-1 ${m.accessRole === 'all' ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'}`}
+                        >
+                            <Users size={10} /> All
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => onRoleChange(m.id, 'admin')}
+                            className={`px-2 py-1 text-[10px] rounded-sm transition-colors inline-flex items-center gap-1 ${m.accessRole === 'admin' ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'}`}
+                        >
+                            <ShieldCheck size={10} /> Admin
+                        </button>
+                    </div>
+                )}
+
+                {m.name === 'Servers' ? (
+                    <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title="Servers module cannot be disabled">
                         <span className="toggle-knob toggle-knob-on" />
                     </div>
                 ) : (
@@ -160,6 +185,15 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         }
     };
 
+    const handleRoleChange = async (id: number, role: 'all' | 'admin') => {
+        const res = await setModuleAccessRole(id, role);
+        if (res.success) {
+            onModulesChange();
+        } else {
+            alert(res.message || "Error changing role.");
+        }
+    };
+
     return (
         <div>
             <div className="flex justify-between items-center mb-6">
@@ -179,6 +213,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                                 module={m}
                                 onToggle={handleToggleModule}
                                 onDelete={handleDeleteModule}
+                                onRoleChange={handleRoleChange}
                             />
                         ))}
                     </div>

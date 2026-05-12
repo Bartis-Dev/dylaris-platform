@@ -690,8 +690,10 @@ func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.S
 // MODULES
 // ==========================================
 
+const moduleSelectCols = `id, name, type, icon, COALESCE(url, ''), is_enabled, is_system, position, COALESCE(access_role, 'all')`
+
 func (s *PostgresStore) ListModules() ([]models.Module, error) {
-	query := `SELECT id, name, type, icon, COALESCE(url, ''), is_enabled, is_system, position FROM modules ORDER BY position ASC, id ASC`
+	query := `SELECT ` + moduleSelectCols + ` FROM modules ORDER BY position ASC, id ASC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -701,7 +703,7 @@ func (s *PostgresStore) ListModules() ([]models.Module, error) {
 	var modules []models.Module
 	for rows.Next() {
 		var m models.Module
-		if err := rows.Scan(&m.ID, &m.Name, &m.Type, &m.Icon, &m.URL, &m.IsEnabled, &m.IsSystem, &m.Position); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Type, &m.Icon, &m.URL, &m.IsEnabled, &m.IsSystem, &m.Position, &m.AccessRole); err != nil {
 			continue
 		}
 		modules = append(modules, m)
@@ -712,12 +714,22 @@ func (s *PostgresStore) ListModules() ([]models.Module, error) {
 func (s *PostgresStore) GetModuleByID(id int) (*models.Module, error) {
 	var m models.Module
 	err := s.db.QueryRow(
-		`SELECT id, name, type, icon, COALESCE(url, ''), is_enabled, is_system, position FROM modules WHERE id = $1`, id,
-	).Scan(&m.ID, &m.Name, &m.Type, &m.Icon, &m.URL, &m.IsEnabled, &m.IsSystem, &m.Position)
+		`SELECT `+moduleSelectCols+` FROM modules WHERE id = $1`, id,
+	).Scan(&m.ID, &m.Name, &m.Type, &m.Icon, &m.URL, &m.IsEnabled, &m.IsSystem, &m.Position, &m.AccessRole)
 	if err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// SetModuleAccessRole gates a module to "admin" or "all".
+// Servers is hard-protected — it must stay "all".
+func (s *PostgresStore) SetModuleAccessRole(id int, role string) error {
+	if role != "all" && role != "admin" {
+		role = "all"
+	}
+	_, err := s.db.Exec(`UPDATE modules SET access_role = $1 WHERE id = $2 AND name <> 'Servers'`, role, id)
+	return err
 }
 
 func (s *PostgresStore) CreateModule(m *models.Module) (int, error) {

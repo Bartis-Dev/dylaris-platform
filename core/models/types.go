@@ -125,14 +125,15 @@ type ServerStatRow struct {
 }
 
 type Module struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Icon      string `json:"icon"`
-	URL       string `json:"url"`
-	IsEnabled bool   `json:"isEnabled"`
-	IsSystem  bool   `json:"isSystem"`
-	Position  int    `json:"position"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Icon       string `json:"icon"`
+	URL        string `json:"url"`
+	IsEnabled  bool   `json:"isEnabled"`
+	IsSystem   bool   `json:"isSystem"`
+	Position   int    `json:"position"`
+	AccessRole string `json:"accessRole"` // "all" | "admin"
 }
 
 // --- Gateway Route Limits (managed by Core, not Hub) ---

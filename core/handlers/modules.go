@@ -52,10 +52,65 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 		modules = []models.Module{}
 	}
 
+	// Non-admins only see modules with access_role = "all". Admins see all
+	// modules (including the admin-only ones) and the access_role field so
+	// they can configure visibility from the Modules tab.
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if !isAdmin {
+		filtered := modules[:0]
+		for _, m := range modules {
+			if m.AccessRole != "admin" {
+				filtered = append(filtered, m)
+			}
+		}
+		modules = filtered
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"modules": modules,
 	})
+}
+
+// SetModuleAccessRoleHandler PATCH /modules/{id}/role — admin only.
+// Body: {"role": "all" | "admin"}.  Servers stays "all" regardless.
+func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	if req.Role != "all" && req.Role != "admin" {
+		sendJSONError(w, "role must be 'all' or 'admin'", 400)
+		return
+	}
+	mod, err := h.state.Store.GetModuleByID(id)
+	if err != nil {
+		sendJSONError(w, "Module not found", 404)
+		return
+	}
+	if mod.Name == "Servers" {
+		sendJSONError(w, "Servers module is always visible to all users", 400)
+		return
+	}
+	if err := h.state.Store.SetModuleAccessRole(id, req.Role); err != nil {
+		sendJSONError(w, "Update failed", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Request) {

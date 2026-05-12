@@ -9,7 +9,10 @@ export interface AppModule {
     isEnabled: boolean;
     isSystem: boolean;
     position: number;
+    accessRole: 'all' | 'admin';
 }
+export const setModuleAccessRole = (id: number, role: 'all' | 'admin') =>
+    fetchAPI(`/modules/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
 
 export interface User {
     id: number;

@@ -86,6 +86,7 @@ type Store interface {
 	DeleteModule(id int) error
 	UpdateModuleStatus(id int, isEnabled bool) error
 	UpdateModulePosition(id int, position int) error
+	SetModuleAccessRole(id int, role string) error
 
 	// --- Settings ---
 	GetSetting(key string) (string, error)

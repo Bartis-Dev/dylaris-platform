@@ -90,6 +90,10 @@ func createUsersTable(db *sql.DB) error {
 }
 
 func createModulesTable(db *sql.DB) error {
+	// access_role gates which user role can see/use the module:
+	//   "all"   — both admins and regular users (default for user-facing tabs)
+	//   "admin" — admin-only (Admin, Infrastructure, Settings adjacent tabs)
+	// Servers is hard-coded to "all" by seed and cannot be changed.
 	query := `CREATE TABLE IF NOT EXISTS modules (
 		id SERIAL PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -98,7 +102,8 @@ func createModulesTable(db *sql.DB) error {
 		url TEXT,
 		is_enabled BOOLEAN DEFAULT TRUE,
 		is_system BOOLEAN DEFAULT FALSE,
-		position INTEGER DEFAULT 99
+		position INTEGER DEFAULT 99,
+		access_role TEXT DEFAULT 'all'
 	)`
 	_, err := db.Exec(query)
 	return err
@@ -196,6 +201,7 @@ func migrateSchema(db *sql.DB) error {
 		{"nodes", "last_seen_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"},
 		{"servers", "host_port", "INT DEFAULT 0"},
 		{"servers", "container_port", "INT DEFAULT 25565"},
+		{"modules", "access_role", "TEXT DEFAULT 'all'"},
 		// Auto-move: when true, the rebalance loop is allowed to migrate this
 		// server to another node when the current node is overloaded.
 		// Migration only happens while the server is stopped/idle.
@@ -228,28 +234,31 @@ func migrateSchema(db *sql.DB) error {
 // seedSystemModules inserts system modules that don't exist yet and migrates existing ones
 func seedSystemModules(db *sql.DB) {
 	modules := []struct {
-		name, typ, icon, url string
-		position             int
-		enabled, system      bool
+		name, typ, icon, url, role string
+		position                    int
+		enabled, system             bool
 	}{
-		{"Servers", "internal", "server", "/servers", 1, true, true},
-		{"Admin", "internal", "shield-check", "/admin", 2, true, true},
-		{"Infrastructure", "internal", "cpu", "/infrastructure", 3, true, true},
-		{"Gateway", "internal", "globe", "/gateway", 4, true, false},
-		{"Library", "internal", "folder-open", "/library", 5, false, false},
+		{"Servers", "internal", "server", "/servers", "all", 1, true, true},
+		{"Admin", "internal", "shield-check", "/admin", "admin", 2, true, true},
+		{"Infrastructure", "internal", "cpu", "/infrastructure", "admin", 3, true, true},
+		{"Gateway", "internal", "globe", "/gateway", "all", 4, true, false},
+		{"Library", "internal", "folder-open", "/library", "all", 5, false, false},
 	}
 	for _, m := range modules {
 		db.Exec(`
-			INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position)
-			SELECT $1, $2, $3, $4, $6, $7, $5
+			INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role)
+			SELECT $1, $2, $3, $4, $6, $7, $5, $8
 			WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = $1)
-		`, m.name, m.typ, m.icon, m.url, m.position, m.enabled, m.system)
+		`, m.name, m.typ, m.icon, m.url, m.position, m.enabled, m.system, m.role)
 	}
 
-	// Migrate existing deployments: ensure correct positions, icons, and system flags
-	db.Exec(`UPDATE modules SET position = 1, is_enabled = TRUE, is_system = TRUE WHERE name = 'Servers'`)
-	db.Exec(`INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position) SELECT 'Admin', 'internal', 'shield-check', '/admin', TRUE, TRUE, 2 WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Admin')`)
-	db.Exec(`UPDATE modules SET position = 3, is_system = TRUE, icon = 'cpu' WHERE name = 'Infrastructure'`)
+	// Migrate existing deployments: ensure correct positions, icons, system flags
+	// AND correct access_role for the admin-only modules so older deployments
+	// stop showing the Admin/Infrastructure tabs to regular users.
+	db.Exec(`UPDATE modules SET position = 1, is_enabled = TRUE, is_system = TRUE, access_role = 'all' WHERE name = 'Servers'`)
+	db.Exec(`INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role) SELECT 'Admin', 'internal', 'shield-check', '/admin', TRUE, TRUE, 2, 'admin' WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Admin')`)
+	db.Exec(`UPDATE modules SET position = 2, access_role = 'admin' WHERE name = 'Admin'`)
+	db.Exec(`UPDATE modules SET position = 3, is_system = TRUE, icon = 'cpu', access_role = 'admin' WHERE name = 'Infrastructure'`)
 	db.Exec(`UPDATE modules SET position = 4, is_system = FALSE, is_enabled = TRUE WHERE name = 'Gateway'`)
 	db.Exec(`UPDATE modules SET position = 5, is_system = FALSE, icon = 'folder-open' WHERE name = 'Library'`)
 	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files', 'Tickets') AND is_system = TRUE`)
