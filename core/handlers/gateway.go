@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"dylaris-core/services"
@@ -101,6 +102,101 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 	}
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Route deleted"})
+}
+
+// BulkDeleteRoutesBySuffix deletes every route whose domain equals OR ends
+// with `.<suffix>`. Independent of the hoster-domain list in settings — it
+// operates purely on what's currently in the routes table / Redis cache.
+// POST /api/gateway/routes/bulk-delete  body: {"suffix": "mc.example.com"}
+func (h *GatewayHandler) BulkDeleteRoutesBySuffix(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Suffix string `json:"suffix"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	suffix := strings.ToLower(strings.TrimSpace(req.Suffix))
+	if suffix == "" {
+		sendJSONError(w, "suffix required", http.StatusBadRequest)
+		return
+	}
+
+	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
+	deleted := 0
+	failed := 0
+	for _, rt := range routes {
+		d := strings.ToLower(rt.Domain)
+		if d == suffix || strings.HasSuffix(d, "."+suffix) {
+			if err := h.state.Gateway.DeleteRoute(rt.Domain); err != nil {
+				failed++
+			} else {
+				deleted++
+			}
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"deleted": deleted,
+		"failed":  failed,
+		"suffix":  suffix,
+	})
+}
+
+// GetRouteSuffixes returns the unique apex (1-dot) and parent (2-dot) suffixes
+// across every route currently registered. Powers the bulk-delete picker.
+// GET /api/gateway/routes/suffixes
+func (h *GatewayHandler) GetRouteSuffixes(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
+	seen := map[string]int{} // suffix → match count
+	for _, rt := range routes {
+		d := strings.ToLower(strings.TrimSpace(rt.Domain))
+		if strings.HasPrefix(d, "*.") {
+			d = d[2:]
+		}
+		labels := strings.Split(d, ".")
+		// Build apex (last 2 labels) and parent (last 3 labels if present).
+		if len(labels) >= 2 {
+			apex := strings.Join(labels[len(labels)-2:], ".")
+			seen[apex]++
+		}
+		if len(labels) >= 3 {
+			parent := strings.Join(labels[len(labels)-3:], ".")
+			seen[parent]++
+		}
+	}
+	type SuffixEntry struct {
+		Suffix string `json:"suffix"`
+		Count  int    `json:"count"`
+		Depth  int    `json:"depth"` // 1 = apex (one dot), 2 = parent (two dots)
+	}
+	out := make([]SuffixEntry, 0, len(seen))
+	for s, c := range seen {
+		depth := strings.Count(s, ".")
+		out = append(out, SuffixEntry{Suffix: s, Count: c, Depth: depth})
+	}
+	// Sort apex first, then by count desc, then alpha
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Depth != out[j].Depth {
+			return out[i].Depth < out[j].Depth
+		}
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Suffix < out[j].Suffix
+	})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"suffixes": out,
+	})
 }
 
 // ==========================================

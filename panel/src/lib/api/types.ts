@@ -124,6 +124,7 @@ export interface LibrarySettings {
     s3Bucket?: string;
     s3Region?: string;
     s3AccessKey?: string;
+    s3SecretKey?: string;
 }
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
@@ -401,6 +402,17 @@ export const getGatewayLinks = () => fetchAPI('/gateway/links');
 export const getGatewayGates = () => fetchAPI('/gateway/gates');
 export const getGatewayRoutes = () => fetchAPI('/gateway/routes');
 export const deleteGatewayRoute = (id: number) => fetchAPI(`/gateway/routes/${id}`, { method: 'DELETE' });
+
+// Bulk route operations (admin)
+export interface RouteSuffix {
+    suffix: string;
+    count: number;
+    depth: number; // 1 = apex (one dot), 2 = parent (two dots)
+}
+export const getRouteSuffixes = (): Promise<{ success: boolean; suffixes: RouteSuffix[] }> =>
+    fetchAPI('/gateway/routes/suffixes');
+export const bulkDeleteRoutesBySuffix = (suffix: string): Promise<{ success: boolean; deleted: number; failed: number; suffix: string; message?: string }> =>
+    fetchAPI('/gateway/routes/bulk-delete', { method: 'POST', body: JSON.stringify({ suffix }) });
 export const getGatewayLogs = () => fetchAPI('/gateway/logs');
 export const getGatewayStats = (): Promise<GatewayStats> => fetchAPI('/gateway/stats');
 export const triggerGatewaySync = () => fetchAPI('/gateway/sync', { method: 'POST' });

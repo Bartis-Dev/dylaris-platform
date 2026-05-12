@@ -2,11 +2,34 @@
 
 import React, { useState, useEffect } from 'react';
 import { getLibrarySettings, saveLibrarySettings, testLibraryConnection, LibrarySettings } from '@/lib/api';
-import { RefreshCw, Cable, Save, CircleCheck, CircleAlert } from 'lucide-react';
+import { RefreshCw, Cable, Save, CircleCheck, CircleAlert, HardDrive, Cloud } from 'lucide-react';
 
 const STORAGE_TYPES = [
-    { id: 'local', label: 'Local Path', description: 'Files stored on this server\'s filesystem or a mounted network share (NFS/SMB).' },
-    { id: 's3', label: 'S3 / Object Storage', description: 'Compatible with AWS S3, MinIO, Backblaze B2, etc.' },
+    { id: 'local', label: 'Local Path', description: 'Files stored on this server\'s filesystem or a mounted network share (NFS/SMB).', icon: HardDrive },
+    { id: 's3', label: 'S3 / Object Storage', description: 'Any S3-compatible API: AWS S3, Cloudflare R2, Backblaze B2, Hetzner, MinIO, Wasabi.', icon: Cloud },
+];
+
+// Provider presets fill in endpoint pattern + region hints so admins don't
+// have to look up the exact URL format. "custom" leaves all fields blank
+// for self-hosted MinIO etc.
+interface ProviderPreset {
+    id: string;
+    label: string;
+    endpoint: string;       // template — admins still edit, just pre-fill
+    regionHint: string;
+    regionPlaceholder: string;
+    forcePathStyleDefault: boolean;
+    note: string;
+}
+
+const S3_PROVIDERS: ProviderPreset[] = [
+    { id: 'custom',    label: 'Custom / Other',     endpoint: '',                                                regionHint: 'Provider-specific.',                      regionPlaceholder: 'auto',     forcePathStyleDefault: false, note: '' },
+    { id: 'aws',       label: 'AWS S3',             endpoint: 'https://s3.{region}.amazonaws.com',               regionHint: 'AWS region code (e.g. us-east-1).',       regionPlaceholder: 'us-east-1', forcePathStyleDefault: false, note: 'Endpoint auto-derives from region — leave the template literal or write the resolved URL.' },
+    { id: 'cloudflare-r2', label: 'Cloudflare R2',  endpoint: 'https://<ACCOUNT_ID>.r2.cloudflarestorage.com',   regionHint: 'R2 only supports "auto".',                 regionPlaceholder: 'auto',     forcePathStyleDefault: false, note: 'Replace <ACCOUNT_ID> with your R2 account ID.' },
+    { id: 'backblaze', label: 'Backblaze B2',       endpoint: 'https://s3.{region}.backblazeb2.com',             regionHint: 'B2 region (e.g. us-west-002).',           regionPlaceholder: 'us-west-002', forcePathStyleDefault: false, note: 'Use the S3-compatible endpoint, not the native B2 API.' },
+    { id: 'hetzner',   label: 'Hetzner Object Storage', endpoint: 'https://{region}.your-objectstorage.com',     regionHint: 'Hetzner location (hel1, fsn1, nbg1).',    regionPlaceholder: 'hel1',     forcePathStyleDefault: false, note: '' },
+    { id: 'wasabi',    label: 'Wasabi',             endpoint: 'https://s3.{region}.wasabisys.com',               regionHint: 'Wasabi region.',                          regionPlaceholder: 'us-east-1', forcePathStyleDefault: false, note: '' },
+    { id: 'minio',     label: 'MinIO / Self-hosted', endpoint: 'https://minio.example.com',                      regionHint: 'Often "us-east-1" by convention.',        regionPlaceholder: 'us-east-1', forcePathStyleDefault: true,  note: 'Path-style addressing is enabled — MinIO requires it unless configured otherwise.' },
 ];
 
 export default function LibraryTab() {
@@ -15,6 +38,7 @@ export default function LibraryTab() {
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [selectedProvider, setSelectedProvider] = useState('custom');
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -53,6 +77,19 @@ export default function LibraryTab() {
     const set = (key: keyof LibrarySettings, value: string) =>
         setSettings(prev => ({ ...prev, [key]: value }));
 
+    const applyProvider = (id: string) => {
+        setSelectedProvider(id);
+        const p = S3_PROVIDERS.find(x => x.id === id);
+        if (!p || id === 'custom') return;
+        setSettings(prev => ({
+            ...prev,
+            s3Endpoint: prev.s3Endpoint || p.endpoint,
+            s3Region: prev.s3Region || p.regionPlaceholder,
+        }));
+    };
+
+    const currentProvider = S3_PROVIDERS.find(p => p.id === selectedProvider) ?? S3_PROVIDERS[0];
+
     if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={30} className="animate-spin" /></div>;
 
     return (
@@ -66,16 +103,34 @@ export default function LibraryTab() {
             <div>
                 <label className="input-label mb-2 block">Storage Type</label>
                 <div className="grid grid-cols-2 gap-3">
-                    {STORAGE_TYPES.map(t => (
-                        <button
-                            key={t.id}
-                            onClick={() => set('type', t.id)}
-                            className={`card p-4 text-left transition-all ${settings.type === t.id ? 'border-(--accent-border) bg-(--accent-ghost)' : 'hover:border-(--base-05)'}`}
-                        >
-                            <div className="font-medium text-sm text-(--base-09)">{t.label}</div>
-                            <div className="text-xs text-(--base-06) mt-1">{t.description}</div>
-                        </button>
-                    ))}
+                    {STORAGE_TYPES.map(t => {
+                        const Icon = t.icon;
+                        const active = settings.type === t.id;
+                        return (
+                            <button
+                                key={t.id}
+                                onClick={() => set('type', t.id)}
+                                className={`card p-4 text-left transition-all relative ${
+                                    active
+                                        ? 'border-(--accent) ring-1 ring-(--accent)/40 bg-(--accent-ghost)'
+                                        : 'border-(--base-03) hover:border-(--base-05)'
+                                }`}
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-(--accent)/20 text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
+                                        <Icon size={18} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className={`font-medium text-sm flex items-center gap-1.5 ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
+                                            {t.label}
+                                            {active && <CircleCheck size={13} className="text-(--accent-light)" />}
+                                        </div>
+                                        <div className="text-xs text-(--base-06) mt-1">{t.description}</div>
+                                    </div>
+                                </div>
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
@@ -97,6 +152,27 @@ export default function LibraryTab() {
             {/* S3 fields */}
             {settings.type === 's3' && (
                 <div className="space-y-4">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Provider Preset</label>
+                        <select
+                            value={selectedProvider}
+                            onChange={e => applyProvider(e.target.value)}
+                            className="input-field w-full md:w-72"
+                        >
+                            {S3_PROVIDERS.map(p => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-(--base-06) mt-0.5">
+                            Pre-fills endpoint pattern + region placeholder. You can still edit every field manually.
+                        </p>
+                        {currentProvider.note && (
+                            <p className="text-xs text-(--accent-light) bg-(--accent)/5 border border-(--accent)/20 rounded-md px-2 py-1.5 mt-1">
+                                {currentProvider.note}
+                            </p>
+                        )}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Endpoint URL</label>
@@ -104,7 +180,7 @@ export default function LibraryTab() {
                                 type="text"
                                 value={settings.s3Endpoint || ''}
                                 onChange={e => set('s3Endpoint', e.target.value)}
-                                placeholder="https://s3.amazonaws.com"
+                                placeholder={currentProvider.endpoint || 'https://s3.example.com'}
                                 className="input-mono w-full"
                             />
                         </div>
@@ -124,9 +200,10 @@ export default function LibraryTab() {
                                 type="text"
                                 value={settings.s3Region || ''}
                                 onChange={e => set('s3Region', e.target.value)}
-                                placeholder="us-east-1"
+                                placeholder={currentProvider.regionPlaceholder}
                                 className="input-mono w-full"
                             />
+                            <p className="text-xs text-(--base-06)">{currentProvider.regionHint}</p>
                         </div>
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Access Key</label>
@@ -143,8 +220,11 @@ export default function LibraryTab() {
                         <label className="input-label">Secret Key</label>
                         <input
                             type="password"
+                            value={settings.s3SecretKey || ''}
+                            onChange={e => set('s3SecretKey', e.target.value)}
                             placeholder="••••••••••••••••••••"
                             className="input-mono w-full"
+                            autoComplete="new-password"
                         />
                         <p className="text-xs text-(--base-06) mt-0.5">The secret key is write-only. Leave blank to keep the existing value.</p>
                     </div>

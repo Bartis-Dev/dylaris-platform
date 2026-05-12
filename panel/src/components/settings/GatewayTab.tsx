@@ -4,9 +4,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     getGatewaySettings, saveGatewaySettings, GatewaySettings, HosterDomain, HosterValidation,
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
+    bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2 } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X } from 'lucide-react';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -311,11 +312,62 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             hosterDomains: [...prev.hosterDomains, { domain: '', validation: 'alphanumeric' }],
         }));
     };
+
+    // Removing a hoster domain — when the entry has a real domain value we
+    // route through a confirm modal with an optional cascade-delete-routes
+    // checkbox. Blank/unsaved entries (just-added rows) skip the prompt.
+    const [removeTarget, setRemoveTarget] = useState<{ idx: number; domain: string } | null>(null);
+    const [removeCascade, setRemoveCascade] = useState(false);
+    const [removeCountdown, setRemoveCountdown] = useState(0);
+    const [removeBusy, setRemoveBusy] = useState(false);
+
+    useEffect(() => {
+        if (!removeTarget || !removeCascade) {
+            setRemoveCountdown(0);
+            return;
+        }
+        setRemoveCountdown(5);
+        const id = setInterval(() => {
+            setRemoveCountdown(c => (c <= 1 ? 0 : c - 1));
+        }, 1000);
+        return () => clearInterval(id);
+    }, [removeTarget, removeCascade]);
+
     const removeHoster = (idx: number) => {
+        const target = settings.hosterDomains[idx];
+        if (!target || !target.domain.trim()) {
+            // Brand-new empty row — drop immediately, no confirm.
+            setSettings(prev => ({
+                ...prev,
+                hosterDomains: prev.hosterDomains.filter((_, i) => i !== idx),
+            }));
+            return;
+        }
+        setRemoveCascade(false);
+        setRemoveCountdown(0);
+        setRemoveTarget({ idx, domain: target.domain });
+    };
+
+    const confirmRemoveHoster = async () => {
+        if (!removeTarget) return;
+        if (removeCascade && removeCountdown > 0) return; // timer still running
+        setRemoveBusy(true);
+        let cascadeMessage = '';
+        if (removeCascade) {
+            const res = await bulkDeleteRoutesBySuffix(removeTarget.domain);
+            if (res.success) {
+                cascadeMessage = ` (${res.deleted} route${res.deleted !== 1 ? 's' : ''} deleted)`;
+            } else {
+                cascadeMessage = ' (route cascade failed)';
+            }
+        }
         setSettings(prev => ({
             ...prev,
-            hosterDomains: prev.hosterDomains.filter((_, i) => i !== idx),
+            hosterDomains: prev.hosterDomains.filter((_, i) => i !== removeTarget.idx),
         }));
+        setRemoveBusy(false);
+        setRemoveTarget(null);
+        showToast(`Removed ${removeTarget.domain}${cascadeMessage}. Click Save to persist.`);
     };
     const updateHoster = (idx: number, patch: Partial<HosterDomain>) => {
         setSettings(prev => ({
@@ -707,6 +759,73 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                         <div className="flex gap-3 pt-2">
                             <button onClick={handleSaveRouting} className="btn btn-primary px-5 py-2 text-sm flex-1">Confirm & Apply</button>
                             <button onClick={() => setConfirmModal(false)} className="btn px-5 py-2 text-sm flex-1">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Hoster-domain remove confirmation (optional cascade) */}
+            {removeTarget && (
+                <div className="modal-overlay animate-fade-in">
+                    <div className="modal-panel w-full max-w-md">
+                        <div className="modal-header flex items-center justify-between">
+                            <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
+                                <AlertTriangle size={18} />
+                                Remove Hoster Domain
+                            </h3>
+                            <button onClick={() => setRemoveTarget(null)} className="text-(--base-06) hover:text-(--error-light)" disabled={removeBusy}>
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-08)">
+                                Remove <code className="font-mono text-(--base-09) bg-(--base-02) px-1.5 py-0.5 rounded">{removeTarget.domain}</code> from the hoster-domain list?
+                            </p>
+                            <p className="text-xs text-(--base-06)">
+                                Users will no longer be able to register new subdomains under it. Existing routes pointing to this domain stay active by default.
+                            </p>
+
+                            <label className="flex items-start gap-2 cursor-pointer pt-1">
+                                <input
+                                    type="checkbox"
+                                    checked={removeCascade}
+                                    onChange={e => setRemoveCascade(e.target.checked)}
+                                    className="mt-0.5"
+                                />
+                                <span className="text-sm text-(--base-08)">
+                                    Also delete all related routes ending in <code className="font-mono">.{removeTarget.domain}</code>
+                                </span>
+                            </label>
+                            {removeCascade && (
+                                <div className="flex items-start gap-2 bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2.5 rounded-md text-xs">
+                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                    <span>
+                                        Cascade is permanent. Every server route under this domain will be deleted from the gateway. The confirm button is locked for {removeCountdown}s so you can re-read this.
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="modal-footer">
+                            <button
+                                onClick={() => setRemoveTarget(null)}
+                                disabled={removeBusy}
+                                className="btn btn-secondary px-4 py-1.5 text-sm"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmRemoveHoster}
+                                disabled={removeBusy || (removeCascade && removeCountdown > 0)}
+                                className={`btn px-4 py-1.5 text-sm disabled:opacity-50 inline-flex items-center gap-1.5 ${removeCascade ? 'btn-danger' : 'btn-primary'}`}
+                            >
+                                {removeBusy
+                                    ? <><RefreshCw size={13} className="animate-spin" /> Removing…</>
+                                    : (removeCascade && removeCountdown > 0)
+                                        ? `Confirm cascade (${removeCountdown}s)`
+                                        : removeCascade
+                                            ? <><Trash2 size={13} /> Remove + delete routes</>
+                                            : 'Remove domain'}
+                            </button>
                         </div>
                     </div>
                 </div>
