@@ -734,9 +734,15 @@ func (s *PostgresStore) SetModuleAccessRole(id int, role string) error {
 
 func (s *PostgresStore) CreateModule(m *models.Module) (int, error) {
 	var id int
-	query := `INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position) 
-	          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
-	err := s.db.QueryRow(query, m.Name, m.Type, m.Icon, m.URL, m.IsEnabled, m.IsSystem, m.Position).Scan(&id)
+	// access_role defaults to "admin" — admins can flip newly-created modules
+	// to "all" via the Modules tab if they want users to see them.
+	role := m.AccessRole
+	if role != "all" && role != "admin" {
+		role = "admin"
+	}
+	query := `INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
+	err := s.db.QueryRow(query, m.Name, m.Type, m.Icon, m.URL, m.IsEnabled, m.IsSystem, m.Position, role).Scan(&id)
 	return id, err
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	beamauth "dylaris-pkg/beam/auth"
 	pb "dylaris-proto/beam"
 
 	"google.golang.org/grpc"
@@ -26,10 +27,12 @@ type beamServer struct {
 	pb.UnimplementedBeamNodeServiceServer
 	storageMgr *StorageManager
 	throttle   *BeamThrottle
+	jwtSecret  string // BEAM_JWT_SECRET — must match the gateway's beam-relay
+	nodeID     string // local node id; tickets must claim this same id
 }
 
 // StartBeamServer starts the BeamNodeService gRPC server on localhost:9091.
-func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *BeamThrottle) {
+func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *BeamThrottle, jwtSecret, nodeID string) {
 	lis, err := net.Listen("tcp", "127.0.0.1:9091")
 	if err != nil {
 		log.Printf("beam-server: failed to listen on :9091: %v", err)
@@ -40,6 +43,8 @@ func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *
 	pb.RegisterBeamNodeServiceServer(srv, &beamServer{
 		storageMgr: storageMgr,
 		throttle:   throttle,
+		jwtSecret:  jwtSecret,
+		nodeID:     nodeID,
 	})
 
 	log.Println("beam-server: listening on 127.0.0.1:9091")
@@ -73,13 +78,23 @@ func (s *beamServer) validateBeamPath(reqPath, serverUUID string) (string, error
 // ─── Auth ────────────────────────────────────────────────────────────
 
 func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb.BeamAuthResp, error) {
-	// TODO: Validate JWT ticket signature using shared JWT_SECRET
-	// For now, accept all tickets and extract claims
-	// This will be implemented when Core's ticket signing is ready
-
+	if s.jwtSecret == "" {
+		// Defence in depth: empty secret means no validator is configured,
+		// so we must refuse rather than accept blindly.
+		return &pb.BeamAuthResp{Ok: false, Message: "node beam auth not configured"}, nil
+	}
+	claims, err := beamauth.ValidateBeamTicket(s.jwtSecret, req.Ticket)
+	if err != nil {
+		return &pb.BeamAuthResp{Ok: false, Message: "invalid ticket: " + err.Error()}, nil
+	}
+	// Node-binding: the relay routes by node_id, but a stolen ticket for
+	// another node should still be rejected at the destination.
+	if s.nodeID != "" && claims.NodeID != s.nodeID {
+		return &pb.BeamAuthResp{Ok: false, Message: "ticket bound to a different node"}, nil
+	}
 	return &pb.BeamAuthResp{
-		Ok:      true,
-		Message: "authenticated (ticket validation pending)",
+		Ok:         true,
+		ServerUuid: claims.ServerUUID,
 	}, nil
 }
 

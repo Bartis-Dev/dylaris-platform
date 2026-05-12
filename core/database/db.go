@@ -241,8 +241,8 @@ func seedSystemModules(db *sql.DB) {
 		{"Servers", "internal", "server", "/servers", "all", 1, true, true},
 		{"Admin", "internal", "shield-check", "/admin", "admin", 2, true, true},
 		{"Infrastructure", "internal", "cpu", "/infrastructure", "admin", 3, true, true},
-		{"Gateway", "internal", "globe", "/gateway", "all", 4, true, false},
-		{"Library", "internal", "folder-open", "/library", "all", 5, false, false},
+		{"Gateway", "internal", "globe", "/gateway", "admin", 4, true, false},
+		{"Library", "internal", "folder-open", "/library", "admin", 5, false, false},
 	}
 	for _, m := range modules {
 		db.Exec(`
@@ -259,8 +259,8 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role) SELECT 'Admin', 'internal', 'shield-check', '/admin', TRUE, TRUE, 2, 'admin' WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Admin')`)
 	db.Exec(`UPDATE modules SET position = 2, access_role = 'admin' WHERE name = 'Admin'`)
 	db.Exec(`UPDATE modules SET position = 3, is_system = TRUE, icon = 'cpu', access_role = 'admin' WHERE name = 'Infrastructure'`)
-	db.Exec(`UPDATE modules SET position = 4, is_system = FALSE, is_enabled = TRUE WHERE name = 'Gateway'`)
-	db.Exec(`UPDATE modules SET position = 5, is_system = FALSE, icon = 'folder-open' WHERE name = 'Library'`)
+	db.Exec(`UPDATE modules SET position = 4, is_system = FALSE, is_enabled = TRUE, access_role = 'admin' WHERE name = 'Gateway'`)
+	db.Exec(`UPDATE modules SET position = 5, is_system = FALSE, icon = 'folder-open', access_role = 'admin' WHERE name = 'Library'`)
 	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files', 'Tickets') AND is_system = TRUE`)
 
 	// Migrate route limits: old semantics had 0 = unlimited, new semantics use -1 = unlimited

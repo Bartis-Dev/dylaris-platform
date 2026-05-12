@@ -4,27 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	beamauth "dylaris-pkg/beam/auth"
 )
 
 type BeamHandler struct {
-	state  *AppState
-	jwtKey []byte
+	state     *AppState
+	jwtSecret string
 }
 
 func NewBeamHandler(state *AppState, jwtSecret string) *BeamHandler {
-	return &BeamHandler{state: state, jwtKey: []byte(jwtSecret)}
-}
-
-// BeamTicketClaims are the JWT claims embedded in a Beam ticket.
-type BeamTicketClaims struct {
-	ServerUUID string `json:"server_uuid"`
-	NodeID     string `json:"node_id"`
-	Username   string `json:"username"`
-	IsAdmin    bool   `json:"is_admin"`
-	jwt.RegisteredClaims
+	return &BeamHandler{state: state, jwtSecret: jwtSecret}
 }
 
 type BeamServerInfo struct {
@@ -143,21 +133,15 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sign ticket (30 min expiry)
-	claims := BeamTicketClaims{
+	// Sign ticket via shared auth package — same format used by gateway
+	// beam-relay validators and node-side BeamNodeService.Authenticate.
+	claims := beamauth.BeamClaims{
 		ServerUUID: server.UUID,
 		NodeID:     nodeDiscoveryID,
 		Username:   username,
 		IsAdmin:    isAdmin,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dylaris-core",
-		},
 	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	ticketString, err := token.SignedString(h.jwtKey)
+	ticketString, err := beamauth.SignBeamTicket(h.jwtSecret, claims)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 		return

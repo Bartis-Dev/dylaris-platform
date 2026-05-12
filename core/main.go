@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"dylaris-core/config"
 	"dylaris-core/database"
-	beamEmbed "dylaris-core/embed"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
 	"dylaris-core/services"
@@ -18,6 +18,29 @@ import (
 	gorillaHandlers "github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 )
+
+// detectBeamPlatform maps a browser User-Agent header to one of the platform
+// slugs the gateway's beam-relay serves at /download/{slug}.
+// Conservative: anything unrecognised falls back to linux-amd64.
+func detectBeamPlatform(ua string) string {
+	u := strings.ToLower(ua)
+	switch {
+	case strings.Contains(u, "windows"):
+		return "windows-amd64"
+	case strings.Contains(u, "mac os x"), strings.Contains(u, "macintosh"):
+		if strings.Contains(u, "arm") {
+			return "darwin-arm64"
+		}
+		return "darwin-amd64"
+	case strings.Contains(u, "linux"):
+		if strings.Contains(u, "aarch64") || strings.Contains(u, "arm64") {
+			return "linux-arm64"
+		}
+		return "linux-amd64"
+	default:
+		return "linux-amd64"
+	}
+}
 
 func main() {
 	log.Println("Starting Dylaris Core...")
@@ -315,33 +338,39 @@ func main() {
 	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
 	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// ?list=1 — return availability without serving binary
-		if r.URL.Query().Get("list") == "1" {
+		// The Beam desktop app is now served by gateway/beam-relay's
+		// /download/{os}-{arch} endpoint — see plan. Core redirects to it
+		// using either the admin-configured beam.download_url setting or,
+		// as a convenience, derives it from beam.relay_address by swapping
+		// in the relay's HTTPS download port (default 25552).
+		downloadBase, _ := appState.Store.GetSetting("beam.download_url")
+		if downloadBase == "" {
+			relayAddr, _ := appState.Store.GetSetting("beam.relay_address")
+			if relayAddr != "" {
+				// strip any existing port; relay download is :25552 by convention
+				host := relayAddr
+				if i := strings.LastIndex(host, ":"); i > 0 {
+					host = host[:i]
+				}
+				downloadBase = "https://" + host + ":25552"
+			}
+		}
+		if downloadBase == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":   true,
-				"available": beamEmbed.ListAvailablePlatforms(),
+				"success": false,
+				"message": "Beam download URL not configured. Set beam.download_url or beam.relay_address in Settings → Gateway → Beam.",
 			})
 			return
 		}
+
 		platform := r.URL.Query().Get("platform")
 		if platform == "" {
-			platform = beamEmbed.DetectPlatform(r.UserAgent())
+			platform = detectBeamPlatform(r.UserAgent())
 		}
-		data := beamEmbed.GetBeamBinary(platform)
-		if data == nil {
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":   false,
-				"message":   "Beam binary not available for platform: " + platform,
-				"available": beamEmbed.ListAvailablePlatforms(),
-			})
-			return
-		}
-		filename := beamEmbed.GetBeamFilename(platform)
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-		w.Write(data)
+		target := strings.TrimSuffix(downloadBase, "/") + "/download/" + platform
+		http.Redirect(w, r, target, http.StatusFound)
 	}).Methods("GET")
 
 	corsObj := gorillaHandlers.CORS(

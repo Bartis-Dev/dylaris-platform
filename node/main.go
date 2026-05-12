@@ -161,9 +161,15 @@ func main() {
 	meshMgr := NewMeshManager(nodeID, rdb, streamHandler)
 	go meshMgr.Run(ctx)
 
-	// Beam: file transfer gRPC server on localhost:9091
+	// Beam: file transfer gRPC server on localhost:9091.
+	// BEAM_JWT_SECRET must match the gateway's beam-relay so tickets that
+	// the relay validated also pass the node-side Authenticate gate.
 	beamThrottle := NewBeamThrottle(ctx, rdb)
-	go StartBeamServer(ctx, storageMgr, beamThrottle)
+	beamJWTSecret := os.Getenv("BEAM_JWT_SECRET")
+	if beamJWTSecret == "" {
+		log.Printf("BEAM_JWT_SECRET unset — Beam authentication will reject all tickets")
+	}
+	go StartBeamServer(ctx, storageMgr, beamThrottle, beamJWTSecret, nodeID)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
