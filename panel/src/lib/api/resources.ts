@@ -13,7 +13,7 @@ export async function createUser(user: Partial<User>) {
     try {
         const res = await fetch(`${API_URL}/users`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(user)
         });
         return handleResponse(res);
@@ -24,7 +24,7 @@ export async function updateUser(id: number, user: Partial<User>) {
     try {
         const res = await fetch(`${API_URL}/users/${id}`, {
             method: 'PUT',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(user)
         });
         return handleResponse(res);
@@ -50,7 +50,7 @@ export async function createNode(node: Partial<Node>) {
     try {
         const res = await fetch(`${API_URL}/nodes`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(node)
         });
         return handleResponse(res);
@@ -69,7 +69,7 @@ export async function createModule(module: Partial<AppModule>) {
     try {
         const res = await fetch(`${API_URL}/modules`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(module)
         });
         return handleResponse(res);

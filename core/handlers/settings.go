@@ -476,9 +476,9 @@ type PlacementSettings struct {
 }
 
 var defaultPlacementSettings = PlacementSettings{
-	CPUOvercommitDefault: 2.0,  // CPU is time-shared, 2x is conservative
-	RAMOvercommitDefault: 1.0,  // RAM has no defaults overcommit (safer)
-	DiskBufferGB:         5,
+	CPUOvercommitDefault: 2.0,  // CPU is time-shared, 2.0x = 200% is conservative
+	RAMOvercommitDefault: 1.0,  // RAM has no default overcommit (safer); 100%
+	DiskBufferGB:         10,
 	RebalanceEnabled:     false,
 	RebalanceThreshold:   90,
 	PortMode:             "sequential",

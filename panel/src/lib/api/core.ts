@@ -1,14 +1,13 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:25500/api";
 
-export const getAuthHeader = () => {
-  if (typeof window === 'undefined') return new Headers();
-  
-  const token = localStorage.getItem("authToken");
-  const headers = new Headers();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  return headers;
+// Returns a plain object so callers can spread it into header objects:
+//   { ...getAuthHeader(), 'Content-Type': 'application/json' }
+// A Headers instance does not iterate as own properties — spreading it
+// silently drops Authorization, which broke 2FA verify and similar flows.
+export const getAuthHeader = (): Record<string, string> => {
+  if (typeof window === 'undefined') return {};
+  const token = localStorage.getItem("authToken") || localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 // Error Handler Helper

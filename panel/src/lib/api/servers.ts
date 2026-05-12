@@ -5,7 +5,7 @@ export async function createServer(data: any) {
     try {
         const res = await fetch(`${API_URL}/servers`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         return handleResponse(res);

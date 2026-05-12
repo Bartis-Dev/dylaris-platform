@@ -211,28 +211,34 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
                 <Stat
                     label="CPU Overcommit"
                     value={isEditing ? (
-                        <input
-                            type="number"
-                            step="0.1"
-                            min={0.1}
-                            value={cpuRatio}
-                            onChange={e => setCpuRatio(Number(e.target.value))}
-                            className="input-mono w-20 text-center text-xs"
-                        />
-                    ) : `${(node.cpuOvercommitRatio ?? 1.0).toFixed(2)}x`}
+                        <div className="relative inline-block w-20">
+                            <input
+                                type="number"
+                                step={10}
+                                min={10}
+                                value={Math.round(cpuRatio * 100)}
+                                onChange={e => setCpuRatio(Math.max(0.1, Number(e.target.value) / 100))}
+                                className="input-mono w-full pr-5 text-center text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-(--base-06) font-mono pointer-events-none">%</span>
+                        </div>
+                    ) : `${Math.round((node.cpuOvercommitRatio ?? 1.0) * 100)}%`}
                 />
                 <Stat
                     label="RAM Overcommit"
                     value={isEditing ? (
-                        <input
-                            type="number"
-                            step="0.1"
-                            min={0.1}
-                            value={ramRatio}
-                            onChange={e => setRamRatio(Number(e.target.value))}
-                            className="input-mono w-20 text-center text-xs"
-                        />
-                    ) : `${(node.ramOvercommitRatio ?? 1.0).toFixed(2)}x`}
+                        <div className="relative inline-block w-20">
+                            <input
+                                type="number"
+                                step={10}
+                                min={10}
+                                value={Math.round(ramRatio * 100)}
+                                onChange={e => setRamRatio(Math.max(0.1, Number(e.target.value) / 100))}
+                                className="input-mono w-full pr-5 text-center text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-(--base-06) font-mono pointer-events-none">%</span>
+                        </div>
+                    ) : `${Math.round((node.ramOvercommitRatio ?? 1.0) * 100)}%`}
                 />
             </div>
 
@@ -305,41 +311,41 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 <div>
                     <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Overcommit Defaults</h3>
                     <p className="text-xs text-(--base-06) mb-4">
-                        Ratio of how much more allocation is allowed than physical capacity.
-                        <span className="font-mono"> 1.0x</span> = no overcommit, <span className="font-mono">2.0x</span> = double-book.
+                        How much allocation is allowed relative to physical capacity.
+                        <span className="font-mono"> 100%</span> = no overcommit, <span className="font-mono">200%</span> = double-book.
                         Applied to new nodes — existing nodes keep their per-node value.
                     </p>
 
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">CPU Overcommit</label>
-                            <div className="relative">
+                            <div className="relative w-32">
                                 <input
                                     type="number"
-                                    step="0.1"
-                                    min={0.1}
-                                    value={settings.cpuOvercommitDefault}
-                                    onChange={e => setSettings(s => ({ ...s, cpuOvercommitDefault: Number(e.target.value) }))}
-                                    className="input-field w-full"
+                                    step={10}
+                                    min={10}
+                                    value={Math.round(settings.cpuOvercommitDefault * 100)}
+                                    onChange={e => setSettings(s => ({ ...s, cpuOvercommitDefault: Math.max(0.1, Number(e.target.value) / 100) }))}
+                                    className="input-field input-mono w-full pr-7 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
-                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">x</span>
+                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">%</span>
                             </div>
-                            <p className="text-xs text-(--base-06)">CPU is time-shared, 2.0x is conservative.</p>
+                            <p className="text-xs text-(--base-06)">CPU is time-shared — 200% is conservative.</p>
                         </div>
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">RAM Overcommit</label>
-                            <div className="relative">
+                            <div className="relative w-32">
                                 <input
                                     type="number"
-                                    step="0.1"
-                                    min={0.1}
-                                    value={settings.ramOvercommitDefault}
-                                    onChange={e => setSettings(s => ({ ...s, ramOvercommitDefault: Number(e.target.value) }))}
-                                    className="input-field w-full"
+                                    step={10}
+                                    min={10}
+                                    value={Math.round(settings.ramOvercommitDefault * 100)}
+                                    onChange={e => setSettings(s => ({ ...s, ramOvercommitDefault: Math.max(0.1, Number(e.target.value) / 100) }))}
+                                    className="input-field input-mono w-full pr-7 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
-                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">x</span>
+                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">%</span>
                             </div>
-                            <p className="text-xs text-(--base-06)">RAM can&apos;t be reclaimed — 1.0x is safest, increase only for idle-heavy workloads.</p>
+                            <p className="text-xs text-(--base-06)">RAM can&apos;t be reclaimed — 100% is safest, increase only for idle-heavy workloads.</p>
                         </div>
                     </div>
                 </div>
@@ -347,14 +353,14 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 <div className="border-t border-(--base-03) pt-5">
                     <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Disk Buffer</h3>
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Disk Buffer (GB)</label>
-                        <div className="relative">
+                        <label className="input-label">Disk Buffer</label>
+                        <div className="relative w-32">
                             <input
                                 type="number"
                                 min={0}
                                 value={settings.diskBufferGb}
                                 onChange={e => setSettings(s => ({ ...s, diskBufferGb: Number(e.target.value) }))}
-                                className="input-field w-32"
+                                className="input-field input-mono w-full pr-9 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                             <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
                         </div>
@@ -374,7 +380,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                             <select
                                 value={settings.portMode}
                                 onChange={e => setSettings(s => ({ ...s, portMode: e.target.value as 'sequential' | 'random' }))}
-                                className="input-field w-full"
+                                className="input-field w-44"
                             >
                                 <option value="sequential">Sequential</option>
                                 <option value="random">Random</option>
@@ -391,7 +397,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                                 max={65535}
                                 value={settings.containerPort}
                                 onChange={e => setSettings(s => ({ ...s, containerPort: Number(e.target.value) }))}
-                                className="input-field w-full"
+                                className="input-field input-mono w-28 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                             <p className="text-xs text-(--base-06)">MC default is 25565. Change only when your server image binds elsewhere.</p>
                         </div>

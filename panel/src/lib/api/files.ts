@@ -38,7 +38,7 @@ export async function saveFile(path: string, content: string, serverUuid?: strin
     try {
         const res = await fetch(`${API_URL}/files/save${uuidQuery(serverUuid)}`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ path, content }),
         });
         return handleResponse(res);
@@ -49,7 +49,7 @@ export async function createFile(path: string, isDir: boolean, serverUuid?: stri
     try {
         const res = await fetch(`${API_URL}/files/create${uuidQuery(serverUuid)}`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ path, is_dir: isDir }),
         });
         return handleResponse(res);
@@ -60,7 +60,7 @@ export async function deleteFile(path: string, serverUuid?: string) {
     try {
         const res = await fetch(`${API_URL}/files/delete${uuidQuery(serverUuid)}`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ path }),
         });
         return handleResponse(res);
@@ -71,7 +71,7 @@ export async function renameFile(oldPath: string, newPath: string, serverUuid?: 
     try {
         const res = await fetch(`${API_URL}/files/rename${uuidQuery(serverUuid)}`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ oldPath, newPath }),
         });
         return handleResponse(res);
@@ -82,7 +82,7 @@ export async function copyFile(oldPath: string, newPath: string, serverUuid?: st
     try {
         const res = await fetch(`${API_URL}/files/copy${uuidQuery(serverUuid)}`, {
             method: 'POST',
-            headers: { ...Object.fromEntries(getAuthHeader()), 'Content-Type': 'application/json' },
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ oldPath, newPath }),
         });
         return handleResponse(res);

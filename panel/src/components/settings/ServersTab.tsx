@@ -54,16 +54,18 @@ export default function ServersTab() {
                         </div>
                     </div>
                     <div className="flex items-center gap-3 pl-12">
-                        <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={settings.maxSubServers}
-                            onChange={e => setSettings(prev => ({ ...prev, maxSubServers: Math.max(0, parseInt(e.target.value) || 0) }))}
-                            className="input w-24 text-center font-mono"
-                        />
+                        <div className="relative">
+                            <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={settings.maxSubServers}
+                                onChange={e => setSettings(prev => ({ ...prev, maxSubServers: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                className="input-field input-mono w-28 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                        </div>
                         <span className="text-xs text-(--base-06)">
-                            {settings.maxSubServers === 0 ? 'Unlimited' : `${settings.maxSubServers} sub-server${settings.maxSubServers !== 1 ? 's' : ''}`}
+                            {settings.maxSubServers === 0 ? 'Unlimited' : 'sub-servers per server'}
                         </span>
                     </div>
                 </div>
