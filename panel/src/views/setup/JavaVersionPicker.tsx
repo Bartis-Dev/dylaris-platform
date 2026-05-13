@@ -4,9 +4,9 @@ import React from 'react';
 import { Info } from 'lucide-react';
 
 export const JAVA_IMAGES = [
-    { id: 'ghcr.io/bartis-dev/dylaris-mc-java21:latest', label: 'Java 21', note: '1.20.5+', proxyNote: 'Recommended' },
-    { id: 'ghcr.io/bartis-dev/dylaris-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for Velocity' },
-    { id: 'ghcr.io/bartis-dev/dylaris-mc-java8:latest',  label: 'Java 8',  note: '1.8–1.16', proxyNote: 'BungeeCord only' },
+    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest', label: 'Java 21', note: '1.20.5+', proxyNote: 'Recommended' },
+    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for Velocity' },
+    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java8:latest',  label: 'Java 8',  note: '1.8–1.16', proxyNote: 'BungeeCord only' },
 ];
 
 /** Returns the recommended Java image ID for a given MC major version string (e.g. "1.20.4"). */

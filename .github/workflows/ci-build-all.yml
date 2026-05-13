@@ -14,7 +14,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: bartis-dev/dylaris
+  IMAGE_NAME: bartis-dev/dylaris-platform
 
 jobs:
   # ──────────────────────────────────────────────
