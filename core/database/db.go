@@ -293,19 +293,23 @@ func seedDefaultAdmin(db *sql.DB) {
 
 func createGatewayTables(db *sql.DB) error {
 	tables := []string{
-		// Links table (managed by Hub via GORM, but created here for first-run)
+		// Links table (managed by Hub via GORM, but created here for first-run).
+		// Constraint name `uni_gateway_links_token` matches GORM's
+		// uniqueIndex auto-naming so Hub's AutoMigrate doesn't try to
+		// rename it on every startup.
 		`CREATE TABLE IF NOT EXISTS gateway_links (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
-			token TEXT NOT NULL UNIQUE,
+			token TEXT NOT NULL,
 			enabled BOOLEAN DEFAULT TRUE,
 			is_system BOOLEAN DEFAULT FALSE,
 			node_id TEXT DEFAULT NULL,
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			deleted_at TIMESTAMPTZ
+			deleted_at TIMESTAMPTZ,
+			CONSTRAINT uni_gateway_links_token UNIQUE (token)
 		)`,
-		// Routes table (managed by Hub via GORM)
+		// Routes table (managed by Hub via GORM). Same naming convention.
 		`CREATE TABLE IF NOT EXISTS gateway_routes (
 			id SERIAL PRIMARY KEY,
 			domain TEXT NOT NULL,
@@ -318,7 +322,7 @@ func createGatewayTables(db *sql.DB) error {
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMPTZ,
-			UNIQUE(domain, target_port)
+			CONSTRAINT idx_domain_port UNIQUE (domain, target_port)
 		)`,
 		// Route limits (still managed by Core raw SQL)
 		`CREATE TABLE IF NOT EXISTS gateway_route_limits (
@@ -365,6 +369,23 @@ func createGatewayTables(db *sql.DB) error {
 		`ALTER TABLE gateway_routes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
 		// Add server_uuid column if missing
 		`ALTER TABLE gateway_routes ADD COLUMN IF NOT EXISTS server_uuid TEXT DEFAULT ''`,
+		// Normalise the gateway_links.token unique constraint name to what
+		// Hub's GORM AutoMigrate expects (uni_<table>_<column>). Older
+		// deployments had the Postgres-auto-named gateway_links_token_key
+		// which made Hub's migration fatal on every restart.
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='gateway_links_token_key' AND conrelid='gateway_links'::regclass)
+			AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uni_gateway_links_token' AND conrelid='gateway_links'::regclass) THEN
+				ALTER TABLE gateway_links RENAME CONSTRAINT gateway_links_token_key TO uni_gateway_links_token;
+			END IF;
+		END $$`,
+		// Same idea for gateway_routes domain+target_port composite unique.
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='gateway_routes_domain_target_port_key' AND conrelid='gateway_routes'::regclass)
+			AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='idx_domain_port' AND conrelid='gateway_routes'::regclass) THEN
+				ALTER TABLE gateway_routes RENAME CONSTRAINT gateway_routes_domain_target_port_key TO idx_domain_port;
+			END IF;
+		END $$`,
 	}
 	for _, q := range migrations {
 		db.Exec(q) // Ignore errors for idempotent migrations
