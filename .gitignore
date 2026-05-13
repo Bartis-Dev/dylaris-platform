@@ -14,6 +14,8 @@ vendor/
 # Node (NEVER upload modules)
 node_modules/
 .next/
+# TypeScript incremental build cache — touched every `tsc` run, no reason to version it.
+*.tsbuildinfo
 
 # System junk
 .vscode/
