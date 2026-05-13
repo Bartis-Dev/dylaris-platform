@@ -274,6 +274,12 @@ func main() {
 	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(infrastructureHandler.GetOverview)).Methods("GET")
 	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(infrastructureHandler.GetRoutingMigrationStatus)).Methods("GET")
 
+	// XDP / eBPF DDoS Protection (deployment-wide config managed by Panel,
+	// consumed by every Edge replica via Redis poll)
+	xdpHandler := handlers.NewXDPHandler(appState)
+	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(xdpHandler.GetConfig)).Methods("GET")
+	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(xdpHandler.UpdateConfig)).Methods("PUT")
+
 	api.HandleFunc("/files", authHandler.AuthMiddleware(fileHandler.GetFilesHandler)).Methods("GET")
 	api.HandleFunc("/files/content", authHandler.AuthMiddleware(fileHandler.GetFileContentHandler)).Methods("GET")
 	api.HandleFunc("/files/save", authHandler.AuthMiddleware(fileHandler.SaveFileHandler)).Methods("POST")

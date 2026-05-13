@@ -7,7 +7,7 @@ import {
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield } from 'lucide-react';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -73,7 +73,7 @@ async function saveBeamSettings(settings: BeamSettings): Promise<{ success: bool
 
 type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc' | 'portHttps' | 'portHttp';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
-type SubTab = 'gateway' | 'beam';
+type SubTab = 'gateway' | 'beam' | 'xdp';
 
 const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
     { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
@@ -90,6 +90,7 @@ const FILE_OPTIONS: ModeOption<FileAccessMode>[] = [
 const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'gateway', label: 'Gateway', icon: Router },
     { id: 'beam', label: 'Beam', icon: Radio },
+    { id: 'xdp', label: 'DDoS Protection', icon: Shield },
 ];
 
 // ─────────────────────────────────────────────
@@ -835,6 +836,269 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 }
 
 // ─────────────────────────────────────────────
+// XDP / DDoS Protection panel
+// ─────────────────────────────────────────────
+
+interface XDPConfig {
+    enabled: boolean;
+    host_mode: boolean;
+    interface?: string;
+    protected_ports: string;
+    rate_limit: number;
+    rate_window_ms: number;
+    ban_duration_min: number;
+    mc_malformed_limit: number;
+    mc_malformed_window_min: number;
+    mc_invalid_host_limit: number;
+    mc_invalid_host_window_min: number;
+    mc_ban_duration_min: number;
+    whitelist?: string;
+}
+
+const XDP_DEFAULTS: XDPConfig = {
+    enabled: false,
+    host_mode: false,
+    interface: '',
+    protected_ports: '25565,80,443',
+    rate_limit: 1000,
+    rate_window_ms: 1000,
+    ban_duration_min: 30,
+    mc_malformed_limit: 20,
+    mc_malformed_window_min: 2,
+    mc_invalid_host_limit: 100,
+    mc_invalid_host_window_min: 2,
+    mc_ban_duration_min: 5,
+    whitelist: '',
+};
+
+async function getXDPConfig(): Promise<{ success: boolean; config?: XDPConfig; present?: boolean }> {
+    try {
+        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+        const res = await fetch(`${API_URL}/admin/xdp/config`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        return await res.json();
+    } catch {
+        return { success: false };
+    }
+}
+
+async function saveXDPConfig(cfg: XDPConfig): Promise<{ success: boolean; message?: string }> {
+    try {
+        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+        const res = await fetch(`${API_URL}/admin/xdp/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(cfg),
+        });
+        return await res.json();
+    } catch {
+        return { success: false, message: 'Network error' };
+    }
+}
+
+function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    const [cfg, setCfg] = useState<XDPConfig>(XDP_DEFAULTS);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [present, setPresent] = useState(false);
+
+    useEffect(() => {
+        getXDPConfig().then(res => {
+            if (res.success && res.config) {
+                setCfg(res.config);
+                setPresent(!!res.present);
+            }
+            setLoading(false);
+        });
+    }, []);
+
+    const set = <K extends keyof XDPConfig>(key: K, value: XDPConfig[K]) =>
+        setCfg(s => ({ ...s, [key]: value }));
+
+    const handleSave = async () => {
+        setSaving(true);
+        const res = await saveXDPConfig(cfg);
+        showToast(res.success ? 'XDP config saved — Edges reconcile within 30s.' : (res.message || 'Save failed.'), res.success);
+        if (res.success) setPresent(true);
+        setSaving(false);
+    };
+
+    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">DDoS Protection (XDP / eBPF)</h2>
+                <p className="text-sm text-(--base-07)">
+                    Kernel-level packet filtering on every Edge replica. Changes here are written to Redis and picked up
+                    by all Edges within ~30 seconds — saving triggers an automatic sidecar recreate (≈1-3s downtime of the
+                    XDP shield, the Edge proxy itself stays up).
+                </p>
+                {!present && (
+                    <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--accent)/5 border border-(--accent-border)/40 text-xs text-(--base-08)">
+                        <AlertTriangle size={14} className="text-(--accent-light) mt-0.5 shrink-0" />
+                        <span>No XDP config in Redis yet — these are the package defaults. Save once to commit them.</span>
+                    </div>
+                )}
+            </div>
+
+            <div className="card p-5 space-y-4">
+                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
+
+                <div className="flex items-center justify-between">
+                    <div>
+                        <label className="input-label">XDP Enabled</label>
+                        <p className="text-xs text-(--base-06) mt-0.5">Master switch — disables packet filtering when off</p>
+                    </div>
+                    <button
+                        onClick={() => set('enabled', !cfg.enabled)}
+                        className={`toggle-track ${cfg.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        role="switch"
+                        aria-checked={cfg.enabled}
+                    >
+                        <span className={`toggle-knob ${cfg.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                    <div>
+                        <label className="input-label">Host Sidecar Mode</label>
+                        <p className="text-xs text-(--base-06) mt-0.5">
+                            Run XDP as a separate host-networked container (recommended for production).
+                            Toggling this requires an Edge restart.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => set('host_mode', !cfg.host_mode)}
+                        className={`toggle-track ${cfg.host_mode ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        role="switch"
+                        aria-checked={cfg.host_mode}
+                    >
+                        <span className={`toggle-knob ${cfg.host_mode ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Network Interface</label>
+                    <p className="text-xs text-(--base-06) mb-1">Empty = auto-detect all non-loopback IPv4 interfaces (sidecar mode only)</p>
+                    <input
+                        type="text"
+                        value={cfg.interface || ''}
+                        onChange={e => set('interface', e.target.value)}
+                        placeholder="eth0"
+                        className="input-field w-48"
+                    />
+                </div>
+
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Protected Ports</label>
+                    <p className="text-xs text-(--base-06) mb-1">Comma-separated list of ports to apply rate-limiting to</p>
+                    <input
+                        type="text"
+                        value={cfg.protected_ports}
+                        onChange={e => set('protected_ports', e.target.value)}
+                        placeholder="25565,80,443"
+                        className="input-field w-72"
+                    />
+                </div>
+            </div>
+
+            <div className="card p-5 space-y-4">
+                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Per-IP Rate Limiting</h3>
+                <p className="text-xs text-(--base-06)">Drops packets from any source IP that exceeds the threshold within the window. Tripped IPs are blocked for the ban duration.</p>
+
+                <div className="grid grid-cols-3 gap-4">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Packets / Window</label>
+                        <input type="number" min={1} max={1000000} value={cfg.rate_limit}
+                            onChange={e => set('rate_limit', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field" />
+                    </div>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Window (ms)</label>
+                        <input type="number" min={100} value={cfg.rate_window_ms}
+                            onChange={e => set('rate_window_ms', Math.max(100, parseInt(e.target.value) || 1000))}
+                            className="input-field" />
+                    </div>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Ban Duration (min)</label>
+                        <input type="number" min={1} value={cfg.ban_duration_min}
+                            onChange={e => set('ban_duration_min', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="card p-5 space-y-4">
+                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Minecraft-Aware Filters</h3>
+                <p className="text-xs text-(--base-06)">Protocol-level filters using the Edge's MC handshake parser. Catches scanners and malformed-packet floods that pass plain rate-limiting.</p>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Malformed / Window</label>
+                        <input type="number" min={1} value={cfg.mc_malformed_limit}
+                            onChange={e => set('mc_malformed_limit', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field" />
+                    </div>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Window (min)</label>
+                        <input type="number" min={1} value={cfg.mc_malformed_window_min}
+                            onChange={e => set('mc_malformed_window_min', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field" />
+                    </div>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Invalid Host / Window</label>
+                        <input type="number" min={1} value={cfg.mc_invalid_host_limit}
+                            onChange={e => set('mc_invalid_host_limit', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field" />
+                    </div>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Window (min)</label>
+                        <input type="number" min={1} value={cfg.mc_invalid_host_window_min}
+                            onChange={e => set('mc_invalid_host_window_min', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field" />
+                    </div>
+                    <div className="flex flex-col gap-[5px] col-span-2">
+                        <label className="input-label">MC Ban Duration (min)</label>
+                        <input type="number" min={1} value={cfg.mc_ban_duration_min}
+                            onChange={e => set('mc_ban_duration_min', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="input-field w-48" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="card p-5 space-y-3">
+                <h3 className="text-sm font-display font-semibold text-(--base-08)">Whitelist</h3>
+                <p className="text-xs text-(--base-06)">
+                    IPs and CIDRs that bypass all checks. Comma-separated. Useful for monitoring services or known crawlers.
+                </p>
+                <textarea
+                    value={cfg.whitelist || ''}
+                    onChange={e => set('whitelist', e.target.value)}
+                    placeholder="1.2.3.4, 10.0.0.0/8, 192.168.0.0/16"
+                    rows={3}
+                    className="input-field font-mono text-xs resize-y"
+                />
+            </div>
+
+            <div className="flex justify-end pt-2">
+                <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="btn btn-primary px-5 py-2 inline-flex items-center gap-2 text-sm"
+                >
+                    {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save
+                </button>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
 // Main export: Gateway + Beam with left-nav
 // ─────────────────────────────────────────────
 
@@ -871,6 +1135,7 @@ export default function GatewayTab() {
             <div className="flex-1 pl-6 overflow-y-auto">
                 {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
                 {subTab === 'beam' && <BeamPanel showToast={showToast} />}
+                {subTab === 'xdp' && <XDPPanel showToast={showToast} />}
             </div>
 
             {/* Shared toast */}
