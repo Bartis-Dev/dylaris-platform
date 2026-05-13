@@ -34,8 +34,8 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 
 	ctx := context.Background()
 
-	// Gates with full stats (auto-discovered from Redis)
-	gates := services.GetGatesFromRedis(ctx, h.state.Redis)
+	// Edges with full stats (auto-discovered from Redis)
+	edges := services.GetEdgesFromRedis(ctx, h.state.Redis)
 
 	// Links with online status
 	links := services.GetLinksFromRedis(ctx, h.state.Redis)
@@ -77,10 +77,10 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		totalTunnels += l.ActiveTunnels
 	}
 
-	onlineGates := 0
-	for _, g := range gates {
-		if g.Status == "online" {
-			onlineGates++
+	onlineEdges := 0
+	for _, e := range edges {
+		if e.Status == "online" {
+			onlineEdges++
 		}
 	}
 
@@ -89,12 +89,12 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":      true,
-		"gates":        gates,
+		"edges":        edges,
 		"links":        links,
 		"nodes":        nodes,
 		"routeCount":   routeCount,
 		"onlineLinks":  onlineLinks,
-		"onlineGates":  onlineGates,
+		"onlineEdges":  onlineEdges,
 		"totalTunnels": totalTunnels,
 		"errors":       errors,
 	})

@@ -19,14 +19,14 @@ const hubQueueKey = "dylaris:hub:queue"
 
 // --- Redis-side types for reading gateway state ---
 
-// GatewayGateInfo represents a gate as stored in Redis (gate:registry:{id}).
-type GatewayGateInfo struct {
-	GateID      string `json:"gate_id"`
+// GatewayEdgeInfo represents an Edge as stored in Redis (edge:registry:{id}).
+type GatewayEdgeInfo struct {
+	EdgeID      string `json:"edge_id"`
 	Name        string `json:"name"`
 	IP          string `json:"ip"`
 	PrivateIP   string `json:"private_ip"`
 	ServicePort string `json:"service_port"`
-	HealthPort  string `json:"health_port"`
+	SplicePort  string `json:"splice_port"`
 	Status      string `json:"status"`
 }
 
@@ -179,12 +179,12 @@ func DeriveLinkToken(nodeID, clusterSecret string) string {
 
 // --- Redis read helpers ---
 
-// GetGatesFromRedis reads all gates from Redis (gate:registry:{id} keys).
-func GetGatesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayGateInfo {
-	var gates []GatewayGateInfo
+// GetEdgesFromRedis reads all edges from Redis (edge:registry:{id} keys).
+func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo {
+	var edges []GatewayEdgeInfo
 	var cursor uint64
 	for {
-		keys, next, err := rdb.Scan(ctx, cursor, "gate:registry:*", 100).Result()
+		keys, next, err := rdb.Scan(ctx, cursor, "edge:registry:*", 100).Result()
 		if err != nil {
 			break
 		}
@@ -193,12 +193,12 @@ func GetGatesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayGateInfo
 			if err != nil {
 				continue
 			}
-			var g GatewayGateInfo
-			if json.Unmarshal([]byte(val), &g) == nil {
-				if g.Status == "" {
-					g.Status = "online"
+			var e GatewayEdgeInfo
+			if json.Unmarshal([]byte(val), &e) == nil {
+				if e.Status == "" {
+					e.Status = "online"
 				}
-				gates = append(gates, g)
+				edges = append(edges, e)
 			}
 		}
 		cursor = next
@@ -206,7 +206,7 @@ func GetGatesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayGateInfo
 			break
 		}
 	}
-	return gates
+	return edges
 }
 
 // GetLinksFromRedis reads all known link tokens and their online status from Redis.

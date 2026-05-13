@@ -71,16 +71,6 @@ func main() {
 		log.Fatalf("FATAL: Redis Error: %v", err)
 	}
 
-	// Dev only: flush Redis so cached routes/links/heartbeats from the wiped DB
-	// don't linger. Pairs with database.WipeAll() in InitDB.
-	if cfg.ClearDev {
-		if err := redisClient.FlushDB(context.Background()).Err(); err != nil {
-			log.Printf("⚠ DEV CLEAR — Redis FLUSHDB failed: %v", err)
-		} else {
-			log.Println("⚠ DEV CLEAR — Redis flushed")
-		}
-	}
-
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
 
@@ -265,7 +255,7 @@ func main() {
 
 	// Admin endpoints
 	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(gatewayHandler.GetLinks)).Methods("GET")
-	api.HandleFunc("/gateway/gates", authHandler.AuthMiddleware(gatewayHandler.GetGates)).Methods("GET")
+	api.HandleFunc("/gateway/edges", authHandler.AuthMiddleware(gatewayHandler.GetEdges)).Methods("GET")
 	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(gatewayHandler.GetAllRoutes)).Methods("GET")
 	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(gatewayHandler.GetRouteSuffixes)).Methods("GET")
 	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(gatewayHandler.BulkDeleteRoutesBySuffix)).Methods("POST")

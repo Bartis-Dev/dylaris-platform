@@ -26,13 +26,6 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 
 	log.Println("Postgres DB connection established.")
 
-	// Dev only: wipe everything before init when DYLARIS_CLEAR_DEV is true.
-	if cfg.ClearDev {
-		if err := WipeAll(db); err != nil {
-			return nil, fmt.Errorf("DEV CLEAR failed: %w", err)
-		}
-	}
-
 	// Create tables (schema)
 	if err := createUsersTable(db); err != nil {
 		return nil, err
@@ -441,22 +434,3 @@ func createServerStatsTable(db *sql.DB) error {
 	return nil
 }
 
-// WipeAll drops the entire public schema and recreates it.
-// Used by DYLARIS_CLEAR_DEV=true on startup to reset all tables (Core + Hub's
-// gateway_* tables) for clean dev iterations. Hub will re-seed on its next
-// start because its AutoMigrate sees empty tables.
-//
-// ⚠ DESTRUCTIVE: removes ALL tables, sequences, types in the 'public' schema.
-// Never enable in production.
-func WipeAll(db *sql.DB) error {
-	log.Println("⚠ DEV CLEAR ACTIVE — dropping public schema (all tables + sequences)")
-	if _, err := db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
-		return fmt.Errorf("drop schema: %w", err)
-	}
-	// Re-grant default privileges so the configured user can keep working.
-	if _, err := db.Exec(`GRANT ALL ON SCHEMA public TO public;`); err != nil {
-		return fmt.Errorf("grant schema: %w", err)
-	}
-	log.Println("⚠ DEV CLEAR — public schema wiped, fresh init follows")
-	return nil
-}

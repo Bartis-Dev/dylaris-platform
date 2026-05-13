@@ -130,3 +130,23 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java21:${{ steps.tags.outputs.TAG_PRIMARY }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java21:${{ steps.tags.outputs.TAG_SHA }}
+
+      - name: Build and push java17
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/mc-server
+          file: docker/mc-server/Dockerfile.java17
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java17:${{ steps.tags.outputs.TAG_PRIMARY }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java17:${{ steps.tags.outputs.TAG_SHA }}
+
+      - name: Build and push java8
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/mc-server
+          file: docker/mc-server/Dockerfile.java8
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java8:${{ steps.tags.outputs.TAG_PRIMARY }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java8:${{ steps.tags.outputs.TAG_SHA }}

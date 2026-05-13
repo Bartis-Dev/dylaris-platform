@@ -298,7 +298,7 @@ export interface GatewayLink {
     active_mode: string;
 }
 
-export interface GateStats {
+export interface EdgeStats {
     cpu: number;
     ram_used: number;
     ram_total: number;
@@ -315,15 +315,15 @@ export interface GateStats {
     xdp_blocked_ips: number;
 }
 
-export interface GatewayGate {
-    gate_id: string;
+export interface GatewayEdge {
+    edge_id: string;
     name: string;
     ip: string;
     private_ip: string;
     service_port: string;
-    health_port: string;
+    splice_port: string;
     status: string;
-    stats?: GateStats;
+    stats?: EdgeStats;
 }
 
 export interface GatewayRoute {
@@ -344,8 +344,8 @@ export interface GatewayRoute {
 export interface GatewayStats {
     links: number;
     linksOnline: number;
-    gates: number;
-    gatesOnline: number;
+    edges: number;
+    edgesOnline: number;
     routes: number;
 }
 
@@ -397,9 +397,9 @@ export interface GatewayRouteOptions {
     cnameTarget: string;
 }
 
-// Gateway Admin API (read-only for links/gates — they auto-register via Redis)
+// Gateway Admin API (read-only for links/edges — they auto-register via Redis)
 export const getGatewayLinks = () => fetchAPI('/gateway/links');
-export const getGatewayGates = () => fetchAPI('/gateway/gates');
+export const getGatewayEdges = () => fetchAPI('/gateway/edges');
 export const getGatewayRoutes = () => fetchAPI('/gateway/routes');
 export const deleteGatewayRoute = (id: number) => fetchAPI(`/gateway/routes/${id}`, { method: 'DELETE' });
 

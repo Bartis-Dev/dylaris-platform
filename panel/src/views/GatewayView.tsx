@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-    getGatewayRoutes, getGatewayGates, getGatewayLinks,
+    getGatewayRoutes, getGatewayEdges, getGatewayLinks,
     deleteGatewayRoute, triggerGatewaySync,
     getRouteSuffixes, bulkDeleteRoutesBySuffix, RouteSuffix,
-    GatewayRoute, GatewayGate, GatewayLink
+    GatewayRoute, GatewayEdge, GatewayLink
 } from '@/lib/api';
 import {
     Globe, Trash2, RefreshCw, AlertTriangle, X, ExternalLink, Zap,
@@ -34,7 +34,7 @@ function StatCard({ label, value, sub, icon }: { label: string; value: string | 
 export default function GatewayView() {
     const [loading, setLoading] = useState(true);
     const [routes, setRoutes] = useState<GatewayRoute[]>([]);
-    const [gates, setGates] = useState<GatewayGate[]>([]);
+    const [edges, setEdges] = useState<GatewayEdge[]>([]);
     const [links, setLinks] = useState<GatewayLink[]>([]);
     const [search, setSearch] = useState('');
     const [deleteModal, setDeleteModal] = useState<GatewayRoute | null>(null);
@@ -58,16 +58,16 @@ export default function GatewayView() {
 
     const fetchData = useCallback(async () => {
         try {
-            const [routesRes, gatesRes, linksRes] = await Promise.all([
+            const [routesRes, edgesRes, linksRes] = await Promise.all([
                 getGatewayRoutes(),
-                getGatewayGates(),
+                getGatewayEdges(),
                 getGatewayLinks(),
             ]);
             if (routesRes.routes) setRoutes(routesRes.routes);
             else if (Array.isArray(routesRes)) setRoutes(routesRes);
 
-            if (Array.isArray(gatesRes)) setGates(gatesRes);
-            else if (gatesRes.gates && Array.isArray(gatesRes.gates)) setGates(gatesRes.gates);
+            if (Array.isArray(edgesRes)) setEdges(edgesRes);
+            else if (edgesRes.edges && Array.isArray(edgesRes.edges)) setEdges(edgesRes.edges);
 
             if (Array.isArray(linksRes)) setLinks(linksRes);
             else if (linksRes.links && Array.isArray(linksRes.links)) setLinks(linksRes.links);
@@ -156,10 +156,10 @@ export default function GatewayView() {
         }
     };
 
-    const onlineGates = gates.filter(g => g.status === 'online');
+    const onlineEdges = edges.filter(e => e.status === 'online');
     const onlineLinks = links.filter(l => l.online);
-    const totalTunnels = gates.reduce((sum, g) => sum + ((g.stats as any)?.active_tunnels ?? 0), 0);
-    const gatewayDeployed = gates.length > 0 || links.length > 0;
+    const totalTunnels = edges.reduce((sum, e) => sum + ((e.stats as any)?.active_tunnels ?? 0), 0);
+    const gatewayDeployed = edges.length > 0 || links.length > 0;
 
     const filteredRoutes = useMemo(() => {
         if (!search.trim()) return routes;
@@ -209,11 +209,11 @@ export default function GatewayView() {
                         <div className="flex flex-col gap-1.5">
                             <h2 className="font-display text-lg font-bold text-(--base-09)">No Gateway Deployed</h2>
                             <p className="text-sm text-(--base-07) leading-relaxed">
-                                The Gateway module routes player traffic through dedicated Gate servers — no direct host port exposed to the internet is required.
-                                A Gate receives inbound connections and tunnels them to your game servers via an encrypted Link.
+                                The Gateway module routes player traffic through dedicated Edge servers — no direct host port exposed to the internet is required.
+                                An Edge receives inbound connections and tunnels them to your game servers via an encrypted Link.
                             </p>
                             <p className="text-sm text-(--base-07) leading-relaxed">
-                                The Gateway infrastructure (Gate + Link) is currently <span className="text-(--base-09) font-medium">closed source and not publicly available</span>.
+                                The Gateway infrastructure (Edge + Link) is currently <span className="text-(--base-09) font-medium">closed source and not publicly available</span>.
                                 You can still enable this module to manage routes once a Gateway is deployed.
                             </p>
                             <a
@@ -235,30 +235,30 @@ export default function GatewayView() {
                     {/* Summary cards */}
                     <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
                         <StatCard label="Routes" value={routes.length} icon={<Globe size={16} />} />
-                        <StatCard label="Gates" value={onlineGates.length} sub={`/ ${gates.length}`} icon={<Server size={16} />} />
+                        <StatCard label="Edges" value={onlineEdges.length} sub={`/ ${edges.length}`} icon={<Server size={16} />} />
                         <StatCard label="Links" value={onlineLinks.length} sub={`/ ${links.length}`} icon={<Network size={16} />} />
                         <StatCard label="Tunnels" value={totalTunnels} icon={<Activity size={16} />} />
                     </div>
 
-                    {/* DNS Targets — Gate IPs to point DNS to */}
-                    {onlineGates.length > 0 && (
+                    {/* DNS Targets — Edge IPs to point DNS to */}
+                    {onlineEdges.length > 0 && (
                         <div className="card p-4 flex flex-col gap-2.5">
                             <div className="flex items-center gap-2">
                                 <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">DNS Targets</span>
-                                <span className="text-[11px] text-(--base-05)">— point your domains to one or more of these gate IPs</span>
+                                <span className="text-[11px] text-(--base-05)">— point your domains to one or more of these edge IPs</span>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                                {onlineGates.map(gate => (
+                                {onlineEdges.map(edge => (
                                     <button
-                                        key={gate.gate_id}
-                                        onClick={() => copyToClipboard(gate.ip)}
+                                        key={edge.edge_id}
+                                        onClick={() => copyToClipboard(edge.ip)}
                                         className="group flex items-center gap-2 px-3 py-1.5 rounded-md bg-(--base-02) border border-(--base-03) hover:border-(--accent-border) transition-colors"
-                                        title={`${gate.name} — click to copy`}
+                                        title={`${edge.name} — click to copy`}
                                     >
                                         <div className="w-1.5 h-1.5 rounded-full bg-(--success-light) shadow-[0_0_5px_var(--success-light)]" />
-                                        <span className="font-mono text-xs text-(--base-09)">{gate.ip}</span>
-                                        <span className="text-[10px] text-(--base-06) font-mono">{gate.name}</span>
-                                        {copiedIP === gate.ip
+                                        <span className="font-mono text-xs text-(--base-09)">{edge.ip}</span>
+                                        <span className="text-[10px] text-(--base-06) font-mono">{edge.name}</span>
+                                        {copiedIP === edge.ip
                                             ? <Check size={12} className="text-(--success-light)" />
                                             : <Copy size={12} className="text-(--base-05) group-hover:text-(--base-08) transition-colors" />
                                         }

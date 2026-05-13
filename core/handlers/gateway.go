@@ -67,15 +67,15 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 // ==========================================
-// ADMIN: Gates
+// ADMIN: Edges
 // ==========================================
 
-func (h *GatewayHandler) GetGates(w http.ResponseWriter, r *http.Request) {
-	gates := services.GetGatesFromRedis(h.ctx(), h.state.Redis)
-	if gates == nil {
-		gates = []services.GatewayGateInfo{}
+func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
+	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
+	if edges == nil {
+		edges = []services.GatewayEdgeInfo{}
 	}
-	json.NewEncoder(w).Encode(gates)
+	json.NewEncoder(w).Encode(edges)
 }
 
 // ==========================================
@@ -211,7 +211,7 @@ func (h *GatewayHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
-	gates := services.GetGatesFromRedis(h.ctx(), h.state.Redis)
+	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
 	routeCount := services.CountRoutesFromRedis(h.ctx(), h.state.Redis)
 
 	onlineLinks := 0
@@ -220,18 +220,18 @@ func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 			onlineLinks++
 		}
 	}
-	onlineGates := 0
-	for _, g := range gates {
-		if g.Status == "online" {
-			onlineGates++
+	onlineEdges := 0
+	for _, e := range edges {
+		if e.Status == "online" {
+			onlineEdges++
 		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"links":       len(links),
 		"linksOnline": onlineLinks,
-		"gates":       len(gates),
-		"gatesOnline": onlineGates,
+		"edges":       len(edges),
+		"edgesOnline": onlineEdges,
 		"routes":      routeCount,
 	})
 }

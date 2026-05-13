@@ -6,7 +6,7 @@ import {
   Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield, Activity,
   Users, Link2, HardDrive
 } from 'lucide-react';
-import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayGate, GatewayLink, GateStats } from '@/lib/api';
+import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats } from '@/lib/api';
 
 interface StorageInfo {
   path: string;
@@ -52,16 +52,16 @@ interface ServerInfo {
 }
 
 interface InfrastructureData {
-  gates: GatewayGate[];
+  edges: GatewayEdge[];
   links: GatewayLink[];
   nodes: NodeInfo[];
   routeCount: number;
   onlineLinks: number;
-  onlineGates: number;
+  onlineEdges: number;
   totalTunnels: number;
 }
 
-type Tab = 'nodes' | 'gates';
+type Tab = 'nodes' | 'edges';
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -274,9 +274,9 @@ function NodeCard({
   );
 }
 
-function GateCard({ gate }: { gate: GatewayGate }) {
-  const isOnline = gate.status === 'online';
-  const stats = gate.stats;
+function EdgeCard({ edge }: { edge: GatewayEdge }) {
+  const isOnline = edge.status === 'online';
+  const stats = edge.stats;
   const rxBytes = (stats as any)?.rx_bytes as number | undefined;
   const txBytes = (stats as any)?.tx_bytes as number | undefined;
   const hasTotal = (rxBytes ?? 0) > 0 || (txBytes ?? 0) > 0;
@@ -287,12 +287,12 @@ function GateCard({ gate }: { gate: GatewayGate }) {
         <div className="flex items-center gap-2.5 min-w-0">
           <div className={`w-2 h-2 rounded-full shrink-0 ${isOnline ? 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]' : 'bg-(--error)'}`} />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-(--base-09) truncate">{gate.name}</p>
-            <p className="text-[10px] font-mono text-(--base-05) truncate">{gate.ip}:{gate.service_port}</p>
+            <p className="text-sm font-semibold text-(--base-09) truncate">{edge.name}</p>
+            <p className="text-[10px] font-mono text-(--base-05) truncate">{edge.ip}:{edge.service_port}</p>
           </div>
         </div>
         <span className={`text-[10px] font-mono uppercase tracking-[0.08em] shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
-          {gate.status}
+          {edge.status}
         </span>
       </div>
 
@@ -409,12 +409,12 @@ export default function InfrastructureView({
           } catch { /* ignore */ }
         }
         setData({
-          gates: res.gates || [],
+          edges: res.edges || [],
           links: res.links || [],
           nodes,
           routeCount: res.routeCount ?? 0,
           onlineLinks: res.onlineLinks ?? 0,
-          onlineGates: res.onlineGates ?? 0,
+          onlineEdges: res.onlineEdges ?? 0,
           totalTunnels: res.totalTunnels ?? 0,
         });
       }
@@ -458,19 +458,19 @@ export default function InfrastructureView({
     } catch { setToast('Delete failed'); } finally { setDeleting(false); }
   }
 
-  const gates = data?.gates ?? [];
+  const edges = data?.edges ?? [];
   const links = data?.links ?? [];
   const nodes = data?.nodes ?? [];
   const routeCount = data?.routeCount ?? 0;
-  const onlineGates = data?.onlineGates ?? 0;
+  const onlineEdges = data?.onlineEdges ?? 0;
   const onlineNodes = nodes.filter(n => n.status === 'online').length;
-  const totalPlayers = gates.reduce((sum, g) => sum + (g.stats?.active_mc_streams ?? 0), 0);
+  const totalPlayers = edges.reduce((sum, e) => sum + (e.stats?.active_mc_streams ?? 0), 0);
 
-  const gatewayDeployed = gates.length > 0 || links.length > 0;
+  const gatewayDeployed = edges.length > 0 || links.length > 0;
 
-  // If gates tab is active but gateway is no longer deployed, reset to nodes
+  // If edges tab is active but gateway is no longer deployed, reset to nodes
   useEffect(() => {
-    if (tab === 'gates' && !gatewayDeployed) setTab('nodes');
+    if (tab === 'edges' && !gatewayDeployed) setTab('nodes');
   }, [tab, gatewayDeployed]);
 
   if (loading) {
@@ -483,7 +483,7 @@ export default function InfrastructureView({
 
   const TABS: { id: Tab; label: string; count: number }[] = [
     { id: 'nodes', label: 'Nodes', count: nodes.length },
-    ...(gatewayDeployed ? [{ id: 'gates' as Tab, label: 'Gates', count: gates.length }] : []),
+    ...(gatewayDeployed ? [{ id: 'edges' as Tab, label: 'Edges', count: edges.length }] : []),
   ];
 
   return (
@@ -511,7 +511,7 @@ export default function InfrastructureView({
       <div className={`grid gap-3 ${gatewayDeployed ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2'}`}>
         <StatCard label="Nodes" value={nodes.length} icon={<Network size={16} />} />
         <StatCard label="Online" value={onlineNodes} sub={`/ ${nodes.length}`} icon={<Activity size={16} />} />
-        {gatewayDeployed && <StatCard label="Gates" value={gates.length} icon={<Server size={16} />} />}
+        {gatewayDeployed && <StatCard label="Edges" value={edges.length} icon={<Server size={16} />} />}
         {gatewayDeployed && <StatCard label="Routes" value={routeCount} icon={<Globe size={16} />} />}
       </div>
 
@@ -554,16 +554,16 @@ export default function InfrastructureView({
         )
       )}
 
-      {/* Tab: Gates */}
-      {tab === 'gates' && (
-        gates.length === 0 ? (
+      {/* Tab: Edges */}
+      {tab === 'edges' && (
+        edges.length === 0 ? (
           <div className="card p-8 text-center text-(--base-06) text-sm">
-            No gates registered — gates auto-discover via Redis
+            No edges registered — edges auto-discover via Redis
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {gates.map(gate => (
-              <GateCard key={gate.gate_id} gate={gate} />
+            {edges.map(edge => (
+              <EdgeCard key={edge.edge_id} edge={edge} />
             ))}
           </div>
         )
