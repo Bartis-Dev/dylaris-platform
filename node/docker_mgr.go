@@ -157,6 +157,11 @@ type ServerConfig struct {
 	UUID            string       `json:"uuid"`
 	Docker          DockerConfig `json:"docker"`
 	ActiveSubServer string       `json:"activeSubServer"`
+	// ExistingBinds, when non-empty, overrides the default bind-mount
+	// derivation in startMinecraftContainer. Used by RestartContainer to
+	// preserve the previous container's exact mount source, so world data
+	// is never lost to a path-resolution change.
+	ExistingBinds []string `json:"-"`
 }
 
 // buildRedisEnv returns the env-slice that the log-shipper inside the container
@@ -335,6 +340,13 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer),
 	}
 
+	binds := []string{fmt.Sprintf("%s:/data", hostServerPath)}
+	if len(config.ExistingBinds) > 0 {
+		// Preserve the previous container's exact mounts on restart so a
+		// silent storage-path change can never strand the world data.
+		binds = config.ExistingBinds
+	}
+
 	hc := &container.HostConfig{
 		Resources: container.Resources{
 			Memory:     bookedRAM + oomPadding,
@@ -342,7 +354,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 			NanoCPUs:   nanoCpus,
 			CpusetCpus: config.Docker.CpusetCpus,
 		},
-		Binds:         []string{fmt.Sprintf("%s:/data", hostServerPath)},
+		Binds:         binds,
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
 
@@ -425,18 +437,25 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 	config.Docker.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
 	config.Docker.CpusetCpus = info.HostConfig.CpusetCpus
 
-	log.Printf("RestartContainer %s: image=%s cmd=%s sub=%s ram=%dMB cpu=%.1f",
-		uuid, config.Docker.Image, config.Docker.Command, config.ActiveSubServer, config.Docker.RAM, config.Docker.CPULimit)
+	// Preserve the previous bind mounts verbatim so the world data on disk
+	// can't be lost to a storage-path resolution change between create and
+	// restart (e.g. storageMgr reseeded with a different host path cache).
+	if len(info.HostConfig.Binds) > 0 {
+		config.ExistingBinds = append([]string{}, info.HostConfig.Binds...)
+	}
+
+	log.Printf("RestartContainer %s: image=%s cmd=%s sub=%s ram=%dMB cpu=%.1f binds=%v",
+		uuid, config.Docker.Image, config.Docker.Command, config.ActiveSubServer, config.Docker.RAM, config.Docker.CPULimit, config.ExistingBinds)
 
 	return dm.RecreateWithCommand(config)
 }
 
 // UpdateResources stops the container, then recreates it with new RAM/CPU/Port settings,
-// preserving the existing image and command from the running/last container inspect.
+// preserving the existing image, command, and bind mounts from the running/last container inspect.
 func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 
-	// Inspect existing container to preserve image + command
+	// Inspect existing container to preserve image + command + binds
 	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
 	if err == nil {
 		if config.Docker.Image == "" {
@@ -444,6 +463,9 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 		}
 		if config.Docker.Command == "" && len(info.Config.Cmd) > 0 {
 			config.Docker.Command = strings.Join(info.Config.Cmd, " ")
+		}
+		if len(info.HostConfig.Binds) > 0 {
+			config.ExistingBinds = append([]string{}, info.HostConfig.Binds...)
 		}
 	}
 
