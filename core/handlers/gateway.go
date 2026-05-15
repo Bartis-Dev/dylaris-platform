@@ -257,6 +257,46 @@ func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// CheckDomainAvailability tells the panel whether a candidate domain is
+// already registered, so the route-create form can show a live "available
+// / in use" hint while the user types. Resolves the same three input
+// shapes as CreateServerRoute (subdomain+hosterDomain, customDomain, or
+// raw domain) and answers only `{available}` — never leaks who owns a
+// taken domain.
+//
+// GET /api/gateway/check-domain?domain=foo.example.com
+// GET /api/gateway/check-domain?subdomain=foo&hosterDomain=mc.example.com
+// GET /api/gateway/check-domain?customDomain=play.acme.tld
+func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	req := struct {
+		Domain       string `json:"domain"`
+		Subdomain    string `json:"subdomain"`
+		HosterDomain string `json:"hosterDomain"`
+		CustomDomain string `json:"customDomain"`
+		TargetPort   int    `json:"targetPort"`
+	}{
+		Domain:       q.Get("domain"),
+		Subdomain:    q.Get("subdomain"),
+		HosterDomain: q.Get("hosterDomain"),
+		CustomDomain: q.Get("customDomain"),
+	}
+	finalDomain, err := h.resolveRouteDomain(&req)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"available": false,
+			"reason":    err.Error(),
+		})
+		return
+	}
+
+	exists, _ := h.state.Redis.Exists(h.ctx(), "route:"+finalDomain).Result()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"available": exists == 0,
+		"domain":    finalDomain,
+	})
+}
+
 // ==========================================
 // USER: Server Routes
 // ==========================================

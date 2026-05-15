@@ -368,7 +368,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Gateway</span>
                                 {serverRoutes.slice(0, 3).map(route => (
-                                    <div key={route.ID} className="flex items-center gap-1.5 bg-(--accent-ghost) border border-(--accent-border) rounded-md px-2.5 py-1">
+                                    <div key={route.domain} className="flex items-center gap-1.5 bg-(--accent-ghost) border border-(--accent-border) rounded-md px-2.5 py-1">
                                         <Globe size={11} className="text-(--accent-light) shrink-0" />
                                         <span className="text-xs font-mono text-(--accent-light)">{route.domain}</span>
                                         <button

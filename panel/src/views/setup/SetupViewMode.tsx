@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Server, getServerRoutes, createServerRoute, deleteServerRoute, GatewayRoute, CreateRouteRequest } from '@/lib/api';
+import { Server, getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability, GatewayRoute, CreateRouteRequest } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
-import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle, Globe, Trash2 } from 'lucide-react';
+import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle, Globe, Trash2, X, Check } from 'lucide-react';
 import { JAVA_IMAGES } from './JavaVersionPicker';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
 
@@ -31,13 +31,24 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
     const hasFlags = !!server.extraJvmFlags;
     const flagCount = server.extraJvmFlags ? server.extraJvmFlags.split(' ').filter(Boolean).length : 0;
 
-    // Routes state
+    // Routes state — identity is `domain` (Redis-stored routes have no
+    // integer ID; the backend delete endpoint accepts the full domain).
     const [routes, setRoutes] = useState<GatewayRoute[]>([]);
     const [routesLoading, setRoutesLoading] = useState(false);
     const [newRoute, setNewRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
     const [routeError, setRouteError] = useState('');
     const [routeCreating, setRouteCreating] = useState(false);
-    const [confirmDeleteRoute, setConfirmDeleteRoute] = useState<number | null>(null);
+    const [deleteRouteModal, setDeleteRouteModal] = useState<GatewayRoute | null>(null);
+    const [deletingRoute, setDeletingRoute] = useState(false);
+
+    // Live availability check for the route-create form
+    type AvailabilityState =
+        | { status: 'idle' }
+        | { status: 'checking' }
+        | { status: 'available'; domain: string }
+        | { status: 'taken'; domain: string }
+        | { status: 'invalid'; reason: string };
+    const [availability, setAvailability] = useState<AvailabilityState>({ status: 'idle' });
 
     const loadRoutes = useCallback(async () => {
         setRoutesLoading(true);
@@ -53,6 +64,36 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
     useEffect(() => { loadRoutes(); }, [loadRoutes]);
 
     const hasRouteInput = !!(newRoute.subdomain || newRoute.customDomain || newRoute.domain);
+
+    // Debounced availability check — fires 350ms after the user stops
+    // editing the domain input. Shows green/red hint under the picker.
+    useEffect(() => {
+        if (!hasRouteInput) {
+            setAvailability({ status: 'idle' });
+            return;
+        }
+        setAvailability({ status: 'checking' });
+        const handle = setTimeout(async () => {
+            try {
+                const res = await checkDomainAvailability({
+                    domain: newRoute.domain,
+                    subdomain: newRoute.subdomain,
+                    hosterDomain: newRoute.hosterDomain,
+                    customDomain: newRoute.customDomain,
+                });
+                if (res.reason) {
+                    setAvailability({ status: 'invalid', reason: res.reason });
+                } else if (res.available) {
+                    setAvailability({ status: 'available', domain: res.domain || '' });
+                } else {
+                    setAvailability({ status: 'taken', domain: res.domain || '' });
+                }
+            } catch {
+                setAvailability({ status: 'idle' });
+            }
+        }, 350);
+        return () => clearTimeout(handle);
+    }, [hasRouteInput, newRoute.domain, newRoute.subdomain, newRoute.hosterDomain, newRoute.customDomain]);
 
     // Backend queues route creation to the Hub asynchronously, so a single
     // refetch right after the POST usually sees stale data. We optimistically
@@ -72,13 +113,14 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
             const resolvedDomain: string | undefined = res.domain || newRoute.domain || newRoute.customDomain
                 || (newRoute.subdomain && newRoute.hosterDomain ? `${newRoute.subdomain}.${newRoute.hosterDomain}` : undefined);
             if (resolvedDomain) {
-                const tempId = -Date.now();
-                setRoutes(prev => [
-                    ...prev,
-                    { ID: tempId, domain: resolvedDomain, target_ip: '', target_port: newRoute.targetPort } as GatewayRoute,
-                ]);
+                // Optimistic placeholder; replaced once the Hub queue commits
+                // and the next poll returns the canonical entry.
+                setRoutes(prev => prev.some(r => r.domain === resolvedDomain)
+                    ? prev
+                    : [...prev, { domain: resolvedDomain, target_ip: '', target_port: newRoute.targetPort }]);
             }
             setNewRoute({ targetPort: 25565 });
+            setAvailability({ status: 'idle' });
             // Poll for the real route to replace our placeholder. Hub typically
             // commits within a few hundred ms; give up after ~6s.
             for (let i = 0; i < 8; i++) {
@@ -96,12 +138,16 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
         setRouteCreating(false);
     };
 
-    const handleDeleteRoute = async (routeId: number) => {
+    const handleConfirmDeleteRoute = async () => {
+        if (!deleteRouteModal) return;
+        const target = deleteRouteModal.domain;
+        setDeletingRoute(true);
         try {
-            await deleteServerRoute(server.id, routeId);
-            setRoutes(prev => prev.filter(r => r.ID !== routeId));
-        } catch { /* ignore */ }
-        setConfirmDeleteRoute(null);
+            await deleteServerRoute(server.id, target);
+            setRoutes(prev => prev.filter(r => r.domain !== target));
+        } catch { /* surface via toast later if needed */ }
+        setDeletingRoute(false);
+        setDeleteRouteModal(null);
     };
 
     return (
@@ -218,7 +264,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                     ) : routes.length > 0 ? (
                         <div className="space-y-2 mb-3">
                             {routes.map(route => (
-                                <div key={route.ID} className="flex items-center justify-between bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
+                                <div key={route.domain} className="flex items-center justify-between bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
                                     <div className="flex items-center gap-2.5">
                                         <Globe size={12} className="text-(--accent-light) shrink-0" />
                                         <div>
@@ -229,20 +275,13 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                                             </div>
                                         </div>
                                     </div>
-                                    {confirmDeleteRoute === route.ID ? (
-                                        <div className="flex gap-2">
-                                            <button onClick={() => handleDeleteRoute(route.ID)} className="btn btn-danger px-2.5 py-1 text-xs">Delete</button>
-                                            <button onClick={() => setConfirmDeleteRoute(null)} className="btn btn-secondary px-2.5 py-1 text-xs">Cancel</button>
-                                        </div>
-                                    ) : (
-                                        <button
-                                            onClick={() => setConfirmDeleteRoute(route.ID)}
-                                            className="text-(--error-light) hover:text-(--error) transition-colors p-1"
-                                            title="Delete route"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={() => setDeleteRouteModal(route)}
+                                        className="text-(--error-light) hover:text-(--error) transition-colors p-1"
+                                        title="Delete route"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -269,7 +308,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                                     </select>
                                     <button
                                         onClick={handleCreateRoute}
-                                        disabled={routeCreating || !hasRouteInput}
+                                        disabled={routeCreating || !hasRouteInput || availability.status === 'taken' || availability.status === 'invalid'}
                                         className="btn btn-primary text-xs px-3 disabled:opacity-50"
                                     >
                                         <Plus size={13} />
@@ -278,10 +317,74 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                                 </div>
                             }
                         />
+
+                        {/* Live availability hint */}
+                        {hasRouteInput && (
+                            <div className="text-[11px] font-mono min-h-3.5">
+                                {availability.status === 'checking' && (
+                                    <span className="text-(--base-06)">Checking…</span>
+                                )}
+                                {availability.status === 'available' && (
+                                    <span className="text-(--success-light) inline-flex items-center gap-1">
+                                        <Check size={11} />
+                                        {availability.domain || 'Domain'} is available
+                                    </span>
+                                )}
+                                {availability.status === 'taken' && (
+                                    <span className="text-(--error-light) inline-flex items-center gap-1">
+                                        <X size={11} />
+                                        {availability.domain || 'Domain'} is already in use
+                                    </span>
+                                )}
+                                {availability.status === 'invalid' && (
+                                    <span className="text-(--warning-light) inline-flex items-center gap-1">
+                                        <AlertTriangle size={11} />
+                                        {availability.reason}
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
                 )}
             </div>
+
+            {/* Delete-route confirm modal */}
+            {deleteRouteModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                    <div className="card w-full max-w-sm p-6 flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle size={16} className="text-(--error)" />
+                                <h2 className="font-display text-base font-bold text-(--base-09)">Delete Route</h2>
+                            </div>
+                            <button onClick={() => setDeleteRouteModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">
+                                <X size={15} />
+                            </button>
+                        </div>
+                        <p className="text-sm text-(--base-07)">
+                            Delete route <span className="text-(--base-09) font-medium">{deleteRouteModal.domain}</span>?
+                            This will immediately stop routing traffic through this entry.
+                        </p>
+                        <div className="flex justify-end gap-2">
+                            <button
+                                onClick={() => setDeleteRouteModal(null)}
+                                disabled={deletingRoute}
+                                className="px-4 py-2 rounded-md text-sm text-(--base-07) hover:text-(--base-09) transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmDeleteRoute}
+                                disabled={deletingRoute}
+                                className="px-4 py-2 rounded-md text-sm font-semibold bg-(--error) text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                            >
+                                {deletingRoute ? 'Deleting...' : 'Delete'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

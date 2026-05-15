@@ -102,11 +102,12 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
 
     const handleDeleteRoute = async () => {
         if (!deleteModal) return;
+        const target = deleteModal.domain;
         setDeleting(true);
         try {
-            const res = await deleteGatewayRoute(deleteModal.ID);
+            const res = await deleteGatewayRoute(target);
             if (res.success !== false) {
-                setRoutes(prev => prev.filter(r => r.ID !== deleteModal.ID));
+                setRoutes(prev => prev.filter(r => r.domain !== target));
                 showToast('Route deleted');
                 setDeleteModal(null);
             } else {
@@ -239,7 +240,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                             </thead>
                             <tbody>
                                 {filteredRoutes.map(route => (
-                                    <tr key={route.ID} className="border-b border-(--base-03)/50 hover:bg-(--base-03)/30 transition-colors group">
+                                    <tr key={route.domain} className="border-b border-(--base-03)/50 hover:bg-(--base-03)/30 transition-colors group">
                                         <td className="py-2.5 pr-4">
                                             <div className="flex items-center gap-2">
                                                 <span className="text-(--base-09) font-medium">{route.domain}</span>

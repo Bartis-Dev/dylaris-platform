@@ -332,7 +332,9 @@ export interface GatewayEdge {
 }
 
 export interface GatewayRoute {
-    ID: number;
+    // domain is the unique identity — routes live in Redis as
+    // route:{domain} and have no integer ID. Use it as the React key
+    // and as the URL segment when deleting.
     domain: string;
     target_ip: string;
     target_port: number;
@@ -406,7 +408,7 @@ export interface GatewayRouteOptions {
 export const getGatewayLinks = () => fetchAPI('/gateway/links');
 export const getGatewayEdges = () => fetchAPI('/gateway/edges');
 export const getGatewayRoutes = () => fetchAPI('/gateway/routes');
-export const deleteGatewayRoute = (id: number) => fetchAPI(`/gateway/routes/${id}`, { method: 'DELETE' });
+export const deleteGatewayRoute = (domain: string) => fetchAPI(`/gateway/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
 // Bulk route operations (admin)
 export interface RouteSuffix {
@@ -493,8 +495,33 @@ export interface CreateRouteRequest {
 }
 export const createServerRoute = (serverId: number, data: CreateRouteRequest) =>
     fetchAPI(`/servers/${serverId}/routes`, { method: 'POST', body: JSON.stringify(data) });
-export const deleteServerRoute = (serverId: number, routeId: number) => fetchAPI(`/servers/${serverId}/routes/${routeId}`, { method: 'DELETE' });
+// Backend identifies routes by full domain (URL: /servers/{id}/routes/{domain:.+}).
+export const deleteServerRoute = (serverId: number, domain: string) =>
+    fetchAPI(`/servers/${serverId}/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchAPI('/gateway/route-options');
+
+// Live availability check for the route-create form. Accepts the same
+// three input shapes the create endpoint does and answers `{available}`
+// without leaking who owns a taken domain.
+export interface DomainCheckRequest {
+    domain?: string;
+    subdomain?: string;
+    hosterDomain?: string;
+    customDomain?: string;
+}
+export interface DomainCheckResponse {
+    available: boolean;
+    domain?: string;
+    reason?: string;
+}
+export const checkDomainAvailability = (req: DomainCheckRequest): Promise<DomainCheckResponse> => {
+    const params = new URLSearchParams();
+    if (req.domain) params.set('domain', req.domain);
+    if (req.subdomain) params.set('subdomain', req.subdomain);
+    if (req.hosterDomain) params.set('hosterDomain', req.hosterDomain);
+    if (req.customDomain) params.set('customDomain', req.customDomain);
+    return fetchAPI(`/gateway/check-domain?${params.toString()}`);
+};
 
 // --- BEAM SETTINGS ---
 export interface BeamSettings {
