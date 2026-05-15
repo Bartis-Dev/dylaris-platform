@@ -54,14 +54,44 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
 
     const hasRouteInput = !!(newRoute.subdomain || newRoute.customDomain || newRoute.domain);
 
+    // Backend queues route creation to the Hub asynchronously, so a single
+    // refetch right after the POST usually sees stale data. We optimistically
+    // insert a placeholder using the resolved domain from the create response,
+    // then poll loadRoutes a few times until the real entry appears.
     const handleCreateRoute = async () => {
         setRouteError('');
         if (!hasRouteInput) { setRouteError('Domain is required'); return; }
         setRouteCreating(true);
         try {
             const res = await createServerRoute(server.id, newRoute);
-            if (res.error) { setRouteError(res.error); }
-            else { setNewRoute({ targetPort: 25565 }); loadRoutes(); }
+            if (res.error) {
+                setRouteError(res.error);
+                setRouteCreating(false);
+                return;
+            }
+            const resolvedDomain: string | undefined = res.domain || newRoute.domain || newRoute.customDomain
+                || (newRoute.subdomain && newRoute.hosterDomain ? `${newRoute.subdomain}.${newRoute.hosterDomain}` : undefined);
+            if (resolvedDomain) {
+                const tempId = -Date.now();
+                setRoutes(prev => [
+                    ...prev,
+                    { ID: tempId, domain: resolvedDomain, target_ip: '', target_port: newRoute.targetPort } as GatewayRoute,
+                ]);
+            }
+            setNewRoute({ targetPort: 25565 });
+            // Poll for the real route to replace our placeholder. Hub typically
+            // commits within a few hundred ms; give up after ~6s.
+            for (let i = 0; i < 8; i++) {
+                await new Promise(r => setTimeout(r, i === 0 ? 400 : 800));
+                try {
+                    const list = await getServerRoutes(server.id);
+                    const real: GatewayRoute[] = Array.isArray(list) ? list : (list.routes ?? []);
+                    if (!resolvedDomain || real.some(r => r.domain === resolvedDomain)) {
+                        setRoutes(real);
+                        break;
+                    }
+                } catch { /* keep polling */ }
+            }
         } catch { setRouteError('Failed to create route'); }
         setRouteCreating(false);
     };
