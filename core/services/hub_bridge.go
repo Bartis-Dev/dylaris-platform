@@ -20,14 +20,37 @@ const hubQueueKey = "dylaris:hub:queue"
 // --- Redis-side types for reading gateway state ---
 
 // GatewayEdgeInfo represents an Edge as stored in Redis (edge:registry:{id}).
+// Stats are not part of the registry payload — they're published separately to
+// the dylaris:edge:{id}:stats stream by the Edge service every few seconds and
+// merged in by GetEdgesFromRedis.
 type GatewayEdgeInfo struct {
-	EdgeID      string `json:"edge_id"`
-	Name        string `json:"name"`
-	IP          string `json:"ip"`
-	PrivateIP   string `json:"private_ip"`
-	ServicePort string `json:"service_port"`
-	SplicePort  string `json:"splice_port"`
-	Status      string `json:"status"`
+	EdgeID      string         `json:"edge_id"`
+	Name        string         `json:"name"`
+	IP          string         `json:"ip"`
+	PrivateIP   string         `json:"private_ip"`
+	ServicePort string         `json:"service_port"`
+	SplicePort  string         `json:"splice_port"`
+	Status      string         `json:"status"`
+	Stats       *EdgeLiveStats `json:"stats,omitempty"`
+}
+
+// EdgeLiveStats mirrors the EdgeMetrics payload published by the Edge service
+// to dylaris:edge:{id}:stats. Field names match the JSON the Edge produces.
+type EdgeLiveStats struct {
+	CPU                 float64 `json:"cpu"`
+	RAMUsed             uint64  `json:"ram_used"`
+	RAMTotal            uint64  `json:"ram_total"`
+	RAMPercent          float64 `json:"ram_pct"`
+	RxSpeed             uint64  `json:"rx_speed"`
+	TxSpeed             uint64  `json:"tx_speed"`
+	ActiveTunnels       int     `json:"active_tunnels"`
+	ActiveTokens        int     `json:"active_tokens"`
+	ActiveMCStreams     int64   `json:"active_mc_streams"`
+	XDPEnabled          bool    `json:"xdp_enabled"`
+	XDPPassed           uint64  `json:"xdp_passed"`
+	XDPDroppedBlocked   uint64  `json:"xdp_dropped_blocked"`
+	XDPDroppedRateLimit uint64  `json:"xdp_dropped_ratelimit"`
+	XDPBlockedIPs       int     `json:"xdp_blocked_ips"`
 }
 
 // GatewayLinkStatus represents a link's online state as readable from Redis.
@@ -179,7 +202,8 @@ func DeriveLinkToken(nodeID, clusterSecret string) string {
 
 // --- Redis read helpers ---
 
-// GetEdgesFromRedis reads all edges from Redis (edge:registry:{id} keys).
+// GetEdgesFromRedis reads all edges from Redis (edge:registry:{id} keys) and
+// merges the latest stats snapshot from each edge's stats stream.
 func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo {
 	var edges []GatewayEdgeInfo
 	var cursor uint64
@@ -198,6 +222,7 @@ func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo
 				if e.Status == "" {
 					e.Status = "online"
 				}
+				e.Stats = readLatestEdgeStats(ctx, rdb, e.EdgeID)
 				edges = append(edges, e)
 			}
 		}
@@ -207,6 +232,29 @@ func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo
 		}
 	}
 	return edges
+}
+
+// readLatestEdgeStats fetches the newest entry from the per-edge stats stream
+// written by the Edge service's metrics collector. Returns nil if the stream
+// is empty, missing, or unreadable — never blocks the overview response.
+func readLatestEdgeStats(ctx context.Context, rdb *redis.Client, edgeID string) *EdgeLiveStats {
+	if edgeID == "" {
+		return nil
+	}
+	streamKey := "dylaris:edge:" + edgeID + ":stats"
+	msgs, err := rdb.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok || raw == "" {
+		return nil
+	}
+	var s EdgeLiveStats
+	if json.Unmarshal([]byte(raw), &s) != nil {
+		return nil
+	}
+	return &s
 }
 
 // GetLinksFromRedis reads all known link tokens and their online status from Redis.
