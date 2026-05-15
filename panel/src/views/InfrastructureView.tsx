@@ -7,6 +7,7 @@ import {
   Users, Link2, HardDrive
 } from 'lucide-react';
 import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats } from '@/lib/api';
+import RoutesPanel from './infrastructure/RoutesPanel';
 
 interface StorageInfo {
   path: string;
@@ -61,7 +62,7 @@ interface InfrastructureData {
   totalTunnels: number;
 }
 
-type Tab = 'nodes' | 'edges';
+type Tab = 'nodes' | 'edges' | 'routes';
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -322,13 +323,7 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
             <div className="flex items-center gap-1.5">
               <Users size={11} className="text-(--accent-light)" />
               <span className="text-[11px] font-mono text-(--base-07)">
-                <span className="text-(--base-09) font-semibold tabular-nums">{stats.active_mc_streams}</span> players
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Activity size={11} className="text-(--base-06)" />
-              <span className="text-[11px] font-mono text-(--base-07)">
-                <span className="text-(--base-09) font-semibold tabular-nums">{stats.active_tunnels}</span> tunnels
+                <span className="text-(--base-09) font-semibold tabular-nums">{stats.active_mc_streams}</span> players connected
               </span>
             </div>
           </div>
@@ -466,11 +461,14 @@ export default function InfrastructureView({
   const onlineNodes = nodes.filter(n => n.status === 'online').length;
   const totalPlayers = edges.reduce((sum, e) => sum + (e.stats?.active_mc_streams ?? 0), 0);
 
-  const gatewayDeployed = edges.length > 0 || links.length > 0;
+  // Edges/Routes tabs only render when the feature is enabled AND something
+  // is actually deployed — keeps the UI honest about empty backends.
+  const gatewayDeployed = gatewayEnabled && (edges.length > 0 || links.length > 0);
+  const onlineEdgesList = edges.filter(e => e.status === 'online');
 
-  // If edges tab is active but gateway is no longer deployed, reset to nodes
+  // If a gateway-only tab is active but gateway is no longer available, fall back to nodes
   useEffect(() => {
-    if (tab === 'edges' && !gatewayDeployed) setTab('nodes');
+    if ((tab === 'edges' || tab === 'routes') && !gatewayDeployed) setTab('nodes');
   }, [tab, gatewayDeployed]);
 
   if (loading) {
@@ -483,7 +481,10 @@ export default function InfrastructureView({
 
   const TABS: { id: Tab; label: string; count: number }[] = [
     { id: 'nodes', label: 'Nodes', count: nodes.length },
-    ...(gatewayDeployed ? [{ id: 'edges' as Tab, label: 'Edges', count: edges.length }] : []),
+    ...(gatewayDeployed ? [
+      { id: 'edges' as Tab, label: 'Edges', count: edges.length },
+      { id: 'routes' as Tab, label: 'Routes', count: routeCount },
+    ] : []),
   ];
 
   return (
@@ -508,11 +509,12 @@ export default function InfrastructureView({
       </div>
 
       {/* Summary Row */}
-      <div className={`grid gap-3 ${gatewayDeployed ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2'}`}>
+      <div className={`grid gap-3 ${gatewayDeployed ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-2'}`}>
         <StatCard label="Nodes" value={nodes.length} icon={<Network size={16} />} />
         <StatCard label="Online" value={onlineNodes} sub={`/ ${nodes.length}`} icon={<Activity size={16} />} />
         {gatewayDeployed && <StatCard label="Edges" value={edges.length} icon={<Server size={16} />} />}
         {gatewayDeployed && <StatCard label="Routes" value={routeCount} icon={<Globe size={16} />} />}
+        {gatewayDeployed && <StatCard label="Players Connected" value={totalPlayers} icon={<Users size={16} />} />}
       </div>
 
       {/* Tabs */}
@@ -567,6 +569,11 @@ export default function InfrastructureView({
             ))}
           </div>
         )
+      )}
+
+      {/* Tab: Routes (migrated from the retired standalone Gateway view) */}
+      {tab === 'routes' && gatewayDeployed && (
+        <RoutesPanel onlineEdges={onlineEdgesList} />
       )}
 
       {/* Force-Delete Modal */}

@@ -32,11 +32,10 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 	// === AUTO-SEED LOGIK ===
 	if len(modules) == 0 {
 		defaultModules := []models.Module{
-			{Name: "Servers", Type: "internal", Icon: "server", URL: "/servers", IsEnabled: true, IsSystem: true, Position: 1},
-			{Name: "Admin", Type: "internal", Icon: "shield-check", URL: "/admin", IsEnabled: true, IsSystem: true, Position: 2},
-			{Name: "Infrastructure", Type: "internal", Icon: "cpu", URL: "/infrastructure", IsEnabled: true, IsSystem: true, Position: 3},
-			{Name: "Gateway", Type: "internal", Icon: "globe", URL: "/gateway", IsEnabled: true, IsSystem: false, Position: 4},
-			{Name: "Library", Type: "internal", Icon: "folder-open", URL: "/library", IsEnabled: false, IsSystem: false, Position: 5},
+			{Name: "Servers", Type: "internal", Icon: "server", URL: "/servers", IsEnabled: true, IsSystem: true, Position: 1, AccessRole: "all"},
+			{Name: "Admin", Type: "internal", Icon: "shield-check", URL: "/admin", IsEnabled: true, IsSystem: true, Position: 2, AccessRole: "admin"},
+			{Name: "Infrastructure", Type: "internal", Icon: "cpu", URL: "/infrastructure", IsEnabled: true, IsSystem: true, Position: 3, AccessRole: "admin"},
+			{Name: "Library", Type: "internal", Icon: "folder-open", URL: "/library", IsEnabled: false, IsSystem: false, Position: 4, AccessRole: "admin"},
 		}
 
 		for _, m := range defaultModules {
@@ -46,6 +45,20 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 
 		// Reload list after insert
 		modules, _ = h.state.Store.ListModules()
+	}
+
+	// Gateway is no longer a standalone module — its UI was merged into the
+	// Infrastructure module's Routes tab. Filter any legacy "Gateway" row out
+	// of the response so the panel never shows the old nav entry.
+	if len(modules) > 0 {
+		filtered := modules[:0]
+		for _, m := range modules {
+			if m.Name == "Gateway" {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		modules = filtered
 	}
 
 	if modules == nil {
@@ -106,6 +119,10 @@ func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *htt
 		sendJSONError(w, "Servers module is always visible to all users", 400)
 		return
 	}
+	if mod.Name == "Admin" {
+		sendJSONError(w, "Admin module is always admin-only", 400)
+		return
+	}
 	if err := h.state.Store.SetModuleAccessRole(id, req.Role); err != nil {
 		sendJSONError(w, "Update failed", 500)
 		return
@@ -148,11 +165,12 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 // builtInModules cannot be deleted (only toggled if !is_system).
 // They're seeded by Core and re-created on every start anyway, so deleting
 // them just causes confusion + the next restart re-creates them.
+// Note: "Gateway" is intentionally absent — it was retired as a standalone
+// module and its content moved into Infrastructure's Routes tab.
 var builtInModules = map[string]bool{
 	"Servers":        true,
 	"Admin":          true,
 	"Infrastructure": true,
-	"Gateway":        true,
 	"Library":        true,
 }
 

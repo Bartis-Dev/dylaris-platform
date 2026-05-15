@@ -41,6 +41,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const [modules, setModules] = useState<AppModule[]>([]);
     const [servers, setServers] = useState<Server[]>([]);
     const [proxiesEnabled, setProxiesEnabled] = useState(true);
+    const [gatewayFeatureEnabled, setGatewayFeatureEnabled] = useState(true);
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>('sftp');
     const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
@@ -68,7 +69,10 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             getRoutingMode(),
             getBeamSettings(),
         ]);
-        if (features.success && features.settings) setProxiesEnabled(features.settings.proxyEnabled);
+        if (features.success && features.settings) {
+            setProxiesEnabled(features.settings.proxyEnabled);
+            setGatewayFeatureEnabled(features.settings.gatewayEnabled ?? true);
+        }
         if (routing.success) {
             setRoutingMode(routing.mode || 'ip_port');
             setFileAccessMode(routing.fileMode || 'sftp');
@@ -95,7 +99,10 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         return () => clearInterval(interval);
     }, [ready, refreshServers]);
 
-    const gatewayEnabled = modules.some(m => m.name === 'Gateway' && m.isEnabled);
+    // Gateway is no longer a standalone module — its on/off lives in the
+    // Features tab as a dedicated `gatewayEnabled` flag (separate from the
+    // MC-proxy `proxyEnabled` flag).
+    const gatewayEnabled = gatewayFeatureEnabled;
     const libraryEnabled = modules.some(m => m.name === 'Library' && m.isEnabled);
 
     const value: AppData = {

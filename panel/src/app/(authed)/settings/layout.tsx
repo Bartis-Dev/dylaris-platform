@@ -13,7 +13,11 @@ const ALL_TABS = [
     { slug: 'filemanager', label: 'File Manager', always: true },
     { slug: 'servers', label: 'Servers', always: true },
     { slug: 'features', label: 'Features', always: true },
-    { slug: 'gateway', label: 'Gateway', always: false, module: 'Gateway' },
+    // Gateway config (hoster domains, route limits, XDP, etc.) stays
+    // available as a settings tab even though the standalone Gateway module
+    // was retired — admins still need to configure the feature before
+    // toggling it on from the Features tab.
+    { slug: 'gateway', label: 'Gateway', always: true },
 ] as const;
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

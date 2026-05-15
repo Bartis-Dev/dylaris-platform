@@ -223,7 +223,8 @@ func (h *SettingsHandler) GetUserLimits(w http.ResponseWriter, r *http.Request) 
 // --- Feature Settings ---
 
 type FeatureSettings struct {
-	ProxyEnabled bool `json:"proxyEnabled"`
+	ProxyEnabled   bool `json:"proxyEnabled"`
+	GatewayEnabled bool `json:"gatewayEnabled"`
 }
 
 // GetFeatureSettings GET /api/settings/features
@@ -252,8 +253,16 @@ func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Req
 	if req.ProxyEnabled {
 		proxyVal = "true"
 	}
+	gatewayVal := "false"
+	if req.GatewayEnabled {
+		gatewayVal = "true"
+	}
 
 	if err := h.state.Store.SetSetting("feature_proxy_enabled", proxyVal); err != nil {
+		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		return
+	}
+	if err := h.state.Store.SetSetting("feature_gateway_enabled", gatewayVal); err != nil {
 		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
@@ -264,8 +273,10 @@ func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Req
 // LoadFeatureSettings reads feature flags from the database. Available to all authenticated users.
 func (h *SettingsHandler) LoadFeatureSettings() FeatureSettings {
 	proxyVal, _ := h.state.Store.GetSetting("feature_proxy_enabled")
+	gatewayVal, _ := h.state.Store.GetSetting("feature_gateway_enabled")
 	return FeatureSettings{
-		ProxyEnabled: proxyVal != "false", // default true
+		ProxyEnabled:   proxyVal != "false",   // default true
+		GatewayEnabled: gatewayVal != "false", // default true
 	}
 }
 

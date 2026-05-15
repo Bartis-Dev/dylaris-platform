@@ -11,13 +11,15 @@ interface NavbarProps {
   children?: React.ReactNode;
 }
 
-// Map a DB-loaded module to its URL route
+// Map a DB-loaded module to its URL route.
+// Gateway was retired as a standalone module — its content moved into the
+// Infrastructure module's Routes tab and any legacy DB row is filtered out
+// server-side.
 export function moduleHref(module: AppModule): string {
   switch (module.name) {
     case 'Servers': return '/servers';
     case 'Admin': return '/admin';
     case 'Infrastructure': return '/infrastructure';
-    case 'Gateway': return '/gateway';
     case 'Library': return '/library';
     default: return `/modules/${module.id}`;
   }

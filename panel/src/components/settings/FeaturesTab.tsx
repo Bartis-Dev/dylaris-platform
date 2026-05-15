@@ -2,10 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Network } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Network, Globe } from 'lucide-react';
 
 export default function FeaturesTab() {
-    const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true });
+    const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: true });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -61,6 +61,29 @@ export default function FeaturesTab() {
                         className={`toggle-track ${settings.proxyEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
                     >
                         <span className={`toggle-knob ${settings.proxyEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+            </div>
+
+            <div className="card p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Globe size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">Gateway</div>
+                            <div className="text-xs text-(--base-06)">Edge-based routing (Edges, Links, custom domains). Disabling hides the Edges and Routes sub-tabs in Infrastructure and blocks new route creation.</div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={settings.gatewayEnabled}
+                        onClick={() => setSettings(prev => ({ ...prev, gatewayEnabled: !prev.gatewayEnabled }))}
+                        className={`toggle-track ${settings.gatewayEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
+                    >
+                        <span className={`toggle-knob ${settings.gatewayEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
             </div>

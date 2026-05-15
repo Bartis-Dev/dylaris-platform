@@ -26,8 +26,9 @@ interface ModulesTabProps {
 }
 
 // Built-in modules cannot be deleted (kept in sync with Core's seed list +
-// builtInModules check in handlers/modules.go).
-const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Gateway', 'Library']);
+// builtInModules check in handlers/modules.go). Gateway was retired and its
+// content moved into Infrastructure's Routes tab.
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library']);
 
 interface SortableModuleCardProps {
     module: AppModule;
@@ -74,10 +75,14 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                 </div>
             </div>
             <div className="flex items-center gap-2">
-                {/* Role toggle — Servers is hard-locked to "all" */}
+                {/* Role toggle — Servers is hard-locked to "all", Admin to "admin" */}
                 {m.name === 'Servers' ? (
                     <div className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) px-2 py-1 rounded-md bg-(--base-03)" title="Always visible to all users">
                         <Users size={11} /> All
+                    </div>
+                ) : m.name === 'Admin' ? (
+                    <div className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) px-2 py-1 rounded-md bg-(--base-03)" title="Always admin-only">
+                        <ShieldCheck size={11} /> Admin
                     </div>
                 ) : (
                     <div className="flex bg-(--base-03) p-0.5 rounded-md" title="Who can see this module">
@@ -98,8 +103,8 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                     </div>
                 )}
 
-                {m.name === 'Servers' ? (
-                    <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title="Servers module cannot be disabled">
+                {m.name === 'Servers' || m.name === 'Admin' ? (
+                    <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title={`${m.name} module cannot be disabled`}>
                         <span className="toggle-knob toggle-knob-on" />
                     </div>
                 ) : (

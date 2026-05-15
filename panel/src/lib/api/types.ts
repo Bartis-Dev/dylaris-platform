@@ -280,6 +280,11 @@ export const saveServerSettings = (data: ServerLimitSettings) => fetchAPI('/sett
 // --- FEATURE SETTINGS ---
 export interface FeatureSettings {
     proxyEnabled: boolean;
+    // Master switch for the Gateway routing feature (edges, links, routes).
+    // When false the Edges + Routes sub-tabs in Infrastructure are hidden and
+    // route creation is blocked. Lives here instead of as a module because
+    // the standalone Gateway nav was retired.
+    gatewayEnabled: boolean;
 }
 export const getFeatureSettings = () => fetchAPI('/settings/features');
 export const saveFeatureSettings = (data: FeatureSettings) => fetchAPI('/settings/features', { method: 'POST', body: JSON.stringify(data) });
