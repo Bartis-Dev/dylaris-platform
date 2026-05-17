@@ -130,14 +130,14 @@ export default function LibraryView() {
             {/* Header */}
             <div className="flex items-center justify-between mb-4 shrink-0">
                 <div>
-                    <h2 className="text-xl font-display font-bold text-(--base-09)">Server Library</h2>
+                    <h2 className="h-page">Server Library</h2>
                     <p className="text-sm text-(--base-07)">Manage shared files available for server installation.</p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => setShowCreateDir(true)} className="btn btn-secondary px-3 py-1.5 text-sm">
+                    <button onClick={() => setShowCreateDir(true)} className="btn btn-secondary btn-sm">
                         <FolderPlus size={14} /> New Folder
                     </button>
-                    <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary px-3 py-1.5 text-sm">
+                    <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary btn-sm">
                         <Upload size={14} /> Upload
                     </button>
                     <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleUpload} />
@@ -265,8 +265,8 @@ export default function LibraryView() {
                             />
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setShowCreateDir(false)} className="btn btn-secondary px-4 py-1.5 text-sm">Cancel</button>
-                            <button onClick={handleCreateDir} className="btn btn-primary px-4 py-1.5 text-sm">Create</button>
+                            <button onClick={() => setShowCreateDir(false)} className="btn btn-secondary">Cancel</button>
+                            <button onClick={handleCreateDir} className="btn btn-primary">Create</button>
                         </div>
                     </div>
                 </div>
@@ -285,8 +285,8 @@ export default function LibraryView() {
                             </p>
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setDeleteTarget(null)} className="btn btn-secondary px-4 py-1.5 text-sm">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger px-4 py-1.5 text-sm">Delete</button>
+                            <button onClick={() => setDeleteTarget(null)} className="btn btn-secondary">Cancel</button>
+                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
                         </div>
                     </div>
                 </div>

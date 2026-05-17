@@ -164,10 +164,10 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                 </div>
                 {hasSubServers && (
                     <div className="flex gap-2">
-                        <button onClick={onEdit} className="btn btn-secondary px-3 py-1.5 text-sm">
+                        <button onClick={onEdit} className="btn btn-secondary btn-sm">
                             <Pencil size={14} /> Edit
                         </button>
-                        <button onClick={onAddNew} className="btn btn-primary px-3 py-1.5 text-sm">
+                        <button onClick={onAddNew} className="btn btn-primary btn-sm">
                             <Plus size={14} /> Add Server
                         </button>
                     </div>
@@ -176,7 +176,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
 
             {/* Warning banner */}
             {activeServerMissing && (
-                <div className="mx-6 mt-4 p-4 bg-(--warning-ghost) border border-(--warning-border) rounded-xl flex items-start gap-3">
+                <div className="alert alert-warning gap-3 rounded-xl mx-6 mt-4">
                     <AlertTriangle size={20} className="text-(--warning-light) shrink-0" />
                     <div className="text-sm">
                         <p className="font-medium text-(--warning-light)">Server folder not found</p>
@@ -269,7 +269,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                                         <Globe size={12} className="text-(--accent-light) shrink-0" />
                                         <div>
                                             <div className="text-sm font-medium text-(--base-09)">{route.domain}</div>
-                                            <div className="font-mono text-[10px] text-(--base-06) uppercase tracking-[0.08em]">
+                                            <div className="mono-label">
                                                 Port {route.target_port}
                                                 {route.link_name && <> &middot; Link: {route.link_name}</>}
                                             </div>
@@ -290,7 +290,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                     )}
 
                     <div className="bg-(--base-03) rounded-md border border-(--base-04) p-3 space-y-2">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Add Route</div>
+                        <div className="mono-label">Add Route</div>
                         <RouteDomainPicker
                             value={newRoute}
                             onChange={next => { setNewRoute(next); setRouteError(''); }}
@@ -309,7 +309,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                                     <button
                                         onClick={handleCreateRoute}
                                         disabled={routeCreating || !hasRouteInput || availability.status === 'taken' || availability.status === 'invalid'}
-                                        className="btn btn-primary text-xs px-3 disabled:opacity-50"
+                                        className="btn btn-primary btn-sm disabled:opacity-40"
                                     >
                                         <Plus size={13} />
                                         Add

@@ -128,7 +128,7 @@ export function DiskAnalysisPanel({
                 <div className="p-4 space-y-4">
                     {data.orphaned.length > 0 && (
                         <div>
-                            <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--warning) mb-2 flex items-center gap-1.5">
+                            <p className="mono-label text-(--warning) mb-2 flex items-center gap-1.5">
                                 <AlertTriangle size={10} />
                                 Orphaned (disk only — no DB record)
                             </p>
@@ -151,7 +151,7 @@ export function DiskAnalysisPanel({
                     )}
 
                     {data.nodeOnline === false && (
-                        <div className="flex items-start gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2.5 text-xs text-(--warning)">
+                        <div className="alert alert-warning text-(--warning) text-xs">
                             <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                             <span>Node ist offline / kein Heartbeat — DB-Leichen können nicht zuverlässig erkannt werden.</span>
                         </div>
@@ -159,7 +159,7 @@ export function DiskAnalysisPanel({
 
                     {data.nodeOnline !== false && data.missing.length > 0 && (
                         <div>
-                            <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) mb-2">
+                            <p className="mono-label mb-2">
                                 Missing from disk (DB-Leichen)
                             </p>
                             <div className="space-y-1">
@@ -206,7 +206,7 @@ export function DiskAnalysisPanel({
                         </div>
                         <div className="modal-body space-y-3">
                             {deleteError && (
-                                <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md text-sm">
+                                <div className="alert alert-error">
                                     {deleteError}
                                 </div>
                             )}
@@ -239,7 +239,7 @@ export function DiskAnalysisPanel({
                             <button
                                 type="button"
                                 onClick={() => setPendingDelete(null)}
-                                className="btn btn-secondary px-4 py-1.5 text-sm"
+                                className="btn btn-secondary"
                                 disabled={!!deleting || !!deletingDbId}
                             >
                                 Cancel
@@ -248,7 +248,7 @@ export function DiskAnalysisPanel({
                                 type="button"
                                 onClick={confirmDelete}
                                 disabled={!!deleting || !!deletingDbId}
-                                className="btn btn-danger px-4 py-1.5 text-sm disabled:opacity-50 inline-flex items-center gap-1.5"
+                                className="btn btn-danger disabled:opacity-40 inline-flex items-center gap-1.5"
                             >
                                 {deleting || deletingDbId ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                                 {pendingDelete.kind === 'orphan' ? 'Delete folder' : 'Remove entry'}

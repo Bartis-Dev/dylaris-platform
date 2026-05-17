@@ -103,7 +103,7 @@ function ProgressBar({ value, max, color = 'accent' }: { value: number; max: num
 function StatCard({ label, value, sub, icon }: { label: string; value: string | number; sub?: string; icon: React.ReactNode }) {
   return (
     <div className="card p-4 flex flex-col gap-1.5">
-      <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">{label}</span>
+      <span className="mono-label">{label}</span>
       <div className="flex items-baseline gap-1.5">
         <div className="text-(--accent-light) flex items-center" style={{ marginBottom: 1 }}>{icon}</div>
         <span className="font-display text-2xl font-bold text-(--base-09) tabular-nums leading-none">{value}</span>
@@ -145,7 +145,7 @@ function NodeCard({
           <p className="text-sm font-semibold text-(--base-09) truncate">{displayName}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className={`text-[10px] font-mono uppercase tracking-[0.08em] ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
+          <span className={`mono-label ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
             {node.status}
           </span>
           {!isOnline && (
@@ -210,7 +210,7 @@ function NodeCard({
       {hasStats && node.cpuUsage !== undefined && (
         <div>
           <div className="flex items-center justify-between mb-1">
-            <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+            <span className="flex items-center gap-1.5 mono-label">
               <Cpu size={10} /> CPU
             </span>
             <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{node.cpuUsage.toFixed(1)}%</span>
@@ -223,7 +223,7 @@ function NodeCard({
       {hasStats && node.ramFree !== undefined && node.ramTotal !== undefined && (
         <div>
           <div className="flex items-center justify-between mb-1">
-            <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+            <span className="flex items-center gap-1.5 mono-label">
               <MemoryStick size={10} /> RAM
             </span>
             <span className="text-[10px] font-mono text-(--base-07) tabular-nums">
@@ -241,7 +241,7 @@ function NodeCard({
 
       {/* Storage */}
       <div className="border-t border-(--base-03) pt-2 space-y-1.5">
-        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+        <div className="flex items-center gap-1.5 mono-label">
           <HardDrive size={10} />
           Storage
         </div>
@@ -292,7 +292,7 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
             <p className="text-[10px] font-mono text-(--base-05) truncate">{edge.ip}:{edge.service_port}</p>
           </div>
         </div>
-        <span className={`text-[10px] font-mono uppercase tracking-[0.08em] shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
+        <span className={`mono-label shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
           {edge.status}
         </span>
       </div>
@@ -301,7 +301,7 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
         <div className="flex flex-col gap-2.5 pt-1 border-t border-(--base-03)">
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+              <span className="flex items-center gap-1.5 mono-label">
                 <Cpu size={10} /> CPU
               </span>
               <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{stats.cpu.toFixed(1)}%</span>
@@ -310,7 +310,7 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+              <span className="flex items-center gap-1.5 mono-label">
                 <MemoryStick size={10} /> RAM
               </span>
               <span className="text-[10px] font-mono text-(--base-07) tabular-nums">
@@ -347,7 +347,7 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
           </div>
           {stats.xdp_enabled && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--accent)/10 text-[10px] font-mono uppercase tracking-[0.08em] text-(--accent-light)">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--accent)/10 mono-label text-(--accent-light)">
                 <Shield size={9} /> XDP
               </span>
               <span className="text-[10px] font-mono text-(--base-06) tabular-nums">
@@ -496,12 +496,12 @@ export default function InfrastructureView({
           <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
             <Server size={18} className="text-(--accent-light)" />
           </div>
-          <h1 className="font-display text-xl font-bold text-(--base-09)">Infrastructure</h1>
+          <h1 className="h-page">Infrastructure</h1>
         </div>
         <button
           onClick={() => fetchData(true)}
           disabled={refreshing}
-          className="btn px-3 py-1.5 rounded-md bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors flex items-center gap-1.5 text-sm"
+          className="btn btn-secondary btn-sm"
         >
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
           Refresh
@@ -583,7 +583,7 @@ export default function InfrastructureView({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={18} className="text-(--error)" />
-                <h2 className="font-display text-lg font-bold text-(--base-09)">Force Delete Node</h2>
+                <h2 className="h-section">Force Delete Node</h2>
               </div>
               <button onClick={() => setDeleteModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">
                 <X size={16} />
@@ -599,7 +599,7 @@ export default function InfrastructureView({
             </div>
             {deleteModal.servers.length > 0 && (
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-2">Servers on this node</p>
+                <p className="mono-label mb-2">Servers on this node</p>
                 <div className="rounded-md border border-(--base-03) divide-y divide-(--base-03) max-h-40 overflow-y-auto">
                   {deleteModal.servers.map(srv => (
                     <div key={srv.id} className="px-3 py-2 flex items-center justify-between">
@@ -614,7 +614,7 @@ export default function InfrastructureView({
               </div>
             )}
             <div>
-              <label className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) block mb-1.5">
+              <label className="mono-label block mb-1.5">
                 Type &quot;{deleteModal.node.name}&quot; to confirm
               </label>
               <input

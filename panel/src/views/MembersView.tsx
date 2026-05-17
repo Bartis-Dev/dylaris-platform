@@ -127,7 +127,7 @@ export default function MembersView({ server }: MembersViewProps) {
                     />
                     <button
                         onClick={handleInvite}
-                        className="btn btn-primary px-6 py-2.5 text-sm"
+                        className="btn btn-primary btn-lg"
                     >
                         Invite
                     </button>
@@ -171,13 +171,13 @@ export default function MembersView({ server }: MembersViewProps) {
                                         <div className="flex gap-2">
                                             <button
                                                 onClick={() => handleRemove(member.userId)}
-                                                className="btn btn-danger px-3 py-1 text-xs"
+                                                className="btn btn-danger btn-sm"
                                             >
                                                 Confirm
                                             </button>
                                             <button
                                                 onClick={() => setConfirmRemove(null)}
-                                                className="btn btn-secondary px-3 py-1 text-xs"
+                                                className="btn btn-secondary btn-sm"
                                             >
                                                 Cancel
                                             </button>
@@ -234,7 +234,7 @@ export default function MembersView({ server }: MembersViewProps) {
                                 <div className="flex items-center justify-between mb-3">
                                     <div>
                                         <span className="font-medium text-(--base-08)">{member.username}</span>
-                                        <span className="text-[10px] font-mono text-(--accent-light) ml-2 uppercase tracking-wider">inherited</span>
+                                        <span className="mono-label text-(--accent-light) ml-2">inherited</span>
                                     </div>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
@@ -279,13 +279,13 @@ export default function MembersView({ server }: MembersViewProps) {
                         <div className="modal-footer">
                             <button
                                 onClick={() => setConfirmMembersPerm(null)}
-                                className="btn btn-secondary px-4 py-2 text-sm"
+                                className="btn btn-secondary"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleConfirmMembersPerm}
-                                className="btn btn-primary px-4 py-2 text-sm"
+                                className="btn btn-primary"
                             >
                                 Confirm
                             </button>

@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { getLibrarySettings, saveLibrarySettings, testLibraryConnection, LibrarySettings } from '@/lib/api';
-import { RefreshCw, Cable, Save, CircleCheck, CircleAlert, HardDrive, Cloud } from 'lucide-react';
+import { Cable, Save, CircleCheck, CircleAlert, HardDrive, Cloud } from 'lucide-react';
+import LoadingState from '@/components/LoadingState';
 
 const STORAGE_TYPES = [
     { id: 'local', label: 'Local Path', description: 'Files stored on this server\'s filesystem or a mounted network share (NFS/SMB).', icon: HardDrive },
@@ -90,7 +91,7 @@ export default function LibraryTab() {
 
     const currentProvider = S3_PROVIDERS.find(p => p.id === selectedProvider) ?? S3_PROVIDERS[0];
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={30} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="max-w-2xl space-y-6">
@@ -236,7 +237,7 @@ export default function LibraryTab() {
                 <button
                     onClick={handleTest}
                     disabled={testing}
-                    className="btn btn-secondary px-4 py-2 text-sm disabled:opacity-50"
+                    className="btn btn-secondary disabled:opacity-40"
                 >
                     <Cable size={14} />
                     {testing ? 'Testing...' : 'Test Connection'}
@@ -244,7 +245,7 @@ export default function LibraryTab() {
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50"
+                    className="btn btn-primary disabled:opacity-40"
                 >
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}

@@ -150,7 +150,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
             {onlineEdges.length > 0 && (
                 <div className="card p-4 flex flex-col gap-2.5">
                     <div className="flex items-center gap-2">
-                        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">DNS Targets</span>
+                        <span className="mono-label">DNS Targets</span>
                         <span className="text-[11px] text-(--base-05)">— point your domains to one or more of these edge IPs</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -185,7 +185,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                         {routes.length > 0 && (
                             <button
                                 onClick={openBulkDelete}
-                                className="btn btn-secondary px-2.5 py-1 text-xs ml-2 inline-flex items-center gap-1.5"
+                                className="btn btn-secondary btn-sm ml-2 inline-flex items-center gap-1.5"
                                 title="Delete all routes that share a domain suffix"
                             >
                                 <Layers size={12} />
@@ -194,7 +194,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                         )}
                         <button
                             onClick={handleSync}
-                            className="btn btn-secondary px-2.5 py-1 text-xs ml-1 inline-flex items-center gap-1.5"
+                            className="btn btn-secondary btn-sm ml-1 inline-flex items-center gap-1.5"
                             title="Re-sync routes with the gateway"
                         >
                             <RefreshCw size={12} />
@@ -230,11 +230,11 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-(--base-02) z-10">
                                 <tr className="border-b border-(--base-03)">
-                                    <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4">Domain</th>
-                                    <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4">Target</th>
-                                    <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4 hidden md:table-cell">Link</th>
-                                    <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4 hidden lg:table-cell">Server</th>
-                                    <th className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) text-left pb-2 pr-4 hidden lg:table-cell">Owner</th>
+                                    <th className="mono-label text-left pb-2 pr-4">Domain</th>
+                                    <th className="mono-label text-left pb-2 pr-4">Target</th>
+                                    <th className="mono-label text-left pb-2 pr-4 hidden md:table-cell">Link</th>
+                                    <th className="mono-label text-left pb-2 pr-4 hidden lg:table-cell">Server</th>
+                                    <th className="mono-label text-left pb-2 pr-4 hidden lg:table-cell">Owner</th>
                                     <th className="pb-2 w-10"></th>
                                 </tr>
                             </thead>
@@ -362,7 +362,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                 </div>
                             )}
                             {bulkSelected && (
-                                <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2.5 rounded-md text-xs flex items-start gap-2">
+                                <div className="alert alert-error text-xs">
                                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                                     <span>
                                         This will permanently delete every route ending in{' '}
@@ -376,7 +376,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                 type="button"
                                 onClick={() => setBulkOpen(false)}
                                 disabled={bulkBusy}
-                                className="btn btn-secondary px-4 py-1.5 text-sm"
+                                className="btn btn-secondary"
                             >
                                 Cancel
                             </button>
@@ -384,7 +384,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                 type="button"
                                 onClick={handleBulkDelete}
                                 disabled={!bulkSelected || bulkBusy || bulkConfirmCountdown > 0}
-                                className="btn btn-danger px-4 py-1.5 text-sm disabled:opacity-50 inline-flex items-center gap-1.5"
+                                className="btn btn-danger disabled:opacity-40 inline-flex items-center gap-1.5"
                             >
                                 {bulkBusy
                                     ? <><RefreshCw size={13} className="animate-spin" /> Deleting…</>

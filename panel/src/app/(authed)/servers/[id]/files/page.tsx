@@ -58,7 +58,7 @@ export default function ServerFilesPage() {
                             href={beamSettings.downloadLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="btn btn-secondary text-xs px-3 py-1.5 ml-auto shrink-0"
+                            className="btn btn-secondary btn-sm ml-auto shrink-0"
                         >
                             <FolderOpen size={12} />
                             Download Beam

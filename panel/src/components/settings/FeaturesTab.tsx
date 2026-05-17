@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Network, Globe } from 'lucide-react';
+import { Save, CircleCheck, CircleAlert, Network, Globe } from 'lucide-react';
+import LoadingState from '@/components/LoadingState';
 
 export default function FeaturesTab() {
     const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: true });
@@ -33,7 +34,7 @@ export default function FeaturesTab() {
         setSaving(false);
     };
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={30} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="max-w-2xl space-y-6">
@@ -93,7 +94,7 @@ export default function FeaturesTab() {
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50"
+                    className="btn btn-primary disabled:opacity-40"
                 >
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}

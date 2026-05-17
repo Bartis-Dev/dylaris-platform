@@ -48,7 +48,7 @@ export function AssignOwnerModal({ server, users, onClose, onAssigned }: AssignO
                         Assign <span className="text-(--base-08) font-medium">{server.name}</span> to a user.
                     </p>
                     {error && (
-                        <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md mb-3 text-sm">
+                        <div className="alert alert-error mb-3">
                             {error}
                         </div>
                     )}

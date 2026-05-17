@@ -80,7 +80,7 @@ export default function LoginForm() {
       </h1>
 
       {error && (
-        <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-4 py-3 rounded-md mb-4 text-center text-sm font-medium">
+        <div className="alert alert-error mb-4 justify-center text-center font-medium">
           {error}
         </div>
       )}
@@ -114,7 +114,7 @@ export default function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="btn btn-primary w-full py-3 mt-2 text-sm"
+            className="btn btn-primary btn-lg w-full mt-2"
           >
             {loading ? 'Authenticating...' : 'Login'}
           </button>
@@ -146,7 +146,7 @@ export default function LoginForm() {
           <button
             type="submit"
             disabled={loading || totpCode.trim().length < 6}
-            className="btn btn-primary w-full py-3 text-sm"
+            className="btn btn-primary btn-lg w-full"
           >
             {loading ? 'Verifying...' : 'Verify & Login'}
           </button>

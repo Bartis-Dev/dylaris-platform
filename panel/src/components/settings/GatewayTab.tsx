@@ -8,6 +8,8 @@ import {
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield } from 'lucide-react';
+import LoadingState from '@/components/LoadingState';
+import Spinner from '@/components/Spinner';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -129,7 +131,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         setSaving(false);
     };
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="space-y-6">
@@ -209,7 +211,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             </div>
 
             <div className="flex gap-3 pt-2">
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50">
+                <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-40">
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}
                 </button>
@@ -389,7 +391,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         { key: 'perServer', label: 'Per-Server Max', desc: 'Max routes per individual MC server' },
     ];
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="space-y-6">
@@ -411,7 +413,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div>
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Game Traffic</h3>
+                    <h3 className="mono-label mb-3">Game Traffic</h3>
                     <div className="grid grid-cols-3 gap-2">
                         {ROUTING_OPTIONS.map(opt => (
                             <button key={opt.value} type="button" onClick={() => setRoutingMode(opt.value)}
@@ -424,7 +426,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div>
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">File Access</h3>
+                    <h3 className="mono-label mb-3">File Access</h3>
                     <div className="grid grid-cols-3 gap-2">
                         {FILE_OPTIONS.map(opt => (
                             <button key={opt.value} type="button" onClick={() => setFileMode(opt.value)}
@@ -448,7 +450,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     <div className="p-3 rounded-md bg-(--base-02) border border-(--base-04) space-y-2">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                                <RefreshCw size={13} className={`${migration.running ? 'animate-spin' : ''} text-(--accent-light)`} />
+                                {migration.running ? <Spinner size="xs" className="text-(--accent-light)" /> : <RefreshCw size={13} className="text-(--accent-light)" />}
                                 <span className="text-xs text-(--base-09)">{migration.running ? 'Redeploying servers...' : 'Redeploy complete'}</span>
                             </div>
                             <span className="font-mono text-xs text-(--base-06)">{migration.done} / {migration.total} done{migration.failed > 0 ? ` · ${migration.failed} failed` : ''}</span>
@@ -462,7 +464,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
                 <div className="flex items-center gap-3 pt-1 border-t border-(--base-03)">
                     <button onClick={() => setConfirmModal(true)} disabled={!routingChanged || savingRouting}
-                        className="btn btn-primary px-5 py-2 text-sm disabled:opacity-40">
+                        className="btn btn-primary disabled:opacity-40">
                         <Save size={14} />
                         {savingRouting ? 'Applying...' : 'Apply Routing'}
                     </button>
@@ -488,7 +490,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div>
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Hoster Domains</h3>
+                    <h3 className="mono-label mb-3">Hoster Domains</h3>
                     <p className="text-xs text-(--base-06) mb-3">
                         Users only enter a subdomain — these base domains appear as a dropdown next to the input. Pick which characters are allowed in the subdomain per domain.
                     </p>
@@ -530,7 +532,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     <button
                         type="button"
                         onClick={addHoster}
-                        className="btn btn-secondary px-3 py-1.5 text-xs mt-3"
+                        className="btn btn-secondary btn-sm mt-3"
                     >
                         <Plus size={12} /> Add domain
                     </button>
@@ -539,7 +541,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 <div className="border-t border-(--base-03) pt-5 space-y-4">
                     <div className="flex items-center justify-between gap-4">
                         <div>
-                            <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Custom Domains</h3>
+                            <h3 className="mono-label">Custom Domains</h3>
                             <p className="text-xs text-(--base-06) mt-1">Allow users to bring their own domain via a CNAME record.</p>
                         </div>
                         <button
@@ -581,7 +583,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div>
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Route Allocation</h3>
+                    <h3 className="mono-label mb-3">Route Allocation</h3>
                     <div className="space-y-3">
                         {allocationFields.map(({ key, label, desc }) => (
                             <div key={key} className="flex items-center justify-between gap-4 p-3 rounded-md bg-(--base-02)">
@@ -610,7 +612,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Port Configuration</h3>
+                    <h3 className="mono-label mb-3">Port Configuration</h3>
                     <div className="flex items-start gap-2 p-3 rounded-md bg-(--warning)/5 border border-(--warning)/20 mb-3">
                         <AlertTriangle size={13} className="text-(--warning-light) mt-0.5 shrink-0" />
                         <p className="text-xs text-(--base-07)">Use HTTP (port 80) only when behind a reverse proxy (nginx, Traefik, Caddy). Exposing HTTP directly is insecure.</p>
@@ -723,7 +725,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             </div>
 
             <div className="flex gap-3 pt-2">
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50">
+                <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-40">
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}
                 </button>
@@ -758,7 +760,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             <p className="text-(--base-06) text-xs pt-1">Servers are redeployed in batches of 4 with 15s between batches. Each container has a 60s timeout before a force-kill is issued.</p>
                         </div>
                         <div className="flex gap-3 pt-2">
-                            <button onClick={handleSaveRouting} className="btn btn-primary px-5 py-2 text-sm flex-1">Confirm & Apply</button>
+                            <button onClick={handleSaveRouting} className="btn btn-primary flex-1">Confirm & Apply</button>
                             <button onClick={() => setConfirmModal(false)} className="btn px-5 py-2 text-sm flex-1">Cancel</button>
                         </div>
                     </div>
@@ -798,7 +800,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                 </span>
                             </label>
                             {removeCascade && (
-                                <div className="flex items-start gap-2 bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2.5 rounded-md text-xs">
+                                <div className="alert alert-error text-xs">
                                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                                     <span>
                                         Cascade is permanent. Every server route under this domain will be deleted from the gateway. The confirm button is locked for {removeCountdown}s so you can re-read this.
@@ -810,17 +812,17 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             <button
                                 onClick={() => setRemoveTarget(null)}
                                 disabled={removeBusy}
-                                className="btn btn-secondary px-4 py-1.5 text-sm"
+                                className="btn btn-secondary"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={confirmRemoveHoster}
                                 disabled={removeBusy || (removeCascade && removeCountdown > 0)}
-                                className={`btn px-4 py-1.5 text-sm disabled:opacity-50 inline-flex items-center gap-1.5 ${removeCascade ? 'btn-danger' : 'btn-primary'}`}
+                                className={`btn disabled:opacity-40 ${removeCascade ? 'btn-danger' : 'btn-primary'}`}
                             >
                                 {removeBusy
-                                    ? <><RefreshCw size={13} className="animate-spin" /> Removing…</>
+                                    ? <><Spinner size="xs" /> Removing…</>
                                     : (removeCascade && removeCountdown > 0)
                                         ? `Confirm cascade (${removeCountdown}s)`
                                         : removeCascade
@@ -926,7 +928,7 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
         setSaving(false);
     };
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="space-y-6">
@@ -1088,9 +1090,9 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="btn btn-primary px-5 py-2 inline-flex items-center gap-2 text-sm"
+                    className="btn btn-primary"
                 >
-                    {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                    {saving ? <Spinner /> : <Save size={14} />}
                     Save
                 </button>
             </div>

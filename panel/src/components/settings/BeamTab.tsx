@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Save, CircleCheck, CircleAlert } from 'lucide-react';
+import { Save, CircleCheck, CircleAlert } from 'lucide-react';
+import LoadingState from '@/components/LoadingState';
 
 interface BeamSettings {
     relayAddress: string;
@@ -107,7 +108,7 @@ export default function BeamTab() {
         setSaving(false);
     };
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={30} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="max-w-2xl space-y-6">
@@ -195,7 +196,7 @@ export default function BeamTab() {
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50"
+                    className="btn btn-primary disabled:opacity-40"
                 >
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}

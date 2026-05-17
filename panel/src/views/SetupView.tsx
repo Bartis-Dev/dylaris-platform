@@ -460,14 +460,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
             {/* Delete Confirmation Modal */}
             {showDeleteConfirm && (
-                <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+                <div className="modal-overlay animate-fade-in" onClick={() => setShowDeleteConfirm(false)}>
                     <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={20} /> Delete Sub-Server
                             </h3>
                         </div>
-                        <div className="p-6 space-y-4">
+                        <div className="modal-body space-y-4">
                             <p className="text-sm text-(--base-08)">
                                 Are you sure you want to delete <span className="font-mono font-semibold text-(--error-light)">{subName}</span>?
                             </p>
@@ -475,14 +475,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                                 All data will be permanently deleted. This action cannot be undone.
                             </p>
                         </div>
-                        <div className="modal-footer flex gap-2">
-                            <button onClick={() => setShowDeleteConfirm(false)} className="btn btn-secondary flex-1 py-2.5 text-sm">
+                        <div className="modal-footer">
+                            <button onClick={() => setShowDeleteConfirm(false)} className="btn btn-secondary flex-1">
                                 Cancel
                             </button>
                             <button
                                 onClick={handleDeleteSubServer}
                                 disabled={deleteCountdown > 0 || deleting}
-                                className="btn btn-danger flex-1 py-2.5 text-sm"
+                                className="btn btn-danger flex-1"
                             >
                                 {deleting
                                     ? <><RefreshCw size={14} className="animate-spin" /> Deleting...</>

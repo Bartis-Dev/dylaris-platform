@@ -52,7 +52,7 @@ export default function AdminServersPage() {
                     </button>
                 )}
                 <span className="text-xs text-(--base-06) ml-auto">{filteredServers.length} server{filteredServers.length !== 1 ? 's' : ''}</span>
-                <button onClick={refresh} className="btn btn-secondary px-3 py-1.5 text-sm flex items-center gap-1.5">
+                <button onClick={refresh} className="btn btn-secondary btn-sm">
                     <RefreshCw size={13} />
                     Refresh
                 </button>
@@ -69,12 +69,12 @@ export default function AdminServersPage() {
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="text-left border-b border-(--base-03)">
-                                <th className="pb-2 pr-4 font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) font-normal">Name</th>
-                                <th className="pb-2 pr-4 font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) font-normal hidden md:table-cell">UUID</th>
-                                <th className="pb-2 pr-4 font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) font-normal">Owner</th>
-                                <th className="pb-2 pr-4 font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) font-normal hidden lg:table-cell">Node</th>
-                                <th className="pb-2 pr-4 font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) font-normal">Status</th>
-                                <th className="pb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) font-normal">Actions</th>
+                                <th className="pb-2 pr-4 mono-label font-normal">Name</th>
+                                <th className="pb-2 pr-4 mono-label font-normal hidden md:table-cell">UUID</th>
+                                <th className="pb-2 pr-4 mono-label font-normal">Owner</th>
+                                <th className="pb-2 pr-4 mono-label font-normal hidden lg:table-cell">Node</th>
+                                <th className="pb-2 pr-4 mono-label font-normal">Status</th>
+                                <th className="pb-2 mono-label font-normal">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-(--base-03)">

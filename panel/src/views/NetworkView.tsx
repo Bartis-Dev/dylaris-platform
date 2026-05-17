@@ -89,14 +89,14 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
                     >
                       {linkedProxy.name}
                     </button>
-                    <div className="font-mono text-[10px] text-(--base-06) uppercase tracking-[0.08em]">Linked Proxy</div>
+                    <div className="mono-label">Linked Proxy</div>
                   </div>
                   <div className={`badge-dot ${getStatusDot(linkedProxy.status)}`} title={linkedProxy.status}></div>
                 </div>
                 <button
                   onClick={() => handleUnlink(server.id)}
                   disabled={linkLoading}
-                  className="btn btn-ghost text-xs px-3 py-1.5 text-(--error) hover:bg-(--error-ghost)"
+                  className="btn btn-ghost btn-sm text-(--error) hover:bg-(--error-ghost)"
                 >
                   <Unlink size={12} />
                   Unlink
@@ -118,7 +118,7 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
                   <button
                     onClick={() => selectedId && handleLink(server.id, Number(selectedId))}
                     disabled={!selectedId || linkLoading}
-                    className="btn btn-primary text-xs px-4 py-2.5"
+                    className="btn btn-primary btn-sm"
                   >
                     <Link size={12} />
                     Link
@@ -156,7 +156,7 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
                     <button
                       onClick={() => handleUnlink(child.id)}
                       disabled={linkLoading}
-                      className="btn btn-ghost text-xs px-2 py-1 text-(--error) hover:bg-(--error-ghost)"
+                      className="btn btn-ghost btn-sm text-(--error) hover:bg-(--error-ghost)"
                     >
                       <Unlink size={12} />
                     </button>
@@ -182,7 +182,7 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
                 <button
                   onClick={() => selectedId && handleLink(Number(selectedId), server.id)}
                   disabled={!selectedId || linkLoading}
-                  className="btn btn-primary text-xs px-4 py-2.5"
+                  className="btn btn-primary btn-sm"
                 >
                   <Link size={12} />
                   Add

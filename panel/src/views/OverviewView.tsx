@@ -120,7 +120,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
     borderRadius: 'var(--radius-md)',
     fontSize: '12px',
     color: 'var(--base-09)',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+    boxShadow: 'var(--shadow-md)',
     padding: '8px 12px',
   };
 
@@ -167,7 +167,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
             ))}
           </div>
         )}
-        <span className="text-[10px] text-(--base-06) ml-auto font-mono tracking-wide">
+        <span className="mono-label ml-auto">
           {mode === 'live' ? `${liveData.length} pts` : `${historyData.length} pts`}
         </span>
       </div>
@@ -322,7 +322,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
               {sorted.map(([name, bytes], i) => (
                 <div key={name} className="flex items-center gap-2 text-sm">
                   <span
-                    className="w-2.5 h-2.5 rounded-[3px] shrink-0"
+                    className="w-2.5 h-2.5 rounded-sm shrink-0"
                     style={{ backgroundColor: segmentColors[i % segmentColors.length] }}
                   />
                   <span className="text-(--base-08)">{name}</span>
@@ -331,7 +331,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
               ))}
               {diskUsage.limit > 0 && freeBytes > 0 && (
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="w-2.5 h-2.5 rounded-[3px] shrink-0 bg-(--base-04)" />
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0 bg-(--base-04)" />
                   <span className="text-(--base-06)">Free</span>
                   <span className="font-mono text-xs text-(--base-06)">{formatBytes(freeBytes)}</span>
                 </div>

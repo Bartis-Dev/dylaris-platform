@@ -33,7 +33,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
             <div className="flex items-center justify-between mb-6">
                 <div>
-                    <h2 className="text-xl font-display font-bold text-(--base-09)">Admin</h2>
+                    <h2 className="h-page">Admin</h2>
                     <p className="text-sm text-(--base-06)">Server management and storage diagnostics</p>
                 </div>
             </div>

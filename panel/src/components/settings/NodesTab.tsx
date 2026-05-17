@@ -6,9 +6,10 @@ import {
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement,
 } from '@/lib/api';
+import LoadingState from '@/components/LoadingState';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import {
-    Network, Server, Globe, Settings as SettingsIcon, Save, RefreshCw,
+    Network, Server, Globe, Settings as SettingsIcon, Save,
     CircleCheck, CircleAlert, Pencil, X,
 } from 'lucide-react';
 
@@ -244,10 +245,10 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
 
             {isEditing && (
                 <div className="mt-3 flex items-center gap-2 justify-end">
-                    <button onClick={onCancel} className="btn btn-secondary px-3 py-1.5 text-xs">
+                    <button onClick={onCancel} className="btn btn-secondary btn-sm">
                         <X size={12} /> Cancel
                     </button>
-                    <button onClick={handleSave} disabled={saving} className="btn btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
+                    <button onClick={handleSave} disabled={saving} className="btn btn-primary btn-sm disabled:opacity-40">
                         <Save size={12} /> {saving ? 'Saving…' : 'Save'}
                     </button>
                 </div>
@@ -259,7 +260,7 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     return (
         <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">{label}</div>
+            <div className="mono-label">{label}</div>
             <div className="text-sm text-(--base-09) mt-0.5">{value}</div>
         </div>
     );
@@ -296,7 +297,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         showToast(res.success ? 'Placement settings saved.' : (res.message || 'Save failed.'), res.success);
     };
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-(--base-07)"><RefreshCw size={24} className="animate-spin" /></div>;
+    if (loading) return <LoadingState />;
 
     return (
         <div className="space-y-6">
@@ -309,7 +310,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
 
             <div className="card p-5 space-y-5">
                 <div>
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Overcommit Defaults</h3>
+                    <h3 className="mono-label mb-3">Overcommit Defaults</h3>
                     <p className="text-xs text-(--base-06) mb-4">
                         How much allocation is allowed relative to physical capacity.
                         <span className="font-mono"> 100%</span> = no overcommit, <span className="font-mono">200%</span> = double-book.
@@ -351,7 +352,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Disk Buffer</h3>
+                    <h3 className="mono-label mb-3">Disk Buffer</h3>
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">Disk Buffer</label>
                         <div className="relative w-32">
@@ -369,7 +370,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Host-Port Allocation</h3>
+                    <h3 className="mono-label mb-3">Host-Port Allocation</h3>
                     <p className="text-xs text-(--base-06) mb-4">
                         How nodes pick a host port from their range when a server is created. Applies cluster-wide;
                         per-node port range stays in the node&apos;s <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">PORT_RANGE</code> env.
@@ -405,7 +406,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Auto Rebalance (Phase B)</h3>
+                    <h3 className="mono-label mb-3">Auto Rebalance (Phase B)</h3>
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm text-(--base-09)">Migrate idle auto-move servers off overloaded nodes</p>
@@ -442,7 +443,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
             </div>
 
             <div className="flex gap-3 pt-2">
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary px-6 py-2 text-sm disabled:opacity-50">
+                <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-40">
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Settings'}
                 </button>

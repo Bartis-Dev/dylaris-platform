@@ -82,7 +82,7 @@ export default function SetupEditMode(props: SetupEditModeProps) {
 
                 {/* Warning banner */}
                 {props.activeServerMissing && (
-                    <div className="p-4 bg-(--warning-ghost) border border-(--warning-border) rounded-xl flex items-start gap-3">
+                    <div className="alert alert-warning gap-3 rounded-xl">
                         <AlertTriangle size={20} className="text-(--warning-light) shrink-0" />
                         <div className="text-sm">
                             <p className="font-medium text-(--warning-light)">Server folder not found</p>
@@ -184,7 +184,7 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                     type="button"
                     onClick={props.onSubmit}
                     disabled={props.submitting || props.fileTooLarge}
-                    className="btn btn-primary flex-1 py-3 text-sm"
+                    className="btn btn-primary btn-lg flex-1"
                 >
                     {props.submitting
                         ? <><RefreshCw size={16} className="animate-spin" /> Working...</>
@@ -194,7 +194,7 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                 <button
                     type="button"
                     onClick={props.onDelete}
-                    className="btn btn-danger px-4 py-3 text-sm"
+                    className="btn btn-danger btn-lg"
                     title="Delete this sub-server"
                 >
                     <Trash2 size={16} />

@@ -47,7 +47,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
 
     return (
         <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
-            <h1 className="text-3xl font-display font-bold text-(--accent) mb-6">System Settings</h1>
+            <h1 className="h-page mb-6">System Settings</h1>
 
             <div className="flex gap-4 border-b border-(--base-04) mb-6 overflow-x-auto hide-scrollbar">
                 {visibleTabs.map(tab => {

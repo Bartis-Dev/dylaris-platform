@@ -218,7 +218,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 {/* Header */}
                 <div className="modal-header flex justify-between items-center">
                     <div>
-                        <h2 className="modal-title text-2xl">Deploy Server</h2>
+                        <h2 className="modal-title">Deploy Server</h2>
                         <p className="input-label mt-1">Step {step} of 2 — Software setup happens after deployment</p>
                     </div>
                     <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light) transition-colors">
@@ -446,7 +446,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                             );
                                                         })}
                                                     </div>
-                                                    <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">
+                                                    <p className="mono-label">
                                                         {selectedTags.length === 0
                                                             ? 'any tag — all nodes in the region are candidates'
                                                             : `${selectedTags.length} selected — node must have all of them (AND)`}
@@ -627,7 +627,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     </button>
                                 </section>
 
-                                <div className="bg-(--primary-ghost) p-3 rounded-lg border border-(--primary-border) text-sm text-(--base-07)">
+                                <div className="alert alert-info text-(--base-07)">
                                     <Info size={14} className="inline align-middle mr-1 text-(--primary-light)" />
                                     Java version, Minecraft software, and server name are configured in the Setup tab after deployment.
                                 </div>
@@ -639,7 +639,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 {/* Footer */}
                 <div className="modal-footer">
                     {step > 1 ? (
-                        <button onClick={() => setStep(step - 1)} className="btn btn-secondary px-6 py-2 text-sm">Back</button>
+                        <button onClick={() => setStep(step - 1)} className="btn btn-secondary">Back</button>
                     ) : (
                         <div></div>
                     )}
@@ -654,7 +654,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                 }
                                 setStep(2);
                             }}
-                            className="btn btn-primary px-8 py-2 text-sm"
+                            className="btn btn-primary"
                         >
                             Next <ArrowRight size={18} className="ml-1" />
                         </button>
@@ -662,7 +662,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                         <button
                             onClick={handleCreate}
                             disabled={loading}
-                            className="btn px-8 py-2 text-sm bg-(--success) text-white border-(--success) hover:bg-(--success-light) disabled:opacity-50"
+                            className="btn bg-(--success) text-white border-(--success) hover:bg-(--success-light) disabled:opacity-40"
                         >
                             {loading ? 'Creating...' : 'CREATE SERVER'} <Rocket size={18} className="ml-1" />
                         </button>

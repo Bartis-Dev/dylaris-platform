@@ -5,6 +5,9 @@ import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { Power, Send, Cpu, MemoryStick } from 'lucide-react';
 
+// Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
+// ANSI spec for terminal color rendering and are intentionally NOT mapped to
+// design tokens — server console output expects spec-faithful colors.
 const ANSI_COLORS: Record<number, string> = {
   30: '#4d4d4d', 31: '#e74c3c', 32: '#2ecc71', 33: '#f39c12',
   34: '#3498db', 35: '#9b59b6', 36: '#1abc9c', 37: '#ecf0f1',
@@ -195,7 +198,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         <div className="shrink-0 flex items-center gap-6 px-5 h-12 bg-(--base-01) border-b-2 border-(--base-03)">
           <div className="flex items-center gap-2">
             <Cpu size={16} className="text-(--base-06)" />
-            <span className="text-xs font-mono text-(--base-06) uppercase tracking-wide">CPU</span>
+            <span className="mono-label">CPU</span>
             <span className="text-sm font-semibold font-mono text-(--base-09)">{liveStats.cpu.toFixed(1)}%</span>
             <div className="w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
               <div className="h-full bg-(--primary) rounded-full transition-all duration-500" style={{ width: `${Math.min(100, liveStats.cpuLimit > 0 ? (liveStats.cpu / (liveStats.cpuLimit * 100)) * 100 : liveStats.cpu)}%` }} />
@@ -203,7 +206,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           </div>
           <div className="flex items-center gap-2">
             <MemoryStick size={16} className="text-(--base-06)" />
-            <span className="text-xs font-mono text-(--base-06) uppercase tracking-wide">RAM</span>
+            <span className="mono-label">RAM</span>
             <span className="text-sm font-semibold font-mono text-(--base-09)">
               {liveStats.memUsed >= 1024 ? `${(liveStats.memUsed / 1024).toFixed(1)}G` : `${liveStats.memUsed}M`}/{liveStats.memLimit >= 1024 ? `${(liveStats.memLimit / 1024).toFixed(1)}G` : `${liveStats.memLimit}M`}
             </span>
@@ -218,7 +221,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         {isOffline && lines.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-(--base-06)">
             <Power size={48} className="mb-3 opacity-30" />
-            <p className="text-lg font-display font-bold text-(--base-07)">Server is offline</p>
+            <p className="h-section text-(--base-07)">Server is offline</p>
             <p className="text-sm mt-1 text-(--base-06)">Start the server to see console output.</p>
           </div>
         ) : lines.length === 0 ? (

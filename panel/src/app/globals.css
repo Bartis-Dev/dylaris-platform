@@ -111,6 +111,12 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-2xl: 20px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.4);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,.55);
+  --shadow-xl: 0 24px 80px rgba(0,0,0,.7);
 }
 
 /* ── Base Styles ── */
@@ -159,7 +165,7 @@ select:focus {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--base-04);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--base-05);
@@ -198,15 +204,41 @@ button:hover {
    COMPONENT UTILITY CLASSES
    ══════════════════════════════════════════════════════ */
 
+/* ── Headings ── */
+.h-page {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--base-09);
+  line-height: 1.2;
+}
+.h-section {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--base-09);
+  line-height: 1.25;
+}
+.h-stat {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--base-09);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 /* ── Buttons ── */
 .btn {
   font-family: var(--font-body);
   font-weight: 500;
+  font-size: 13px;
   border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  padding: 8px 14px;
   transition: all 0.15s ease;
   cursor: pointer;
 }
@@ -215,9 +247,33 @@ button:hover {
   cursor: not-allowed;
   pointer-events: none;
 }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ghost);
+}
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+  gap: 5px;
+}
+.btn-lg {
+  padding: 11px 18px;
+  font-size: 14px;
+  gap: 8px;
+}
+.btn-icon {
+  padding: 6px;
+  gap: 0;
+}
+.btn-icon.btn-sm {
+  padding: 4px;
+}
+.btn-icon.btn-lg {
+  padding: 8px;
+}
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--base-09);
   border: 1px solid var(--accent);
 }
 .btn-primary:hover {
@@ -238,7 +294,7 @@ button:hover {
   border: 1px solid var(--error-border);
 }
 .btn-danger:hover {
-  background: rgba(150,56,56,.18);
+  background: color-mix(in srgb, var(--error) 18%, transparent);
 }
 .btn-ghost {
   background: transparent;
@@ -303,12 +359,59 @@ input[type="number"] {
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
 
+/* ── Form Group (Label + Input pair) ── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* ── Alerts ── */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.alert-error {
+  background: var(--error-ghost);
+  border-color: var(--error-border);
+  color: var(--error-light);
+}
+.alert-warning {
+  background: var(--warning-ghost);
+  border-color: var(--warning-border);
+  color: var(--warning-light);
+}
+.alert-success {
+  background: var(--success-ghost);
+  border-color: var(--success-border);
+  color: var(--success-light);
+}
+.alert-info {
+  background: var(--primary-ghost);
+  border-color: var(--primary-border);
+  color: var(--primary-light);
+}
+.alert-accent {
+  background: var(--accent-ghost);
+  border-color: var(--accent-border);
+  color: var(--accent-light);
+}
+
 /* ── Cards ── */
 .card {
   background: var(--base-02);
   border: 1px solid var(--base-03);
   border-radius: var(--radius-xl);
 }
+.card-sm { padding: 16px; }
+.card-pad { padding: 20px; }
+.card-lg { padding: 24px; }
 .card-stat {
   background: var(--base-03);
   border: 1px solid var(--base-04);
@@ -426,7 +529,7 @@ input[type="number"] {
   background: var(--base-02);
   border: 1px solid var(--base-03);
   border-radius: var(--radius-2xl);
-  box-shadow: 0 24px 80px rgba(0,0,0,.7);
+  box-shadow: var(--shadow-xl);
 }
 .modal-header {
   padding: 22px 24px 18px;
@@ -465,13 +568,13 @@ input[type="number"] {
   background: var(--base-02);
   border: 1px solid var(--base-03);
   border-radius: var(--radius-xl);
-  padding: 13px 14px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-lg);
   align-items: center;
 }
 .toast-bar {
   width: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   align-self: stretch;
   flex-shrink: 0;
 }
@@ -482,7 +585,7 @@ input[type="number"] {
   background: var(--base-02);
   border: 1px solid var(--base-03);
   border-radius: var(--radius-xl);
-  box-shadow: 0 8px 32px rgba(0,0,0,.6);
+  box-shadow: var(--shadow-lg);
   padding: 6px;
   z-index: 50;
 }
@@ -530,9 +633,9 @@ input[type="number"] {
   height: 18px;
   width: 18px;
   border-radius: 9999px;
-  background: #fff;
+  background: var(--base-09);
   transition: transform 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  box-shadow: var(--shadow-sm);
 }
 .toggle-knob-off {
   transform: translateX(4px);

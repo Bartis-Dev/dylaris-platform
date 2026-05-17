@@ -230,7 +230,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     type="button"
                     onClick={props.onSubmit}
                     disabled={props.submitting || !sanitized || props.fileTooLarge}
-                    className="btn btn-primary flex-1 py-3 text-sm"
+                    className="btn btn-primary btn-lg flex-1"
                 >
                     {props.submitting
                         ? <><RefreshCw size={16} className="animate-spin" /> Working...</>

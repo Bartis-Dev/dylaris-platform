@@ -131,7 +131,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     return (
         <div>
             <div className="flex justify-end mb-4">
-                <button onClick={() => {setUserForm({ username: "", password: "", isAdmin: false }); setError(""); setIsModalOpen(true);}} className="btn btn-primary px-4 py-2 text-sm">
+                <button onClick={() => {setUserForm({ username: "", password: "", isAdmin: false }); setError(""); setIsModalOpen(true);}} className="btn btn-primary">
                     <UserPlus size={14} />
                     Create User
                 </button>
@@ -167,7 +167,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             <Settings size={13} />
                                         </button>
                                         {currentUser?.username !== u.username && (
-                                            <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger px-3 py-1 text-xs">Delete</button>
+                                            <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger btn-sm">Delete</button>
                                         )}
                                     </div>
                                 </td>
@@ -185,7 +185,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             <h3 className="modal-title">New User</h3>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md mb-4 text-sm font-medium">{error}</div>}
+                            {error && <div className="alert alert-error mb-4 font-medium">{error}</div>}
 
                             <form onSubmit={handleCreateUser} className="space-y-4">
                                 <div className="flex flex-col gap-[5px]">
@@ -201,8 +201,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     <label className="text-sm font-medium text-(--base-08)">Administrator Rights</label>
                                 </div>
                                 <div className="modal-footer">
-                                    <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary px-4 py-1.5 text-sm">Cancel</button>
-                                    <button type="submit" className="btn btn-primary px-4 py-1.5 text-sm">Create User</button>
+                                    <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
+                                    <button type="submit" className="btn btn-primary">Create User</button>
                                 </div>
                             </form>
                         </div>
@@ -217,7 +217,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                         {/* Header */}
                         <div className="flex items-center justify-between p-5 border-b border-(--base-03)">
                             <div>
-                                <h3 className="font-display text-lg font-bold text-(--base-09)">User Settings</h3>
+                                <h3 className="h-section">User Settings</h3>
                                 <p className="text-xs font-mono text-(--base-06)">{settingsUser.username}</p>
                             </div>
                             <button onClick={() => setSettingsUser(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">
@@ -248,7 +248,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             {settingsTab === 'general' && (
                                 <div className="space-y-5">
                                     <div>
-                                        <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Reset Password</h4>
+                                        <h4 className="mono-label mb-3">Reset Password</h4>
                                         <div className="flex gap-2">
                                             <input
                                                 type="password"
@@ -260,7 +260,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             <button
                                                 onClick={handleResetPassword}
                                                 disabled={!newPassword || pwSaving}
-                                                className="btn btn-primary px-4 py-2 text-sm disabled:opacity-50 shrink-0"
+                                                className="btn btn-primary disabled:opacity-40 shrink-0"
                                             >
                                                 {pwSaving ? 'Saving...' : 'Reset'}
                                             </button>
@@ -268,7 +268,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     </div>
 
                                     <div>
-                                        <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Two-Factor Authentication</h4>
+                                        <h4 className="mono-label mb-3">Two-Factor Authentication</h4>
                                         <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
                                             <div className="text-sm">
                                                 <p className="text-(--base-09)">
@@ -284,7 +284,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 type="button"
                                                 onClick={handleReset2FA}
                                                 disabled={!settingsUser.is2FAEnabled || resetting2FA}
-                                                className="btn btn-danger px-3 py-1.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed shrink-0 inline-flex items-center gap-1.5"
+                                                className="btn btn-danger btn-sm disabled:opacity-40 disabled:cursor-not-allowed shrink-0 inline-flex items-center gap-1.5"
                                             >
                                                 <ShieldOff size={12} />
                                                 {resetting2FA ? 'Resetting…' : 'Reset 2FA'}
@@ -297,7 +297,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             {settingsTab === 'gateway' && (
                                 <div className="space-y-4">
                                     <div>
-                                        <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06) mb-3">Route Limit Override</h4>
+                                        <h4 className="mono-label mb-3">Route Limit Override</h4>
                                         <p className="text-xs text-(--base-06) mb-3">Override the global default route limit for this user.</p>
 
                                         <div className="space-y-2">
@@ -361,7 +361,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             <button
                                                 onClick={handleSaveRouteLimit}
                                                 disabled={routeSaving}
-                                                className="btn btn-primary px-4 py-2 text-sm disabled:opacity-50"
+                                                className="btn btn-primary disabled:opacity-40"
                                             >
                                                 {routeSaving ? 'Saving...' : 'Save Route Limit'}
                                             </button>

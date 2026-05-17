@@ -77,11 +77,11 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
             <div className="flex items-center gap-2">
                 {/* Role toggle — Servers is hard-locked to "all", Admin to "admin" */}
                 {m.name === 'Servers' ? (
-                    <div className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) px-2 py-1 rounded-md bg-(--base-03)" title="Always visible to all users">
+                    <div className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)" title="Always visible to all users">
                         <Users size={11} /> All
                     </div>
                 ) : m.name === 'Admin' ? (
-                    <div className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) px-2 py-1 rounded-md bg-(--base-03)" title="Always admin-only">
+                    <div className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)" title="Always admin-only">
                         <ShieldCheck size={11} /> Admin
                     </div>
                 ) : (
@@ -203,7 +203,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         <div>
             <div className="flex justify-between items-center mb-6">
                 <p className="text-sm text-(--base-07)">Manage system features and external links. Drag to reorder. Disabled modules are hidden from the sidebar.</p>
-                <button onClick={() => { setModForm({ name: "", type: "iframe", icon: "link", url: "" }); setError(""); setIsModalOpen(true); }} className="btn btn-primary px-4 py-2 text-sm">
+                <button onClick={() => { setModForm({ name: "", type: "iframe", icon: "link", url: "" }); setError(""); setIsModalOpen(true); }} className="btn btn-primary">
                     <Plus size={14} />
                     Add Module
                 </button>
@@ -232,7 +232,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                             <h3 className="modal-title">New Module</h3>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md mb-4 text-sm font-medium">{error}</div>}
+                            {error && <div className="alert alert-error mb-4 font-medium">{error}</div>}
 
                             <form onSubmit={handleCreateModule} className="space-y-4">
                                 <div className="flex flex-col gap-[5px]">
@@ -260,8 +260,8 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                                     </div>
                                 </div>
                                 <div className="modal-footer">
-                                    <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary px-4 py-1.5 text-sm">Cancel</button>
-                                    <button type="submit" className="btn btn-primary px-4 py-1.5 text-sm">Save Module</button>
+                                    <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
+                                    <button type="submit" className="btn btn-primary">Save Module</button>
                                 </div>
                             </form>
                         </div>

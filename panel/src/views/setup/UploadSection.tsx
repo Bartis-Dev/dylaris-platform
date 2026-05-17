@@ -116,7 +116,7 @@ export default function UploadSection({
         <div className="space-y-3">
             {/* SFTP Banner */}
             <div className="flex items-center gap-3 px-3 py-2 bg-(--base-02) rounded-md border border-(--base-03)">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-(--base-06) shrink-0">SFTP</span>
+                <span className="mono-label shrink-0">SFTP</span>
                 {sftpCreds ? (
                     <span className="text-xs font-mono text-(--base-07) truncate">
                         {sftpCreds.host}:{sftpCreds.port} &middot; {sftpCreds.username}
@@ -227,9 +227,9 @@ export default function UploadSection({
                             </div>
 
                             {fileTooLarge && (
-                                <div className="flex items-start gap-2 p-2.5 bg-(--warning-ghost) border border-(--warning-border) rounded-md">
+                                <div className="alert alert-warning text-xs">
                                     <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                                    <p className="text-xs text-(--warning-light)">
+                                    <p>
                                         File exceeds limit. Use SFTP to upload large files.
                                     </p>
                                 </div>

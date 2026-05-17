@@ -7,7 +7,7 @@ export default function NotFound() {
         <p className="font-display text-[80px] font-bold leading-none text-(--base-03) select-none tabular-nums">
           404
         </p>
-        <h1 className="font-display text-2xl font-bold text-(--base-09) mt-2">
+        <h1 className="h-page mt-2">
           Page not found
         </h1>
         <p className="text-sm text-(--base-06) mt-2 mb-8">
@@ -15,7 +15,7 @@ export default function NotFound() {
         </p>
         <Link
           href="/"
-          className="btn btn-primary px-6 py-2.5 text-sm inline-flex items-center gap-2"
+          className="btn btn-primary"
         >
           Back to Dashboard
         </Link>

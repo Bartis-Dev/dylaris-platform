@@ -33,12 +33,12 @@ function AdminDiskInner() {
                 <p className="text-sm text-(--base-06)">
                     Compare UUID folders on each node's disk against database records. Click a node to run the analysis.
                 </p>
-                <button onClick={refresh} className="btn btn-secondary px-3 py-1.5 text-sm flex items-center gap-1.5 shrink-0">
+                <button onClick={refresh} className="btn btn-secondary btn-sm shrink-0">
                     <RefreshCw size={13} />
                     Refresh
                 </button>
             </div>
-            <div className="flex items-start gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2.5 text-xs text-(--warning)">
+            <div className="alert alert-warning text-(--warning) text-xs">
                 <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                 <span>Deleting orphaned folders or DB entries is permanent. Verify before deleting.</span>
             </div>

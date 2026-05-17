@@ -10,7 +10,7 @@ export default function ServersIndexPage() {
     return (
         <div className="flex-1 flex flex-col items-center justify-center text-(--base-06) p-6">
             <ServerIcon size={64} className="mb-4 opacity-40" />
-            <p className="text-lg font-display font-bold mb-2 text-(--base-07)">
+            <p className="h-section text-(--base-07) mb-2">
                 {servers.length === 0 ? 'No servers yet' : 'No server selected'}
             </p>
             <p className="text-sm text-(--base-06) max-w-md text-center mb-6">

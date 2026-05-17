@@ -242,12 +242,12 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </div>
                         )}
                         {selectedServer.activeSubServer && (
-                            <span className="text-[10px] bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07) font-mono uppercase tracking-[0.08em]">
+                            <span className="mono-label bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07)">
                                 {selectedServer.activeSubServer}
                             </span>
                         )}
                         {selectedServer.serverType === 'proxy' && (
-                            <span className="text-[10px] bg-(--accent-ghost) px-2 py-0.5 rounded-sm text-(--accent-light) font-mono uppercase tracking-[0.08em] flex items-center gap-1">
+                            <span className="mono-label bg-(--accent-ghost) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1">
                                 Proxy
                             </span>
                         )}
@@ -256,7 +256,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             return proxy ? (
                                 <Link
                                     href={`/servers/${proxy.id}`}
-                                    className="text-[10px] bg-(--accent-ghost) px-2 py-0.5 rounded-sm text-(--accent-light) font-mono uppercase tracking-[0.08em] flex items-center gap-1 hover:bg-(--accent)/20 transition-colors"
+                                    className="mono-label bg-(--accent-ghost) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1 hover:bg-(--accent)/20 transition-colors"
                                 >
                                     {proxy.name}
                                 </Link>
@@ -269,7 +269,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1.5">
                             {isPendingSetup && (
-                                <span className="px-2.5 py-1 rounded-sm text-[10px] font-mono font-medium uppercase tracking-[0.08em] border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)">
+                                <span className="mono-label font-medium px-2.5 py-1 rounded-sm border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)">
                                     <div className="w-[5px] h-[5px] rounded-full bg-(--warning) animate-pulse"></div>
                                     pending_setup
                                 </span>
@@ -324,11 +324,11 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         {user?.isAdmin && <div className="w-px h-6 bg-(--base-04)" />}
                         {user?.isAdmin && (
                             <div className="flex items-center gap-1.5">
-                                <button onClick={handleOpenEditResources} className="btn btn-secondary px-2.5 py-1 text-xs">
+                                <button onClick={handleOpenEditResources} className="btn btn-secondary btn-sm">
                                     <SlidersHorizontal size={14} />
                                     Resources
                                 </button>
-                                <button onClick={handleOpenDeletePopup} className="btn btn-danger px-2.5 py-1 text-xs">
+                                <button onClick={handleOpenDeletePopup} className="btn btn-danger btn-sm">
                                     <Trash2 size={14} />
                                     Delete
                                 </button>
@@ -350,7 +350,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     }`}>
                         {routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0 && (
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Direct</span>
+                                <span className="mono-label text-(--base-05)">Direct</span>
                                 <div className="flex items-center gap-1.5 bg-(--base-03)/50 border border-(--base-04) rounded-md px-2.5 py-1">
                                     <Link2 size={11} className="text-(--base-06) shrink-0" />
                                     <span className="text-xs font-mono text-(--base-07)">{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>
@@ -366,7 +366,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         )}
                         {gatewayEnabled && serverRoutes.length > 0 && (
                             <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Gateway</span>
+                                <span className="mono-label text-(--base-05)">Gateway</span>
                                 {serverRoutes.slice(0, 3).map(route => (
                                     <div key={route.domain} className="flex items-center gap-1.5 bg-(--accent-ghost) border border-(--accent-border) rounded-md px-2.5 py-1">
                                         <Globe size={11} className="text-(--accent-light) shrink-0" />
@@ -445,11 +445,11 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </p>
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setShowDeletePopup(false)} className="btn btn-secondary px-4 py-2 text-sm">Cancel</button>
+                            <button onClick={() => setShowDeletePopup(false)} className="btn btn-secondary">Cancel</button>
                             <button
                                 onClick={handleDelete}
                                 disabled={deleteCountdown > 0}
-                                className="btn btn-danger px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="btn btn-danger disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {deleteCountdown > 0 ? `Delete (${deleteCountdown}s)` : 'Delete'}
                             </button>
@@ -474,8 +474,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </p>
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setShowKillConfirm(false)} className="btn btn-secondary px-4 py-2 text-sm">Cancel</button>
-                            <button onClick={() => { handlePower('kill'); setShowKillConfirm(false); }} className="btn btn-danger px-4 py-2 text-sm">Kill</button>
+                            <button onClick={() => setShowKillConfirm(false)} className="btn btn-secondary">Cancel</button>
+                            <button onClick={() => { handlePower('kill'); setShowKillConfirm(false); }} className="btn btn-danger">Kill</button>
                         </div>
                     </div>
                 </div>
@@ -549,7 +549,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                         <span className="input-label mb-0">{storagePaths.length > 1 ? 'Storage Path Migration' : 'Storage Path'}</span>
                                     </div>
                                     <div className="flex flex-col gap-[5px]">
-                                        <label className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">Current Path</label>
+                                        <label className="mono-label">Current Path</label>
                                         <p className="text-xs font-mono text-(--base-07) bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 truncate">
                                             {storageCurrentPath || <span className="text-(--base-05) italic">unknown</span>}
                                         </p>
@@ -558,14 +558,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                         <>
                                             <div className="flex gap-2 items-end">
                                                 <div className="flex flex-col gap-[5px] flex-1 min-w-0">
-                                                    <label className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06)">Migrate To</label>
+                                                    <label className="mono-label">Migrate To</label>
                                                     <select value={storageMigrateTarget} onChange={e => setStorageMigrateTarget(e.target.value)} className="input-field text-sm" disabled={storageMigrating}>
                                                         {storagePaths.filter(p => p.path !== storageCurrentPath).map(p => (
                                                             <option key={p.path} value={p.path}>{p.path} — {(p.free_bytes / 1073741824).toFixed(1)} GB free</option>
                                                         ))}
                                                     </select>
                                                 </div>
-                                                <button type="button" onClick={handleMigrateStorage} disabled={storageMigrating || !storageMigrateTarget} className="btn btn-secondary px-3 py-2 text-sm flex items-center gap-1.5 shrink-0">
+                                                <button type="button" onClick={handleMigrateStorage} disabled={storageMigrating || !storageMigrateTarget} className="btn btn-secondary btn-sm shrink-0">
                                                     {storageMigrating ? <><RefreshCw size={14} className="animate-spin" /> Moving...</> : <><MoveHorizontal size={14} /> Migrate</>}
                                                 </button>
                                             </div>
@@ -597,8 +597,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             )}
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setShowEditResourcesPopup(false)} className="btn btn-secondary px-4 py-2 text-sm">Cancel</button>
-                            <button onClick={handleSaveResources} className="btn btn-primary px-4 py-2 text-sm">Save & Restart</button>
+                            <button onClick={() => setShowEditResourcesPopup(false)} className="btn btn-secondary">Cancel</button>
+                            <button onClick={handleSaveResources} className="btn btn-primary">Save & Restart</button>
                         </div>
                     </div>
                 </div>

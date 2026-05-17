@@ -82,11 +82,11 @@ export default function SubServerSidebar({
                     </p>
                     <div className="flex gap-1">
                         <button type="button" onClick={onSwitchConfirm} disabled={submitting}
-                            className="btn btn-primary flex-1 py-1.5 text-xs bg-(--warning) border-(--warning)">
+                            className="btn btn-primary btn-sm flex-1 bg-(--warning) border-(--warning)">
                             {submitting ? <RefreshCw size={12} className="animate-spin" /> : 'Confirm'}
                         </button>
                         <button type="button" onClick={() => onSwitchSelect(null)}
-                            className="btn btn-secondary flex-1 py-1.5 text-xs">Cancel</button>
+                            className="btn btn-secondary btn-sm flex-1">Cancel</button>
                     </div>
                 </div>
             )}

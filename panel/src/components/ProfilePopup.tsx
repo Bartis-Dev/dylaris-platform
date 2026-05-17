@@ -75,8 +75,8 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
         </div>
 
         <div className="modal-body">
-          {error && <div className="bg-(--error-ghost) text-(--error-light) px-4 py-3 rounded-md mb-4 text-sm font-medium border border-(--error-border)">{error}</div>}
-          {success && <div className="bg-(--success-ghost) text-(--success-light) px-4 py-3 rounded-md mb-4 text-sm font-medium border border-(--success-border)">{success}</div>}
+          {error && <div className="alert alert-error mb-4 font-medium">{error}</div>}
+          {success && <div className="alert alert-success mb-4 font-medium">{success}</div>}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {currentView === "general" && (
@@ -151,7 +151,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
               </div>
             </div>
 
-            <button type="submit" disabled={loading} className="btn btn-primary w-full py-3 mt-4 text-sm">
+            <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full mt-4">
               {loading ? 'Saving...' : 'Save Changes'}
             </button>
           </form>
@@ -250,7 +250,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
 
         <div className="modal-body">
           {error && (
-            <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md mb-3 text-sm">
+            <div className="alert alert-error mb-3">
               {error}
             </div>
           )}
@@ -283,7 +283,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
                   className="input-field input-mono w-full text-center tracking-widest"
                 />
               </div>
-              <button type="submit" disabled={busy || code.replace(/\s/g, '').length < 6} className="btn btn-primary w-full py-2.5 text-sm">
+              <button type="submit" disabled={busy || code.replace(/\s/g, '').length < 6} className="btn btn-primary w-full">
                 {busy ? 'Verifying…' : 'Verify & Enable'}
               </button>
             </form>
@@ -291,7 +291,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
 
           {step === 'backup' && (
             <div className="space-y-4">
-              <div className="flex items-start gap-2 bg-(--warning-ghost) border border-(--warning-border) text-(--warning) px-3 py-2.5 rounded-md text-xs">
+              <div className="alert alert-warning text-(--warning) text-xs">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <span>
                   Store these backup codes somewhere safe. Each code works exactly once and lets you log in if you lose your authenticator. They will never be shown again.
@@ -304,7 +304,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
                   </code>
                 ))}
               </div>
-              <button type="button" onClick={copyAll} className="btn btn-secondary w-full py-2 text-xs">
+              <button type="button" onClick={copyAll} className="btn btn-secondary btn-sm w-full">
                 {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
               </button>
               <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
@@ -315,7 +315,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
                 type="button"
                 onClick={onComplete}
                 disabled={!acknowledged}
-                className="btn btn-primary w-full py-2.5 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                className="btn btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Done
               </button>
@@ -362,7 +362,7 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
 
         <div className="modal-body space-y-4">
           {error && (
-            <div className="bg-(--error-ghost) border border-(--error-border) text-(--error-light) px-3 py-2 rounded-md text-sm">
+            <div className="alert alert-error">
               {error}
             </div>
           )}
@@ -386,7 +386,7 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
                 required
               />
             </div>
-            <button type="submit" disabled={busy} className="btn btn-danger w-full py-2.5 text-sm">
+            <button type="submit" disabled={busy} className="btn btn-danger w-full">
               {busy ? 'Disabling…' : 'Disable 2FA'}
             </button>
           </form>

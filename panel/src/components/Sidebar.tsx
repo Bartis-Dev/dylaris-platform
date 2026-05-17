@@ -135,7 +135,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           <div className={`font-medium truncate text-sm transition-colors ${isActive ? 'text-(--base-09)' : 'text-(--base-07) group-hover:text-(--base-09)'}`}>
             {server.name}
           </div>
-          <div className="font-mono text-[10px] text-(--base-06) mt-0.5 uppercase tracking-[0.08em]">
+          <div className="mono-label mt-0.5">
             {roleLabel}
           </div>
         </div>
@@ -163,7 +163,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             <div className={`font-medium truncate text-sm transition-colors ${isProxyActive ? 'text-(--base-09)' : 'text-(--base-07) group-hover:text-(--base-09)'}`}>
               {group.proxy.name}
             </div>
-            <div className="font-mono text-[10px] text-(--base-06) mt-0.5 uppercase tracking-[0.08em]">
+            <div className="mono-label mt-0.5">
               Proxy
             </div>
           </div>
@@ -204,7 +204,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       <>
         {proxyGroups.map(renderProxyGroup)}
         {hasProxies && standaloneServers.length > 0 && (
-          <div className="font-mono text-[10px] text-(--base-05) uppercase tracking-[0.08em] px-1 pt-2 pb-1">
+          <div className="mono-label text-(--base-05) px-1 pt-2 pb-1">
             Standalone
           </div>
         )}
