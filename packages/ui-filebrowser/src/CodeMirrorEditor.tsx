@@ -132,7 +132,7 @@ export default function CodeMirrorEditor({
           searchKeymap: true,
         }}
         height="100%"
-        onCreateEditor={view => {
+        onCreateEditor={(view: EditorView) => {
           viewRef.current = view;
         }}
       />
