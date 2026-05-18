@@ -7,7 +7,7 @@ import { json } from '@codemirror/lang-json';
 import { yaml } from '@codemirror/lang-yaml';
 import { javascript } from '@codemirror/lang-javascript';
 import { xml } from '@codemirror/lang-xml';
-import { EditorView } from '@codemirror/view';
+import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { dylarisTheme, dylarisHighlight } from './codemirror-theme';
 import { propertiesLanguage } from './codemirror-properties';
 
@@ -90,7 +90,7 @@ export default function CodeMirrorEditor({
       dylarisTheme,
       dylarisHighlight,
       EditorView.lineWrapping,
-      EditorView.updateListener.of(update => {
+      EditorView.updateListener.of((update: ViewUpdate) => {
         if (onCursorChange && update.selectionSet) {
           const head = update.state.selection.main.head;
           const line = update.state.doc.lineAt(head);
