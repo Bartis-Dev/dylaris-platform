@@ -45,3 +45,15 @@ type BackupRun struct {
 	StorageKey   string     `json:"storageKey"`
 	ErrorMessage string     `json:"errorMessage"`
 }
+
+// BackupRestore records a restore attempt against an archived BackupRun.
+type BackupRestore struct {
+	ID            int        `json:"id"`
+	RunID         int        `json:"runId"`
+	ServerID      int        `json:"serverId"`
+	RequestedBy   *int       `json:"requestedBy,omitempty"`
+	RequestedAt   time.Time  `json:"requestedAt"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+	Status        string     `json:"status"` // queued | running | success | failed
+	ErrorMessage  string     `json:"errorMessage"`
+}

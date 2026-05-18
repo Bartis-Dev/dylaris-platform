@@ -275,8 +275,21 @@ export const listBackupRuns = (jobId: number): Promise<{ success: boolean; runs?
     fetchAPI(`/backup-jobs/${jobId}/runs`);
 export const deleteBackupRun = (runId: number): Promise<{ success: boolean }> =>
     fetchAPI(`/backup-runs/${runId}`, { method: 'DELETE' });
-export const restoreBackupRun = (runId: number): Promise<{ success: boolean; message?: string }> =>
+export const restoreBackupRun = (runId: number): Promise<{ success: boolean; message?: string; restoreId?: number }> =>
     fetchAPI(`/backup-runs/${runId}/restore`, { method: 'POST' });
+
+export interface BackupRestore {
+    id: number;
+    runId: number;
+    serverId: number;
+    requestedBy?: number | null;
+    requestedAt: string;
+    completedAt?: string | null;
+    status: 'queued' | 'running' | 'success' | 'failed';
+    errorMessage: string;
+}
+export const listBackupRestores = (serverId: number): Promise<{ success: boolean; restores?: BackupRestore[] }> =>
+    fetchAPI(`/servers/${serverId}/backup-restores`);
 export const backupDownloadUrl = (runId: number) => {
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
     return `${API_URL}/backup-runs/${runId}/download`;

@@ -46,6 +46,44 @@ func (b *BackupScheduler) Start(ctx context.Context) {
 		}
 	}()
 	go b.consumeResults(ctx)
+	go b.consumeRestoreResults(ctx)
+}
+
+// consumeRestoreResults listens on dylaris:backup:restores and updates the
+// backup_restores row with the outcome reported by the node.
+func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
+	pubsub := b.redis.Subscribe(ctx, "dylaris:backup:restores")
+	defer pubsub.Close()
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			var result struct {
+				RestoreID int    `json:"restoreId"`
+				Status    string `json:"status"`
+				Error     string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(msg.Payload), &result); err != nil {
+				log.Printf("restore result: decode failed: %v", err)
+				continue
+			}
+			if result.RestoreID == 0 {
+				continue
+			}
+			completed := time.Time{}
+			if result.Status == "success" || result.Status == "failed" {
+				completed = time.Now()
+			}
+			if err := b.store.UpdateBackupRestoreStatus(result.RestoreID, result.Status, result.Error, completed); err != nil {
+				log.Printf("restore result: update failed for id=%d: %v", result.RestoreID, err)
+			}
+		}
+	}
 }
 
 // consumeResults listens on the `dylaris:backup:results` channel and

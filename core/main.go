@@ -356,6 +356,7 @@ func main() {
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/runs", authHandler.AuthMiddleware(backupHandler.ListRuns)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/download", authHandler.AuthMiddleware(backupHandler.DownloadRun)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/restore", authHandler.AuthMiddleware(backupHandler.RestoreRun)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-restores", authHandler.AuthMiddleware(backupHandler.ListRestores)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteRun)).Methods("DELETE")
 	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
 		// The Beam desktop app is now served by gateway/beam-relay's

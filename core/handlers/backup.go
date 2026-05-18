@@ -364,6 +364,24 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Track the restore attempt in the DB so the panel can show history
+	// even after the node finishes (or fails).
+	username := r.Context().Value("username").(string)
+	var requestedBy *int
+	if user, _ := h.state.Store.GetUserByUsername(username); user != nil {
+		requestedBy = &user.ID
+	}
+	restoreID, err := h.state.Store.CreateBackupRestore(&models.BackupRestore{
+		RunID:       run.ID,
+		ServerID:    job.ServerID,
+		RequestedBy: requestedBy,
+		Status:      "queued",
+	})
+	if err != nil {
+		sendJSONError(w, "Failed to record restore: "+err.Error(), 500)
+		return
+	}
+
 	storageCfgJSON, _ := json.Marshal(storage)
 	subServer := ""
 	if job.SubServer != nil {
@@ -372,6 +390,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]interface{}{
 		"action":     "backup_restore",
 		"runId":      run.ID,
+		"restoreId":  restoreID,
 		"jobId":      job.ID,
 		"serverUuid": srv.UUID,
 		"subServer":  subServer,
@@ -381,11 +400,30 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	jsonData, _ := json.Marshal(payload)
 	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)
 	if err := h.state.Redis.RPush(r.Context(), queueKey, jsonData).Err(); err != nil {
+		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue push failed: "+err.Error(), time.Now())
 		sendJSONError(w, "Failed to queue restore: "+err.Error(), 500)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restoreId": restoreID})
+}
+
+// ListRestores GET /api/servers/{id}/backup-restores
+// Recent restore history for a server, newest first.
+func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
+	serverID, _, ok := h.resolveServerWithAccess(w, r, "backups")
+	if !ok {
+		return
+	}
+	restores, err := h.state.Store.ListBackupRestores(serverID, 25)
+	if err != nil {
+		sendJSONError(w, "Database error", 500)
+		return
+	}
+	if restores == nil {
+		restores = []models.BackupRestore{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restores": restores})
 }
 
 // DeleteRun DELETE /api/backup-runs/{runId}

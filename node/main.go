@@ -159,6 +159,8 @@ func main() {
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
 	go StartReconciler(ctx, rdb, dockerMgr, storageMgr)
+	// Purge .pre-restore-* dirs left over from crashed restores.
+	StartRestoreCleanup(ctx, storageMgr)
 
 	// gRPC Mesh: connect outbound to all Cores
 	streamHandler := NewStreamHandler(storageMgr)

@@ -22,6 +22,7 @@ import (
 // roll a sub-server (or the whole container) back to a previous backup.
 type BackupRestoreCommand struct {
 	RunID      int             `json:"runId"`
+	RestoreID  int             `json:"restoreId"`
 	JobID      int             `json:"jobId"`
 	ServerUUID string          `json:"serverUuid"`
 	SubServer  string          `json:"subServer"`
@@ -38,7 +39,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	started := time.Now()
 	storage := storageInfo{}
 	if err := json.Unmarshal(cmd.Storage, &storage); err != nil {
-		reportRestore(ctx, rdb, cmd.RunID, "failed", "invalid storage payload: "+err.Error())
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "invalid storage payload: "+err.Error())
 		return
 	}
 
@@ -53,7 +54,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// which keeps the rename truly atomic.
 	stageDir := targetDir + ".restore-" + time.Now().UTC().Format("20060102-150405")
 	if err := os.MkdirAll(stageDir, 0o755); err != nil {
-		reportRestore(ctx, rdb, cmd.RunID, "failed", "stage dir: "+err.Error())
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stage dir: "+err.Error())
 		return
 	}
 	// On any error we'll remove the stage dir; success path will remove the
@@ -72,7 +73,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	body, err := downloadBackup(ctx, storage, cmd.StorageKey)
 	if err != nil {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RunID, "failed", "download failed: "+err.Error())
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "download failed: "+err.Error())
 		return
 	}
 	defer body.Close()
@@ -80,7 +81,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	gr, err := gzip.NewReader(body)
 	if err != nil {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RunID, "failed", "gzip open: "+err.Error())
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "gzip open: "+err.Error())
 		return
 	}
 	defer gr.Close()
@@ -94,7 +95,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 		if terr != nil {
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RunID, "failed", "tar read: "+terr.Error())
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "tar read: "+terr.Error())
 			return
 		}
 		// Path-traversal guard — entries can name "..", absolute paths,
@@ -108,25 +109,25 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		case tar.TypeDir:
 			if err := os.MkdirAll(cleanPath, os.FileMode(hdr.Mode)); err != nil {
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RunID, "failed", "mkdir: "+err.Error())
+				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "mkdir: "+err.Error())
 				return
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			if err := os.MkdirAll(filepath.Dir(cleanPath), 0o755); err != nil {
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RunID, "failed", "mkdir parent: "+err.Error())
+				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "mkdir parent: "+err.Error())
 				return
 			}
 			f, ferr := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(hdr.Mode))
 			if ferr != nil {
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RunID, "failed", "open file: "+ferr.Error())
+				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open file: "+ferr.Error())
 				return
 			}
 			if _, err := io.Copy(f, tr); err != nil {
 				f.Close()
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RunID, "failed", "copy: "+err.Error())
+				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "copy: "+err.Error())
 				return
 			}
 			f.Close()
@@ -140,7 +141,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 
 	if extracted == 0 {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RunID, "failed", "archive contained no regular files")
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "archive contained no regular files")
 		return
 	}
 
@@ -152,7 +153,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	if _, statErr := os.Stat(targetDir); statErr == nil {
 		if err := os.Rename(targetDir, backupDir); err != nil {
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RunID, "failed", "stash original: "+err.Error())
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stash original: "+err.Error())
 			return
 		}
 	}
@@ -160,7 +161,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		// Roll back the previous stash so the world isn't left missing.
 		os.Rename(backupDir, targetDir)
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RunID, "failed", "swap stage: "+err.Error())
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "swap stage: "+err.Error())
 		return
 	}
 	go os.RemoveAll(backupDir)
@@ -175,7 +176,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 	}
 
-	reportRestore(ctx, rdb, cmd.RunID, "success", "")
+	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
 }
 
@@ -215,10 +216,10 @@ func downloadBackup(ctx context.Context, info storageInfo, key string) (io.ReadC
 }
 
 // reportRestore publishes on a dedicated restore channel so the Core's
-// scheduler can update UI without conflating with regular backup_run
-// results.
-func reportRestore(ctx context.Context, rdb *redis.Client, runID int, status, errMsg string) {
+// scheduler can update the backup_restores row matching this attempt.
+func reportRestore(ctx context.Context, rdb *redis.Client, restoreID, runID int, status, errMsg string) {
 	payload := map[string]interface{}{
+		"restoreId": restoreID,
 		"runId":     runID,
 		"status":    status,
 		"error":     errMsg,

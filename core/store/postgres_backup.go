@@ -310,6 +310,82 @@ func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun,
 	return toPrune, nil
 }
 
+// ───────────── Restores ─────────────
+
+func (s *PostgresStore) scanRestore(row interface{ Scan(...interface{}) error }) (*models.BackupRestore, error) {
+	var r models.BackupRestore
+	var requestedBy sql.NullInt64
+	var completed sql.NullTime
+	err := row.Scan(&r.ID, &r.RunID, &r.ServerID, &requestedBy, &r.RequestedAt, &completed, &r.Status, &r.ErrorMessage)
+	if err != nil {
+		return nil, err
+	}
+	if requestedBy.Valid {
+		v := int(requestedBy.Int64)
+		r.RequestedBy = &v
+	}
+	if completed.Valid {
+		t := completed.Time
+		r.CompletedAt = &t
+	}
+	return &r, nil
+}
+
+const backupRestoreCols = `id, run_id, server_id, requested_by, requested_at, completed_at, status, error_message`
+
+func (s *PostgresStore) CreateBackupRestore(r *models.BackupRestore) (int, error) {
+	var id int
+	var requestedBy interface{} = nil
+	if r.RequestedBy != nil {
+		requestedBy = *r.RequestedBy
+	}
+	err := s.db.QueryRow(
+		`INSERT INTO backup_restores (run_id, server_id, requested_by, status) VALUES ($1, $2, $3, $4) RETURNING id`,
+		r.RunID, r.ServerID, requestedBy, r.Status,
+	).Scan(&id)
+	return id, err
+}
+
+func (s *PostgresStore) GetBackupRestore(id int) (*models.BackupRestore, error) {
+	row := s.db.QueryRow(`SELECT `+backupRestoreCols+` FROM backup_restores WHERE id = $1`, id)
+	return s.scanRestore(row)
+}
+
+func (s *PostgresStore) ListBackupRestores(serverID, limit int) ([]models.BackupRestore, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	rows, err := s.db.Query(
+		`SELECT `+backupRestoreCols+` FROM backup_restores WHERE server_id = $1 ORDER BY requested_at DESC LIMIT $2`,
+		serverID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.BackupRestore
+	for rows.Next() {
+		r, err := s.scanRestore(rows)
+		if err != nil {
+			continue
+		}
+		out = append(out, *r)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) error {
+	var completedArg interface{} = completed
+	if completed.IsZero() {
+		completedArg = nil
+	}
+	_, err := s.db.Exec(
+		`UPDATE backup_restores SET status = $1, error_message = $2, completed_at = $3 WHERE id = $4`,
+		status, errorMsg, completedArg, id,
+	)
+	return err
+}
+
 // ───────────── helpers ─────────────
 
 func nullableString(s *string) interface{} {

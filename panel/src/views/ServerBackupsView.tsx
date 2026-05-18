@@ -8,10 +8,10 @@ import {
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
-    BackupJob, BackupRun, BackupStorage,
+    BackupJob, BackupRun, BackupStorage, BackupRestore,
     listBackupJobs, createBackupJob, updateBackupJob, deleteBackupJob, triggerBackupJob,
     listBackupRuns, deleteBackupRun, restoreBackupRun, backupDownloadUrl,
-    listBackupStorages,
+    listBackupStorages, listBackupRestores,
 } from '@/lib/api';
 import Spinner from '@/components/Spinner';
 
@@ -204,6 +204,7 @@ export default function ServerBackupsView() {
     const [restoreTarget, setRestoreTarget] = useState<BackupRun | null>(null);
     const [restoreCountdown, setRestoreCountdown] = useState(5);
     const [restoring, setRestoring] = useState(false);
+    const [restoreHistory, setRestoreHistory] = useState<BackupRestore[]>([]);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -213,12 +214,14 @@ export default function ServerBackupsView() {
     const reload = useCallback(async () => {
         if (!server) return;
         setLoading(true);
-        const [jobsRes, storagesRes] = await Promise.all([
+        const [jobsRes, storagesRes, restoresRes] = await Promise.all([
             listBackupJobs(server.id),
             listBackupStorages(),
+            listBackupRestores(server.id),
         ]);
         if (jobsRes.success && jobsRes.jobs) setJobs(jobsRes.jobs);
         if (storagesRes.success && storagesRes.storages) setStorages(storagesRes.storages);
+        if (restoresRes.success && restoresRes.restores) setRestoreHistory(restoresRes.restores);
         setLoading(false);
 
         // Load runs per job in parallel.
@@ -232,13 +235,14 @@ export default function ServerBackupsView() {
 
     useEffect(() => { reload(); }, [reload]);
 
-    // Refresh while any run is in progress.
+    // Refresh while any run or restore is in progress.
     useEffect(() => {
         const hasRunning = Object.values(runs).some(list => list.some(r => r.status === 'running'));
-        if (!hasRunning) return;
+        const hasPendingRestore = restoreHistory.some(r => r.status === 'queued' || r.status === 'running');
+        if (!hasRunning && !hasPendingRestore) return;
         const interval = setInterval(reload, 5000);
         return () => clearInterval(interval);
-    }, [runs, reload]);
+    }, [runs, restoreHistory, reload]);
 
     const subServers = server?.activeSubServer ? [server.activeSubServer] : [];
 
@@ -407,6 +411,33 @@ export default function ServerBackupsView() {
                             )}
                         </div>
                     ))}
+                </div>
+            )}
+
+            {restoreHistory.length > 0 && (
+                <div className="card card-pad">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Undo2 size={14} className="text-(--accent-light)" />
+                        <span className="h-section">Restore History</span>
+                        <span className="mono-label">{restoreHistory.length}</span>
+                    </div>
+                    <div className="space-y-1">
+                        {restoreHistory.slice(0, 8).map(restore => (
+                            <div key={restore.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-(--base-03)/40">
+                                <span className={`badge-dot ${restore.status === 'success' ? 'bg-(--success-light)' : restore.status === 'failed' ? 'bg-(--error)' : 'bg-(--warning) animate-pulse'}`} />
+                                <span className="text-sm text-(--base-08) flex-1">
+                                    Run #{restore.runId}
+                                    <span className="text-xs text-(--base-06) ml-2">{formatRel(restore.requestedAt)}</span>
+                                </span>
+                                <span className="badge badge-neutral capitalize">{restore.status}</span>
+                                {restore.errorMessage && (
+                                    <span className="text-[10px] text-(--error-light) max-w-xs truncate" title={restore.errorMessage}>
+                                        {restore.errorMessage}
+                                    </span>
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 

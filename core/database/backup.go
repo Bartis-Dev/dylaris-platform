@@ -48,6 +48,20 @@ func createBackupTables(db *sql.DB) error {
 			error_message TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at DESC)`,
+		// One row per restore attempt. We keep history separate from
+		// backup_runs because a single archive can be restored many times
+		// — collapsing them would mask that.
+		`CREATE TABLE IF NOT EXISTS backup_restores (
+			id SERIAL PRIMARY KEY,
+			run_id INTEGER NOT NULL REFERENCES backup_runs(id) ON DELETE CASCADE,
+			server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+			requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			requested_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+			completed_at TIMESTAMPTZ,
+			status TEXT NOT NULL DEFAULT 'queued',
+			error_message TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_backup_restores_server ON backup_restores(server_id, requested_at DESC)`,
 	}
 	for _, q := range tables {
 		if _, err := db.Exec(q); err != nil {
