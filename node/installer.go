@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -9,10 +10,20 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// dockerManager is set once at boot by main.go so installers that need a
+// real JVM (Forge / NeoForge) can run one-shot containers without threading
+// a *DockerManager argument through the whole installer call graph.
+var dockerManager *DockerManager
+
+// SetDockerManager wires the package-level docker manager. Called from main
+// right after NewDockerManager succeeds.
+func SetDockerManager(dm *DockerManager) {
+	dockerManager = dm
+}
 
 type InstallerConfig struct {
 	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import"
@@ -21,6 +32,12 @@ type InstallerConfig struct {
 	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback)
 	Path      string `json:"path"`      // Local library file path (for "library" type)
 	Structure string `json:"structure"` // "direct" or "subfolder" (for "upload-zip")
+	// JavaImage + ServerUUID flow in from the setup command so installers
+	// that need a real JVM (Forge / NeoForge) can run inside a temp
+	// container with the user's chosen Java image instead of relying on
+	// `java` being installed on the node host.
+	JavaImage  string `json:"javaImage,omitempty"`
+	ServerUUID string `json:"serverUuid,omitempty"`
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving
@@ -71,9 +88,9 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 	case "fabric":
 		return installFabric(destDir, config.Version, config.Loader)
 	case "forge":
-		return installForge(destDir, config.Version, config.Loader)
+		return installForge(destDir, config.Version, config.Loader, config.JavaImage, config.ServerUUID)
 	case "neoforge":
-		return installNeoForge(destDir, config.Loader)
+		return installNeoForge(destDir, config.Loader, config.JavaImage, config.ServerUUID)
 	case "library":
 		return installFromLibrary(destDir, config.Path, config.URL)
 	case "import":
@@ -151,8 +168,9 @@ func installFabric(dir, mcVersion, loaderVersion string) error {
 
 // installForge resolves the recommended/latest Forge build via promotions_slim.json
 // (or uses the caller-supplied build), downloads the installer JAR and runs it
-// with --installServer. Requires `java` in PATH on the node host.
-func installForge(dir, mcVersion, build string) error {
+// inside a one-shot container built from the user's chosen Java image. No
+// host-level Java install required.
+func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 	if build == "" {
 		var promos struct {
 			Promos map[string]string `json:"promos"`
@@ -180,20 +198,14 @@ func installForge(dir, mcVersion, build string) error {
 	}
 	defer os.Remove(installerPath)
 
-	log.Printf("Running Forge --installServer ...")
-	cmd := exec.Command("java", "-jar", installerPath, "--installServer")
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("forge installer failed: %v\n%s", err, string(output))
-	}
-	return nil
+	log.Printf("Running Forge --installServer inside %s ...", javaImage)
+	return runJavaInstaller(serverUUID, javaImage, "_forge-installer.jar", "--installServer")
 }
 
 // installNeoForge resolves the requested NeoForge version (or latest if blank)
-// from the Maven metadata, downloads the installer JAR and runs --install-server.
-// Requires `java` in PATH on the node host.
-func installNeoForge(dir, version string) error {
+// from the Maven metadata, downloads the installer JAR and runs --install-server
+// inside a one-shot Java container.
+func installNeoForge(dir, version, javaImage, serverUUID string) error {
 	if version == "" {
 		resp, err := http.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
 		if err != nil {
@@ -202,8 +214,8 @@ func installNeoForge(dir, version string) error {
 		defer resp.Body.Close()
 		var meta struct {
 			Versioning struct {
-				Latest   string   `xml:"latest"`
-				Release  string   `xml:"release"`
+				Latest   string `xml:"latest"`
+				Release  string `xml:"release"`
 				Versions struct {
 					Version []string `xml:"version"`
 				} `xml:"versions"`
@@ -233,12 +245,28 @@ func installNeoForge(dir, version string) error {
 	}
 	defer os.Remove(installerPath)
 
-	log.Printf("Running NeoForge --install-server ...")
-	cmd := exec.Command("java", "-jar", installerPath, "--install-server")
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
+	log.Printf("Running NeoForge --install-server inside %s ...", javaImage)
+	return runJavaInstaller(serverUUID, javaImage, "_neoforge-installer.jar", "--install-server")
+}
+
+// runJavaInstaller wraps the installer-JAR execution inside a one-shot Java
+// container. The server's data directory is mounted at /data and the JAR
+// runs with /data as workdir, so paths inside the installer line up with
+// how the runtime container will see the same directory.
+func runJavaInstaller(serverUUID, javaImage, installerJAR string, args ...string) error {
+	if dockerManager == nil {
+		return fmt.Errorf("docker manager unavailable — installer cannot run")
+	}
+	if javaImage == "" {
+		return fmt.Errorf("installer requires a Java image (set during setup)")
+	}
+	cmd := append([]string{"java", "-jar", "/data/" + installerJAR}, args...)
+	logs, err := dockerManager.RunInstallerContainer(context.Background(), serverUUID, javaImage, cmd)
 	if err != nil {
-		return fmt.Errorf("neoforge installer failed: %v\n%s", err, string(output))
+		if logs != "" {
+			return fmt.Errorf("%w\n%s", err, logs)
+		}
+		return err
 	}
 	return nil
 }

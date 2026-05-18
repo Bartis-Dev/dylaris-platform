@@ -97,6 +97,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to init Docker Manager: %v", err)
 	}
+	// Make the docker manager available to installers that need a JVM
+	// container (Forge / NeoForge).
+	SetDockerManager(dockerMgr)
 
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
 	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, portMode)
@@ -539,7 +542,15 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 
 					serverPath := storage.GetServerDir(cmd.Config.UUID)
 
-					if err := InstallServer(serverPath, subName, cmd.Installer); err != nil {
+					// Forge / NeoForge installers need to run inside a Java
+					// container; copy the Java image + container UUID from
+					// the setup config so the installer has everything it
+					// needs without an extra round-trip.
+					installerCfg := cmd.Installer
+					installerCfg.JavaImage = cmd.Config.Docker.Image
+					installerCfg.ServerUUID = cmd.Config.UUID
+
+					if err := InstallServer(serverPath, subName, installerCfg); err != nil {
 						log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 						return
@@ -744,8 +755,13 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Clean failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 					}
 
-					// Re-install with new config
-					if err := InstallServer(serverPath, subName, cmd.Installer); err != nil {
+					// Re-install with new config (Forge/NeoForge need the
+					// Java image to spin up a one-shot installer container).
+					installerCfg := cmd.Installer
+					installerCfg.JavaImage = cmd.Config.Docker.Image
+					installerCfg.ServerUUID = cmd.Config.UUID
+
+					if err := InstallServer(serverPath, subName, installerCfg); err != nil {
 						log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 						return
@@ -828,6 +844,15 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					}
 					log.Printf("backup_run: starting run=%d job=%d server=%s sub=%s", bcmd.RunID, bcmd.JobID, bcmd.ServerUUID, bcmd.SubServer)
 					RunBackup(ctx, rdb, storage, bcmd)
+
+				case "backup_restore":
+					var rcmd BackupRestoreCommand
+					if err := json.Unmarshal([]byte(payload), &rcmd); err != nil {
+						log.Printf("backup_restore: decode failed: %v", err)
+						return
+					}
+					log.Printf("backup_restore: starting run=%d server=%s sub=%s", rcmd.RunID, rcmd.ServerUUID, rcmd.SubServer)
+					RunRestore(ctx, rdb, storage, dm, rcmd)
 
 				default:
 					log.Printf("Unknown action: %s", cmd.Action)

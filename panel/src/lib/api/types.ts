@@ -275,6 +275,8 @@ export const listBackupRuns = (jobId: number): Promise<{ success: boolean; runs?
     fetchAPI(`/backup-jobs/${jobId}/runs`);
 export const deleteBackupRun = (runId: number): Promise<{ success: boolean }> =>
     fetchAPI(`/backup-runs/${runId}`, { method: 'DELETE' });
+export const restoreBackupRun = (runId: number): Promise<{ success: boolean; message?: string }> =>
+    fetchAPI(`/backup-runs/${runId}/restore`, { method: 'POST' });
 export const backupDownloadUrl = (runId: number) => {
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
     return `${API_URL}/backup-runs/${runId}/download`;

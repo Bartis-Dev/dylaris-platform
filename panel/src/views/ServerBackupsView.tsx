@@ -4,13 +4,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import {
     Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleCheck, CircleAlert, Save,
-    RotateCcw,
+    Undo2, AlertTriangle,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     BackupJob, BackupRun, BackupStorage,
     listBackupJobs, createBackupJob, updateBackupJob, deleteBackupJob, triggerBackupJob,
-    listBackupRuns, deleteBackupRun, backupDownloadUrl,
+    listBackupRuns, deleteBackupRun, restoreBackupRun, backupDownloadUrl,
     listBackupStorages,
 } from '@/lib/api';
 import Spinner from '@/components/Spinner';
@@ -201,6 +201,9 @@ export default function ServerBackupsView() {
     const [editingJob, setEditingJob] = useState<BackupJob | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [busyJob, setBusyJob] = useState<number | null>(null);
+    const [restoreTarget, setRestoreTarget] = useState<BackupRun | null>(null);
+    const [restoreCountdown, setRestoreCountdown] = useState(5);
+    const [restoring, setRestoring] = useState(false);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -280,6 +283,30 @@ export default function ServerBackupsView() {
         reload();
     };
 
+    // Restore confirmation: 5s countdown gives a clear chance to bail.
+    useEffect(() => {
+        if (!restoreTarget) return;
+        setRestoreCountdown(5);
+        const interval = setInterval(() => {
+            setRestoreCountdown(c => Math.max(0, c - 1));
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [restoreTarget]);
+
+    const handleConfirmRestore = async () => {
+        if (!restoreTarget) return;
+        setRestoring(true);
+        const res = await restoreBackupRun(restoreTarget.id);
+        setRestoring(false);
+        if (res.success) {
+            showToast('Restore queued — your server will restart shortly.');
+            setRestoreTarget(null);
+            reload();
+        } else {
+            showToast(res.message || 'Restore failed.', false);
+        }
+    };
+
     if (!server) return null;
 
     return (
@@ -352,9 +379,18 @@ export default function ServerBackupsView() {
                                                 <span className="text-xs text-(--base-06) tabular-nums w-20 text-right">{formatBytes(run.sizeBytes)}</span>
                                                 <span className="badge badge-neutral capitalize">{run.status}</span>
                                                 {run.status === 'success' && (
-                                                    <a href={backupDownloadUrl(run.id)} className="btn btn-secondary btn-sm" download title="Download archive">
-                                                        <Download size={11} />
-                                                    </a>
+                                                    <>
+                                                        <button
+                                                            onClick={() => setRestoreTarget(run)}
+                                                            className="btn btn-secondary btn-sm"
+                                                            title="Restore this backup"
+                                                        >
+                                                            <Undo2 size={11} />
+                                                        </button>
+                                                        <a href={backupDownloadUrl(run.id)} className="btn btn-secondary btn-sm" download title="Download archive">
+                                                            <Download size={11} />
+                                                        </a>
+                                                    </>
                                                 )}
                                                 <button onClick={() => handleDeleteRun(run.id)} className="btn btn-danger btn-sm" title="Delete">
                                                     <Trash2 size={11} />
@@ -399,6 +435,46 @@ export default function ServerBackupsView() {
                     onClose={() => setEditingJob(null)}
                     onSave={handleUpdate}
                 />
+            )}
+
+            {restoreTarget && (
+                <div className="modal-overlay animate-fade-in" onClick={() => !restoring && setRestoreTarget(null)}>
+                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
+                                <AlertTriangle size={18} /> Restore Backup
+                            </h3>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-08)">
+                                Replace the current world data with the backup from {' '}
+                                <span className="font-mono text-(--base-09)">{new Date(restoreTarget.startedAt).toLocaleString()}</span>?
+                            </p>
+                            <p className="alert alert-warning text-xs">
+                                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                                <span>
+                                    Your server will be stopped, the archive extracted into the sub-server directory, and the server restarted automatically. The previous contents are moved aside (kept until next disk cleanup) — but anything written since this backup will be gone.
+                                </span>
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => setRestoreTarget(null)} disabled={restoring} className="btn btn-secondary">
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmRestore}
+                                disabled={restoreCountdown > 0 || restoring}
+                                className="btn btn-danger disabled:opacity-40"
+                            >
+                                {restoring
+                                    ? 'Queueing…'
+                                    : restoreCountdown > 0
+                                        ? `Restore (${restoreCountdown}s)`
+                                        : <><Undo2 size={13} /> Restore now</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {toast && (

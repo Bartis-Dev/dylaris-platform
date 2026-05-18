@@ -314,6 +314,80 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, reader)
 }
 
+// RestoreRun POST /api/backup-runs/{runId}/restore
+// Dispatches a restore command to the node. The node stops the affected
+// sub-server, streams the archive from storage, extracts in place and
+// restarts the container. We don't block the HTTP request on the actual
+// restore — it can take minutes for large worlds — the panel polls run
+// status instead.
+func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.Atoi(mux.Vars(r)["runId"])
+	if err != nil {
+		sendJSONError(w, "Invalid run ID", 400)
+		return
+	}
+	run, err := h.state.Store.GetBackupRun(runID)
+	if err != nil {
+		sendJSONError(w, "Run not found", 404)
+		return
+	}
+	if run.Status != "success" {
+		sendJSONError(w, "Cannot restore a run that did not complete successfully", 400)
+		return
+	}
+	job, err := h.state.Store.GetBackupJob(run.JobID)
+	if err != nil {
+		sendJSONError(w, "Job not found", 404)
+		return
+	}
+	if !h.hasServerAccess(r, job.ServerID, "backups") {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(job.ServerID)
+	if err != nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	if err != nil {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
+	if job.StorageID == nil {
+		sendJSONError(w, "Job has no storage configured", 400)
+		return
+	}
+	storage, err := h.state.Store.GetBackupStorage(*job.StorageID)
+	if err != nil {
+		sendJSONError(w, "Storage not found", 404)
+		return
+	}
+
+	storageCfgJSON, _ := json.Marshal(storage)
+	subServer := ""
+	if job.SubServer != nil {
+		subServer = *job.SubServer
+	}
+	payload := map[string]interface{}{
+		"action":     "backup_restore",
+		"runId":      run.ID,
+		"jobId":      job.ID,
+		"serverUuid": srv.UUID,
+		"subServer":  subServer,
+		"storageKey": run.StorageKey,
+		"storage":    json.RawMessage(storageCfgJSON),
+	}
+	jsonData, _ := json.Marshal(payload)
+	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)
+	if err := h.state.Redis.RPush(r.Context(), queueKey, jsonData).Err(); err != nil {
+		sendJSONError(w, "Failed to queue restore: "+err.Error(), 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
 // DeleteRun DELETE /api/backup-runs/{runId}
 func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(mux.Vars(r)["runId"])

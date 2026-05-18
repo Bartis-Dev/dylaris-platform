@@ -304,6 +304,98 @@ func (dm *DockerManager) DisconnectFromProxyNetwork(containerUUID, proxyUUID str
 	return nil
 }
 
+// RunInstallerContainer runs a one-shot container with the given image,
+// mounting the server's data directory at /data, executing `cmd` from /data
+// and returning the combined stdout+stderr output. The container is
+// auto-removed when the process exits. Used by Forge/NeoForge installers
+// that need a real JVM — we pick whatever Java image the user selected for
+// the actual MC server, so the installer matches the runtime version.
+//
+// Errors are returned with the container logs appended so callers can
+// surface a useful failure reason to the panel.
+func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, image string, cmd []string) (string, error) {
+	if image == "" {
+		return "", fmt.Errorf("installer image is required")
+	}
+	hostServerPath := dm.resolveHostServerPath(serverUUID)
+	if hostServerPath == "" {
+		return "", fmt.Errorf("could not resolve host path for server %s", serverUUID)
+	}
+
+	// Pull the image first — many user-selected Java images won't be on
+	// the node yet at first setup. Ignore errors; container create will
+	// re-surface the real problem if it's missing.
+	dm.PullImage(image)
+
+	cc := &container.Config{
+		Image:        image,
+		Cmd:          cmd,
+		WorkingDir:   "/data",
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          false,
+	}
+	hc := &container.HostConfig{
+		AutoRemove: true,
+		Binds:      []string{fmt.Sprintf("%s:/data", hostServerPath)},
+	}
+	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nil, nil, "")
+	if err != nil {
+		return "", fmt.Errorf("installer container create: %w", err)
+	}
+	cid := resp.ID
+
+	if err := dm.cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
+		return "", fmt.Errorf("installer container start: %w", err)
+	}
+
+	// Wait for completion (or until ctx is cancelled, which the caller can
+	// use to enforce a timeout).
+	statusCh, errCh := dm.cli.ContainerWait(ctx, cid, container.WaitConditionNotRunning)
+	var exitCode int64
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case waitErr := <-errCh:
+		if waitErr != nil {
+			return "", fmt.Errorf("installer container wait: %w", waitErr)
+		}
+	case status := <-statusCh:
+		exitCode = status.StatusCode
+	}
+
+	// Grab the logs even on success — Forge/NeoForge installers print useful
+	// diagnostics we want to surface in the panel error if anything goes
+	// wrong later (missing libraries, etc.).
+	logReader, logErr := dm.cli.ContainerLogs(ctx, cid, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+	})
+	logs := ""
+	if logErr == nil {
+		buf, _ := io.ReadAll(logReader)
+		logs = string(buf)
+		logReader.Close()
+	}
+
+	if exitCode != 0 {
+		return logs, fmt.Errorf("installer exited with code %d", exitCode)
+	}
+	return logs, nil
+}
+
+// PullImage pulls an image with no auth — best-effort, used by the installer
+// path to fault in user-selected Java images before running the installer.
+func (dm *DockerManager) PullImage(image string) {
+	reader, err := dm.cli.ImagePull(dm.ctx, image, dockerimage.PullOptions{})
+	if err != nil {
+		log.Printf("PullImage(%s): %v", image, err)
+		return
+	}
+	io.Copy(io.Discard, reader)
+	reader.Close()
+}
+
 // ContainerProxyIP returns the container's IP inside the given proxy network
 // (empty when not attached / container missing). Used by the panel to display
 // the private endpoint a proxy should target.
