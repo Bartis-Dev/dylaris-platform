@@ -14,6 +14,7 @@ import {
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
+import RoutesModal from '@/components/RoutesModal';
 
 export default function ServerLayout({ children }: { children: React.ReactNode }) {
     const params = useParams();
@@ -52,6 +53,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [showKillConfirm, setShowKillConfirm] = useState(false);
 
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
+    const [showRoutesModal, setShowRoutesModal] = useState(false);
 
     // Load gateway routes when relevant
     useEffect(() => {
@@ -340,8 +342,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 {/* Connection Info */}
                 {!isPendingSetup && (
                     (routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0) ||
-                    (gatewayEnabled && serverRoutes.length > 0) ||
-                    (routingMode === 'gateway' && gatewayEnabled && serverRoutes.length === 0)
+                    gatewayEnabled
                 ) && (
                     <div className={`flex items-center gap-4 py-2 border-t flex-wrap ${
                         routingMode === 'gateway' && gatewayEnabled && serverRoutes.length === 0
@@ -387,6 +388,17 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 <AlertTriangle size={12} className="text-(--warning)" />
                                 <span className="text-xs text-(--warning) font-medium">No gateway route configured</span>
                             </div>
+                        )}
+                        {gatewayEnabled && (
+                            <button
+                                onClick={() => setShowRoutesModal(true)}
+                                className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium hover:bg-(--accent)/15 transition-colors ${serverRoutes.length === 0 ? 'shine-border' : ''}`}
+                                title="Manage gateway routes &amp; domains"
+                            >
+                                <Globe size={12} />
+                                Routes
+                                <span className="mono-label text-(--accent-light)">{serverRoutes.length}</span>
+                            </button>
                         )}
                     </div>
                 )}
@@ -602,6 +614,15 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         </div>
                     </div>
                 </div>
+            )}
+
+            {showRoutesModal && (
+                <RoutesModal
+                    serverId={selectedServer.id}
+                    serverName={selectedServer.name}
+                    onClose={() => setShowRoutesModal(false)}
+                    onRoutesChanged={setServerRoutes}
+                />
             )}
         </main>
     );

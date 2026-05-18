@@ -325,7 +325,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           className="btn w-full px-4 py-3 text-sm text-(--accent-light) bg-transparent border-0 hover:bg-(--base-03) justify-start"
         >
           <PlusCircle size={16} />
-          New Server
+          New Container
         </button>
       </div>
     </aside>

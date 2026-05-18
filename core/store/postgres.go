@@ -598,6 +598,23 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 	return invites, nil
 }
 
+func (s *PostgresStore) CountInvitesPerServer() (map[int]int, error) {
+	rows, err := s.db.Query(`SELECT server_id, COUNT(*) FROM server_invites GROUP BY server_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make(map[int]int)
+	for rows.Next() {
+		var sid, c int
+		if err := rows.Scan(&sid, &c); err != nil {
+			continue
+		}
+		counts[sid] = c
+	}
+	return counts, nil
+}
+
 func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.Server, error) {
 	serverCols := `s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
 		s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,

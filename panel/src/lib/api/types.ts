@@ -525,10 +525,12 @@ export const checkDomainAvailability = (req: DomainCheckRequest): Promise<Domain
 
 // --- BEAM SETTINGS ---
 export interface BeamSettings {
-    relayAddress: string;
+    relayAddress: string;            // Effective (discovered or manual override)
+    manualOverride?: string;         // Admin-configured override (empty = auto)
+    discoveredRelays?: string[];     // Read-only list from Redis discovery
     bwLimit: number;
     enabled: boolean;
-    downloadLink?: string;
+    downloadLink?: string;           // Optional CDN override
 }
 export const getBeamSettings = (): Promise<{ success: boolean; settings?: BeamSettings }> => fetchAPI('/settings/beam');
 export const saveBeamSettings = (data: BeamSettings) => fetchAPI('/settings/beam', { method: 'POST', body: JSON.stringify(data) });
@@ -543,6 +545,13 @@ export interface AdminServer {
     nodeId?: number;
     status: string;
     activeSubServer?: string;
+    createdAt?: string;
+    serverType?: 'game' | 'proxy';
+    memory?: number;
+    diskLimit?: number;
+    cpuLimit?: number;
+    memberCount?: number;
+    proxyId?: number | null;
 }
 export interface DiskAnalysis {
     nodeOnline?: boolean;

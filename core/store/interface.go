@@ -77,6 +77,7 @@ type Store interface {
 	UpdateInvitePermissions(serverID, userID int, permissions map[string]bool) error
 	GetInvite(serverID, userID int) (*models.ServerInvite, error)
 	ListInvitesByServer(serverID int) ([]models.ServerInvite, error)
+	CountInvitesPerServer() (map[int]int, error)
 	ListServersForUser(userID int, isAdmin bool) ([]models.Server, error)
 
 	// --- Modules ---

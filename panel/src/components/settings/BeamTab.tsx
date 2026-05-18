@@ -1,13 +1,16 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Save, CircleCheck, CircleAlert } from 'lucide-react';
+import { Save, CircleCheck, CircleAlert, Radar } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
 
 interface BeamSettings {
-    relayAddress: string;
+    relayAddress: string;       // Effective (discovered or manual)
+    manualOverride: string;     // Admin-configured override
+    discoveredRelays: string[]; // Auto-registered relays
     bwLimit: number;
     enabled: boolean;
+    downloadLink?: string;
 }
 
 const BW_UNITS = [
@@ -63,6 +66,8 @@ async function saveBeamSettings(settings: BeamSettings): Promise<{ success: bool
 export default function BeamTab() {
     const [settings, setSettings] = useState<BeamSettings>({
         relayAddress: '',
+        manualOverride: '',
+        discoveredRelays: [],
         bwLimit: 0,
         enabled: true,
     });
@@ -99,7 +104,13 @@ export default function BeamTab() {
     const handleSave = async () => {
         setSaving(true);
         const bwLimit = unlimited ? 0 : displayToBw(bwValue, bwUnit);
-        const res = await saveBeamSettings({ ...settings, bwLimit });
+        // Backend stores manualOverride under beam.relay_address — send as relayAddress.
+        const payload: BeamSettings = {
+            ...settings,
+            relayAddress: settings.manualOverride,
+            bwLimit,
+        };
+        const res = await saveBeamSettings(payload);
         if (res.success) {
             showToast('Beam settings saved.');
         } else {
@@ -137,17 +148,44 @@ export default function BeamTab() {
                     </button>
                 </div>
 
-                {/* Relay Address */}
+                {/* Discovered Relays */}
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                        <label className="input-label">Discovered Relays</label>
+                        <span className="mono-label">{settings.discoveredRelays.length} online</span>
+                    </div>
+                    {settings.discoveredRelays.length > 0 ? (
+                        <ul className="rounded-md border border-(--base-03) divide-y divide-(--base-03) bg-(--base-01)">
+                            {settings.discoveredRelays.map(addr => (
+                                <li key={addr} className="flex items-center gap-2 px-3 py-2">
+                                    <Radar size={12} className="text-(--success-light)" />
+                                    <span className="font-mono text-xs text-(--base-08)">{addr}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : (
+                        <p className="alert alert-warning text-xs">
+                            No relays have registered themselves via Redis auto-discovery yet.
+                            Either start a Beam relay (it self-registers in <code className="font-mono">beam:relays</code>)
+                            or set a manual override below.
+                        </p>
+                    )}
+                </div>
+
+                {/* Manual Override */}
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Relay Address</label>
-                    <p className="text-xs text-(--base-06) mb-1">Public address of the Beam Relay service (e.g. beam.example.com:9095)</p>
+                    <label className="input-label">Manual Override</label>
+                    <p className="text-xs text-(--base-06) mb-1">Optional. When set, forces all clients to this address and bypasses discovery.</p>
                     <input
                         type="text"
-                        value={settings.relayAddress}
-                        onChange={e => setSettings(s => ({ ...s, relayAddress: e.target.value }))}
-                        placeholder="beam.example.com:9095"
-                        className="input-field"
+                        value={settings.manualOverride}
+                        onChange={e => setSettings(s => ({ ...s, manualOverride: e.target.value }))}
+                        placeholder="beam.example.com:9095 (leave blank for auto-discovery)"
+                        className="input-field font-mono"
                     />
+                    <p className="text-xs text-(--base-06)">
+                        Effective relay: <span className="font-mono text-(--base-08)">{settings.relayAddress || '— none —'}</span>
+                    </p>
                 </div>
             </div>
 

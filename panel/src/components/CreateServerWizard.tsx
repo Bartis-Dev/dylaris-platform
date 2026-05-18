@@ -218,7 +218,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 {/* Header */}
                 <div className="modal-header flex justify-between items-center">
                     <div>
-                        <h2 className="modal-title">Deploy Server</h2>
+                        <h2 className="modal-title">Create Container</h2>
                         <p className="input-label mt-1">Step {step} of 2 — Software setup happens after deployment</p>
                     </div>
                     <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light) transition-colors">

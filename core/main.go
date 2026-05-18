@@ -334,6 +334,7 @@ func main() {
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")
 	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
+	api.HandleFunc("/beam/download", beamHandler.GetBeamDownload).Methods("GET")
 	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
 		// The Beam desktop app is now served by gateway/beam-relay's
 		// /download/{os}-{arch} endpoint — see plan. Core redirects to it

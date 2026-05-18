@@ -1,12 +1,60 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
+	"strings"
+	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
+	"github.com/redis/go-redis/v9"
 )
+
+// Beam relay discovery — relays register themselves in Redis sorted-set
+// "beam:relays" with score = unix-expiry. Entries past TTL are pruned on read.
+const beamRelaysKey = "beam:relays"
+
+// DiscoverBeamRelays returns the list of currently registered Beam relays,
+// pruning any whose registration has expired.
+func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []string {
+	if rdb == nil {
+		return nil
+	}
+	now := time.Now().Unix()
+	// Prune expired entries (score < now)
+	rdb.ZRemRangeByScore(ctx, beamRelaysKey, "-inf", fmt.Sprintf("%d", now-1))
+	res, err := rdb.ZRange(ctx, beamRelaysKey, 0, -1).Result()
+	if err != nil {
+		return nil
+	}
+	return res
+}
+
+// PickBeamRelay returns one relay address using random load-balancing,
+// or empty string when none are registered.
+func PickBeamRelay(ctx context.Context, rdb *redis.Client) string {
+	relays := DiscoverBeamRelays(ctx, rdb)
+	if len(relays) == 0 {
+		return ""
+	}
+	return relays[rand.Intn(len(relays))]
+}
+
+// resolveRelay returns (effectiveAddress, source). Source is "discovered" or
+// "manual" or empty. Manual override (DB setting beam.relay_address) wins so
+// admins can force a specific relay during incidents.
+func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride string) (string, string) {
+	if strings.TrimSpace(manualOverride) != "" {
+		return manualOverride, "manual"
+	}
+	if relay := PickBeamRelay(ctx, rdb); relay != "" {
+		return relay, "discovered"
+	}
+	return "", ""
+}
 
 type BeamHandler struct {
 	state     *AppState
@@ -162,7 +210,8 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 		return val
 	}
 
-	relayAddress := getSetting("beam.relay_address")
+	manualOverride := getSetting("beam.relay_address")
+	relayAddress, _ := resolveRelay(r.Context(), h.state.Redis, manualOverride)
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"
@@ -184,4 +233,52 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 			"logo_url": brandLogoURL,
 		},
 	})
+}
+
+// GetBeamDownload redirects to a Beam binary on a load-balanced relay.
+// GET /api/beam/download/{platform}
+// platform ∈ {win, mac-arm, mac-intel, linux}
+func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
+	platform := r.URL.Query().Get("platform")
+	if platform == "" {
+		// Allow path-style /api/beam/download (no platform) — return JSON list.
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"platforms": []string{"win", "mac-arm", "mac-intel", "linux"},
+		})
+		return
+	}
+
+	validPlatforms := map[string]bool{"win": true, "mac-arm": true, "mac-intel": true, "linux": true}
+	if !validPlatforms[platform] {
+		sendJSONError(w, "Invalid platform", http.StatusBadRequest)
+		return
+	}
+
+	getSetting := func(key string) string {
+		val, _ := h.state.Store.GetSetting(key)
+		return val
+	}
+
+	// Manual override for the entire download URL still wins — useful when
+	// shipping a binary from a separate CDN rather than via a relay.
+	manualLink := getSetting("beam.download_link")
+	if strings.TrimSpace(manualLink) != "" {
+		http.Redirect(w, r, manualLink, http.StatusFound)
+		return
+	}
+
+	relay, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"))
+	if relay == "" {
+		sendJSONError(w, "No Beam relay available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Relays expose /download/{platform} over HTTPS on their public address.
+	scheme := "https"
+	if strings.HasPrefix(relay, "http://") || strings.HasPrefix(relay, "https://") {
+		http.Redirect(w, r, strings.TrimRight(relay, "/")+"/download/"+platform, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("%s://%s/download/%s", scheme, relay, platform), http.StatusFound)
 }

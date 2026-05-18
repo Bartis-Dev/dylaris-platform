@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 	"encoding/json"
 	"fmt"
@@ -217,16 +218,16 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve owner username for container naming
-	owner, err := h.state.Store.GetUserByID(req.OwnerID)
-	if err != nil {
+	// Validate owner exists before going further.
+	if _, err := h.state.Store.GetUserByID(req.OwnerID); err != nil {
 		sendJSONError(w, "Owner not found", 404)
 		return
 	}
 
-	// Container-Name: Username-Server-N
-	count, _ := h.state.Store.CountServersByOwner(req.OwnerID)
-	containerName := fmt.Sprintf("%s-Server-%02d", owner.Username, count+1)
+	// Container name: Heroku-style slug like "crimson-otter-7a3f". The 4-hex
+	// suffix gives ~65k entropy per adj+noun pair, collisions are vanishingly
+	// rare; DB uniqueness still enforces final correctness on insert.
+	containerName := services.GenerateContainerSlug()
 
 	isFixedVal := true
 	if req.IsFixed != nil {
@@ -1297,9 +1298,19 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 		servers = filtered
 	}
 
+	memberCounts, _ := h.state.Store.CountInvitesPerServer()
+	type adminServerRow struct {
+		models.Server
+		MemberCount int `json:"memberCount"`
+	}
+	rows := make([]adminServerRow, len(servers))
+	for i, s := range servers {
+		rows[i] = adminServerRow{Server: s, MemberCount: memberCounts[s.ID]}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"servers": servers,
+		"servers": rows,
 	})
 }
 

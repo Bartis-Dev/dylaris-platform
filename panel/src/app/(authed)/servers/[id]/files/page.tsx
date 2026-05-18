@@ -5,15 +5,32 @@ import { Terminal, Globe, FolderOpen, Copy } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import FileBrowserView from '@/views/FileBrowserView';
 
+function detectBeamPlatform(): 'win' | 'mac-arm' | 'mac-intel' | 'linux' {
+    if (typeof navigator === 'undefined') return 'win';
+    const ua = navigator.userAgent;
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? '';
+    if (/Mac|Darwin/i.test(ua) || /macOS/i.test(platform)) {
+        // Apple Silicon detection: userAgentData is most reliable; fall back to UA hint.
+        const isArm = /Mac OS X.*ARM|aarch64|arm64/i.test(ua) || /arm/i.test(platform);
+        return isArm ? 'mac-arm' : 'mac-intel';
+    }
+    if (/Linux/i.test(ua)) return 'linux';
+    return 'win';
+}
+
 export default function ServerFilesPage() {
     const params = useParams();
     const { servers, user, fileAccessMode, beamSettings } = useAppData();
     const server = servers.find(s => s.id === Number(params?.id));
     if (!server) return null;
 
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+    const beamDownloadUrl = `${API_URL}/beam/download?platform=${detectBeamPlatform()}`;
+    const beamEnabled = (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.enabled !== false;
+
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;
-    const showBeam = (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.relayAddress;
-    const hasInfoBar = showSftp || showBeam || beamSettings?.downloadLink;
+    const showBeam = beamEnabled && beamSettings?.relayAddress;
+    const hasInfoBar = showSftp || showBeam || beamEnabled;
 
     return (
         <div className="flex flex-col gap-3 h-full">
@@ -53,9 +70,9 @@ export default function ServerFilesPage() {
                             </div>
                         </div>
                     )}
-                    {beamSettings?.downloadLink && (
+                    {beamEnabled && (
                         <a
-                            href={beamSettings.downloadLink}
+                            href={beamDownloadUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn btn-secondary btn-sm ml-auto shrink-0"

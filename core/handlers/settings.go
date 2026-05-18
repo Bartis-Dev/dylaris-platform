@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -717,15 +718,18 @@ func (h *SettingsHandler) TestLibraryConnection(w http.ResponseWriter, r *http.R
 // ─── Beam Settings ───────────────────────────────────────────────────
 
 type BeamSettings struct {
-	RelayAddress string `json:"relayAddress"` // Public BeamRelay address for clients
-	BwLimit      int64  `json:"bwLimit"`      // Bytes/sec, 0 = unlimited
-	Enabled      bool   `json:"enabled"`
-	DownloadLink string `json:"downloadLink"` // Optional download URL shown in Files tab
+	RelayAddress     string   `json:"relayAddress"`     // Effective relay (discovered or manual override)
+	ManualOverride   string   `json:"manualOverride"`   // Admin-configured override (empty = use auto-discovery)
+	DiscoveredRelays []string `json:"discoveredRelays"` // Currently registered relays (read-only)
+	BwLimit          int64    `json:"bwLimit"`          // Bytes/sec, 0 = unlimited
+	Enabled          bool     `json:"enabled"`
+	DownloadLink     string   `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
 }
 
 // GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)
 func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request) {
 	settings := h.LoadBeamSettings()
+	settings.DiscoveredRelays = DiscoverBeamRelays(r.Context(), h.state.Redis)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": settings,
@@ -782,10 +786,14 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 		return val
 	}
 
+	manualOverride := getSetting("beam.relay_address")
+	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride)
+
 	settings := BeamSettings{
-		RelayAddress: getSetting("beam.relay_address"),
-		DownloadLink: getSetting("beam.download_link"),
-		Enabled:      true,
+		RelayAddress:   effective,
+		ManualOverride: manualOverride,
+		DownloadLink:   getSetting("beam.download_link"),
+		Enabled:        true,
 	}
 
 	enabledStr := getSetting("beam.enabled")
