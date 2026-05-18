@@ -1,9 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown, ChevronRight, ChevronDown } from 'lucide-react';
 import type { FileEntry, FileBrowserAdapter, FileBrowserProps } from './types';
 import { formatBytes, validFilenameRegex, editableExtensions, getCopyName } from './utils';
+
+// Lazy-load the CodeMirror bundle — only pulled in when an edit modal opens.
+const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
 
 // We load JSZip from a CDN, so no import is needed here.
 declare const JSZip: any;
@@ -44,9 +47,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const [searchTerm, setSearchTerm] = useState('');
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
-  const highlightedContentRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const currentMatchRef = useRef<HTMLSpanElement>(null);
 
 
   const [showUploadPopup, setShowUploadPopup] = useState(false);
@@ -417,20 +417,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       setIsRenaming(false);
   }
 
-  const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (isEditingEnabled && e.key === 'Tab') {
-        e.preventDefault();
-        const target = e.currentTarget;
-        const start = target.selectionStart;
-        const end = target.selectionEnd;
-        const newContent = fileContent.substring(0, start) + '\t' + fileContent.substring(end);
-        setFileContent(newContent);
-        setTimeout(() => {
-            target.selectionStart = target.selectionEnd = start + 1;
-        }, 0);
-    }
-  };
-
   const handleSaveFile = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -473,74 +459,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }
   };
   
-  const handleEditorScroll = useCallback(() => {
-    if (textareaRef.current && highlightedContentRef.current) {
-      highlightedContentRef.current.scrollTop = textareaRef.current.scrollTop;
-      highlightedContentRef.current.scrollLeft = textareaRef.current.scrollLeft;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (currentMatchIndex >= 0 && currentMatchIndex < searchMatches.length && textareaRef.current) {
-      const matchOffset = searchMatches[currentMatchIndex];
-      const textBefore = fileContent.substring(0, matchOffset);
-      const lineNumber = textBefore.split('\n').length - 1;
-      const lineHeight = 20;
-      const viewHeight = textareaRef.current.clientHeight;
-      textareaRef.current.scrollTop = Math.max(0, lineNumber * lineHeight - viewHeight / 2);
-      handleEditorScroll();
-    }
-  }, [currentMatchIndex, searchMatches, fileContent, handleEditorScroll]);
-
-  const renderHighlightedContent = () => {
-    if (!fileContent) return null;
-
-    type Match = {
-        index: number;
-        len: number;
-        type: string;
-        isCurrent?: boolean;
-    };
-
-    const parts: React.ReactNode[] = [];
-    let lastIndex = 0;
-
-    const allMatches: Match[] = [
-      ...[...fileContent.matchAll(/\b(ERROR|Error|error|failed|failure)\b/g)].map(m => ({ index: m.index as number, len: m[0].length, type: 'error' })),
-      ...[...fileContent.matchAll(/\b(WARN|Warning|warn|WARNING)\b/g)].map(m => ({ index: m.index as number, len: m[0].length, type: 'warning' })),
-      ...[...fileContent.matchAll(/\b(INFO|Info|info)\b/g)].map(m => ({ index: m.index as number, len: m[0].length, type: 'info' })),
-      ...searchMatches.map((index, i) => ({ index, len: searchTerm.length, type: 'search', isCurrent: i === currentMatchIndex }))
-    ].sort((a, b) => a.index - b.index);
-
-    for (const match of allMatches) {
-        if (match.index < lastIndex) continue;
-        if (match.index > lastIndex) {
-            parts.push(fileContent.substring(lastIndex, match.index));
-        }
-
-        const text = fileContent.substring(match.index, match.index + match.len);
-        let className = '';
-        if (match.type === 'error') className = 'text-(--error)';
-        else if (match.type === 'warning') className = 'text-(--warning)';
-        else if (match.type === 'info') className = 'text-(--info)';
-        else if (match.type === 'search') {
-            className = match.isCurrent ? 'bg-(--accent) text-white' : 'bg-yellow-500 bg-opacity-50';
-        }
-
-        parts.push(
-            <span key={`${match.index}-${match.type}`} ref={match.isCurrent ? currentMatchRef : null} className={className}>
-                {text}
-            </span>
-        );
-        lastIndex = match.index + match.len;
-    }
-
-    if (lastIndex < fileContent.length) {
-        parts.push(fileContent.substring(lastIndex));
-    }
-
-    return <pre className="whitespace-pre-wrap break-words"><code>{parts}</code></pre>;
-  };
+  // Editor scroll + jump-to-match is owned by CodeMirror now; we only
+  // recompute the match counter for the search UI badge.
 
   const handleDeleteClick = (e: React.MouseEvent, file: FileEntry) => {
     e.stopPropagation();
@@ -1156,22 +1076,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                 Loading content...
               </div>
             ) : (
-                <div className="relative grow mx-4 mb-2 rounded-md bg-(--base-01) font-mono border border-(--base-03) focus-within:border-(--accent) overflow-hidden">
-                    <div
-                        ref={highlightedContentRef}
-                        className={`absolute inset-0 p-4 pointer-events-none overflow-hidden whitespace-pre-wrap break-all leading-5 text-sm ${!isEditingEnabled ? 'opacity-60' : ''}`}
-                    >
-                        {renderHighlightedContent()}
-                    </div>
-                    <textarea
-                        ref={textareaRef}
-                        value={fileContent}
-                        onChange={e => setFileContent(e.target.value)}
-                        onKeyDown={handleEditorKeyDown}
-                        onScroll={handleEditorScroll}
-                        readOnly={!isEditingEnabled}
-                        className={`relative w-full h-full p-4 bg-transparent font-mono text-sm leading-5 resize-none border-none focus:outline-none text-transparent caret-(--base-09) overflow-auto ${!isEditingEnabled ? 'caret-transparent' : ''}`}
-                    />
+                <div className="relative grow mx-4 mb-2 rounded-md bg-(--base-01) border border-(--base-03) focus-within:border-(--accent) overflow-hidden">
+                    <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-(--base-07)">Loading editor...</div>}>
+                        <CodeMirrorEditor
+                            value={fileContent}
+                            onChange={setFileContent}
+                            filename={editingFile || ''}
+                            readOnly={!isEditingEnabled}
+                            searchTerm={searchTerm}
+                            className="h-full"
+                        />
+                    </Suspense>
                 </div>
             )}
             <div className="modal-footer">

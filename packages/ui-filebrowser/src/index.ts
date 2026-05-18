@@ -1,3 +1,5 @@
 export { default as FileBrowser } from './FileBrowser';
 export type { FileEntry, FileBrowserAdapter, FileBrowserProps } from './types';
 export { formatBytes, validFilenameRegex, editableExtensions, getCopyName } from './utils';
+export { default as CodeMirrorEditor, detectLanguage } from './CodeMirrorEditor';
+export type { FileLanguage } from './CodeMirrorEditor';

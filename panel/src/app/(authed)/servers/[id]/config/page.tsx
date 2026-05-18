@@ -1,7 +1,7 @@
 "use client";
 
-import PlaceholderView from '@/views/PlaceholderView';
+import ServerPropertiesView from '@/views/ServerPropertiesView';
 
 export default function ServerConfigPage() {
-    return <PlaceholderView viewName="Configuration" />;
+    return <ServerPropertiesView />;
 }
