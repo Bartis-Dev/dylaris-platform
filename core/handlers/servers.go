@@ -120,9 +120,10 @@ type SetupServerRequest struct {
 	JavaImage     string `json:"javaImage"`
 	ExtraJvmFlags string `json:"extraJvmFlags"`
 	Installer     struct {
-		Type      string `json:"type"`      // "paper", "vanilla", "forge", "library", "upload", "upload-zip"
-		Version   string `json:"version"`   // build/version identifier
+		Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip"
+		Version   string `json:"version"`   // build/version identifier (Paper build, Forge build, etc.)
 		McVersion string `json:"mcVersion"` // major MC version (e.g. "1.21.4")
+		Loader    string `json:"loader"`    // Fabric loader / Forge build / NeoForge version (optional)
 		URL       string `json:"url"`       // for import via URL
 		Path      string `json:"path"`      // for library selection
 		Structure string `json:"structure"` // "direct" or "subfolder" (for upload-zip)
@@ -417,6 +418,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		installerPayload := map[string]interface{}{
 			"type":      req.Installer.Type,
 			"version":   req.Installer.Version,
+			"loader":    req.Installer.Loader,
 			"url":       req.Installer.URL,
 			"path":      req.Installer.Path,
 			"structure": req.Installer.Structure,
@@ -460,6 +462,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			Type      string `json:"type"`
 			Version   string `json:"version"`
 			McVersion string `json:"mcVersion"`
+			Loader    string `json:"loader"`
 			URL       string `json:"url"`
 			Path      string `json:"path"`
 			Structure string `json:"structure"`
@@ -560,6 +563,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		installerPayload := map[string]interface{}{
 			"type":      req.Installer.Type,
 			"version":   req.Installer.Version,
+			"loader":    req.Installer.Loader,
 			"url":       req.Installer.URL,
 			"path":      req.Installer.Path,
 			"structure": req.Installer.Structure,

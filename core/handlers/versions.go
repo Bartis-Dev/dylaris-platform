@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -146,12 +147,143 @@ func (b *BungeeCordProvider) FetchVersions() ([]VersionEntry, error) {
 }
 
 // ==========================================
+// Fabric Provider
+// ==========================================
+
+type FabricProvider struct{}
+
+func (f *FabricProvider) Name() string { return "fabric" }
+
+func (f *FabricProvider) FetchVersions() ([]VersionEntry, error) {
+	// Fabric publishes the supported MC version list separately from
+	// loaders. We surface the MC versions; the loader auto-picks latest.
+	url := "https://meta.fabricmc.net/v2/versions/game"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var versions []struct {
+		Version string `json:"version"`
+		Stable  bool   `json:"stable"`
+	}
+	if err := json.Unmarshal(body, &versions); err != nil {
+		return nil, err
+	}
+	var entries []VersionEntry
+	for _, v := range versions {
+		if !v.Stable {
+			continue
+		}
+		entries = append(entries, VersionEntry{
+			Major: getMajorVersion(v.Version),
+			Build: v.Version,
+		})
+	}
+	return entries, nil
+}
+
+// ==========================================
+// Forge Provider
+// ==========================================
+
+type ForgeProvider struct{}
+
+func (f *ForgeProvider) Name() string { return "forge" }
+
+func (f *ForgeProvider) FetchVersions() ([]VersionEntry, error) {
+	resp, err := fetchJSON("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json")
+	if err != nil {
+		return nil, err
+	}
+	promos, ok := resp["promos"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected Forge promotions response")
+	}
+	// Promo keys look like "1.20.1-recommended" or "1.20.1-latest".
+	// We emit one entry per MC version, preferring -recommended.
+	seen := map[string]bool{}
+	var entries []VersionEntry
+	for key, val := range promos {
+		// Strip suffix
+		mc := key
+		for _, suffix := range []string{"-recommended", "-latest"} {
+			if len(key) > len(suffix) && key[len(key)-len(suffix):] == suffix {
+				mc = key[:len(key)-len(suffix)]
+				break
+			}
+		}
+		if seen[mc] {
+			continue
+		}
+		seen[mc] = true
+		_ = val // build number; the installer fetches it again at install time
+		entries = append(entries, VersionEntry{
+			Major: getMajorVersion(mc),
+			Build: mc,
+		})
+	}
+	return entries, nil
+}
+
+// ==========================================
+// NeoForge Provider
+// ==========================================
+
+type NeoForgeProvider struct{}
+
+func (n *NeoForgeProvider) Name() string { return "neoforge" }
+
+func (n *NeoForgeProvider) FetchVersions() ([]VersionEntry, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var meta struct {
+		Versioning struct {
+			Versions struct {
+				Version []string `xml:"version"`
+			} `xml:"versions"`
+		} `xml:"versioning"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return nil, err
+	}
+	// NeoForge versions look like "21.1.106" — first number maps to MC 1.{N}.x.
+	var entries []VersionEntry
+	all := meta.Versioning.Versions.Version
+	for i := len(all) - 1; i >= 0; i-- {
+		v := all[i]
+		parts := splitDot(v)
+		major := v
+		if len(parts) > 0 {
+			major = "1." + parts[0]
+		}
+		entries = append(entries, VersionEntry{
+			Major: major,
+			Build: v,
+		})
+	}
+	return entries, nil
+}
+
+// ==========================================
 // Provider Registry
 // ==========================================
 
 var softwareProviders = map[string]SoftwareProvider{
 	"paper":      &PaperMCProvider{project: "paper"},
 	"vanilla":    &VanillaProvider{},
+	"fabric":     &FabricProvider{},
+	"forge":      &ForgeProvider{},
+	"neoforge":   &NeoForgeProvider{},
 	"velocity":   &PaperMCProvider{project: "velocity"},
 	"waterfall":  &PaperMCProvider{project: "waterfall"},
 	"bungeecord": &BungeeCordProvider{},
@@ -161,6 +293,9 @@ var softwareProviders = map[string]SoftwareProvider{
 var softwareTypes = map[string]string{
 	"paper":      "game",
 	"vanilla":    "game",
+	"fabric":     "game",
+	"forge":      "game",
+	"neoforge":   "game",
 	"velocity":   "proxy",
 	"waterfall":  "proxy",
 	"bungeecord": "proxy",

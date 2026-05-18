@@ -277,8 +277,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         const installer: any = {};
         if (installTab === 'online') {
             installer.type = software;
-            installer.version = selectedBuild;
-            installer.mcVersion = selectedMajor;
+            if (software === 'neoforge') {
+                // NeoForge versions are self-contained — the version IS the loader,
+                // the matching MC version is implicit.
+                installer.loader = selectedBuild;
+            } else {
+                installer.version = selectedBuild;
+                installer.mcVersion = selectedMajor;
+            }
         } else if (installTab === 'library') {
             installer.type = 'library';
             installer.path = selectedLibraryFile;

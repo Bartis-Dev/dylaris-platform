@@ -26,7 +26,7 @@ export default function VersionPicker({
     loading,
 }: VersionPickerProps) {
     const isProxySoftware = ['velocity', 'waterfall', 'bungeecord'].includes(software);
-    const availableSoftware = softwareList || (isProxySoftware ? ['velocity', 'waterfall', 'bungeecord'] : ['paper', 'vanilla']);
+    const availableSoftware = softwareList || (isProxySoftware ? ['velocity', 'waterfall', 'bungeecord'] : ['paper', 'vanilla', 'fabric', 'forge', 'neoforge']);
 
     const majorVersions = [...new Set(allVersions.map(v => v.major))];
     const buildsForMajor = selectedMajor

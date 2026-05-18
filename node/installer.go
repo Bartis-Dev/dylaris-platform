@@ -3,18 +3,21 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 type InstallerConfig struct {
-	Type      string `json:"type"`      // "paper", "vanilla", "library", "upload", "upload-zip", "import"
-	Version   string `json:"version"`   // e.g. "1.21.1"
+	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import"
+	Version   string `json:"version"`   // MC version, e.g. "1.21.1"
+	Loader    string `json:"loader"`    // Optional loader/build version (Fabric loader, Forge build, NeoForge version)
 	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback)
 	Path      string `json:"path"`      // Local library file path (for "library" type)
 	Structure string `json:"structure"` // "direct" or "subfolder" (for "upload-zip")
@@ -65,6 +68,12 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 		return installPaper(destDir, config.Version)
 	case "vanilla":
 		return installVanilla(destDir, config.Version)
+	case "fabric":
+		return installFabric(destDir, config.Version, config.Loader)
+	case "forge":
+		return installForge(destDir, config.Version, config.Loader)
+	case "neoforge":
+		return installNeoForge(destDir, config.Loader)
 	case "library":
 		return installFromLibrary(destDir, config.Path, config.URL)
 	case "import":
@@ -81,6 +90,170 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 	default:
 		return fmt.Errorf("unknown installer type: %s", config.Type)
 	}
+}
+
+// installFabric downloads the Fabric server launcher. Resolves loader/installer
+// versions from Fabric's meta service when the caller leaves them blank.
+// Result lands as fabric-server-launch.jar in destDir.
+func installFabric(dir, mcVersion, loaderVersion string) error {
+	if loaderVersion == "" {
+		var loaders []struct {
+			Loader struct {
+				Version string `json:"version"`
+				Stable  bool   `json:"stable"`
+			} `json:"loader"`
+		}
+		if err := fetchJSON(fmt.Sprintf("https://meta.fabricmc.net/v2/versions/loader/%s", mcVersion), &loaders); err != nil {
+			return fmt.Errorf("fabric loader lookup failed: %v", err)
+		}
+		for _, l := range loaders {
+			if l.Loader.Stable {
+				loaderVersion = l.Loader.Version
+				break
+			}
+		}
+		if loaderVersion == "" && len(loaders) > 0 {
+			loaderVersion = loaders[0].Loader.Version
+		}
+		if loaderVersion == "" {
+			return fmt.Errorf("no Fabric loader available for MC %s", mcVersion)
+		}
+	}
+
+	// Pick the most recent stable installer (server-launcher itself is the
+	// final artifact; this is just for the URL).
+	var installers []struct {
+		Version string `json:"version"`
+		Stable  bool   `json:"stable"`
+	}
+	if err := fetchJSON("https://meta.fabricmc.net/v2/versions/installer", &installers); err != nil {
+		return fmt.Errorf("fabric installer lookup failed: %v", err)
+	}
+	installerVersion := ""
+	for _, i := range installers {
+		if i.Stable {
+			installerVersion = i.Version
+			break
+		}
+	}
+	if installerVersion == "" && len(installers) > 0 {
+		installerVersion = installers[0].Version
+	}
+	if installerVersion == "" {
+		return fmt.Errorf("no Fabric installer version available")
+	}
+
+	url := fmt.Sprintf("https://meta.fabricmc.net/v2/versions/loader/%s/%s/%s/server/jar",
+		mcVersion, loaderVersion, installerVersion)
+	log.Printf("Downloading Fabric server launcher (mc=%s loader=%s installer=%s)", mcVersion, loaderVersion, installerVersion)
+	return downloadFile(url, filepath.Join(dir, "fabric-server-launch.jar"))
+}
+
+// installForge resolves the recommended/latest Forge build via promotions_slim.json
+// (or uses the caller-supplied build), downloads the installer JAR and runs it
+// with --installServer. Requires `java` in PATH on the node host.
+func installForge(dir, mcVersion, build string) error {
+	if build == "" {
+		var promos struct {
+			Promos map[string]string `json:"promos"`
+		}
+		if err := fetchJSON("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", &promos); err != nil {
+			return fmt.Errorf("forge promotions lookup failed: %v", err)
+		}
+		if b, ok := promos.Promos[mcVersion+"-recommended"]; ok {
+			build = b
+		} else if b, ok := promos.Promos[mcVersion+"-latest"]; ok {
+			build = b
+		}
+		if build == "" {
+			return fmt.Errorf("no Forge build available for MC %s", mcVersion)
+		}
+	}
+
+	combined := mcVersion + "-" + build
+	installerURL := fmt.Sprintf("https://maven.minecraftforge.net/net/minecraftforge/forge/%s/forge-%s-installer.jar", combined, combined)
+	installerPath := filepath.Join(dir, "_forge-installer.jar")
+
+	log.Printf("Downloading Forge installer (mc=%s build=%s)", mcVersion, build)
+	if err := downloadFile(installerURL, installerPath); err != nil {
+		return fmt.Errorf("forge installer download failed: %v", err)
+	}
+	defer os.Remove(installerPath)
+
+	log.Printf("Running Forge --installServer ...")
+	cmd := exec.Command("java", "-jar", installerPath, "--installServer")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("forge installer failed: %v\n%s", err, string(output))
+	}
+	return nil
+}
+
+// installNeoForge resolves the requested NeoForge version (or latest if blank)
+// from the Maven metadata, downloads the installer JAR and runs --install-server.
+// Requires `java` in PATH on the node host.
+func installNeoForge(dir, version string) error {
+	if version == "" {
+		resp, err := http.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+		if err != nil {
+			return fmt.Errorf("neoforge metadata fetch failed: %v", err)
+		}
+		defer resp.Body.Close()
+		var meta struct {
+			Versioning struct {
+				Latest   string   `xml:"latest"`
+				Release  string   `xml:"release"`
+				Versions struct {
+					Version []string `xml:"version"`
+				} `xml:"versions"`
+			} `xml:"versioning"`
+		}
+		if err := xml.NewDecoder(resp.Body).Decode(&meta); err != nil {
+			return fmt.Errorf("neoforge metadata parse failed: %v", err)
+		}
+		if meta.Versioning.Release != "" {
+			version = meta.Versioning.Release
+		} else if meta.Versioning.Latest != "" {
+			version = meta.Versioning.Latest
+		} else if n := len(meta.Versioning.Versions.Version); n > 0 {
+			version = meta.Versioning.Versions.Version[n-1]
+		}
+		if version == "" {
+			return fmt.Errorf("no NeoForge version found in metadata")
+		}
+	}
+
+	installerURL := fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", version, version)
+	installerPath := filepath.Join(dir, "_neoforge-installer.jar")
+
+	log.Printf("Downloading NeoForge installer (version=%s)", version)
+	if err := downloadFile(installerURL, installerPath); err != nil {
+		return fmt.Errorf("neoforge installer download failed: %v", err)
+	}
+	defer os.Remove(installerPath)
+
+	log.Printf("Running NeoForge --install-server ...")
+	cmd := exec.Command("java", "-jar", installerPath, "--install-server")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("neoforge installer failed: %v\n%s", err, string(output))
+	}
+	return nil
+}
+
+// fetchJSON is a tiny helper that fetches a URL and decodes JSON into target.
+func fetchJSON(url string, target interface{}) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status %s", resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 // installPaper fetches the latest PaperMC build for the given version and downloads it as server.jar.
