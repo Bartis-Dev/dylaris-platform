@@ -5,17 +5,23 @@ import { Terminal, Globe, FolderOpen, Copy } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import FileBrowserView from '@/views/FileBrowserView';
 
-function detectBeamPlatform(): 'win' | 'mac-arm' | 'mac-intel' | 'linux' {
-    if (typeof navigator === 'undefined') return 'win';
+// Platform slugs match gateway/beam/relay/binaries.go validPlatforms.
+type BeamPlatform = 'windows-amd64' | 'linux-amd64' | 'linux-arm64' | 'darwin-amd64' | 'darwin-arm64';
+
+function detectBeamPlatform(): BeamPlatform {
+    if (typeof navigator === 'undefined') return 'windows-amd64';
     const ua = navigator.userAgent;
-    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? '';
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string; architecture?: string } }).userAgentData?.platform ?? '';
+    const arch = (navigator as Navigator & { userAgentData?: { platform?: string; architecture?: string } }).userAgentData?.architecture ?? '';
+    const isArm = /aarch64|arm64|arm/i.test(ua + ' ' + arch);
+
     if (/Mac|Darwin/i.test(ua) || /macOS/i.test(platform)) {
-        // Apple Silicon detection: userAgentData is most reliable; fall back to UA hint.
-        const isArm = /Mac OS X.*ARM|aarch64|arm64/i.test(ua) || /arm/i.test(platform);
-        return isArm ? 'mac-arm' : 'mac-intel';
+        return isArm ? 'darwin-arm64' : 'darwin-amd64';
     }
-    if (/Linux/i.test(ua)) return 'linux';
-    return 'win';
+    if (/Linux/i.test(ua)) {
+        return isArm ? 'linux-arm64' : 'linux-amd64';
+    }
+    return 'windows-amd64';
 }
 
 export default function ServerFilesPage() {

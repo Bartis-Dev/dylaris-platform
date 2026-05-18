@@ -4,10 +4,20 @@ import React, { useState, useEffect } from 'react';
 import { Save, CircleCheck, CircleAlert, Radar } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
 
+interface BeamRelayInfo {
+    beam_id: string;
+    ip: string;
+    private_ip?: string;
+    service_port: string;
+    client_port?: string;
+    download_port?: string;
+    timestamp: number;
+}
+
 interface BeamSettings {
-    relayAddress: string;       // Effective (discovered or manual)
-    manualOverride: string;     // Admin-configured override
-    discoveredRelays: string[]; // Auto-registered relays
+    relayAddress: string;             // Effective (discovered or manual)
+    manualOverride: string;           // Admin-configured override
+    discoveredRelays: BeamRelayInfo[]; // Auto-registered relays
     bwLimit: number;
     enabled: boolean;
     downloadLink?: string;
@@ -156,17 +166,27 @@ export default function BeamTab() {
                     </div>
                     {settings.discoveredRelays.length > 0 ? (
                         <ul className="rounded-md border border-(--base-03) divide-y divide-(--base-03) bg-(--base-01)">
-                            {settings.discoveredRelays.map(addr => (
-                                <li key={addr} className="flex items-center gap-2 px-3 py-2">
-                                    <Radar size={12} className="text-(--success-light)" />
-                                    <span className="font-mono text-xs text-(--base-08)">{addr}</span>
+                            {settings.discoveredRelays.map(relay => (
+                                <li key={relay.beam_id} className="flex items-center gap-3 px-3 py-2">
+                                    <Radar size={12} className="text-(--success-light) shrink-0" />
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm font-medium text-(--base-09)">{relay.beam_id}</span>
+                                            <span className="mono-label">{relay.ip || 'no ip'}</span>
+                                        </div>
+                                        <div className="text-xs text-(--base-06) font-mono mt-0.5">
+                                            service:{relay.service_port}
+                                            {relay.client_port && <> · client:{relay.client_port}</>}
+                                            {relay.download_port && <> · download:{relay.download_port}</>}
+                                        </div>
+                                    </div>
                                 </li>
                             ))}
                         </ul>
                     ) : (
                         <p className="alert alert-warning text-xs">
                             No relays have registered themselves via Redis auto-discovery yet.
-                            Either start a Beam relay (it self-registers in <code className="font-mono">beam:relays</code>)
+                            Either start a Beam relay (it self-registers in <code className="font-mono">sys:beams</code> + <code className="font-mono">beam:registry:*</code>)
                             or set a manual override below.
                         </p>
                     )}

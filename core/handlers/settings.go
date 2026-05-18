@@ -718,12 +718,12 @@ func (h *SettingsHandler) TestLibraryConnection(w http.ResponseWriter, r *http.R
 // ─── Beam Settings ───────────────────────────────────────────────────
 
 type BeamSettings struct {
-	RelayAddress     string   `json:"relayAddress"`     // Effective relay (discovered or manual override)
-	ManualOverride   string   `json:"manualOverride"`   // Admin-configured override (empty = use auto-discovery)
-	DiscoveredRelays []string `json:"discoveredRelays"` // Currently registered relays (read-only)
-	BwLimit          int64    `json:"bwLimit"`          // Bytes/sec, 0 = unlimited
-	Enabled          bool     `json:"enabled"`
-	DownloadLink     string   `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
+	RelayAddress     string          `json:"relayAddress"`     // Effective relay (discovered or manual override)
+	ManualOverride   string          `json:"manualOverride"`   // Admin-configured override (empty = use auto-discovery)
+	DiscoveredRelays []BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
+	BwLimit          int64           `json:"bwLimit"`          // Bytes/sec, 0 = unlimited
+	Enabled          bool            `json:"enabled"`
+	DownloadLink     string          `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
 }
 
 // GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)

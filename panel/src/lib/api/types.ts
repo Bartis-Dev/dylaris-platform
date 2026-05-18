@@ -601,13 +601,22 @@ export const checkDomainAvailability = (req: DomainCheckRequest): Promise<Domain
 };
 
 // --- BEAM SETTINGS ---
+export interface BeamRelayInfo {
+    beam_id: string;
+    ip: string;
+    private_ip?: string;
+    service_port: string;
+    client_port?: string;
+    download_port?: string;
+    timestamp: number;
+}
 export interface BeamSettings {
-    relayAddress: string;            // Effective (discovered or manual override)
-    manualOverride?: string;         // Admin-configured override (empty = auto)
-    discoveredRelays?: string[];     // Read-only list from Redis discovery
+    relayAddress: string;                // Effective (discovered or manual override)
+    manualOverride?: string;             // Admin-configured override (empty = auto)
+    discoveredRelays?: BeamRelayInfo[];  // Read-only list from Redis discovery
     bwLimit: number;
     enabled: boolean;
-    downloadLink?: string;           // Optional CDN override
+    downloadLink?: string;               // Optional CDN override
 }
 export const getBeamSettings = (): Promise<{ success: boolean; settings?: BeamSettings }> => fetchAPI('/settings/beam');
 export const saveBeamSettings = (data: BeamSettings) => fetchAPI('/settings/beam', { method: 'POST', body: JSON.stringify(data) });

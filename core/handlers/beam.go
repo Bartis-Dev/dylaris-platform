@@ -7,51 +7,89 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
-	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
 	"github.com/redis/go-redis/v9"
 )
 
-// Beam relay discovery — relays register themselves in Redis sorted-set
-// "beam:relays" with score = unix-expiry. Entries past TTL are pruned on read.
-const beamRelaysKey = "beam:relays"
+// Beam relay discovery — matches the heartbeat pattern in
+// gateway/beam/relay: each relay writes JSON to beam:registry:<id> with a
+// 30s TTL and adds its id to the sys:beams set. The Core resolves "alive"
+// relays by intersecting the set with surviving keys.
+const beamRegistrySet = "sys:beams"
 
-// DiscoverBeamRelays returns the list of currently registered Beam relays,
-// pruning any whose registration has expired.
-func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []string {
+// BeamRelayInfo describes one discovered relay. Mirrors what the relay's
+// heartbeat publishes so we can surface it raw in the admin UI.
+type BeamRelayInfo struct {
+	BeamID       string `json:"beam_id"`
+	IP           string `json:"ip"`
+	PrivateIP    string `json:"private_ip,omitempty"`
+	ServicePort  string `json:"service_port"`
+	ClientPort   string `json:"client_port,omitempty"`
+	DownloadPort string `json:"download_port,omitempty"`
+	Timestamp    int64  `json:"timestamp"`
+}
+
+// DiscoverBeamRelays reads sys:beams and resolves each entry against the
+// corresponding beam:registry:<id> key. Stale entries (TTL expired) are
+// skipped silently — the relay's own cleanup loop will eventually prune
+// them from sys:beams.
+func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []BeamRelayInfo {
 	if rdb == nil {
 		return nil
 	}
-	now := time.Now().Unix()
-	// Prune expired entries (score < now)
-	rdb.ZRemRangeByScore(ctx, beamRelaysKey, "-inf", fmt.Sprintf("%d", now-1))
-	res, err := rdb.ZRange(ctx, beamRelaysKey, 0, -1).Result()
+	ids, err := rdb.SMembers(ctx, beamRegistrySet).Result()
 	if err != nil {
 		return nil
 	}
-	return res
+	out := make([]BeamRelayInfo, 0, len(ids))
+	for _, id := range ids {
+		raw, err := rdb.Get(ctx, "beam:registry:"+id).Bytes()
+		if err != nil {
+			continue
+		}
+		var info BeamRelayInfo
+		if json.Unmarshal(raw, &info) != nil {
+			continue
+		}
+		if info.BeamID == "" {
+			info.BeamID = id
+		}
+		out = append(out, info)
+	}
+	return out
 }
 
-// PickBeamRelay returns one relay address using random load-balancing,
-// or empty string when none are registered.
-func PickBeamRelay(ctx context.Context, rdb *redis.Client) string {
+// PickBeamRelay returns one relay using simple random load-balancing.
+// Returns the zero value when none are registered.
+func PickBeamRelay(ctx context.Context, rdb *redis.Client) (BeamRelayInfo, bool) {
 	relays := DiscoverBeamRelays(ctx, rdb)
 	if len(relays) == 0 {
-		return ""
+		return BeamRelayInfo{}, false
 	}
-	return relays[rand.Intn(len(relays))]
+	return relays[rand.Intn(len(relays))], true
 }
 
-// resolveRelay returns (effectiveAddress, source). Source is "discovered" or
-// "manual" or empty. Manual override (DB setting beam.relay_address) wins so
-// admins can force a specific relay during incidents.
+// resolveRelay returns the effective relay address for a client. The address
+// is the relay's public IP:client_port (TLS service for Beam Desktop) since
+// that's what the panel surfaces in the Files tab. Manual override (DB
+// setting beam.relay_address) wins for incident overrides.
 func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride string) (string, string) {
 	if strings.TrimSpace(manualOverride) != "" {
 		return manualOverride, "manual"
 	}
-	if relay := PickBeamRelay(ctx, rdb); relay != "" {
-		return relay, "discovered"
+	if info, ok := PickBeamRelay(ctx, rdb); ok {
+		port := info.ClientPort
+		if port == "" {
+			port = info.ServicePort
+		}
+		host := info.IP
+		if host == "" {
+			host = info.BeamID
+		}
+		if host != "" && port != "" {
+			return host + ":" + port, "discovered"
+		}
 	}
 	return "", ""
 }
@@ -235,22 +273,34 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validBeamPlatforms mirrors gateway/beam/relay/binaries.go validPlatforms.
+// Keep in sync — adding a new platform requires both ends.
+var validBeamPlatforms = map[string]bool{
+	"windows-amd64": true,
+	"linux-amd64":   true,
+	"linux-arm64":   true,
+	"darwin-amd64":  true,
+	"darwin-arm64":  true,
+}
+
 // GetBeamDownload redirects to a Beam binary on a load-balanced relay.
-// GET /api/beam/download/{platform}
-// platform ∈ {win, mac-arm, mac-intel, linux}
+// GET /api/beam/download?platform={os}-{arch}
+// Returns the platform index when no platform query is given.
 func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	platform := r.URL.Query().Get("platform")
 	if platform == "" {
-		// Allow path-style /api/beam/download (no platform) — return JSON list.
+		platforms := make([]string, 0, len(validBeamPlatforms))
+		for p := range validBeamPlatforms {
+			platforms = append(platforms, p)
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
-			"platforms": []string{"win", "mac-arm", "mac-intel", "linux"},
+			"platforms": platforms,
 		})
 		return
 	}
 
-	validPlatforms := map[string]bool{"win": true, "mac-arm": true, "mac-intel": true, "linux": true}
-	if !validPlatforms[platform] {
+	if !validBeamPlatforms[platform] {
 		sendJSONError(w, "Invalid platform", http.StatusBadRequest)
 		return
 	}
@@ -268,17 +318,26 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	relay, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"))
-	if relay == "" {
-		sendJSONError(w, "No Beam relay available", http.StatusServiceUnavailable)
+	// Manual override for the relay host:port — keeps the override semantic
+	// of phase 1 working, but downloads still route through the relay's
+	// /download/* HTTP endpoint.
+	if override := strings.TrimSpace(getSetting("beam.relay_address")); override != "" {
+		http.Redirect(w, r, fmt.Sprintf("https://%s/download/%s", override, platform), http.StatusFound)
 		return
 	}
 
-	// Relays expose /download/{platform} over HTTPS on their public address.
-	scheme := "https"
-	if strings.HasPrefix(relay, "http://") || strings.HasPrefix(relay, "https://") {
-		http.Redirect(w, r, strings.TrimRight(relay, "/")+"/download/"+platform, http.StatusFound)
+	info, ok := PickBeamRelay(r.Context(), h.state.Redis)
+	if !ok {
+		sendJSONError(w, "No Beam relay available", http.StatusServiceUnavailable)
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("%s://%s/download/%s", scheme, relay, platform), http.StatusFound)
+	port := info.DownloadPort
+	if port == "" {
+		port = "25552" // gateway/beam/relay BEAM_DOWNLOAD_PORT default
+	}
+	host := info.IP
+	if host == "" {
+		host = info.BeamID
+	}
+	http.Redirect(w, r, fmt.Sprintf("https://%s:%s/download/%s", host, port, platform), http.StatusFound)
 }
