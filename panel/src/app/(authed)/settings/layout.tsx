@@ -18,6 +18,7 @@ const ALL_TABS = [
     // was retired — admins still need to configure the feature before
     // toggling it on from the Features tab.
     { slug: 'gateway', label: 'Gateway', always: true },
+    { slug: 'backups', label: 'Backups', always: true },
 ] as const;
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

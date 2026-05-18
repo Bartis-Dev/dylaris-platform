@@ -135,6 +135,7 @@ func main() {
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret)
+	backupHandler := handlers.NewBackupHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -155,6 +156,10 @@ func main() {
 	// Core Heartbeat in Redis (so Nodes can discover this Core)
 	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.GRPCPort)
 	coreHeartbeat.Start()
+
+	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
+	backupScheduler := services.NewBackupScheduler(pgStore, redisClient)
+	backupScheduler.Start(context.Background())
 
 	// Router & API Endpunkte einrichten
 	r := mux.NewRouter()
@@ -336,6 +341,21 @@ func main() {
 	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
 	api.HandleFunc("/beam/download", beamHandler.GetBeamDownload).Methods("GET")
+
+	// --- Backup Endpoints ---
+	api.HandleFunc("/backup-storages", authHandler.AuthMiddleware(backupHandler.ListStorages)).Methods("GET")
+	api.HandleFunc("/backup-storages", authHandler.AuthMiddleware(backupHandler.CreateStorage)).Methods("POST")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateStorage)).Methods("PATCH")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteStorage)).Methods("DELETE")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(backupHandler.TestStorage)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(backupHandler.ListJobs)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(backupHandler.CreateJob)).Methods("POST")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateJob)).Methods("PATCH")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteJob)).Methods("DELETE")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/trigger", authHandler.AuthMiddleware(backupHandler.TriggerJob)).Methods("POST")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/runs", authHandler.AuthMiddleware(backupHandler.ListRuns)).Methods("GET")
+	api.HandleFunc("/backup-runs/{runId:[0-9]+}/download", authHandler.AuthMiddleware(backupHandler.DownloadRun)).Methods("GET")
+	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteRun)).Methods("DELETE")
 	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
 		// The Beam desktop app is now served by gateway/beam-relay's
 		// /download/{os}-{arch} endpoint — see plan. Core redirects to it

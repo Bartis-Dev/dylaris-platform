@@ -54,6 +54,9 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 	if err := createLibraryDisabledTable(db); err != nil {
 		return nil, err
 	}
+	if err := createBackupTables(db); err != nil {
+		return nil, err
+	}
 
 	if err := migrateSchema(db); err != nil {
 		return nil, err

@@ -80,6 +80,29 @@ type Store interface {
 	CountInvitesPerServer() (map[int]int, error)
 	ListServersForUser(userID int, isAdmin bool) ([]models.Server, error)
 
+	// --- Backups ---
+	ListBackupStorages() ([]models.BackupStorage, error)
+	GetBackupStorage(id int) (*models.BackupStorage, error)
+	GetDefaultBackupStorage() (*models.BackupStorage, error)
+	CreateBackupStorage(s *models.BackupStorage) (int, error)
+	UpdateBackupStorage(s *models.BackupStorage) error
+	DeleteBackupStorage(id int) error
+
+	ListBackupJobs(serverID int) ([]models.BackupJob, error)
+	GetBackupJob(id int) (*models.BackupJob, error)
+	CreateBackupJob(j *models.BackupJob) (int, error)
+	UpdateBackupJob(j *models.BackupJob) error
+	DeleteBackupJob(id int) error
+	ListDueBackupJobs(now time.Time) ([]models.BackupJob, error)
+	SetBackupJobScheduled(jobID int, lastRun, nextRun time.Time) error
+
+	ListBackupRuns(jobID int, limit int) ([]models.BackupRun, error)
+	GetBackupRun(id int) (*models.BackupRun, error)
+	CreateBackupRun(r *models.BackupRun) (int, error)
+	UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error
+	DeleteBackupRun(id int) error
+	PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error)
+
 	// --- Modules ---
 	ListModules() ([]models.Module, error)
 	GetModuleByID(id int) (*models.Module, error)

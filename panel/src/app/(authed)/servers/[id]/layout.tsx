@@ -214,6 +214,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         { slug: 'files',   icon: 'folder-open',     label: 'Files',         disabled: tabDisabled('files') },
         { slug: 'config',  icon: 'settings',        label: 'Configuration', disabled: tabDisabled('config') },
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
+        { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
         { slug: 'members', icon: 'users',           label: 'Members',       disabled: !isOwner && (!perms || !perms.members) },
     ];
 

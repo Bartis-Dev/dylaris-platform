@@ -818,6 +818,17 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					}
 					rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID))
 
+				case "backup_run":
+					// Re-decode the full payload — BackupRunCommand has many fields
+					// the generic NodeCommand struct doesn't carry.
+					var bcmd BackupRunCommand
+					if err := json.Unmarshal([]byte(payload), &bcmd); err != nil {
+						log.Printf("backup_run: decode failed: %v", err)
+						return
+					}
+					log.Printf("backup_run: starting run=%d job=%d server=%s sub=%s", bcmd.RunID, bcmd.JobID, bcmd.ServerUUID, bcmd.SubServer)
+					RunBackup(ctx, rdb, storage, bcmd)
+
 				default:
 					log.Printf("Unknown action: %s", cmd.Action)
 				}

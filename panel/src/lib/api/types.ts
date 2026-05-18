@@ -62,6 +62,7 @@ export interface TabPermissions {
     power: boolean;
     members: boolean;
     network: boolean;
+    backups: boolean;
     inherit: boolean;
 }
 
@@ -213,6 +214,71 @@ export const linkServerToProxy = (serverId: number, proxyId: number) =>
     fetchAPI(`/servers/${serverId}/proxy`, { method: 'PUT', body: JSON.stringify({ proxyId }) });
 export const unlinkServerFromProxy = (serverId: number) =>
     fetchAPI(`/servers/${serverId}/proxy`, { method: 'DELETE' });
+
+// --- BACKUPS ---
+export interface BackupStorage {
+    id: number;
+    name: string;
+    provider: 'local' | 's3';
+    config: Record<string, unknown>;
+    isDefault: boolean;
+    createdAt?: string;
+}
+export interface BackupJob {
+    id: number;
+    serverId: number;
+    subServer?: string | null;
+    name: string;
+    schedule: string;             // "manual" | "every Nh" | "every Nd"
+    includePatterns: string[];
+    excludePatterns: string[];
+    retentionCount: number;
+    storageId?: number | null;
+    enabled: boolean;
+    lastRunAt?: string | null;
+    nextRunAt?: string | null;
+    createdAt?: string;
+}
+export interface BackupRun {
+    id: number;
+    jobId: number;
+    startedAt: string;
+    completedAt?: string | null;
+    status: 'running' | 'success' | 'failed';
+    sizeBytes: number;
+    storageKey: string;
+    errorMessage: string;
+}
+
+export const listBackupStorages = (): Promise<{ success: boolean; storages?: BackupStorage[] }> =>
+    fetchAPI('/backup-storages');
+export const createBackupStorage = (s: Partial<BackupStorage>): Promise<{ success: boolean; id?: number }> =>
+    fetchAPI('/backup-storages', { method: 'POST', body: JSON.stringify(s) });
+export const updateBackupStorage = (id: number, s: Partial<BackupStorage>): Promise<{ success: boolean }> =>
+    fetchAPI(`/backup-storages/${id}`, { method: 'PATCH', body: JSON.stringify(s) });
+export const deleteBackupStorage = (id: number): Promise<{ success: boolean }> =>
+    fetchAPI(`/backup-storages/${id}`, { method: 'DELETE' });
+export const testBackupStorage = (id: number): Promise<{ success: boolean; message?: string }> =>
+    fetchAPI(`/backup-storages/${id}/test`, { method: 'POST' });
+
+export const listBackupJobs = (serverId: number): Promise<{ success: boolean; jobs?: BackupJob[] }> =>
+    fetchAPI(`/servers/${serverId}/backup-jobs`);
+export const createBackupJob = (serverId: number, j: Partial<BackupJob>): Promise<{ success: boolean; id?: number }> =>
+    fetchAPI(`/servers/${serverId}/backup-jobs`, { method: 'POST', body: JSON.stringify(j) });
+export const updateBackupJob = (jobId: number, j: Partial<BackupJob>): Promise<{ success: boolean }> =>
+    fetchAPI(`/backup-jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify(j) });
+export const deleteBackupJob = (jobId: number): Promise<{ success: boolean }> =>
+    fetchAPI(`/backup-jobs/${jobId}`, { method: 'DELETE' });
+export const triggerBackupJob = (jobId: number): Promise<{ success: boolean; runId?: number }> =>
+    fetchAPI(`/backup-jobs/${jobId}/trigger`, { method: 'POST' });
+export const listBackupRuns = (jobId: number): Promise<{ success: boolean; runs?: BackupRun[] }> =>
+    fetchAPI(`/backup-jobs/${jobId}/runs`);
+export const deleteBackupRun = (runId: number): Promise<{ success: boolean }> =>
+    fetchAPI(`/backup-runs/${runId}`, { method: 'DELETE' });
+export const backupDownloadUrl = (runId: number) => {
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
+    return `${API_URL}/backup-runs/${runId}/download`;
+};
 
 export interface ProxyEndpoint {
     serverId: number;
