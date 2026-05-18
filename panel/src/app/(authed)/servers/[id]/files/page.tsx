@@ -35,8 +35,7 @@ export default function ServerFilesPage() {
     const beamEnabled = (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.enabled !== false;
 
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;
-    const showBeam = beamEnabled && beamSettings?.relayAddress;
-    const hasInfoBar = showSftp || showBeam || beamEnabled;
+    const hasInfoBar = showSftp || beamEnabled;
 
     return (
         <div className="flex flex-col gap-3 h-full">
@@ -64,15 +63,15 @@ export default function ServerFilesPage() {
                             </button>
                         </div>
                     )}
-                    {fileAccessMode === 'both' && beamSettings?.relayAddress && (
+                    {fileAccessMode === 'both' && beamEnabled && (
                         <div className="w-px h-8 bg-(--base-03) hidden sm:block" />
                     )}
-                    {showBeam && (
+                    {beamEnabled && (
                         <div className="flex items-center gap-3 min-w-0">
                             <Globe size={14} className="text-(--accent-light) shrink-0" />
                             <div className="min-w-0">
-                                <div className="input-label mb-0.5">Beam Relay</div>
-                                <div className="font-mono text-xs text-(--base-08)">{beamSettings!.relayAddress}</div>
+                                <div className="input-label mb-0.5">Beam Desktop</div>
+                                <div className="text-xs text-(--base-08)">High-speed transfers via the Beam app</div>
                             </div>
                         </div>
                     )}
@@ -82,6 +81,7 @@ export default function ServerFilesPage() {
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn btn-secondary btn-sm ml-auto shrink-0"
+                            title="Download the Beam Desktop app — connects directly to the relay so transfers don't hit Core"
                         >
                             <FolderOpen size={12} />
                             Download Beam

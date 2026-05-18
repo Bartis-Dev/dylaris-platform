@@ -8,6 +8,7 @@ interface BeamRelayInfo {
     beam_id: string;
     ip: string;
     private_ip?: string;
+    public_host?: string;
     service_port: string;
     client_port?: string;
     download_port?: string;
@@ -166,22 +167,31 @@ export default function BeamTab() {
                     </div>
                     {settings.discoveredRelays.length > 0 ? (
                         <ul className="rounded-md border border-(--base-03) divide-y divide-(--base-03) bg-(--base-01)">
-                            {settings.discoveredRelays.map(relay => (
-                                <li key={relay.beam_id} className="flex items-center gap-3 px-3 py-2">
-                                    <Radar size={12} className="text-(--success-light) shrink-0" />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium text-(--base-09)">{relay.beam_id}</span>
-                                            <span className="mono-label">{relay.ip || 'no ip'}</span>
+                            {settings.discoveredRelays.map(relay => {
+                                const reachable = relay.public_host || relay.ip;
+                                const isInternal = !relay.public_host && relay.ip;
+                                return (
+                                    <li key={relay.beam_id} className="flex items-center gap-3 px-3 py-2">
+                                        <Radar size={12} className="text-(--success-light) shrink-0" />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-sm font-medium text-(--base-09)">{relay.beam_id}</span>
+                                                <span className="font-mono text-xs text-(--base-08)">{reachable || 'no address'}</span>
+                                                {isInternal && (
+                                                    <span className="badge badge-warning" title="Set BEAM_PUBLIC_HOST in the relay container so clients can reach it from outside Swarm">
+                                                        internal IP
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-(--base-06) font-mono mt-0.5">
+                                                service:{relay.service_port}
+                                                {relay.client_port && <> · client:{relay.client_port}</>}
+                                                {relay.download_port && <> · download:{relay.download_port}</>}
+                                            </div>
                                         </div>
-                                        <div className="text-xs text-(--base-06) font-mono mt-0.5">
-                                            service:{relay.service_port}
-                                            {relay.client_port && <> · client:{relay.client_port}</>}
-                                            {relay.download_port && <> · download:{relay.download_port}</>}
-                                        </div>
-                                    </div>
-                                </li>
-                            ))}
+                                    </li>
+                                );
+                            })}
                         </ul>
                     ) : (
                         <p className="alert alert-warning text-xs">

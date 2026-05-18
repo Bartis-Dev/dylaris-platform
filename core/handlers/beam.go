@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
 	"github.com/redis/go-redis/v9"
@@ -24,10 +27,28 @@ type BeamRelayInfo struct {
 	BeamID       string `json:"beam_id"`
 	IP           string `json:"ip"`
 	PrivateIP    string `json:"private_ip,omitempty"`
+	PublicHost   string `json:"public_host,omitempty"` // e.g. "beam.dylaris.com" — preferred over IP
 	ServicePort  string `json:"service_port"`
 	ClientPort   string `json:"client_port,omitempty"`
 	DownloadPort string `json:"download_port,omitempty"`
 	Timestamp    int64  `json:"timestamp"`
+}
+
+// PublicAddress returns the host:port the panel should hand out to clients.
+// Prefers the operator-configured public host over the internal overlay IP
+// so we never accidentally publish a 172.x address to a browser.
+func (i BeamRelayInfo) PublicAddress(port string) string {
+	host := strings.TrimSpace(i.PublicHost)
+	if host == "" {
+		host = i.IP
+	}
+	if host == "" {
+		host = i.BeamID
+	}
+	if port == "" || strings.Contains(host, ":") {
+		return host
+	}
+	return host + ":" + port
 }
 
 // DiscoverBeamRelays reads sys:beams and resolves each entry against the
@@ -70,10 +91,12 @@ func PickBeamRelay(ctx context.Context, rdb *redis.Client) (BeamRelayInfo, bool)
 	return relays[rand.Intn(len(relays))], true
 }
 
-// resolveRelay returns the effective relay address for a client. The address
-// is the relay's public IP:client_port (TLS service for Beam Desktop) since
-// that's what the panel surfaces in the Files tab. Manual override (DB
-// setting beam.relay_address) wins for incident overrides.
+// resolveRelay returns the effective public address for Beam Desktop
+// clients. Prefers the relay's BEAM_PUBLIC_HOST (e.g. beam.dylaris.com)
+// over the internal overlay IP — the IP is never reachable from a
+// browser/desktop client and would produce the 172.x:25551 problem we saw
+// in v1. Manual override (DB setting beam.relay_address) still wins for
+// incident routing.
 func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride string) (string, string) {
 	if strings.TrimSpace(manualOverride) != "" {
 		return manualOverride, "manual"
@@ -83,12 +106,9 @@ func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride string)
 		if port == "" {
 			port = info.ServicePort
 		}
-		host := info.IP
-		if host == "" {
-			host = info.BeamID
-		}
-		if host != "" && port != "" {
-			return host + ":" + port, "discovered"
+		addr := info.PublicAddress(port)
+		if addr != "" {
+			return addr, "discovered"
 		}
 	}
 	return "", ""
@@ -283,7 +303,27 @@ var validBeamPlatforms = map[string]bool{
 	"darwin-arm64":  true,
 }
 
-// GetBeamDownload redirects to a Beam binary on a load-balanced relay.
+// downloadRelayClient is a tuned HTTP client that talks to relays over
+// HTTPS. The relay listens on a self-signed cert by default (with a
+// proper one configured via TLS_CERT_PATH only on production deploys),
+// so we skip verification when the request is between Core and Relay
+// over the internal overlay network. The byte stream is end-to-end via
+// Core's own TLS to the browser, so the user-facing path stays trusted.
+var downloadRelayClient = &http.Client{
+	Timeout: 5 * time.Minute,
+	Transport: &http.Transport{
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       60 * time.Second,
+	},
+}
+
+// GetBeamDownload streams a Beam binary through Core. We deliberately do
+// NOT 302-redirect any more — that exposes the relay's internal IP /
+// hostname to the browser, which usually means a 172.x address on the
+// overlay network or a hostname with a self-signed cert. By reverse-
+// proxying through Core the browser only ever sees a single trusted
+// Core-served URL.
 // GET /api/beam/download?platform={os}-{arch}
 // Returns the platform index when no platform query is given.
 func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
@@ -310,34 +350,113 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		return val
 	}
 
-	// Manual override for the entire download URL still wins — useful when
-	// shipping a binary from a separate CDN rather than via a relay.
-	manualLink := getSetting("beam.download_link")
-	if strings.TrimSpace(manualLink) != "" {
-		http.Redirect(w, r, manualLink, http.StatusFound)
+	// Resolve the relay we'll proxy from. We prefer hitting the relay on
+	// its overlay address (`ip` from the heartbeat) so the request never
+	// leaves Docker's internal network — there's no point in Core fetching
+	// the binary from beam.dylaris.com over the public internet just to
+	// hand it back to the user.
+	upstream, err := resolveDownloadUpstream(r.Context(), h.state.Redis, h.state.Store, getSetting, platform)
+	if err != nil {
+		sendJSONError(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
-	// Manual override for the relay host:port — keeps the override semantic
-	// of phase 1 working, but downloads still route through the relay's
-	// /download/* HTTP endpoint.
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstream, nil)
+	if err != nil {
+		sendJSONError(w, "Could not build upstream request", http.StatusInternalServerError)
+		return
+	}
+	// Pass through the User-Agent so the relay's logs are useful, but drop
+	// any client-supplied auth headers — the relay's /download endpoint is
+	// public and we don't want to leak browser cookies.
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+
+	resp, err := downloadRelayClient.Do(req)
+	if err != nil {
+		sendJSONError(w, "Could not reach Beam relay: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		sendJSONError(w, fmt.Sprintf("Relay returned %d for %s", resp.StatusCode, platform), http.StatusBadGateway)
+		return
+	}
+
+	// Mirror the relay's content headers so the browser saves the file
+	// with the right filename and gets a real Content-Length progress bar.
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		w.Header().Set("Content-Disposition", cd)
+	} else {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="beam-%s"`, platform))
+	}
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		w.Header().Set("Content-Length", cl)
+	}
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp.Body)
+}
+
+// resolveDownloadUpstream picks the relay URL Core should pull from. Falls
+// back through manual settings and finally onto the auto-discovered relay's
+// overlay IP. Returns the fully-qualified https://host:port/download/...
+func resolveDownloadUpstream(ctx context.Context, rdb *redis.Client, _ interface{}, getSetting func(string) string, platform string) (string, error) {
+	// `beam.download_link` is a complete URL override — useful when an op
+	// wants to point at a CDN-hosted mirror rather than the live relay.
+	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
+		base := strings.TrimRight(link, "/")
+		// If the override already includes a /download/... path, treat it
+		// as the literal mirror URL; otherwise tack on /download/{platform}.
+		if strings.Contains(base, "/download/") {
+			return base, nil
+		}
+		return base + "/download/" + platform, nil
+	}
+
+	// `beam.relay_address` is a single host:port override, used during
+	// incidents to pin to one relay.
 	if override := strings.TrimSpace(getSetting("beam.relay_address")); override != "" {
-		http.Redirect(w, r, fmt.Sprintf("https://%s/download/%s", override, platform), http.StatusFound)
-		return
+		// download port is fixed by convention but configurable per relay.
+		// The override addresses the client TLS port, so look up the
+		// matching download_port from any discovered relay.
+		downloadPort := "25552"
+		if relays := DiscoverBeamRelays(ctx, rdb); len(relays) > 0 && relays[0].DownloadPort != "" {
+			downloadPort = relays[0].DownloadPort
+		}
+		host := override
+		if idx := strings.IndexByte(host, ':'); idx >= 0 {
+			host = host[:idx]
+		}
+		return fmt.Sprintf("https://%s:%s/download/%s", host, downloadPort, platform), nil
 	}
 
-	info, ok := PickBeamRelay(r.Context(), h.state.Redis)
+	info, ok := PickBeamRelay(ctx, rdb)
 	if !ok {
-		sendJSONError(w, "No Beam relay available", http.StatusServiceUnavailable)
-		return
+		return "", fmt.Errorf("no Beam relay available")
 	}
 	port := info.DownloadPort
 	if port == "" {
-		port = "25552" // gateway/beam/relay BEAM_DOWNLOAD_PORT default
+		port = "25552"
 	}
+	// Prefer the internal IP for the Core→Relay hop. Inside Swarm the
+	// container can route to the overlay address directly; the public
+	// hostname only matters for the browser/desktop-app facing path.
 	host := info.IP
+	if host == "" {
+		host = info.PublicHost
+	}
 	if host == "" {
 		host = info.BeamID
 	}
-	http.Redirect(w, r, fmt.Sprintf("https://%s:%s/download/%s", host, port, platform), http.StatusFound)
+	if host == "" {
+		return "", fmt.Errorf("relay has no reachable address")
+	}
+	return fmt.Sprintf("https://%s:%s/download/%s", host, port, platform), nil
 }

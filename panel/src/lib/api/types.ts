@@ -620,6 +620,7 @@ export interface BeamRelayInfo {
     beam_id: string;
     ip: string;
     private_ip?: string;
+    public_host?: string;       // operator-configured (e.g. beam.dylaris.com)
     service_port: string;
     client_port?: string;
     download_port?: string;
