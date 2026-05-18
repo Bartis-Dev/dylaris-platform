@@ -49,6 +49,29 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 	return nil
 }
 
+// SendProxyNetworkCommand queues one of the proxy_network_* lifecycle
+// commands. For create/destroy, serverUUID is the proxy UUID and proxyUUID
+// can be empty. For connect/disconnect, serverUUID is the game-server
+// container and proxyUUID is the proxy whose network it should join/leave.
+func (q *QueueService) SendProxyNetworkCommand(ctx context.Context, nodeToken, action, serverUUID, proxyUUID string) error {
+	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	type proxyNetCmd struct {
+		Action    string                 `json:"action"`
+		Config    map[string]interface{} `json:"config"`
+		ProxyUUID string                 `json:"proxyUuid,omitempty"`
+	}
+	cmd := proxyNetCmd{
+		Action:    action,
+		Config:    map[string]interface{}{"uuid": serverUUID},
+		ProxyUUID: proxyUUID,
+	}
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal proxy_network command: %w", err)
+	}
+	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+}
+
 // SendMigrateCommand queues a migrate_storage command for the given server.
 func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, serverUUID, targetPath string) error {
 	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)

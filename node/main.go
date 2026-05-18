@@ -64,6 +64,7 @@ type NodeCommand struct {
 	Config     ServerConfig    `json:"config"`
 	Installer  InstallerConfig `json:"installer"`
 	TargetPath string          `json:"targetPath,omitempty"`
+	ProxyUUID  string          `json:"proxyUuid,omitempty"` // used by proxy_network_* commands
 }
 
 func main() {
@@ -787,6 +788,35 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 
 					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 					log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
+
+				case "proxy_network_create":
+					// config.UUID identifies the proxy server. Idempotent.
+					if _, err := dm.EnsureProxyNetwork(cmd.Config.UUID); err != nil {
+						log.Printf("proxy_network_create failed for %s: %v", cmd.Config.UUID, err)
+					}
+
+				case "proxy_network_destroy":
+					if err := dm.RemoveProxyNetwork(cmd.Config.UUID); err != nil {
+						log.Printf("proxy_network_destroy failed for %s: %v", cmd.Config.UUID, err)
+					}
+
+				case "proxy_network_connect":
+					// config.UUID = game-server container, ProxyUUID = proxy whose
+					// network the container should attach to (hot, no restart).
+					ip, err := dm.ConnectToProxyNetwork(cmd.Config.UUID, cmd.ProxyUUID)
+					if err != nil {
+						log.Printf("proxy_network_connect failed (%s → %s): %v", cmd.Config.UUID, cmd.ProxyUUID, err)
+					} else {
+						log.Printf("Connected %s to proxy %s (private IP %s)", cmd.Config.UUID, cmd.ProxyUUID, ip)
+						// Publish so the panel can read it without re-inspecting.
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID), ip, 0)
+					}
+
+				case "proxy_network_disconnect":
+					if err := dm.DisconnectFromProxyNetwork(cmd.Config.UUID, cmd.ProxyUUID); err != nil {
+						log.Printf("proxy_network_disconnect failed (%s → %s): %v", cmd.Config.UUID, cmd.ProxyUUID, err)
+					}
+					rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID))
 
 				default:
 					log.Printf("Unknown action: %s", cmd.Action)

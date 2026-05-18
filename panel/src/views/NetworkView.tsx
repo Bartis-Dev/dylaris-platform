@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from 'react';
-import { Server, linkServerToProxy, unlinkServerFromProxy } from '@/lib/api';
-import { Network, Link, Unlink, Info } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Server, linkServerToProxy, unlinkServerFromProxy, getProxyEndpoint, ProxyEndpoint } from '@/lib/api';
+import { Network, Link, Unlink, Info, Copy, Server as ServerIcon } from 'lucide-react';
 
 function getStatusDot(status: string) {
   switch (status) {
@@ -22,6 +22,29 @@ interface NetworkViewProps {
 export default function NetworkView({ server, allServers, onServerSelect, onRefreshServers }: NetworkViewProps) {
   const [selectedId, setSelectedId] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
+  const [endpoints, setEndpoints] = useState<ProxyEndpoint[]>([]);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Refresh endpoints when link state or server changes — the connect command
+  // is async, so we poll a few times to catch the IP assignment.
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOnce = async () => {
+      try {
+        const res = await getProxyEndpoint(server.id);
+        if (!cancelled && res.success && res.endpoints) setEndpoints(res.endpoints);
+      } catch { /* ignore */ }
+    };
+    fetchOnce();
+    const interval = setInterval(fetchOnce, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [server.id, server.proxyId]);
+
+  const copyToClipboard = (key: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 1500);
+  };
 
   const isProxy = server.serverType === 'proxy';
   const isGameServer = !isProxy;
@@ -192,6 +215,44 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
           </div>
         )}
       </div>
+
+      {/* Internal Endpoints — only meaningful inside a proxy network. */}
+      {((isProxy && endpoints.length > 0) || (isGameServer && server.proxyId && endpoints.length > 0)) && (
+        <div className="card p-6">
+          <h2 className="modal-title mb-1 flex items-center gap-2">
+            <ServerIcon size={18} className="text-(--accent-light)" />
+            Internal Endpoints
+          </h2>
+          <p className="text-sm text-(--base-06) mb-5">
+            Private IPs inside the proxy overlay network. Use these in your Bungee/Velocity <code className="font-mono text-xs text-(--base-08)">config.yml</code>.
+          </p>
+          <div className="space-y-2">
+            {endpoints.map(ep => (
+              <div key={ep.serverId} className="flex flex-col gap-1 bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-(--base-09)">{ep.serverName}</span>
+                  {!ep.ip && <span className="mono-label text-(--warning-light)">waiting for connect…</span>}
+                </div>
+                {ep.ip && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="mono-label">IP</span>
+                    <code className="font-mono text-xs text-(--base-08) bg-(--base-03) px-1.5 py-0.5 rounded">{ep.ip}</code>
+                    <button onClick={() => copyToClipboard(`ip-${ep.serverId}`, ep.ip)} className="text-(--base-06) hover:text-(--base-09) transition-colors" title="Copy IP">
+                      <Copy size={11} />
+                    </button>
+                    {copiedKey === `ip-${ep.serverId}` && <span className="mono-label text-(--success-light)">copied</span>}
+                    <span className="mono-label ml-3">Hostname</span>
+                    <code className="font-mono text-xs text-(--base-08) bg-(--base-03) px-1.5 py-0.5 rounded">{ep.hostname}</code>
+                    <button onClick={() => copyToClipboard(`host-${ep.serverId}`, ep.hostname)} className="text-(--base-06) hover:text-(--base-09) transition-colors" title="Copy hostname">
+                      <Copy size={11} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Info Card */}
       <div className="flex items-start gap-3 bg-(--base-03) border border-(--base-04) rounded-xl px-4 py-3">

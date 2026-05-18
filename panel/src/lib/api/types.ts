@@ -214,6 +214,17 @@ export const linkServerToProxy = (serverId: number, proxyId: number) =>
 export const unlinkServerFromProxy = (serverId: number) =>
     fetchAPI(`/servers/${serverId}/proxy`, { method: 'DELETE' });
 
+export interface ProxyEndpoint {
+    serverId: number;
+    serverName: string;
+    proxyId: number;
+    proxyUuid: string;
+    ip: string;
+    hostname: string;
+}
+export const getProxyEndpoint = (serverId: number): Promise<{ success: boolean; endpoints?: ProxyEndpoint[] }> =>
+    fetchAPI(`/servers/${serverId}/proxy-endpoint`);
+
 
 // --- MEMBERS (Invites) ---
 export const getServerMembers = (serverId: number) => fetchAPI(`/servers/${serverId}/members`);
