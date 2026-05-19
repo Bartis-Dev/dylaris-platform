@@ -78,8 +78,7 @@ export default function ServerFilesPage() {
                     {beamEnabled && (
                         <a
                             href={beamDownloadUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            download
                             className="btn btn-secondary btn-sm ml-auto shrink-0"
                             title="Download the Beam Desktop app — connects directly to the relay so transfers don't hit Core"
                         >
