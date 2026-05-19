@@ -404,8 +404,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     </div>
                 )}
 
-                {/* Tab Bar */}
-                <div className="flex space-x-1 overflow-x-auto hide-scrollbar">
+                {/* Tab Bar — wraps onto a second row instead of scrolling so
+                    no tab ever ends up hidden under the right edge in
+                    narrow windows (esp. the Beam Desktop App). */}
+                <div className="flex flex-wrap gap-x-1 gap-y-0">
                     {tabs.map(tab => {
                         const href = `/servers/${selectedServer.id}/${tab.slug}`;
                         const isActive = pathname === href;

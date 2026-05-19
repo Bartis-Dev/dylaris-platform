@@ -8,7 +8,7 @@
 // have to know which transport is active.
 
 import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
-import { getUserLimits } from '@/lib/api';
+import { uploadFiles as apiUploadFiles } from '@/lib/api';
 
 // Shape of the bindings exposed by gateway/beam/app/app.go. We type only
 // the methods the FileBrowser actually calls; everything else stays
@@ -113,9 +113,10 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
         copyFile: (srcPath, dstPath, serverUuid) => wrap(() => app.CopyFile(srcPath, dstPath, serverUuid ?? '')),
         // Uploads still go through the HTTP API for now — Wails-side
         // upload bindings don't exist yet. When they land, swap to native.
-        uploadFiles: async () => {
-            return { success: false, message: 'Native upload not implemented yet — use the Web Panel for uploads' };
-        },
+        // The Core enforces its own body limit (multi-GB), so this is fine
+        // for typical mod / world uploads.
+        uploadFiles: (path, files, onProgress, strategy, mergeConflict, serverUuid) =>
+            apiUploadFiles(path, files, onProgress, strategy, mergeConflict, serverUuid),
         downloadFile: async (path, serverUuid, isDir) => {
             // Wails opens its own native save dialog, so we don't need
             // browser progress tracking here.
@@ -124,8 +125,9 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
         selectiveDownload: async (basePath, selected, selectAll, serverUuid) => {
             await app.SelectiveDownload(basePath, selected, selectAll, serverUuid ?? '');
         },
-        // Limits live with the user, not the transport — reuse the HTTP
-        // call so admin-set caps apply consistently in both modes.
-        getUserLimits: () => getUserLimits(),
+        // In the Desktop App, the user is the operator of their own
+        // gateway — admin-set caps don't apply. Return unlimited so the
+        // browser doesn't reject large uploads before they're attempted.
+        getUserLimits: async () => ({ success: true, uploadLimit: 0, downloadLimit: 0 }),
     };
 }
