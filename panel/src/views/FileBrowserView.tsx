@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { FileBrowser } from '@dylaris/ui-filebrowser';
-import { createPanelAdapter } from '@/lib/adapters/panelFileBrowserAdapter';
+import { createBeamAdapter, isWails, syncSessionWithWails, connectWailsToServer } from '@/lib/adapters';
 
 interface FileBrowserViewProps {
   currentServerPath: string;
@@ -10,7 +10,18 @@ interface FileBrowserViewProps {
 }
 
 const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, serverUuid }) => {
-  const adapter = useMemo(() => createPanelAdapter(), []);
+  // The adapter is fixed per environment — browser stays on HTTP, Wails
+  // stays on gRPC. We don't memoize on isWails() because window.go is
+  // available before render in Wails (no race).
+  const adapter = useMemo(() => createBeamAdapter(), []);
+
+  // Inside Beam Desktop, point the native relay tunnel at whatever server
+  // the user is browsing. Re-runs whenever the URL changes server.
+  useEffect(() => {
+    if (!isWails()) return;
+    syncSessionWithWails();
+    if (serverUuid) connectWailsToServer(serverUuid);
+  }, [serverUuid]);
 
   return (
     <FileBrowser
