@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -394,8 +395,28 @@ func main() {
 		http.Redirect(w, r, target, http.StatusFound)
 	}).Methods("GET")
 
+	// allowedOrigin gates CORS. Beyond the configured Panel and the
+	// local dev origin, the Beam Desktop App is allowed through: it
+	// runs the Panel inside a Wails webview whose origin is
+	// http://wails.localhost (Windows) or wails://wails.localhost
+	// (macOS/Linux). Same Core API, just a native shell — and auth is
+	// Bearer-token (no cookies), so a wider CORS surface grants no
+	// ambient privilege.
+	allowedOrigin := func(origin string) bool {
+		if origin == cfg.FrontendURL || origin == "http://localhost:25510" {
+			return true
+		}
+		if strings.HasPrefix(origin, "wails://") {
+			return true
+		}
+		if u, err := url.Parse(origin); err == nil && u.Hostname() == "wails.localhost" {
+			return true
+		}
+		return false
+	}
+
 	corsObj := gorillaHandlers.CORS(
-		gorillaHandlers.AllowedOrigins([]string{cfg.FrontendURL, "http://localhost:25510"}),
+		gorillaHandlers.AllowedOriginValidator(allowedOrigin),
 		gorillaHandlers.AllowedMethods([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
 		gorillaHandlers.AllowedHeaders([]string{"Content-Type", "Authorization"}),
 	)
