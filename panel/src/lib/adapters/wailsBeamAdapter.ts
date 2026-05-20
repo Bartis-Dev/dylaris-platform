@@ -8,7 +8,7 @@
 // have to know which transport is active.
 
 import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
-import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits, API_URL } from '@/lib/api';
+import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
 
 // Chunk size for the JS → Go upload bridge. Smaller = more IPC calls
 // (overhead-bound on the JS side); larger = bigger base64 strings in
@@ -37,11 +37,6 @@ interface WailsAppBindings {
     Logout(): Promise<void>;
     GetBeamConfig(): Promise<{ relay_address: string }>;
     ConnectToServer(serverUUID: string): Promise<void>;
-    // Connect using a ticket the Panel already minted from Core. The
-    // Panel's session reaches Core reliably; the Beam app's Go HTTP
-    // client gets WAF/CDN HTML back on POST /beam/ticket. Optional —
-    // older app builds only have ConnectToServer.
-    ConnectToServerWithTicket?(serverUUID: string, ticket: string): Promise<void>;
     ListFiles(path: string, serverUUID: string): Promise<{ success: boolean; files?: FileEntry[]; message?: string }>;
     GetFileContent(path: string, serverUUID: string): Promise<{ success: boolean; content?: string; message?: string }>;
     SaveFile(path: string, content: string, serverUUID: string): Promise<void>;
@@ -103,26 +98,6 @@ async function doSyncSession(): Promise<void> {
     }
 }
 
-// fetchBeamTicket mints a relay ticket through the panel's own browser
-// fetch. The Beam app's Go HTTP client gets HTML back from a CDN/WAF on
-// POST /beam/ticket, but the panel session — the same one that logs in
-// fine — goes straight through. The Wails side then opens the tunnel
-// with the ticket we hand it.
-async function fetchBeamTicket(serverUuid: string): Promise<string> {
-    const token = localStorage.getItem('authToken') || localStorage.getItem('token') || '';
-    const res = await fetch(`${API_URL}/beam/ticket`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ server_uuid: serverUuid }),
-    });
-    let data: { success?: boolean; ticket?: string; message?: string } = {};
-    try { data = await res.json(); } catch { /* non-JSON error body */ }
-    if (!res.ok || !data.success || !data.ticket) {
-        throw new Error(data.message || `ticket request failed (HTTP ${res.status})`);
-    }
-    return data.ticket;
-}
-
 // ensureWailsConnection points the native relay tunnel at `serverUuid`,
 // throwing the real Go-side error on failure so callers can surface it
 // (the Wails side lazily resolves the relay address, so this also
@@ -134,14 +109,7 @@ export async function ensureWailsConnection(serverUuid: string): Promise<void> {
     if (!app || !serverUuid) return;
     await syncSessionWithWails();
     if (serverUuid === lastConnectedServer) return;
-    if (typeof app.ConnectToServerWithTicket === 'function') {
-        // Mint the ticket panel-side, then hand it to Wails.
-        const ticket = await fetchBeamTicket(serverUuid);
-        await app.ConnectToServerWithTicket(serverUuid, ticket);
-    } else {
-        // Older app build — let the Wails side fetch the ticket itself.
-        await app.ConnectToServer(serverUuid);
-    }
+    await app.ConnectToServer(serverUuid);
     lastConnectedServer = serverUuid;
 }
 

@@ -339,7 +339,7 @@ func main() {
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")
-	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("POST")
+	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("GET", "POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
 	api.HandleFunc("/beam/download", beamHandler.GetBeamDownload).Methods("GET")
 

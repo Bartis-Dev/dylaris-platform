@@ -190,21 +190,25 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
-	var req struct {
-		ServerUUID string `json:"server_uuid"`
+	// server_uuid is read from the query string (GET) or a JSON body
+	// (POST). The Beam desktop app uses GET — networks in front of Core
+	// were observed handing its POSTs an HTML page instead of routing
+	// them through, and GET goes straight to the handler.
+	serverUUID := r.URL.Query().Get("server_uuid")
+	if serverUUID == "" && r.Body != nil {
+		var req struct {
+			ServerUUID string `json:"server_uuid"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		serverUUID = req.ServerUUID
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	if req.ServerUUID == "" {
+	if serverUUID == "" {
 		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 
 	// Resolve server
-	server, err := h.state.Store.GetServerByUUID(req.ServerUUID)
+	server, err := h.state.Store.GetServerByUUID(serverUUID)
 	if err != nil || server == nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
