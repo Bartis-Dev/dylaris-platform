@@ -88,17 +88,27 @@ export async function syncSessionWithWails(): Promise<void> {
     }
 }
 
-// Connect the Wails relay tunnel to a specific server. Called whenever
-// the panel routes to a server's files tab — the Wails side keeps one
-// live tunnel and switches it when the active server changes.
+// ensureWailsConnection points the native relay tunnel at `serverUuid`,
+// throwing the real Go-side error on failure so callers can surface it
+// (the Wails side lazily resolves the relay address, so this also
+// covers first-call bootstrap). Deduped: a server that's already the
+// live tunnel is a no-op.
 let lastConnectedServer = '';
-export async function connectWailsToServer(serverUuid: string): Promise<void> {
+export async function ensureWailsConnection(serverUuid: string): Promise<void> {
     const app = getWailsApp();
     if (!app || !serverUuid) return;
     if (serverUuid === lastConnectedServer) return;
+    await app.ConnectToServer(serverUuid);
+    lastConnectedServer = serverUuid;
+}
+
+// connectWailsToServer is the best-effort pre-warm used on navigation:
+// it opens the tunnel ahead of time but only logs failures — the actual
+// file op (e.g. upload) re-checks via ensureWailsConnection and surfaces
+// the real error there.
+export async function connectWailsToServer(serverUuid: string): Promise<void> {
     try {
-        await app.ConnectToServer(serverUuid);
-        lastConnectedServer = serverUuid;
+        await ensureWailsConnection(serverUuid);
     } catch (err) {
         console.warn('Wails ConnectToServer failed:', err);
     }
@@ -159,6 +169,10 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                     ? crypto.randomUUID()
                     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
             try {
+                // The native upload has no HTTP fallback — it needs the
+                // relay tunnel. Make sure it's up (and surface the real
+                // reason if it isn't) before opening the upload stream.
+                if (serverUuid) await ensureWailsConnection(serverUuid);
                 await app.BeamUploadStart!(uploadID, path, file.name, strategy ?? '', file.size);
                 let offset = 0;
                 while (offset < file.size) {

@@ -17,10 +17,14 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
 
   // Inside Beam Desktop, point the native relay tunnel at whatever server
   // the user is browsing. Re-runs whenever the URL changes server.
+  // syncSessionWithWails MUST finish before connecting — ConnectToServer
+  // needs the session token the sync pushes to the Wails side.
   useEffect(() => {
     if (!isWails()) return;
-    syncSessionWithWails();
-    if (serverUuid) connectWailsToServer(serverUuid);
+    (async () => {
+      await syncSessionWithWails();
+      if (serverUuid) await connectWailsToServer(serverUuid);
+    })();
   }, [serverUuid]);
 
   return (
