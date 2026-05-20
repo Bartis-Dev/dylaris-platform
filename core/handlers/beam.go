@@ -259,10 +259,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// expires is informational. Compute it from the TTL directly —
+	// SignBeamTicket takes claims by value and sets ExpiresAt on its
+	// own copy, so claims.ExpiresAt here is still nil; dereferencing it
+	// panicked the handler (the connection drop surfaced as a 502).
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"ticket":  ticketString,
-		"expires": claims.ExpiresAt.Time.Unix(),
+		"expires": time.Now().Add(beamauth.BeamTicketTTL).Unix(),
 	})
 }
 
