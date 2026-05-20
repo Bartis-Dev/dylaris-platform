@@ -720,6 +720,7 @@ func (h *SettingsHandler) TestLibraryConnection(w http.ResponseWriter, r *http.R
 type BeamSettings struct {
 	RelayAddress     string          `json:"relayAddress"`     // Effective relay (discovered or manual override)
 	ManualOverride   string          `json:"manualOverride"`   // Admin-configured override (empty = use auto-discovery)
+	PublicHost       string          `json:"publicHost"`       // Externally reachable hostname for discovered relays (e.g. beam.dylaris.com)
 	DiscoveredRelays []BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
 	BwLimit          int64           `json:"bwLimit"`          // Bytes/sec, 0 = unlimited
 	Enabled          bool            `json:"enabled"`
@@ -757,6 +758,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 
 	pairs := []struct{ k, v string }{
 		{"beam.relay_address", req.RelayAddress},
+		{"beam.public_host", strings.TrimSpace(req.PublicHost)},
 		{"beam.bw_limit", fmt.Sprintf("%d", req.BwLimit)},
 		{"beam.enabled", enabledStr},
 		{"beam.download_link", req.DownloadLink},
@@ -787,11 +789,13 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 	}
 
 	manualOverride := getSetting("beam.relay_address")
-	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride)
+	publicHost := getSetting("beam.public_host")
+	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost)
 
 	settings := BeamSettings{
 		RelayAddress:   effective,
 		ManualOverride: manualOverride,
+		PublicHost:     publicHost,
 		DownloadLink:   getSetting("beam.download_link"),
 		Enabled:        true,
 	}

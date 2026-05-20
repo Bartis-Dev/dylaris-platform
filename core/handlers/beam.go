@@ -94,16 +94,22 @@ func PickBeamRelay(ctx context.Context, rdb *redis.Client) (BeamRelayInfo, bool)
 }
 
 // resolveRelay returns the effective public address for Beam Desktop
-// clients. Prefers the relay's BEAM_PUBLIC_HOST (e.g. beam.dylaris.com)
-// over the internal overlay IP — the IP is never reachable from a
-// browser/desktop client and would produce the 172.x:25551 problem we saw
-// in v1. Manual override (DB setting beam.relay_address) still wins for
-// incident routing.
-func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride string) (string, string) {
+// clients. Discovery supplies which relay is alive and its port; the
+// externally reachable host comes from publicHost (DB setting
+// beam.public_host) — the relay's own registered IP is an internal
+// overlay address a desktop client can't reach. Manual override (DB
+// setting beam.relay_address) still wins outright for incident routing.
+func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost string) (string, string) {
 	if strings.TrimSpace(manualOverride) != "" {
 		return manualOverride, "manual"
 	}
 	if info, ok := PickBeamRelay(ctx, rdb); ok {
+		// The configured public host is the single source of truth for
+		// the externally reachable hostname — it overrides whatever the
+		// relay reported about itself.
+		if h := strings.TrimSpace(publicHost); h != "" {
+			info.PublicHost = h
+		}
 		port := info.ClientPort
 		if port == "" {
 			port = info.ServicePort
@@ -279,7 +285,8 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	manualOverride := getSetting("beam.relay_address")
-	relayAddress, _ := resolveRelay(r.Context(), h.state.Redis, manualOverride)
+	publicHost := getSetting("beam.public_host")
+	relayAddress, _ := resolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost)
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"

@@ -18,6 +18,7 @@ interface BeamRelayInfo {
 interface BeamSettings {
     relayAddress: string;             // Effective (discovered or manual)
     manualOverride: string;           // Admin-configured override
+    publicHost?: string;              // Externally reachable hostname for discovered relays
     discoveredRelays: BeamRelayInfo[]; // Auto-registered relays
     bwLimit: number;
     enabled: boolean;
@@ -78,6 +79,7 @@ export default function BeamTab() {
     const [settings, setSettings] = useState<BeamSettings>({
         relayAddress: '',
         manualOverride: '',
+        publicHost: '',
         discoveredRelays: [],
         bwLimit: 0,
         enabled: true,
@@ -168,8 +170,8 @@ export default function BeamTab() {
                     {settings.discoveredRelays.length > 0 ? (
                         <ul className="rounded-md border border-(--base-03) divide-y divide-(--base-03) bg-(--base-01)">
                             {settings.discoveredRelays.map(relay => {
-                                const reachable = relay.public_host || relay.ip;
-                                const isInternal = !relay.public_host && relay.ip;
+                                const reachable = settings.publicHost || relay.public_host || relay.ip;
+                                const isInternal = !settings.publicHost && !relay.public_host && !!relay.ip;
                                 return (
                                     <li key={relay.beam_id} className="flex items-center gap-3 px-3 py-2">
                                         <Radar size={12} className="text-(--success-light) shrink-0" />
@@ -178,7 +180,7 @@ export default function BeamTab() {
                                                 <span className="text-sm font-medium text-(--base-09)">{relay.beam_id}</span>
                                                 <span className="font-mono text-xs text-(--base-08)">{reachable || 'no address'}</span>
                                                 {isInternal && (
-                                                    <span className="badge badge-warning" title="Set BEAM_PUBLIC_HOST in the relay container so clients can reach it from outside Swarm">
+                                                    <span className="badge badge-warning" title="Set the Public Host below so clients can reach this relay from outside Swarm">
                                                         internal IP
                                                     </span>
                                                 )}
@@ -202,10 +204,23 @@ export default function BeamTab() {
                     )}
                 </div>
 
+                {/* Public Host */}
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Public Host</label>
+                    <p className="text-xs text-(--base-06) mb-1">The externally reachable hostname clients use to reach discovered relays — overrides the internal IP a relay registers with. Discovery still supplies the port.</p>
+                    <input
+                        type="text"
+                        value={settings.publicHost || ''}
+                        onChange={e => setSettings(s => ({ ...s, publicHost: e.target.value }))}
+                        placeholder="beam.dylaris.com"
+                        className="input-field font-mono"
+                    />
+                </div>
+
                 {/* Manual Override */}
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Manual Override</label>
-                    <p className="text-xs text-(--base-06) mb-1">Optional. When set, forces all clients to this address and bypasses discovery.</p>
+                    <p className="text-xs text-(--base-06) mb-1">Optional. When set, forces all clients to this exact address and bypasses discovery entirely.</p>
                     <input
                         type="text"
                         value={settings.manualOverride}
