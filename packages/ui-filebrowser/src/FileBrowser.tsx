@@ -14,11 +14,31 @@ declare const JSZip: any;
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
 
+// useDelayedFlag mirrors `active`, but only flips on once it has stayed
+// true for `delayMs`. A fast operation (folder switch that resolves in
+// well under the delay) never trips it — so the "Loading…" line doesn't
+// flash on every quick navigation, only on genuinely slow loads.
+function useDelayedFlag(active: boolean, delayMs: number): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setShown(false);
+      return;
+    }
+    const t = setTimeout(() => setShown(true), delayMs);
+    return () => clearTimeout(t);
+  }, [active, delayMs]);
+  return shown;
+}
+
 const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter }) => {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [currentPath, setCurrentPath] = useState(currentServerPath);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Only surface "Loading…" if the op runs longer than this — fast
+  // folder switches stay silent instead of flashing the indicator.
+  const showLoading = useDelayedFlag(loading, 350);
   const [toastMessage, setToastMessage] = useState<{ message: string; type: 'error' | 'info' } | null>(null);
   
   const [globalSearchTerm, setGlobalSearchTerm] = useState('');
@@ -804,7 +824,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       </div>
       
       {isSearching && <p className="text-center text-xl text-(--warning)">Searching...</p>}
-      {loading && !showUploadPopup && <p className="text-center text-xl text-(--warning)">Loading...</p>}
+      {showLoading && !showUploadPopup && <p className="text-center text-xl text-(--warning)">Loading...</p>}
       {error && <p className="text-(--error) text-center text-xl mb-4">{error}</p>}
       <ul className="space-y-2">
         {currentPath && !globalSearchTerm && (
