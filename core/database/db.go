@@ -5,6 +5,7 @@ import (
 	"dylaris-core/config"
 	"fmt"
 	"log"
+	"time"
 
 	_ "github.com/lib/pq" // Required: Postgres Driver
 	"golang.org/x/crypto/bcrypt"
@@ -20,52 +21,108 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("DB Open Error: %w", err)
 	}
 
-	if err = db.Ping(); err != nil {
+	// Wait for Postgres to accept connections instead of crashing out —
+	// covers the Core booting before the DB in a compose / stack deploy.
+	if err := pingWithRetry(db, 60, 2*time.Second); err != nil {
 		return nil, fmt.Errorf("DB Ping Error: %w", err)
 	}
-
 	log.Println("Postgres DB connection established.")
 
-	// Create tables (schema)
-	if err := createUsersTable(db); err != nil {
-		return nil, err
-	}
-	if err := createModulesTable(db); err != nil {
-		return nil, err
-	}
-	if err := createNodesTable(db); err != nil {
-		return nil, err
-	}
-	if err := createServersTable(db); err != nil {
-		return nil, err
-	}
-	if err := createSettingsTable(db); err != nil {
-		return nil, err
-	}
-	if err := createServerInvitesTable(db); err != nil {
-		return nil, err
-	}
-	if err := createServerStatsTable(db); err != nil {
-		return nil, err
-	}
-	if err := createGatewayTables(db); err != nil {
-		return nil, err
-	}
-	if err := createLibraryDisabledTable(db); err != nil {
-		return nil, err
-	}
-	if err := createBackupTables(db); err != nil {
+	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
 
+	// Self-heal: if the database is later restored from an empty volume
+	// (a stack update that reset the TimescaleDB volume, etc.), rebuild
+	// the schema in place so the Core recovers on its own — no manual
+	// restart needed.
+	go schemaHealLoop(db)
+
+	return db, nil
+}
+
+// pingWithRetry blocks until the database answers or the attempt budget
+// is exhausted.
+func pingWithRetry(db *sql.DB, attempts int, delay time.Duration) error {
+	var err error
+	for i := 1; i <= attempts; i++ {
+		if err = db.Ping(); err == nil {
+			return nil
+		}
+		log.Printf("DB not ready (%d/%d): %v", i, attempts, err)
+		time.Sleep(delay)
+	}
+	return err
+}
+
+// ensureSchema creates every table, applies column migrations and seeds
+// the baseline rows. Every statement is idempotent (CREATE/ALTER ... IF
+// NOT EXISTS, conditional inserts), so it is safe to run repeatedly —
+// both at startup and from schemaHealLoop.
+func ensureSchema(db *sql.DB) error {
+	if err := createUsersTable(db); err != nil {
+		return err
+	}
+	if err := createModulesTable(db); err != nil {
+		return err
+	}
+	if err := createNodesTable(db); err != nil {
+		return err
+	}
+	if err := createServersTable(db); err != nil {
+		return err
+	}
+	if err := createSettingsTable(db); err != nil {
+		return err
+	}
+	if err := createServerInvitesTable(db); err != nil {
+		return err
+	}
+	if err := createServerStatsTable(db); err != nil {
+		return err
+	}
+	if err := createGatewayTables(db); err != nil {
+		return err
+	}
+	if err := createLibraryDisabledTable(db); err != nil {
+		return err
+	}
+	if err := createBackupTables(db); err != nil {
+		return err
+	}
 	if err := migrateSchema(db); err != nil {
-		return nil, err
+		return err
 	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
+	return nil
+}
 
-	return db, nil
+// schemaHealLoop watches for the core schema disappearing — which is
+// what happens when the database comes back up on an empty volume — and
+// rebuilds it. A cheap to_regclass probe gates the (idempotent but
+// chatty) full rebuild, so the steady state is one fast query per tick.
+func schemaHealLoop(db *sql.DB) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		var reg sql.NullString
+		if err := db.QueryRow(`SELECT to_regclass('public.users')`).Scan(&reg); err != nil {
+			// DB unreachable — the sql pool reconnects on its own;
+			// there's nothing to rebuild while it's down.
+			continue
+		}
+		if reg.Valid {
+			continue // schema present — steady state
+		}
+		log.Println("schema-heal: core tables are gone — rebuilding schema")
+		if err := ensureSchema(db); err != nil {
+			log.Printf("schema-heal: rebuild failed: %v", err)
+		} else {
+			log.Println("schema-heal: schema rebuilt successfully")
+		}
+	}
 }
 
 func createUsersTable(db *sql.DB) error {
