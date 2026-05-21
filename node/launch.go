@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type launchMode int
@@ -49,4 +51,35 @@ func resolveLaunch(subServerDir string) launchForm {
 		return launchForm{Mode: launchJar, Jar: "server.jar"}
 	}
 	return launchForm{Mode: launchNone}
+}
+
+// buildStartCommand assembles the full `java …` invocation for an
+// installed sub-server. The platform -Xms/-Xmx is always the LAST JVM
+// argument before the main-class token (-jar / @argsfile), so it wins
+// over anything the user put in extraJvmFlags or user_jvm_args.txt.
+func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string) (string, error) {
+	lf := resolveLaunch(subServerDir)
+	mem := fmt.Sprintf("-Xms%dM -Xmx%dM", memMB, memMB)
+	parts := []string{"java"}
+	add := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	switch lf.Mode {
+	case launchJar:
+		add(extraJvmFlags)
+		add(mem)
+		parts = append(parts, "-jar", lf.Jar, "nogui")
+	case launchArgfile:
+		add(extraJvmFlags)
+		if lf.UserJvmArgs {
+			add("@user_jvm_args.txt")
+		}
+		add(mem)
+		parts = append(parts, "@"+lf.ArgsFile, "nogui")
+	default:
+		return "", fmt.Errorf("no runnable server found in %s", subServerDir)
+	}
+	return strings.Join(parts, " "), nil
 }
