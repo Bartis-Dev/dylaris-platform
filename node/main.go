@@ -565,10 +565,10 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					}
 
 					// Build the start command via buildStartCommand (type-aware: jar or argfile form).
-					// extraJvmFlags are extracted from the Core-supplied command string so that
-					// Aikar flags and any admin-configured custom flags are preserved.
+					// ExtraJvmFlags is passed directly from Core as a dedicated field (Aikar flags
+					// and any server-specific custom flags, already combined and trimmed).
 					subServerDir := filepath.Join(serverPath, subName)
-					extraJvmFlags := extractJvmFlagsFromCommand(cmd.Config.Docker.Command)
+					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
 					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags)
 					if err != nil {
 						log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
@@ -607,8 +607,9 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					activeFile := filepath.Join(serverPath, ".active_server")
 
 					// Build the start command for the target sub-server.
+					// ExtraJvmFlags is passed directly from Core as a dedicated field.
 					switchSubDir := filepath.Join(serverPath, subName)
-					extraJvmFlags := extractJvmFlagsFromCommand(cmd.Config.Docker.Command)
+					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
 					startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags)
 					if err != nil {
 						log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
@@ -771,7 +772,8 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					}
 
 					// Build the start command after reinstall (type-aware).
-					extraJvmFlags := extractJvmFlagsFromCommand(cmd.Config.Docker.Command)
+					// ExtraJvmFlags is passed directly from Core as a dedicated field.
+					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
 					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags)
 					if err != nil {
 						log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)

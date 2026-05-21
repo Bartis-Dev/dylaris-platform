@@ -149,6 +149,7 @@ type DockerConfig struct {
 	CpusetCpus    string  `json:"cpusetCpus"`
 	DiskLimit     int64   `json:"diskLimit"`
 	Command       string  `json:"command"`
+	ExtraJvmFlags string  `json:"extraJvmFlags"` // JVM flags forwarded from Core (Aikar + server-specific)
 	HostPort      int     `json:"hostPort"`      // 0 = auto-allocate from range
 	ContainerPort int     `json:"containerPort"` // 0 = use global containerPort var
 }

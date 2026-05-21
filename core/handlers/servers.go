@@ -384,7 +384,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build start command: RAM from DB (without buffer), ExtraFlags from user
+	// Build JVM flags: default/Aikar flags followed by server-specific extra flags.
+	// These are forwarded to the node as a dedicated field; the node builds the
+	// full java start command itself via buildStartCommand.
 	extraFlags := strings.TrimSpace(req.ExtraJvmFlags)
 	if extraFlags == "" {
 		if srv.Memory >= 12288 {
@@ -393,12 +395,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			extraFlags = aikarsFlags
 		}
 	}
-	startCommand := fmt.Sprintf("java -Xms%dM -Xmx%dM %s %s -jar server.jar nogui",
-		srv.Memory, srv.Memory, defaultJvmFlags, extraFlags)
-	startCommand = strings.Join(strings.Fields(startCommand), " ") // Remove extra spaces
+	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
 
-	// Update DB
-	if err := h.state.Store.UpdateServerSetup(serverID, req.JavaImage, startCommand, subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
+	// Update DB (start_command is display-only; store combined flags in extra_jvm_flags)
+	if err := h.state.Store.UpdateServerSetup(serverID, req.JavaImage, "", subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
 		sendJSONError(w, "Failed to update server", 500)
 		return
 	}
@@ -415,11 +415,11 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		configPayload := map[string]interface{}{
 			"uuid": srv.UUID,
 			"docker": map[string]interface{}{
-				"image":      req.JavaImage,
-				"ram":        srv.Memory,
-				"cpuLimit":   srv.CPULimit,
-				"cpusetCpus": node.CpusetCpus,
-				"command":    startCommand,
+				"image":          req.JavaImage,
+				"ram":            srv.Memory,
+				"cpuLimit":       srv.CPULimit,
+				"cpusetCpus":     node.CpusetCpus,
+				"extraJvmFlags":  combinedJvmFlags,
 			},
 			"activeSubServer": subName,
 		}
@@ -526,11 +526,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	if extraFlags == "" {
 		extraFlags = srv.ExtraJvmFlags
 	}
+	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
 
-	startCommand := fmt.Sprintf("java -Xms%dM -Xmx%dM %s %s -jar server.jar nogui", srv.Memory, srv.Memory, defaultJvmFlags, extraFlags)
-	startCommand = strings.Join(strings.Fields(startCommand), " ")
-
-	// Update DB
+	// Update DB (start_command is display-only; node builds the real command)
 	installerType := req.Installer.Type
 	if installerType == "" {
 		installerType = srv.InstallerType
@@ -544,7 +542,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		buildNumber = srv.BuildNumber
 	}
 
-	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, startCommand, subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
+	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
 		sendJSONError(w, "Failed to update server", 500)
 		return
 	}
@@ -560,11 +558,11 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		configPayload := map[string]interface{}{
 			"uuid": srv.UUID,
 			"docker": map[string]interface{}{
-				"image":      javaImage,
-				"ram":        srv.Memory,
-				"cpuLimit":   srv.CPULimit,
-				"cpusetCpus": node.CpusetCpus,
-				"command":    startCommand,
+				"image":         javaImage,
+				"ram":           srv.Memory,
+				"cpuLimit":      srv.CPULimit,
+				"cpusetCpus":    node.CpusetCpus,
+				"extraJvmFlags": combinedJvmFlags,
 			},
 			"activeSubServer": subName,
 		}
@@ -640,15 +638,16 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	if h.state.Queue != nil {
 		node, err := h.state.Store.GetNodeByID(srv.NodeID)
 		if err == nil {
+			combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + strings.TrimSpace(srv.ExtraJvmFlags))
 			switchPayload := map[string]interface{}{
 				"uuid":            srv.UUID,
 				"activeSubServer": subName,
 				"docker": map[string]interface{}{
-					"image":      srv.GameImage,
-					"ram":        srv.Memory,
-					"cpuLimit":   srv.CPULimit,
-					"cpusetCpus": node.CpusetCpus,
-					"command":    strings.Join(strings.Fields(fmt.Sprintf("java -Xms%dM -Xmx%dM %s %s -jar server.jar nogui", srv.Memory, srv.Memory, defaultJvmFlags, strings.TrimSpace(srv.ExtraJvmFlags))), " "),
+					"image":         srv.GameImage,
+					"ram":           srv.Memory,
+					"cpuLimit":      srv.CPULimit,
+					"cpusetCpus":    node.CpusetCpus,
+					"extraJvmFlags": combinedJvmFlags,
 				},
 			}
 			h.state.Queue.SendCommand(context.Background(), node.Token, "switch_server", switchPayload, nil)
