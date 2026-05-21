@@ -605,9 +605,6 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 
 					serverPath := storage.GetServerDir(cmd.Config.UUID)
 					activeFile := filepath.Join(serverPath, ".active_server")
-					if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
-						log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
-					}
 
 					// Build the start command for the target sub-server.
 					switchSubDir := filepath.Join(serverPath, subName)
@@ -615,6 +612,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags)
 					if err != nil {
 						log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 						return
 					}
 					cmd.Config.Docker.Command = startCmd
@@ -622,6 +620,9 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
 						log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 					} else {
+						if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+							log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
+						}
 						log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
 						saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
 					}
