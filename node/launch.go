@@ -53,6 +53,37 @@ func resolveLaunch(subServerDir string) launchForm {
 	return launchForm{Mode: launchNone}
 }
 
+// extractJvmFlagsFromCommand pulls out the user/admin JVM flags from an
+// existing start-command string so they can be forwarded to buildStartCommand.
+// It strips the structural tokens (java, -Xms/-Xmx, -jar <jar>, @<argsfile>,
+// nogui) and returns whatever remains — typically Aikar flags or custom flags
+// set by the admin. Works with both the legacy Core format
+// ("java -Xms -Xmx <flags> -jar …") and the buildStartCommand format
+// ("java <flags> -Xms -Xmx -jar …" / "java <flags> @argsfile …").
+// Returns "" when the command is empty or contains no recognised extra flags.
+func extractJvmFlagsFromCommand(cmd string) string {
+	parts := strings.Fields(cmd)
+	var flags []string
+	skipNext := false
+	for _, p := range parts {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		switch {
+		case p == "java":
+		case strings.HasPrefix(p, "-Xms"), strings.HasPrefix(p, "-Xmx"):
+		case p == "-jar":
+			skipNext = true // skip the jar filename that follows
+		case p == "nogui":
+		case strings.HasPrefix(p, "@"): // @unix_args.txt / @user_jvm_args.txt
+		default:
+			flags = append(flags, p)
+		}
+	}
+	return strings.Join(flags, " ")
+}
+
 // buildStartCommand assembles the full `java …` invocation for an
 // installed sub-server. The platform -Xms/-Xmx is always the LAST JVM
 // argument before the main-class token (-jar / @argsfile), so it wins

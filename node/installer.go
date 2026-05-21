@@ -503,33 +503,6 @@ func DetectServerJar(destDir string) string {
 	return "server.jar"
 }
 
-// DetectExtraJvmArgs reads Forge's user_jvm_args.txt and returns additional JVM flags.
-// Filters out -Xmx/-Xms (we control RAM allocation ourselves) and comments.
-func DetectExtraJvmArgs(destDir string) string {
-	argsFile := filepath.Join(destDir, "user_jvm_args.txt")
-	data, err := os.ReadFile(argsFile)
-	if err != nil {
-		return ""
-	}
-
-	var args []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Skip memory flags — we set those via -Xmx from the DB
-		if strings.HasPrefix(line, "-Xmx") || strings.HasPrefix(line, "-Xms") {
-			continue
-		}
-		args = append(args, line)
-	}
-	if len(args) > 0 {
-		log.Printf("Detected JVM args from user_jvm_args.txt: %s", strings.Join(args, " "))
-	}
-	return strings.Join(args, " ")
-}
-
 // extractZipToDir extracts a ZIP archive into destDir, guarding against path traversal.
 func extractZipToDir(zipPath, destDir string) error {
 	r, err := zip.OpenReader(zipPath)

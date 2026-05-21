@@ -564,18 +564,18 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
 					}
 
-					// Smart JAR detection: find the correct server JAR (Forge, Fabric, Paper, etc.)
+					// Build the start command via buildStartCommand (type-aware: jar or argfile form).
+					// extraJvmFlags are extracted from the Core-supplied command string so that
+					// Aikar flags and any admin-configured custom flags are preserved.
 					subServerDir := filepath.Join(serverPath, subName)
-					detectedJar := DetectServerJar(subServerDir)
-					if detectedJar != "server.jar" {
-						// Replace hardcoded "server.jar" in the start command
-						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, "-jar server.jar", "-jar "+detectedJar, 1)
+					extraJvmFlags := extractJvmFlagsFromCommand(cmd.Config.Docker.Command)
+					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags)
+					if err != nil {
+						log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+						return
 					}
-					// Detect extra JVM args from user_jvm_args.txt (Forge)
-					if detectedArgs := DetectExtraJvmArgs(subServerDir); detectedArgs != "" {
-						// Insert before -jar flag
-						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, " -jar ", " "+detectedArgs+" -jar ", 1)
-					}
+					cmd.Config.Docker.Command = startCmd
 
 					// Track the active sub-server on disk
 					activeFile := filepath.Join(serverPath, ".active_server")
@@ -609,15 +609,15 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
 					}
 
-					// Smart JAR detection for the target sub-server
+					// Build the start command for the target sub-server.
 					switchSubDir := filepath.Join(serverPath, subName)
-					detectedJar := DetectServerJar(switchSubDir)
-					if detectedJar != "server.jar" {
-						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, "-jar server.jar", "-jar "+detectedJar, 1)
+					extraJvmFlags := extractJvmFlagsFromCommand(cmd.Config.Docker.Command)
+					startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags)
+					if err != nil {
+						log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
+						return
 					}
-					if detectedArgs := DetectExtraJvmArgs(switchSubDir); detectedArgs != "" {
-						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, " -jar ", " "+detectedArgs+" -jar ", 1)
-					}
+					cmd.Config.Docker.Command = startCmd
 
 					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
 						log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
@@ -769,14 +769,15 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						return
 					}
 
-					// Smart JAR detection after reinstall
-					detectedJar := DetectServerJar(subServerDir)
-					if detectedJar != "server.jar" {
-						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, "-jar server.jar", "-jar "+detectedJar, 1)
+					// Build the start command after reinstall (type-aware).
+					extraJvmFlags := extractJvmFlagsFromCommand(cmd.Config.Docker.Command)
+					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags)
+					if err != nil {
+						log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)
+						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+						return
 					}
-					if detectedArgs := DetectExtraJvmArgs(subServerDir); detectedArgs != "" {
-						cmd.Config.Docker.Command = strings.Replace(cmd.Config.Docker.Command, " -jar ", " "+detectedArgs+" -jar ", 1)
-					}
+					cmd.Config.Docker.Command = startCmd
 
 					// Recreate container with start command
 					if err := dm.RecreateWithCommand(cmd.Config); err != nil {

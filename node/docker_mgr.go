@@ -637,9 +637,6 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 	// Build a ServerConfig from the inspected container
 	config := ServerConfig{UUID: uuid}
 	config.Docker.Image = info.Config.Image
-	if len(info.Config.Cmd) > 0 {
-		config.Docker.Command = strings.Join(info.Config.Cmd, " ")
-	}
 	if info.Config.WorkingDir != "" && strings.HasPrefix(info.Config.WorkingDir, "/data/") {
 		config.ActiveSubServer = strings.TrimPrefix(info.Config.WorkingDir, "/data/")
 	}
@@ -658,6 +655,27 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 		config.ExistingBinds = append([]string{}, info.HostConfig.Binds...)
 	}
 
+	// Rebuild the start command from disk so the correct launch form (jar vs
+	// argfile) is always used. Extract any extra JVM flags from the old
+	// command so Aikar / admin flags survive the restart.
+	if config.ActiveSubServer != "" {
+		subServerDir := filepath.Join(dm.resolveLocalServerPath(uuid), config.ActiveSubServer)
+		oldCmd := ""
+		if len(info.Config.Cmd) > 0 {
+			oldCmd = strings.Join(info.Config.Cmd, " ")
+		}
+		extraFlags := extractJvmFlagsFromCommand(oldCmd)
+		if startCmd, err := buildStartCommand(subServerDir, config.Docker.RAM, extraFlags); err == nil {
+			config.Docker.Command = startCmd
+		} else {
+			// Fall back to the stored command so the container still starts.
+			log.Printf("RestartContainer %s: buildStartCommand failed (%v), reusing stored command", uuid, err)
+			config.Docker.Command = oldCmd
+		}
+	} else if len(info.Config.Cmd) > 0 {
+		config.Docker.Command = strings.Join(info.Config.Cmd, " ")
+	}
+
 	log.Printf("RestartContainer %s: image=%s cmd=%s sub=%s ram=%dMB cpu=%.1f binds=%v",
 		uuid, config.Docker.Image, config.Docker.Command, config.ActiveSubServer, config.Docker.RAM, config.Docker.CPULimit, config.ExistingBinds)
 
@@ -669,17 +687,39 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 
-	// Inspect existing container to preserve image + command + binds
+	// Inspect existing container to preserve image + active sub-server + binds.
 	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
 	if err == nil {
 		if config.Docker.Image == "" {
 			config.Docker.Image = info.Config.Image
 		}
-		if config.Docker.Command == "" && len(info.Config.Cmd) > 0 {
-			config.Docker.Command = strings.Join(info.Config.Cmd, " ")
+		if config.ActiveSubServer == "" && info.Config.WorkingDir != "" &&
+			strings.HasPrefix(info.Config.WorkingDir, "/data/") {
+			config.ActiveSubServer = strings.TrimPrefix(info.Config.WorkingDir, "/data/")
 		}
 		if len(info.HostConfig.Binds) > 0 {
 			config.ExistingBinds = append([]string{}, info.HostConfig.Binds...)
+		}
+
+		// Rebuild start command from disk with the new RAM value so memory
+		// flags stay in sync. Fall back to the stored command on error.
+		if config.ActiveSubServer != "" {
+			subServerDir := filepath.Join(dm.resolveLocalServerPath(config.UUID), config.ActiveSubServer)
+			oldCmd := ""
+			if len(info.Config.Cmd) > 0 {
+				oldCmd = strings.Join(info.Config.Cmd, " ")
+			}
+			extraFlags := extractJvmFlagsFromCommand(oldCmd)
+			if startCmd, buildErr := buildStartCommand(subServerDir, config.Docker.RAM, extraFlags); buildErr == nil {
+				config.Docker.Command = startCmd
+			} else {
+				log.Printf("UpdateResources %s: buildStartCommand failed (%v), reusing stored command", config.UUID, buildErr)
+				if config.Docker.Command == "" {
+					config.Docker.Command = oldCmd
+				}
+			}
+		} else if config.Docker.Command == "" && len(info.Config.Cmd) > 0 {
+			config.Docker.Command = strings.Join(info.Config.Cmd, " ")
 		}
 	}
 
