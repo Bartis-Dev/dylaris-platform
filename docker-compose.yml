@@ -64,6 +64,15 @@ services:
       POSTGRES_DB: "${DB_NAME}"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      # $$ escapes compose interpolation so the container shell expands
+      # POSTGRES_USER/DB from its own environment. start_period covers
+      # the initdb run on a first (empty-volume) boot.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - dylaris_net
 

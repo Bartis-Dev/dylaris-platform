@@ -94,6 +94,10 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "User not found", http.StatusUnauthorized)
 		return
 	} else if err != nil {
+		if dbUnavailable(err) {
+			sendJSONError(w, "The database is currently unavailable — please try again in a moment.", http.StatusServiceUnavailable)
+			return
+		}
 		sendJSONError(w, "Database Error", http.StatusInternalServerError)
 		return
 	}
@@ -143,6 +147,30 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		"token":   tokenString,
 		"isAdmin": user.IsAdmin,
 	})
+}
+
+// dbUnavailable reports whether err looks like the database being
+// unreachable or not yet ready, rather than a genuine query failure.
+// Both the connection being down and the schema not being rebuilt yet
+// (the schema-heal loop recreates it) are transient — the right
+// user-facing response is "try again shortly", not a hard 500.
+func dbUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, n := range []string{
+		"connection refused", "dial tcp", "no such host",
+		"bad connection", "connection reset", "broken pipe",
+		"i/o timeout", "server closed the connection",
+		"the database system is", // starting up / shutting down / in recovery
+		"does not exist",          // schema not rebuilt yet
+	} {
+		if strings.Contains(msg, n) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *AuthHandler) GetProfileHandler(w http.ResponseWriter, r *http.Request) {
