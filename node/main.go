@@ -463,6 +463,42 @@ func getPrivateIPs() []string {
 	return ips
 }
 
+// scanSubServers lists the immediate sub-directories of serverDir (skipping
+// dotfiles / non-directories) and returns a SubServerMetadata slice with
+// Name and Type populated for each. MinecraftVersion / Build / ExtraJvmFlags
+// are left empty here; the assign flow has its own fallback for those.
+func scanSubServers(serverDir string) []SubServerMetadata {
+	entries, err := os.ReadDir(serverDir)
+	if err != nil {
+		return nil
+	}
+	var subs []SubServerMetadata
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		subDir := filepath.Join(serverDir, e.Name())
+		subs = append(subs, SubServerMetadata{
+			Name: e.Name(),
+			Type: subServerType(subDir),
+		})
+	}
+	return subs
+}
+
+// refreshServerMetadata rewrites <serverDir>/.dylaris.json from current
+// state. Best-effort: a failure is logged and never aborts the caller.
+func refreshServerMetadata(serverDir, uuid, name, image string, ramMB int, cpu float64, active string) {
+	subs := scanSubServers(serverDir)
+	err := writeServerMetadata(serverDir, ServerMetadata{
+		ServerUUID: uuid, Name: name, MemoryMB: ramMB, CPULimit: cpu,
+		GameImage: image, ActiveSubServer: active, SubServers: subs,
+	})
+	if err != nil {
+		log.Printf("metadata: write %s failed: %v", uuid, err)
+	}
+}
+
 func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaProvider, storage *StorageManager) {
 	queueKey := fmt.Sprintf("dylaris:node:%s:queue", id)
 	log.Printf("Listening for core commands on queue: %s", queueKey)
@@ -529,6 +565,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					} else {
 						log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
 						saveNodeConfig(serverPath, cmd.Config)
+						refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, "")
 					}
 
 				case "setup":
@@ -590,6 +627,9 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Server %s/%s deployed and running!", cmd.Config.UUID, subName)
 						saveNodeConfig(serverPath, cmd.Config)
 					}
+					// Best-effort metadata refresh regardless of RecreateWithCommand result
+					// (installation succeeded; the sub-server directory is valid).
+					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 
 					// Notify Core that installation is complete
 					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
@@ -626,6 +666,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						}
 						log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
 						saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
+						refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 					}
 
 				case "start":
@@ -674,7 +715,10 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
 					} else {
 						log.Printf("Server %s resources updated and restarted", cmd.Config.UUID)
-						saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
+						resServerPath := storage.GetServerDir(cmd.Config.UUID)
+						saveNodeConfig(resServerPath, cmd.Config)
+						resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
+						refreshServerMetadata(resServerPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
 					}
 					if quota != nil {
 						if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
@@ -716,12 +760,13 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					// Check if this was the active sub-server
 					activeFile := filepath.Join(serverPath, ".active_server")
 					activeBytes, _ := os.ReadFile(activeFile)
-					if string(activeBytes) == subName {
+					delFinalActive := strings.TrimSpace(string(activeBytes))
+					if delFinalActive == subName {
 						// Find another sub-server to activate
 						entries, _ := os.ReadDir(serverPath)
 						newActive := ""
 						for _, e := range entries {
-							if e.IsDir() {
+							if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 								newActive = e.Name()
 								break
 							}
@@ -729,12 +774,15 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						if newActive != "" {
 							os.WriteFile(activeFile, []byte(newActive), 0644)
 							log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
+							delFinalActive = newActive
 						} else {
 							os.Remove(activeFile)
 							log.Printf("No sub-servers remaining for %s, pending_setup", cmd.Config.UUID)
+							delFinalActive = ""
 						}
 					}
 					log.Printf("Sub-server %s/%s deleted", cmd.Config.UUID, subName)
+					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, delFinalActive)
 
 				case "reinstall":
 					// Reinstall: stop container, clean JARs, re-install, restart

@@ -78,6 +78,58 @@ func TestResolveLaunch(t *testing.T) {
 	})
 }
 
+func TestSubServerType(t *testing.T) {
+	t.Run("forge", func(t *testing.T) {
+		dir := t.TempDir()
+		args := filepath.Join(dir, "libraries/net/minecraftforge/forge/1.20.1-47.2.0")
+		if err := os.MkdirAll(args, 0755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(args, "unix_args.txt"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := subServerType(dir); got != "forge" {
+			t.Fatalf("got %q, want forge", got)
+		}
+	})
+	t.Run("neoforge", func(t *testing.T) {
+		dir := t.TempDir()
+		args := filepath.Join(dir, "libraries/net/neoforged/neoforge/20.4.80")
+		if err := os.MkdirAll(args, 0755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(args, "unix_args.txt"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := subServerType(dir); got != "neoforge" {
+			t.Fatalf("got %q, want neoforge", got)
+		}
+	})
+	t.Run("paper", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "paper-1.20.1-196.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := subServerType(dir); got != "paper" {
+			t.Fatalf("got %q, want paper", got)
+		}
+	})
+	t.Run("fabric", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "fabric-server-launch.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := subServerType(dir); got != "fabric" {
+			t.Fatalf("got %q, want fabric", got)
+		}
+	})
+	t.Run("unknown", func(t *testing.T) {
+		if got := subServerType(t.TempDir()); got != "unknown" {
+			t.Fatalf("got %q, want unknown", got)
+		}
+	})
+}
+
 func TestBuildStartCommand(t *testing.T) {
 	t.Run("jar form puts platform Xmx last before -jar", func(t *testing.T) {
 		dir := t.TempDir()

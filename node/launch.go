@@ -84,6 +84,36 @@ func extractJvmFlagsFromCommand(cmd string) string {
 	return strings.Join(flags, " ")
 }
 
+// subServerType classifies an installed sub-server directory into a
+// human-readable type string by inspecting its launch form.
+func subServerType(subServerDir string) string {
+	lf := resolveLaunch(subServerDir)
+	switch lf.Mode {
+	case launchArgfile:
+		if strings.Contains(lf.ArgsFile, "minecraftforge") {
+			return "forge"
+		}
+		if strings.Contains(lf.ArgsFile, "neoforged") {
+			return "neoforge"
+		}
+		return "unknown"
+	case launchJar:
+		jar := lf.Jar
+		if strings.HasPrefix(jar, "fabric-server") || strings.Contains(jar, "fabric") {
+			return "fabric"
+		}
+		if strings.HasPrefix(jar, "paper-") {
+			return "paper"
+		}
+		if strings.HasPrefix(jar, "purpur-") {
+			return "purpur"
+		}
+		return "vanilla"
+	default:
+		return "unknown"
+	}
+}
+
 // buildStartCommand assembles the full `java …` invocation for an
 // installed sub-server. The platform -Xms/-Xmx is always the LAST JVM
 // argument before the main-class token (-jar / @argsfile), so it wins
