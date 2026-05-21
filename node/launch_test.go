@@ -115,6 +115,28 @@ func TestBuildStartCommand(t *testing.T) {
 			t.Fatalf("got %q want %q", cmd, want)
 		}
 	})
+	t.Run("argfile form: extra flags precede user_jvm_args", func(t *testing.T) {
+		dir := t.TempDir()
+		args := filepath.Join(dir, "libraries/net/minecraftforge/forge/1.20.1-47.2.0")
+		if err := os.MkdirAll(args, 0755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(args, "unix_args.txt"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "user_jvm_args.txt"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		cmd, err := buildStartCommand(dir, 4096, "-Dfoo=bar")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "java -Dfoo=bar @user_jvm_args.txt -Xms4096M -Xmx4096M " +
+			"@libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt nogui"
+		if cmd != want {
+			t.Fatalf("got %q want %q", cmd, want)
+		}
+	})
 	t.Run("nothing runnable is an error", func(t *testing.T) {
 		if _, err := buildStartCommand(t.TempDir(), 1024, ""); err == nil {
 			t.Fatal("expected error for empty dir")

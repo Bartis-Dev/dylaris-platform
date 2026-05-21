@@ -59,7 +59,6 @@ func resolveLaunch(subServerDir string) launchForm {
 // over anything the user put in extraJvmFlags or user_jvm_args.txt.
 func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string) (string, error) {
 	lf := resolveLaunch(subServerDir)
-	mem := fmt.Sprintf("-Xms%dM -Xmx%dM", memMB, memMB)
 	parts := []string{"java"}
 	add := func(s string) {
 		if s = strings.TrimSpace(s); s != "" {
@@ -69,14 +68,14 @@ func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string) (st
 	switch lf.Mode {
 	case launchJar:
 		add(extraJvmFlags)
-		add(mem)
+		parts = append(parts, fmt.Sprintf("-Xms%dM", memMB), fmt.Sprintf("-Xmx%dM", memMB))
 		parts = append(parts, "-jar", lf.Jar, "nogui")
 	case launchArgfile:
 		add(extraJvmFlags)
 		if lf.UserJvmArgs {
 			add("@user_jvm_args.txt")
 		}
-		add(mem)
+		parts = append(parts, fmt.Sprintf("-Xms%dM", memMB), fmt.Sprintf("-Xmx%dM", memMB))
 		parts = append(parts, "@"+lf.ArgsFile, "nogui")
 	default:
 		return "", fmt.Errorf("no runnable server found in %s", subServerDir)
