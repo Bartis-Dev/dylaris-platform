@@ -123,6 +123,15 @@ func TestSubServerType(t *testing.T) {
 			t.Fatalf("got %q, want fabric", got)
 		}
 	})
+	t.Run("purpur", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "purpur-1.20.1-2094.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := subServerType(dir); got != "purpur" {
+			t.Fatalf("got %q, want purpur", got)
+		}
+	})
 	t.Run("unknown", func(t *testing.T) {
 		if got := subServerType(t.TempDir()); got != "unknown" {
 			t.Fatalf("got %q, want unknown", got)

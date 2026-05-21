@@ -838,6 +838,9 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("Server %s/%s reinstalled and running!", cmd.Config.UUID, subName)
 						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 					}
+					// Best-effort metadata refresh regardless of RecreateWithCommand result
+					// (reinstall succeeded; the sub-server directory has new software).
+					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 
 				case "migrate_storage":
 					targetPath := cmd.TargetPath
