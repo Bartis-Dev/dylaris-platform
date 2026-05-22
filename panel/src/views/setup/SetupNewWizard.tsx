@@ -150,6 +150,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     onChange={props.onJavaChange}
                     serverType={props.serverType}
                     recommended={recommendedJava ?? undefined}
+                    mcVersion={props.selectedMajor || undefined}
                 />
 
                 {/* Install tabs */}
