@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { Save, CircleCheck, CircleAlert, Radar } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { CircleCheck, CircleAlert, Radar } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 interface BeamRelayInfo {
     beam_id: string;
@@ -75,6 +76,28 @@ async function saveBeamSettings(settings: BeamSettings): Promise<{ success: bool
     }
 }
 
+// Fields compared for dirty detection — excludes read-only/derived fields.
+interface EditableSnapshot {
+    manualOverride: string;
+    publicHost: string;
+    bwLimit: number;   // raw bytes value as stored
+    enabled: boolean;
+}
+
+function toSnapshot(
+    s: BeamSettings,
+    unlimited: boolean,
+    bwValue: number,
+    bwUnit: string,
+): EditableSnapshot {
+    return {
+        manualOverride: s.manualOverride,
+        publicHost: s.publicHost ?? '',
+        bwLimit: unlimited ? 0 : displayToBw(bwValue, bwUnit),
+        enabled: s.enabled,
+    };
+}
+
 export default function BeamTab() {
     const [settings, setSettings] = useState<BeamSettings>({
         relayAddress: '',
@@ -93,6 +116,9 @@ export default function BeamTab() {
     const [bwUnit, setBwUnit] = useState('MB/s');
     const [unlimited, setUnlimited] = useState(true);
 
+    // Snapshot of last-saved / loaded editable fields for dirty detection.
+    const snapshotRef = useRef<EditableSnapshot | null>(null);
+
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
@@ -104,11 +130,22 @@ export default function BeamTab() {
                 setSettings(res.settings);
                 const isUnlimited = res.settings.bwLimit === 0;
                 setUnlimited(isUnlimited);
+                let loadedBwValue = 0;
+                let loadedBwUnit = 'MB/s';
                 if (!isUnlimited) {
                     const d = bwToDisplay(res.settings.bwLimit);
+                    loadedBwValue = d.value;
+                    loadedBwUnit = d.unit;
                     setBwValue(d.value);
                     setBwUnit(d.unit);
                 }
+                // Record the initial snapshot so we can detect dirty state.
+                snapshotRef.current = toSnapshot(
+                    res.settings,
+                    isUnlimited,
+                    loadedBwValue,
+                    loadedBwUnit,
+                );
             }
             setLoading(false);
         });
@@ -126,11 +163,44 @@ export default function BeamTab() {
         const res = await saveBeamSettings(payload);
         if (res.success) {
             showToast('Beam settings saved.');
+            // Update snapshot so dirty goes false.
+            snapshotRef.current = toSnapshot(settings, unlimited, bwValue, bwUnit);
         } else {
             showToast(res.message || 'Save failed.', false);
         }
         setSaving(false);
     };
+
+    // Discard: reset form back to last snapshot.
+    const handleDiscard = () => {
+        const snap = snapshotRef.current;
+        if (!snap) return;
+        setSettings(s => ({
+            ...s,
+            manualOverride: snap.manualOverride,
+            publicHost: snap.publicHost,
+            enabled: snap.enabled,
+        }));
+        const isUnlimited = snap.bwLimit === 0;
+        setUnlimited(isUnlimited);
+        if (!isUnlimited) {
+            const d = bwToDisplay(snap.bwLimit);
+            setBwValue(d.value);
+            setBwUnit(d.unit);
+        } else {
+            setBwValue(0);
+            setBwUnit('MB/s');
+        }
+    };
+
+    // Dirty flag: current editable state vs snapshot.
+    const currentSnapshot = toSnapshot(settings, unlimited, bwValue, bwUnit);
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(currentSnapshot) !== JSON.stringify(snapshotRef.current);
+
+    // Register with the shared unsaved-changes bar.
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) return <LoadingState />;
 
@@ -272,18 +342,6 @@ export default function BeamTab() {
                         </select>
                     </div>
                 )}
-            </div>
-
-            {/* Save */}
-            <div className="flex gap-3 pt-2">
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary disabled:opacity-40"
-                >
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
             </div>
 
             {/* Toast */}

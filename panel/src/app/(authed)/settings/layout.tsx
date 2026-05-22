@@ -1,9 +1,14 @@
 "use client";
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
+import { Loader2 } from 'lucide-react';
+import {
+    UnsavedChangesProvider,
+    useUnsavedChangesState,
+} from '@/components/settings/UnsavedChanges';
 
 const ALL_TABS = [
     { slug: 'modules', label: 'Modules', always: true },
@@ -21,9 +26,205 @@ const ALL_TABS = [
     { slug: 'backups', label: 'Backups', always: true },
 ] as const;
 
-export default function SettingsLayout({ children }: { children: React.ReactNode }) {
+// ---------------------------------------------------------------------------
+// Tab-switch confirm dialog
+// ---------------------------------------------------------------------------
+
+interface UnsavedDialogProps {
+    onSave: () => Promise<void>;
+    onDiscard: () => void;
+    onCancel: () => void;
+    saving: boolean;
+}
+
+function UnsavedDialog({ onSave, onDiscard, onCancel, saving }: UnsavedDialogProps) {
+    return (
+        <div className="modal-overlay animate-fade-in" onClick={onCancel}>
+            <div
+                className="modal-panel w-full max-w-sm"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="modal-header">
+                    <h3 className="modal-title">Unsaved changes</h3>
+                </div>
+                <div className="modal-body">
+                    <p className="text-sm text-(--base-07)">
+                        You have unsaved changes on this tab. What would you like to do?
+                    </p>
+                </div>
+                <div className="modal-footer">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="btn btn-secondary"
+                        disabled={saving}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onDiscard}
+                        className="btn btn-secondary text-(--error-light) border-(--error) hover:bg-(--error)/10"
+                        disabled={saving}
+                    >
+                        Discard
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onSave}
+                        disabled={saving}
+                        className="btn btn-primary disabled:opacity-40 inline-flex items-center gap-1.5"
+                    >
+                        {saving && <Loader2 size={13} className="animate-spin" />}
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Inner layout — sits inside the provider so it can read context
+// ---------------------------------------------------------------------------
+
+interface PendingNav { href: string }
+
+function SettingsLayoutInner({
+    children,
+    visibleTabs,
+}: {
+    children: React.ReactNode;
+    visibleTabs: typeof ALL_TABS[number][];
+}) {
     const router = useRouter();
     const pathname = usePathname();
+    const registration = useUnsavedChangesState();
+
+    // Pending navigation while the confirm dialog is open.
+    const [pendingNav, setPendingNav] = useState<PendingNav | null>(null);
+    const [dialogSaving, setDialogSaving] = useState(false);
+
+    const dirty = registration?.dirty ?? false;
+    const saving = registration?.saving ?? false;
+
+    // Intercept tab clicks when dirty.
+    const handleTabClick = useCallback(
+        (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+            const isCurrentTab =
+                pathname === href || pathname.startsWith(href + '/');
+            if (!dirty || isCurrentTab) return; // let it navigate normally
+            e.preventDefault();
+            setPendingNav({ href });
+        },
+        [dirty, pathname],
+    );
+
+    const closeDialog = () => {
+        setPendingNav(null);
+        setDialogSaving(false);
+    };
+
+    const handleDialogSave = async () => {
+        if (!registration || !pendingNav) return;
+        setDialogSaving(true);
+        try {
+            await registration.save();
+        } finally {
+            setDialogSaving(false);
+        }
+        const href = pendingNav.href;
+        closeDialog();
+        router.replace(href);
+    };
+
+    const handleDialogDiscard = () => {
+        if (!registration || !pendingNav) return;
+        registration.discard();
+        const href = pendingNav.href;
+        closeDialog();
+        router.replace(href);
+    };
+
+    return (
+        <>
+            {/* Tab bar + sticky save bar row */}
+            <div className="relative flex items-end justify-between gap-4 border-b border-(--base-04) mb-6">
+                {/* Tabs */}
+                <div className="flex gap-4 overflow-x-auto hide-scrollbar">
+                    {visibleTabs.map(tab => {
+                        const href = `/settings/${tab.slug}`;
+                        const isActive =
+                            pathname === href || pathname.startsWith(href + '/');
+                        return (
+                            <Link
+                                key={tab.slug}
+                                href={href}
+                                replace
+                                onClick={e => handleTabClick(e, href)}
+                                className={`px-4 py-2 font-mono text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                                    isActive
+                                        ? 'border-(--accent) text-(--accent-light)'
+                                        : 'border-transparent text-(--base-06) hover:text-(--base-09)'
+                                }`}
+                            >
+                                {tab.label}
+                            </Link>
+                        );
+                    })}
+                </div>
+
+                {/* Sticky save/discard bar — only visible when dirty */}
+                {dirty && (
+                    <div className="sticky right-0 top-0 flex items-center gap-2 pb-2 shrink-0">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-(--base-06) whitespace-nowrap">
+                            Unsaved changes
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => registration?.discard()}
+                            className="btn btn-secondary text-xs py-1 px-3"
+                            disabled={saving}
+                        >
+                            Discard
+                        </button>
+                        <button
+                            type="button"
+                            onClick={async () => { await registration?.save(); }}
+                            disabled={saving}
+                            className="btn btn-primary text-xs py-1 px-3 disabled:opacity-40 inline-flex items-center gap-1.5"
+                        >
+                            {saving && <Loader2 size={12} className="animate-spin" />}
+                            Save
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            {/* Page content */}
+            <div className="flex-1 overflow-y-auto">
+                {children}
+            </div>
+
+            {/* Tab-switch confirm dialog */}
+            {pendingNav && registration && (
+                <UnsavedDialog
+                    onSave={handleDialogSave}
+                    onDiscard={handleDialogDiscard}
+                    onCancel={closeDialog}
+                    saving={dialogSaving}
+                />
+            )}
+        </>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Root layout export
+// ---------------------------------------------------------------------------
+
+export default function SettingsLayout({ children }: { children: React.ReactNode }) {
+    const router = useRouter();
     const { user, modules, ready } = useAppData();
 
     // Admin-only gate
@@ -50,30 +251,11 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
         <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
             <h1 className="h-page mb-6">System Settings</h1>
 
-            <div className="flex gap-4 border-b border-(--base-04) mb-6 overflow-x-auto hide-scrollbar">
-                {visibleTabs.map(tab => {
-                    const href = `/settings/${tab.slug}`;
-                    const isActive = pathname === href || pathname.startsWith(href + '/');
-                    return (
-                        <Link
-                            key={tab.slug}
-                            href={href}
-                            replace
-                            className={`px-4 py-2 font-mono text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                                isActive
-                                    ? 'border-(--accent) text-(--accent-light)'
-                                    : 'border-transparent text-(--base-06) hover:text-(--base-09)'
-                            }`}
-                        >
-                            {tab.label}
-                        </Link>
-                    );
-                })}
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-                {children}
-            </div>
+            <UnsavedChangesProvider>
+                <SettingsLayoutInner visibleTabs={visibleTabs as unknown as typeof ALL_TABS[number][]}>
+                    {children}
+                </SettingsLayoutInner>
+            </UnsavedChangesProvider>
         </main>
     );
 }
