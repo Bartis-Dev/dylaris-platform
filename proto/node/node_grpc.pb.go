@@ -27,7 +27,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Node connects outbound to Core and registers itself.
-// Afterwards, File-Requests (Core→Node) and Responses (Node→Core)
+// After that, file requests (Core→Node) and responses (Node→Core)
 // flow over the same bidirectional stream.
 type NodeServiceClient interface {
 	NodeConnect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[NodeMessage, NodeMessage], error)
@@ -59,7 +59,7 @@ type NodeService_NodeConnectClient = grpc.BidiStreamingClient[NodeMessage, NodeM
 // for forward compatibility.
 //
 // Node connects outbound to Core and registers itself.
-// Afterwards, File-Requests (Core→Node) and Responses (Node→Core)
+// After that, file requests (Core→Node) and responses (Node→Core)
 // flow over the same bidirectional stream.
 type NodeServiceServer interface {
 	NodeConnect(grpc.BidiStreamingServer[NodeMessage, NodeMessage]) error
