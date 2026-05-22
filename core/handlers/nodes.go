@@ -630,7 +630,7 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 
 	orphanInfo, err := h.inspectOrphanOnNode(nodeID, orphanUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), 404)
+		sendJSONError(w, err.Error(), 502)
 		return
 	}
 
