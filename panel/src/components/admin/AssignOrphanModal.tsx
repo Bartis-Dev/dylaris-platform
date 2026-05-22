@@ -5,6 +5,7 @@ import { Loader2, X, UserPlus, User } from 'lucide-react';
 import { assignOrphan, AssignOrphanInput } from '@/lib/api';
 import { getUsers } from '@/lib/api/resources';
 import type { User as UserType } from '@/lib/api';
+import { OrphanFileBrowser } from './OrphanFileBrowser';
 
 interface AssignOrphanModalProps {
     nodeId: number;
@@ -151,10 +152,8 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
                 {/* Tab content */}
                 {activeTab === 'files' ? (
-                    <div className="modal-body flex items-center justify-center min-h-40">
-                        <p className="text-xs text-(--base-05) italic">
-                            Datei-Browser wird in Aufgabe 3.5 implementiert.
-                        </p>
+                    <div className="modal-body">
+                        <OrphanFileBrowser nodeId={nodeId} uuid={uuid} />
                     </div>
                 ) : (
                     <>
