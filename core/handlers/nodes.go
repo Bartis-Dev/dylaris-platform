@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // orphanNameRegex restricts orphan folder names to safe filename chars.
@@ -548,5 +550,225 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"content": buf.String(),
+	})
+}
+
+// AssignOrphanRequest is the body for POST /api/disk/orphans/assign.
+type AssignOrphanRequest struct {
+	NodeID      int     `json:"node_id"`
+	UUID        string  `json:"uuid"`
+	Name        string  `json:"name"`
+	OwnerUserID *int    `json:"owner_user_id"` // existing user, or nil
+	NewUser     *struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"new_user"` // create a new user, or nil
+	MemoryMB int     `json:"memory_mb"`
+	CPULimit float64 `json:"cpu_limit"`
+}
+
+// dylarisMetadata mirrors the relevant fields of .dylaris.json on disk.
+type dylarisMetadata struct {
+	SubServers []struct {
+		Name             string `json:"name"`
+		Type             string `json:"type"`
+		MinecraftVersion string `json:"minecraft_version"`
+		Build            string `json:"build"`
+	} `json:"sub_servers"`
+}
+
+// AssignOrphan adopts an on-disk orphan folder into a proper DB server row.
+// POST /api/disk/orphans/assign  (admin-only)
+//
+// It:
+//  1. Validates the request.
+//  2. Rejects if a servers row for the UUID already exists (409).
+//  3. Optionally creates a new owner user (bcrypt password).
+//  4. Asks the node to inspect the orphan to discover the active sub-server
+//     and its installer type / minecraft version.
+//  5. Inserts the servers row (status=stopped) + calls UpdateServerSetup to
+//     persist installer_type, minecraft_version, active_sub_server.
+//  6. Returns the created server as JSON.
+func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	if h.state.Store == nil {
+		sendJSONError(w, "DB error", 503)
+		return
+	}
+
+	var req AssignOrphanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON body", 400)
+		return
+	}
+
+	// --- Input validation ---
+	if !isSafeOrphanName(req.UUID) {
+		sendJSONError(w, "Invalid UUID (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		sendJSONError(w, "name is required", 400)
+		return
+	}
+	if req.MemoryMB <= 0 {
+		sendJSONError(w, "memory_mb must be > 0", 400)
+		return
+	}
+	// Exactly one owner source must be provided.
+	if req.OwnerUserID == nil && req.NewUser == nil {
+		sendJSONError(w, "exactly one of owner_user_id or new_user must be set", 400)
+		return
+	}
+	if req.OwnerUserID != nil && req.NewUser != nil {
+		sendJSONError(w, "exactly one of owner_user_id or new_user must be set, not both", 400)
+		return
+	}
+	if req.NewUser != nil {
+		if strings.TrimSpace(req.NewUser.Username) == "" || req.NewUser.Password == "" {
+			sendJSONError(w, "new_user.username and new_user.password are required", 400)
+			return
+		}
+	}
+
+	// --- Duplicate check ---
+	existing, _ := h.state.Store.GetServerByUUID(req.UUID)
+	if existing != nil {
+		sendJSONError(w, "A server with this UUID already exists in the database", 409)
+		return
+	}
+
+	// --- Resolve owner ---
+	ownerID := 0
+	if req.OwnerUserID != nil {
+		user, err := h.state.Store.GetUserByID(*req.OwnerUserID)
+		if err != nil || user == nil {
+			sendJSONError(w, fmt.Sprintf("User with id %d not found", *req.OwnerUserID), 400)
+			return
+		}
+		ownerID = user.ID
+	} else {
+		// Create a new non-admin user.
+		hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewUser.Password), bcrypt.DefaultCost)
+		if err != nil {
+			sendJSONError(w, "Failed to hash password", 500)
+			return
+		}
+		newUser := &models.User{
+			Username:  req.NewUser.Username,
+			Password:  string(hashed),
+			IsAdmin:   false,
+			PublicID:  uuid.NewString(),
+		}
+		if err := h.state.Store.CreateUser(newUser); err != nil {
+			log.Printf("AssignOrphan: CreateUser failed for username=%q: %v", req.NewUser.Username, err)
+			sendJSONError(w, "Failed to create user (username may already exist)", 409)
+			return
+		}
+		ownerID = newUser.ID
+	}
+
+	// --- Inspect the orphan on the node ---
+	if h.state.GRPCRegistry == nil {
+		sendJSONError(w, "gRPC not available", 503)
+		return
+	}
+
+	inspResp, err := h.state.GRPCRegistry.SendRequest(req.NodeID, &pb.NodeMessage{
+		RequestId:  uuid.NewString(),
+		ServerUuid: req.UUID,
+		Payload:    &pb.NodeMessage_InspectOrphanReq{InspectOrphanReq: &pb.InspectOrphanReq{}},
+	}, 30*time.Second)
+	if err != nil {
+		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		return
+	}
+	if errResp := inspResp.GetError(); errResp != nil {
+		code := int(errResp.Code)
+		if code == 0 {
+			code = 500
+		}
+		sendJSONError(w, errResp.Message, code)
+		return
+	}
+
+	orphanInfo := inspResp.GetInspectOrphanResp()
+	if orphanInfo == nil {
+		sendJSONError(w, "Orphan folder not found or inspect failed", 404)
+		return
+	}
+
+	activeSubServer := orphanInfo.ActiveSubServer
+	installerType := ""
+	minecraftVersion := ""
+	buildNumber := ""
+
+	if orphanInfo.HasMetadata && orphanInfo.MetadataJson != "" {
+		var meta dylarisMetadata
+		if err := json.Unmarshal([]byte(orphanInfo.MetadataJson), &meta); err == nil {
+			for _, ss := range meta.SubServers {
+				if ss.Name == activeSubServer {
+					installerType = ss.Type
+					minecraftVersion = ss.MinecraftVersion
+					buildNumber = ss.Build
+					break
+				}
+			}
+		}
+	}
+	// Fall back to SubServers list from the proto response if metadata was absent
+	// or if the active sub-server wasn't found in metadata.
+	if installerType == "" {
+		for _, ss := range orphanInfo.SubServers {
+			if ss.Name == activeSubServer {
+				installerType = ss.Type
+				// SubServerInfo carries no minecraft_version; leave it empty.
+				break
+			}
+		}
+	}
+
+	// --- Create the servers DB row ---
+	srv := &models.Server{
+		UUID:            req.UUID,
+		Name:            strings.TrimSpace(req.Name),
+		NodeID:          req.NodeID,
+		OwnerID:         ownerID,
+		Memory:          req.MemoryMB,
+		CPULimit:        req.CPULimit,
+		Status:          "stopped",
+		ActiveSubServer: activeSubServer,
+		ServerType:      "game",
+	}
+
+	newID, err := h.state.Store.CreateServer(srv)
+	if err != nil {
+		log.Printf("AssignOrphan: CreateServer failed (uuid=%s, owner=%d): %v", req.UUID, ownerID, err)
+		if req.NewUser != nil {
+			log.Printf("AssignOrphan: WARNING — new user (id=%d username=%q) was created but server insert failed; manual cleanup may be required", ownerID, req.NewUser.Username)
+		}
+		sendJSONError(w, "Failed to create server record", 500)
+		return
+	}
+	srv.ID = int(newID)
+
+	// Persist installer_type, minecraft_version, active_sub_server, build via UpdateServerSetup.
+	// game_image and start_command are empty for adopted servers — the node already
+	// knows the real command from its own .dylaris.json / active-server file.
+	if err := h.state.Store.UpdateServerSetup(srv.ID, "", "", activeSubServer, "", installerType, minecraftVersion, buildNumber); err != nil {
+		log.Printf("AssignOrphan: UpdateServerSetup failed (id=%d): %v", srv.ID, err)
+		// Non-fatal: the row exists; setup fields just remain empty.
+	}
+
+	srv.InstallerType = installerType
+	srv.MinecraftVersion = minecraftVersion
+	srv.BuildNumber = buildNumber
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"server":  srv,
 	})
 }
