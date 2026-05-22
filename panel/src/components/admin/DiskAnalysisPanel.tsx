@@ -2,12 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-    Trash2, AlertTriangle, ChevronDown, ChevronRight, Loader2, Check, X,
+    Trash2, AlertTriangle, ChevronDown, ChevronRight, Loader2, Check, X, UserPlus,
 } from 'lucide-react';
 import {
     getAdminDiskAnalysis, deleteOrphanedFolder, deleteServer,
     DiskAnalysis, Node,
 } from '@/lib/api';
+import { AssignOrphanModal } from './AssignOrphanModal';
 
 // Single confirm modal handles both flows (orphan folder + DB stray).
 // `target` describes what's being deleted; null means closed.
@@ -32,6 +33,7 @@ export function DiskAnalysisPanel({
     const [expanded, setExpanded] = useState(false);
     const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
     const [deleteError, setDeleteError] = useState<string>('');
+    const [assigningOrphan, setAssigningOrphan] = useState<string | null>(null);
 
     const load = async () => {
         setLoading(true);
@@ -136,14 +138,23 @@ export function DiskAnalysisPanel({
                                 {data.orphaned.map(o => (
                                     <div key={o.uuid} className="flex items-center justify-between px-3 py-2 bg-(--base-02) rounded-md border border-(--warning-border)/30">
                                         <span className="font-mono text-xs text-(--base-07) truncate">{o.uuid}</span>
-                                        <button
-                                            onClick={() => handleDelete(o.uuid)}
-                                            disabled={deleting === o.uuid}
-                                            className="flex items-center gap-1.5 text-[11px] text-(--error-light) hover:bg-(--error-ghost) px-2 py-1 rounded transition-colors ml-3 shrink-0"
-                                        >
-                                            {deleting === o.uuid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                                            Delete
-                                        </button>
+                                        <div className="flex items-center gap-1.5 ml-3 shrink-0">
+                                            <button
+                                                onClick={() => setAssigningOrphan(o.uuid)}
+                                                className="flex items-center gap-1.5 text-[11px] text-(--accent-light) hover:bg-(--base-03) px-2 py-1 rounded transition-colors"
+                                            >
+                                                <UserPlus size={12} />
+                                                Assign
+                                            </button>
+                                            <button
+                                                onClick={() => handleDelete(o.uuid)}
+                                                disabled={deleting === o.uuid}
+                                                className="flex items-center gap-1.5 text-[11px] text-(--error-light) hover:bg-(--error-ghost) px-2 py-1 rounded transition-colors"
+                                            >
+                                                {deleting === o.uuid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                                Delete
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -190,6 +201,20 @@ export function DiskAnalysisPanel({
                         </p>
                     )}
                 </div>
+            )}
+
+            {assigningOrphan && (
+                <AssignOrphanModal
+                    nodeId={node.id}
+                    uuid={assigningOrphan}
+                    onClose={() => setAssigningOrphan(null)}
+                    onAssigned={() => {
+                        const uuid = assigningOrphan;
+                        setAssigningOrphan(null);
+                        setData(prev => prev ? { ...prev, orphaned: prev.orphaned.filter(o => o.uuid !== uuid) } : prev);
+                        onOrphanDeleted();
+                    }}
+                />
             )}
 
             {pendingDelete && (

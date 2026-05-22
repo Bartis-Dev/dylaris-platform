@@ -24,6 +24,18 @@ export async function getOrphanFileContent(nodeId: number, uuid: string, path: s
   }
 }
 
+export async function inspectOrphan(nodeId: number, uuid: string) {
+  try {
+    const res = await fetch(
+      `${API_URL}/disk/orphans/${nodeId}/${encodeURIComponent(uuid)}/inspect`,
+      { headers: getAuthHeader() },
+    );
+    return handleResponse(res);
+  } catch (err) {
+    return handleError(err);
+  }
+}
+
 export interface AssignOrphanInput {
   node_id: number;
   uuid: string;

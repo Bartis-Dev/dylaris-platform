@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Loader2, X, UserPlus, User } from 'lucide-react';
-import { assignOrphan, AssignOrphanInput } from '@/lib/api';
+import { assignOrphan, AssignOrphanInput, inspectOrphan } from '@/lib/api';
 import { getUsers } from '@/lib/api/resources';
 import type { User as UserType } from '@/lib/api';
 import { OrphanFileBrowser } from './OrphanFileBrowser';
@@ -34,6 +34,24 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+
+    // Pre-fill form from orphan metadata on mount. Fails silently — defaults stay.
+    useEffect(() => {
+        const prefill = async () => {
+            try {
+                const res = await inspectOrphan(nodeId, uuid);
+                if (res?.success && res.metadata) {
+                    const m = res.metadata as { name?: string; memory_mb?: number; cpu_limit?: number };
+                    if (m.name) setName(m.name);
+                    if (m.memory_mb && m.memory_mb > 0) setMemoryMb(m.memory_mb);
+                    if (m.cpu_limit !== undefined && m.cpu_limit >= 0) setCpuLimit(m.cpu_limit);
+                }
+            } catch {
+                // silent — modal works with defaults
+            }
+        };
+        prefill();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         const loadUsers = async () => {

@@ -569,12 +569,95 @@ type AssignOrphanRequest struct {
 
 // dylarisMetadata mirrors the relevant fields of .dylaris.json on disk.
 type dylarisMetadata struct {
-	SubServers []struct {
+	Name            string  `json:"name"`
+	MemoryMB        int     `json:"memory_mb"`
+	CPULimit        float64 `json:"cpu_limit"`
+	ActiveSubServer string  `json:"active_sub_server"`
+	SubServers      []struct {
 		Name             string `json:"name"`
 		Type             string `json:"type"`
 		MinecraftVersion string `json:"minecraft_version"`
 		Build            string `json:"build"`
 	} `json:"sub_servers"`
+}
+
+// inspectOrphanOnNode sends an inspect_orphan gRPC request to nodeID for orphanUUID
+// and returns the parsed response. Returns nil, error on gRPC failure or missing orphan.
+func (h *NodeHandler) inspectOrphanOnNode(nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
+	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+		RequestId:  uuid.NewString(),
+		ServerUuid: orphanUUID,
+		Payload:    &pb.NodeMessage_InspectOrphanReq{InspectOrphanReq: &pb.InspectOrphanReq{}},
+	}, 30*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("node communication error: %w", err)
+	}
+	if errResp := resp.GetError(); errResp != nil {
+		code := int(errResp.Code)
+		if code == 0 {
+			code = 500
+		}
+		return nil, fmt.Errorf("node error %d: %s", code, errResp.Message)
+	}
+	orphanInfo := resp.GetInspectOrphanResp()
+	if orphanInfo == nil {
+		return nil, fmt.Errorf("orphan folder not found or inspect failed")
+	}
+	return orphanInfo, nil
+}
+
+// InspectOrphan returns metadata about an orphaned folder without assigning it.
+// GET /api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect  (admin-only)
+func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+
+	vars := mux.Vars(r)
+	nodeID, _ := strconv.Atoi(vars["nodeId"])
+	orphanUUID := vars["uuid"]
+
+	if !isSafeOrphanName(orphanUUID) {
+		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		return
+	}
+
+	if h.state.GRPCRegistry == nil {
+		sendJSONError(w, "gRPC not available", 503)
+		return
+	}
+
+	orphanInfo, err := h.inspectOrphanOnNode(nodeID, orphanUUID)
+	if err != nil {
+		sendJSONError(w, err.Error(), 404)
+		return
+	}
+
+	// Parse metadata JSON server-side so the panel receives a clean object.
+	var metadataObj interface{}
+	if orphanInfo.HasMetadata && orphanInfo.MetadataJson != "" {
+		var meta dylarisMetadata
+		if jsonErr := json.Unmarshal([]byte(orphanInfo.MetadataJson), &meta); jsonErr == nil {
+			metadataObj = meta
+		}
+	}
+
+	type subServerInfo struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	subServers := make([]subServerInfo, 0, len(orphanInfo.SubServers))
+	for _, ss := range orphanInfo.SubServers {
+		subServers = append(subServers, subServerInfo{Name: ss.Name, Type: ss.Type})
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":           true,
+		"metadata":          metadataObj,
+		"active_sub_server": orphanInfo.ActiveSubServer,
+		"sub_servers":       subServers,
+	})
 }
 
 // AssignOrphan adopts an on-disk orphan folder into a proper DB server row.
@@ -686,27 +769,9 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Inspect the orphan on the node ---
-	inspResp, err := h.state.GRPCRegistry.SendRequest(req.NodeID, &pb.NodeMessage{
-		RequestId:  uuid.NewString(),
-		ServerUuid: req.UUID,
-		Payload:    &pb.NodeMessage_InspectOrphanReq{InspectOrphanReq: &pb.InspectOrphanReq{}},
-	}, 30*time.Second)
+	orphanInfo, err := h.inspectOrphanOnNode(req.NodeID, req.UUID)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
-		return
-	}
-	if errResp := inspResp.GetError(); errResp != nil {
-		code := int(errResp.Code)
-		if code == 0 {
-			code = 500
-		}
-		sendJSONError(w, errResp.Message, code)
-		return
-	}
-
-	orphanInfo := inspResp.GetInspectOrphanResp()
-	if orphanInfo == nil {
-		sendJSONError(w, "Orphan folder not found or inspect failed", 404)
 		return
 	}
 
