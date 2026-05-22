@@ -434,9 +434,9 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pathParam := r.URL.Query().Get("path")
-	// Reject any path containing ".." to prevent traversal outside the orphan root.
-	if strings.Contains(pathParam, "..") {
-		sendJSONError(w, "Path must not contain '..'", 400)
+	// Reject any path containing ".." or starting with "/" to prevent traversal outside the orphan root.
+	if strings.Contains(pathParam, "..") || (len(pathParam) > 0 && pathParam[0] == '/') {
+		sendJSONError(w, "Path must not contain '..' or start with '/'", 400)
 		return
 	}
 	// Default to root when path is empty.
@@ -504,8 +504,8 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 	}
 
 	pathParam := r.URL.Query().Get("path")
-	if strings.Contains(pathParam, "..") {
-		sendJSONError(w, "Path must not contain '..'", 400)
+	if strings.Contains(pathParam, "..") || (len(pathParam) > 0 && pathParam[0] == '/') {
+		sendJSONError(w, "Path must not contain '..' or start with '/'", 400)
 		return
 	}
 	if pathParam == "" {
