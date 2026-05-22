@@ -24,6 +24,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
     const [ownerMode, setOwnerMode] = useState<OwnerMode>('existing');
     const [users, setUsers] = useState<UserType[]>([]);
     const [usersLoading, setUsersLoading] = useState(false);
+    const [usersError, setUsersError] = useState(false);
     const [selectedUserId, setSelectedUserId] = useState<number | ''>('');
     const [newUsername, setNewUsername] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -36,13 +37,21 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
     useEffect(() => {
         const loadUsers = async () => {
             setUsersLoading(true);
-            const res = await getUsers();
-            setUsersLoading(false);
-            if (res.success && Array.isArray(res.users)) {
-                setUsers(res.users);
-                if (res.users.length > 0) {
-                    setSelectedUserId(res.users[0].id);
+            try {
+                const res = await getUsers();
+                setUsersLoading(false);
+                if (res.success && Array.isArray(res.users)) {
+                    setUsersError(false);
+                    setUsers(res.users);
+                    if (res.users.length > 0) {
+                        setSelectedUserId(res.users[0].id);
+                    }
+                } else {
+                    setUsersError(true);
                 }
+            } catch {
+                setUsersLoading(false);
+                setUsersError(true);
             }
         };
         loadUsers();
@@ -203,6 +212,10 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         <div className="flex items-center gap-2 text-xs text-(--base-06)">
                                             <Loader2 size={13} className="animate-spin" />
                                             Lade Benutzer…
+                                        </div>
+                                    ) : usersError ? (
+                                        <div className="alert alert-error text-sm">
+                                            Benutzer konnten nicht geladen werden.
                                         </div>
                                     ) : (
                                         <select
