@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Folder, FileText, ChevronRight, ArrowLeft, X } from 'lucide-react';
+import { Loader2, Folder, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
 import { listOrphanFiles, getOrphanFileContent } from '@/lib/api/orphans';
 
 interface FileEntry {
@@ -163,7 +163,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
           const targetPath = pathSegments.slice(0, i + 1).join('/');
           const isLast = i === pathSegments.length - 1;
           return (
-            <React.Fragment key={i}>
+            <React.Fragment key={seg}>
               <ChevronRight size={10} className="text-(--base-04)" />
               {isLast ? (
                 <span className="text-(--base-07)">{seg}</span>
@@ -205,7 +205,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
           )}
 
           {/* Entries */}
-          {entries.length === 0 && !listError ? (
+          {entries.length === 0 && !listError && !listLoading ? (
             <div className="px-3 py-4 text-xs text-(--base-05) italic text-center">
               Verzeichnis ist leer.
             </div>
