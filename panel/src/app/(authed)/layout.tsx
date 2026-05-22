@@ -7,8 +7,9 @@ import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import Navbar from '@/components/Navbar';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import ProfilePopup from '@/components/ProfilePopup';
+import GuardedLink from '@/components/GuardedLink';
+import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { ChevronDown, UserCog, LogOut, Wrench } from 'lucide-react';
-import Link from 'next/link';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
     const { user, ready } = useAppData();
@@ -59,7 +60,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 <Navbar>
                     {user.isAdmin && <NotificationsDropdown />}
                     {user.isAdmin && (
-                        <Link
+                        <GuardedLink
                             href="/settings"
                             className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
                                 settingsActive
@@ -69,7 +70,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                         >
                             <Wrench size={20} />
                             <span className="text-sm hidden md:block">Settings</span>
-                        </Link>
+                        </GuardedLink>
                     )}
 
                     {/* User Profile Dropdown */}
@@ -159,7 +160,9 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
 
     return (
         <AppDataProvider onUnauthenticated={handleUnauthenticated}>
-            <AuthedShell>{children}</AuthedShell>
+            <UnsavedChangesProvider>
+                <AuthedShell>{children}</AuthedShell>
+            </UnsavedChangesProvider>
         </AppDataProvider>
     );
 }

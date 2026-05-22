@@ -6,7 +6,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 import { Loader2 } from 'lucide-react';
 import {
-    UnsavedChangesProvider,
     useUnsavedChangesState,
     UnsavedDialog,
 } from '@/components/settings/UnsavedChanges';
@@ -194,11 +193,12 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
         <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
             <h1 className="h-page mb-6">System Settings</h1>
 
-            <UnsavedChangesProvider>
-                <SettingsLayoutInner visibleTabs={visibleTabs as unknown as typeof ALL_TABS[number][]}>
-                    {children}
-                </SettingsLayoutInner>
-            </UnsavedChangesProvider>
+            {/* UnsavedChangesProvider is mounted globally in (authed)/layout.tsx
+                so its beforeunload + GuardedLink coverage extends beyond the
+                Settings module too. We just consume it here. */}
+            <SettingsLayoutInner visibleTabs={visibleTabs as unknown as typeof ALL_TABS[number][]}>
+                {children}
+            </SettingsLayoutInner>
         </main>
     );
 }

@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Server } from '../lib/api';
 import { ShieldCheck, Search, X, ChevronDown, ChevronRight, PlusCircle, Network } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import GuardedLink from '@/components/GuardedLink';
 
 interface SidebarProps {
   onNewServer?: () => void;
@@ -122,7 +122,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
     const isProxy = server.serverType === 'proxy';
     const roleLabel = server.role === 'inherited' ? 'Inherited' : server.role === 'invited' ? 'Invited' : isProxy ? 'Proxy' : 'Owner';
     return (
-      <Link
+      <GuardedLink
         key={server.id}
         href={`/servers/${server.id}`}
         className={`w-full flex items-center justify-between gap-2.5 ${isChild ? 'py-[7px] px-2.5' : 'py-[9px] px-3'} rounded-md transition-all group ${
@@ -140,7 +140,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           </div>
         </div>
         <div className={`badge-dot ${getStatusDot(server.status)}`} title={server.status}></div>
-      </Link>
+      </GuardedLink>
     );
   };
 
@@ -150,7 +150,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
 
     return (
       <div key={`proxy-${group.proxy.id}`} className="mb-1.5">
-        <Link
+        <GuardedLink
           href={`/servers/${group.proxy.id}`}
           className={`w-full flex items-center gap-2 py-[9px] px-3 rounded-md transition-all cursor-pointer group border-l-2 ${
             isProxyActive
@@ -179,7 +179,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
               : <ChevronDown size={14} className="text-(--base-06)" />
             }
           </button>
-        </Link>
+        </GuardedLink>
 
         {!isCollapsed && group.children.length > 0 && (
           <div className="ml-3 mt-1 pl-3 border-l border-(--base-04) space-y-1">

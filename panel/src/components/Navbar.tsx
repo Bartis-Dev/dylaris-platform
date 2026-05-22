@@ -1,11 +1,11 @@
 "use client";
 
 import React from 'react';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AppModule } from '../lib/api';
 import { DynamicIcon } from '../lib/icons';
 import { useAppData } from '@/lib/AppDataContext';
+import GuardedLink from '@/components/GuardedLink';
 
 interface NavbarProps {
   children?: React.ReactNode;
@@ -48,7 +48,7 @@ export default function Navbar({ children }: NavbarProps) {
           const href = moduleHref(module);
           const isActive = pathname === href || pathname.startsWith(href + '/');
           return (
-            <Link
+            <GuardedLink
               key={module.id}
               href={href}
               className={`btn text-sm px-3.5 py-1.5 ${
@@ -59,7 +59,7 @@ export default function Navbar({ children }: NavbarProps) {
             >
               <DynamicIcon name={module.icon || 'grid-2x2'} size={18} className={`transition-colors ${isActive ? 'text-(--accent-light)' : 'text-(--base-06) group-hover:text-(--base-08)'}`} />
               <span className="tracking-wide">{module.name}</span>
-            </Link>
+            </GuardedLink>
           );
         })}
       </div>

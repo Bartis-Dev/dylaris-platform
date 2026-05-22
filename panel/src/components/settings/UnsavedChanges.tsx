@@ -46,6 +46,24 @@ const UnsavedChangesContext = createContext<UnsavedChangesCtx>({
 export function UnsavedChangesProvider({ children }: { children: React.ReactNode }) {
     const [registration, setRegistration] = useState<UnsavedChangesContextValue>(null);
 
+    // beforeunload — warn the user when they refresh / close the tab / type
+    // a new URL while a form on the page is dirty. The custom Save/Discard
+    // dialog only fires for in-app navigation (handled by GuardedLink); this
+    // catches the cases the SPA can't intercept itself.
+    const dirtyRef = useRef(false);
+    dirtyRef.current = registration?.dirty ?? false;
+    useEffect(() => {
+        const handler = (e: BeforeUnloadEvent) => {
+            if (!dirtyRef.current) return;
+            e.preventDefault();
+            // Modern browsers ignore the message but still need returnValue
+            // to be set (truthy) to show their generic prompt.
+            e.returnValue = '';
+        };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, []);
+
     return (
         <UnsavedChangesContext.Provider value={{ registration, setRegistration }}>
             {children}
