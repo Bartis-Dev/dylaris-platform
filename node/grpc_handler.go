@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -43,6 +44,8 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 		return []*pb.NodeMessage{h.handleRename(msg.RequestId, msg.ServerUuid, p.RenameReq)}
 	case *pb.NodeMessage_CopyReq:
 		return []*pb.NodeMessage{h.handleCopy(msg.RequestId, msg.ServerUuid, p.CopyReq)}
+	case *pb.NodeMessage_InspectOrphanReq:
+		return []*pb.NodeMessage{h.handleInspectOrphan(msg.RequestId, msg.ServerUuid)}
 	default:
 		return []*pb.NodeMessage{errorMsg(msg.RequestId, 400, "unknown request type")}
 	}
@@ -652,6 +655,53 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 	return &pb.NodeMessage{
 		RequestId: reqID,
 		Payload:   &pb.NodeMessage_Result{Result: &pb.OpResult{Message: "copied"}},
+	}
+}
+
+// handleInspectOrphan returns metadata, active sub-server, and sub-server scan
+// for a server UUID. Pure read — performs no mutation.
+func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMessage {
+	if serverUUID == "" {
+		return errorMsg(reqID, 400, "server_uuid required")
+	}
+
+	var serverDir string
+	if h.storageMgr != nil {
+		serverDir = h.storageMgr.GetServerDir(serverUUID)
+	} else {
+		serverDir = filepath.Join(h.baseDir, "dylaris_data", "servers", serverUUID)
+	}
+
+	resp := &pb.InspectOrphanResp{}
+
+	// Read .dylaris.json — missing or malformed is not an error, just has_metadata=false.
+	if m, err := readServerMetadata(serverDir); err == nil {
+		data, jsonErr := json.Marshal(m)
+		if jsonErr == nil {
+			resp.HasMetadata = true
+			resp.MetadataJson = string(data)
+		} else {
+			log.Printf("handleInspectOrphan: marshal metadata for %s: %v", serverUUID, jsonErr)
+		}
+	}
+
+	// Read .active_server — absent is fine, leave ActiveSubServer as "".
+	activeBytes, err := os.ReadFile(filepath.Join(serverDir, ".active_server"))
+	if err == nil {
+		resp.ActiveSubServer = strings.TrimSpace(string(activeBytes))
+	}
+
+	// Scan sub-server directories.
+	for _, sub := range scanSubServers(serverDir) {
+		resp.SubServers = append(resp.SubServers, &pb.SubServerInfo{
+			Name: sub.Name,
+			Type: sub.Type,
+		})
+	}
+
+	return &pb.NodeMessage{
+		RequestId: reqID,
+		Payload:   &pb.NodeMessage_InspectOrphanResp{InspectOrphanResp: resp},
 	}
 }
 

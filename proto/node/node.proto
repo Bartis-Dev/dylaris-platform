@@ -45,6 +45,10 @@ message NodeMessage {
     DataChunk         chunk         = 60;
     TransferDone      transfer_done = 61;
 
+    // Orphan inspection (Core→Node request, Node→Core response)
+    InspectOrphanReq  inspect_orphan_req  = 92;
+    InspectOrphanResp inspect_orphan_resp = 93;
+
     // Generic result / error
     OpResult          result        = 90;
     OpError           error         = 91;
@@ -137,6 +141,23 @@ message DataChunk {
 message TransferDone {
   int64 total_bytes = 1;
   string filename = 2;  // Optional: filename for downloads
+}
+
+// ─── Orphan Inspection ───────────────────────────────────────────────
+// Read-only: returns .dylaris.json metadata, .active_server content, and
+// a directory scan of sub-servers. No mutation is performed.
+message InspectOrphanReq {}  // server_uuid carried in NodeMessage.server_uuid
+
+message SubServerInfo {
+  string name = 1;
+  string type = 2;
+}
+
+message InspectOrphanResp {
+  bool   has_metadata      = 1;   // false → .dylaris.json absent or unparseable
+  string metadata_json     = 2;   // raw JSON of .dylaris.json (only when has_metadata=true)
+  string active_sub_server = 3;   // content of .active_server, or "" if absent
+  repeated SubServerInfo sub_servers = 4;
 }
 
 // ─── Results ─────────────────────────────────────────────────────────

@@ -50,6 +50,14 @@ func writeServerMetadata(serverDir string, m ServerMetadata) error {
 	return os.Rename(tmp, metadataPath(serverDir))
 }
 
+// orphanInspectResult is the data returned by the inspect_orphan gRPC command.
+// It is pure-read: no mutation is performed.
+type orphanInspectResult struct {
+	Metadata   *ServerMetadata     `json:"metadata"`
+	ActiveSub  string              `json:"active_sub_server"`
+	SubServers []SubServerMetadata `json:"sub_servers"`
+}
+
 func readServerMetadata(serverDir string) (ServerMetadata, error) {
 	var m ServerMetadata
 	data, err := os.ReadFile(metadataPath(serverDir))

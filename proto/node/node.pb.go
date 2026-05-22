@@ -42,6 +42,8 @@ type NodeMessage struct {
 	//	*NodeMessage_CopyReq
 	//	*NodeMessage_Chunk
 	//	*NodeMessage_TransferDone
+	//	*NodeMessage_InspectOrphanReq
+	//	*NodeMessage_InspectOrphanResp
 	//	*NodeMessage_Result
 	//	*NodeMessage_Error
 	Payload       isNodeMessage_Payload `protobuf_oneof:"payload"`
@@ -226,6 +228,24 @@ func (x *NodeMessage) GetTransferDone() *TransferDone {
 	return nil
 }
 
+func (x *NodeMessage) GetInspectOrphanReq() *InspectOrphanReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_InspectOrphanReq); ok {
+			return x.InspectOrphanReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetInspectOrphanResp() *InspectOrphanResp {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_InspectOrphanResp); ok {
+			return x.InspectOrphanResp
+		}
+	}
+	return nil
+}
+
 func (x *NodeMessage) GetResult() *OpResult {
 	if x != nil {
 		if x, ok := x.Payload.(*NodeMessage_Result); ok {
@@ -304,12 +324,21 @@ type NodeMessage_CopyReq struct {
 }
 
 type NodeMessage_Chunk struct {
-	// Chunked Data (bidirektional, 64KB pro Chunk)
+	// Chunked Data (bidirectional, 64KB per chunk)
 	Chunk *DataChunk `protobuf:"bytes,60,opt,name=chunk,proto3,oneof"`
 }
 
 type NodeMessage_TransferDone struct {
 	TransferDone *TransferDone `protobuf:"bytes,61,opt,name=transfer_done,json=transferDone,proto3,oneof"`
+}
+
+type NodeMessage_InspectOrphanReq struct {
+	// Orphan inspection (Core→Node request, Node→Core response)
+	InspectOrphanReq *InspectOrphanReq `protobuf:"bytes,92,opt,name=inspect_orphan_req,json=inspectOrphanReq,proto3,oneof"`
+}
+
+type NodeMessage_InspectOrphanResp struct {
+	InspectOrphanResp *InspectOrphanResp `protobuf:"bytes,93,opt,name=inspect_orphan_resp,json=inspectOrphanResp,proto3,oneof"`
 }
 
 type NodeMessage_Result struct {
@@ -348,6 +377,10 @@ func (*NodeMessage_CopyReq) isNodeMessage_Payload() {}
 func (*NodeMessage_Chunk) isNodeMessage_Payload() {}
 
 func (*NodeMessage_TransferDone) isNodeMessage_Payload() {}
+
+func (*NodeMessage_InspectOrphanReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_InspectOrphanResp) isNodeMessage_Payload() {}
 
 func (*NodeMessage_Result) isNodeMessage_Payload() {}
 
@@ -1165,7 +1198,7 @@ func (x *DataChunk) GetOffset() int64 {
 type TransferDone struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TotalBytes    int64                  `protobuf:"varint,1,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
-	Filename      string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"` // Optional: Filename for downloads
+	Filename      string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"` // Optional: filename for downloads
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1214,6 +1247,165 @@ func (x *TransferDone) GetFilename() string {
 	return ""
 }
 
+// ─── Orphan Inspection ───────────────────────────────────────────────
+// Read-only: returns .dylaris.json metadata, .active_server content, and
+// a directory scan of sub-servers. No mutation is performed.
+type InspectOrphanReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InspectOrphanReq) Reset() {
+	*x = InspectOrphanReq{}
+	mi := &file_proto_node_node_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InspectOrphanReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InspectOrphanReq) ProtoMessage() {}
+
+func (x *InspectOrphanReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InspectOrphanReq.ProtoReflect.Descriptor instead.
+func (*InspectOrphanReq) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{17}
+}
+
+type SubServerInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubServerInfo) Reset() {
+	*x = SubServerInfo{}
+	mi := &file_proto_node_node_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubServerInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubServerInfo) ProtoMessage() {}
+
+func (x *SubServerInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubServerInfo.ProtoReflect.Descriptor instead.
+func (*SubServerInfo) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SubServerInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SubServerInfo) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+type InspectOrphanResp struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	HasMetadata     bool                   `protobuf:"varint,1,opt,name=has_metadata,json=hasMetadata,proto3" json:"has_metadata,omitempty"`              // false → .dylaris.json absent or unparseable
+	MetadataJson    string                 `protobuf:"bytes,2,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`            // raw JSON of .dylaris.json (only when has_metadata=true)
+	ActiveSubServer string                 `protobuf:"bytes,3,opt,name=active_sub_server,json=activeSubServer,proto3" json:"active_sub_server,omitempty"` // content of .active_server, or "" if absent
+	SubServers      []*SubServerInfo       `protobuf:"bytes,4,rep,name=sub_servers,json=subServers,proto3" json:"sub_servers,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *InspectOrphanResp) Reset() {
+	*x = InspectOrphanResp{}
+	mi := &file_proto_node_node_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InspectOrphanResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InspectOrphanResp) ProtoMessage() {}
+
+func (x *InspectOrphanResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InspectOrphanResp.ProtoReflect.Descriptor instead.
+func (*InspectOrphanResp) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *InspectOrphanResp) GetHasMetadata() bool {
+	if x != nil {
+		return x.HasMetadata
+	}
+	return false
+}
+
+func (x *InspectOrphanResp) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
+func (x *InspectOrphanResp) GetActiveSubServer() string {
+	if x != nil {
+		return x.ActiveSubServer
+	}
+	return ""
+}
+
+func (x *InspectOrphanResp) GetSubServers() []*SubServerInfo {
+	if x != nil {
+		return x.SubServers
+	}
+	return nil
+}
+
 // ─── Results ─────────────────────────────────────────────────────────
 type OpResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1224,7 +1416,7 @@ type OpResult struct {
 
 func (x *OpResult) Reset() {
 	*x = OpResult{}
-	mi := &file_proto_node_node_proto_msgTypes[17]
+	mi := &file_proto_node_node_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1236,7 +1428,7 @@ func (x *OpResult) String() string {
 func (*OpResult) ProtoMessage() {}
 
 func (x *OpResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_node_proto_msgTypes[17]
+	mi := &file_proto_node_node_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1249,7 +1441,7 @@ func (x *OpResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpResult.ProtoReflect.Descriptor instead.
 func (*OpResult) Descriptor() ([]byte, []int) {
-	return file_proto_node_node_proto_rawDescGZIP(), []int{17}
+	return file_proto_node_node_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *OpResult) GetMessage() string {
@@ -1269,7 +1461,7 @@ type OpError struct {
 
 func (x *OpError) Reset() {
 	*x = OpError{}
-	mi := &file_proto_node_node_proto_msgTypes[18]
+	mi := &file_proto_node_node_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1281,7 +1473,7 @@ func (x *OpError) String() string {
 func (*OpError) ProtoMessage() {}
 
 func (x *OpError) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_node_proto_msgTypes[18]
+	mi := &file_proto_node_node_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1294,7 +1486,7 @@ func (x *OpError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpError.ProtoReflect.Descriptor instead.
 func (*OpError) Descriptor() ([]byte, []int) {
-	return file_proto_node_node_proto_rawDescGZIP(), []int{18}
+	return file_proto_node_node_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *OpError) GetCode() int32 {
@@ -1315,7 +1507,7 @@ var File_proto_node_node_proto protoreflect.FileDescriptor
 
 const file_proto_node_node_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/node/node.proto\x12\fdylaris.node\"\x80\b\n" +
+	"\x15proto/node/node.proto\x12\fdylaris.node\"\xa3\t\n" +
 	"\vNodeMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n" +
@@ -1340,7 +1532,9 @@ const file_proto_node_node_proto_rawDesc = "" +
 	"rename_req\x184 \x01(\v2\x1b.dylaris.node.RenameFileReqH\x00R\trenameReq\x126\n" +
 	"\bcopy_req\x185 \x01(\v2\x19.dylaris.node.CopyFileReqH\x00R\acopyReq\x12/\n" +
 	"\x05chunk\x18< \x01(\v2\x17.dylaris.node.DataChunkH\x00R\x05chunk\x12A\n" +
-	"\rtransfer_done\x18= \x01(\v2\x1a.dylaris.node.TransferDoneH\x00R\ftransferDone\x120\n" +
+	"\rtransfer_done\x18= \x01(\v2\x1a.dylaris.node.TransferDoneH\x00R\ftransferDone\x12N\n" +
+	"\x12inspect_orphan_req\x18\\ \x01(\v2\x1e.dylaris.node.InspectOrphanReqH\x00R\x10inspectOrphanReq\x12Q\n" +
+	"\x13inspect_orphan_resp\x18] \x01(\v2\x1f.dylaris.node.InspectOrphanRespH\x00R\x11inspectOrphanResp\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
 	"\apayload\"R\n" +
@@ -1401,7 +1595,17 @@ const file_proto_node_node_proto_rawDesc = "" +
 	"\fTransferDone\x12\x1f\n" +
 	"\vtotal_bytes\x18\x01 \x01(\x03R\n" +
 	"totalBytes\x12\x1a\n" +
-	"\bfilename\x18\x02 \x01(\tR\bfilename\"$\n" +
+	"\bfilename\x18\x02 \x01(\tR\bfilename\"\x12\n" +
+	"\x10InspectOrphanReq\"7\n" +
+	"\rSubServerInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\"\xc5\x01\n" +
+	"\x11InspectOrphanResp\x12!\n" +
+	"\fhas_metadata\x18\x01 \x01(\bR\vhasMetadata\x12#\n" +
+	"\rmetadata_json\x18\x02 \x01(\tR\fmetadataJson\x12*\n" +
+	"\x11active_sub_server\x18\x03 \x01(\tR\x0factiveSubServer\x12<\n" +
+	"\vsub_servers\x18\x04 \x03(\v2\x1b.dylaris.node.SubServerInfoR\n" +
+	"subServers\"$\n" +
 	"\bOpResult\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"7\n" +
 	"\aOpError\x12\x12\n" +
@@ -1422,27 +1626,30 @@ func file_proto_node_node_proto_rawDescGZIP() []byte {
 	return file_proto_node_node_proto_rawDescData
 }
 
-var file_proto_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_proto_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_proto_node_node_proto_goTypes = []any{
-	(*NodeMessage)(nil),      // 0: dylaris.node.NodeMessage
-	(*NodeAuth)(nil),         // 1: dylaris.node.NodeAuth
-	(*AuthResult)(nil),       // 2: dylaris.node.AuthResult
-	(*NodeIPs)(nil),          // 3: dylaris.node.NodeIPs
-	(*ListFilesReq)(nil),     // 4: dylaris.node.ListFilesReq
-	(*ListFilesResp)(nil),    // 5: dylaris.node.ListFilesResp
-	(*FileInfo)(nil),         // 6: dylaris.node.FileInfo
-	(*ReadFileReq)(nil),      // 7: dylaris.node.ReadFileReq
-	(*SelectiveReadReq)(nil), // 8: dylaris.node.SelectiveReadReq
-	(*WriteFileReq)(nil),     // 9: dylaris.node.WriteFileReq
-	(*UploadFileReq)(nil),    // 10: dylaris.node.UploadFileReq
-	(*CreateFileReq)(nil),    // 11: dylaris.node.CreateFileReq
-	(*DeleteFileReq)(nil),    // 12: dylaris.node.DeleteFileReq
-	(*RenameFileReq)(nil),    // 13: dylaris.node.RenameFileReq
-	(*CopyFileReq)(nil),      // 14: dylaris.node.CopyFileReq
-	(*DataChunk)(nil),        // 15: dylaris.node.DataChunk
-	(*TransferDone)(nil),     // 16: dylaris.node.TransferDone
-	(*OpResult)(nil),         // 17: dylaris.node.OpResult
-	(*OpError)(nil),          // 18: dylaris.node.OpError
+	(*NodeMessage)(nil),       // 0: dylaris.node.NodeMessage
+	(*NodeAuth)(nil),          // 1: dylaris.node.NodeAuth
+	(*AuthResult)(nil),        // 2: dylaris.node.AuthResult
+	(*NodeIPs)(nil),           // 3: dylaris.node.NodeIPs
+	(*ListFilesReq)(nil),      // 4: dylaris.node.ListFilesReq
+	(*ListFilesResp)(nil),     // 5: dylaris.node.ListFilesResp
+	(*FileInfo)(nil),          // 6: dylaris.node.FileInfo
+	(*ReadFileReq)(nil),       // 7: dylaris.node.ReadFileReq
+	(*SelectiveReadReq)(nil),  // 8: dylaris.node.SelectiveReadReq
+	(*WriteFileReq)(nil),      // 9: dylaris.node.WriteFileReq
+	(*UploadFileReq)(nil),     // 10: dylaris.node.UploadFileReq
+	(*CreateFileReq)(nil),     // 11: dylaris.node.CreateFileReq
+	(*DeleteFileReq)(nil),     // 12: dylaris.node.DeleteFileReq
+	(*RenameFileReq)(nil),     // 13: dylaris.node.RenameFileReq
+	(*CopyFileReq)(nil),       // 14: dylaris.node.CopyFileReq
+	(*DataChunk)(nil),         // 15: dylaris.node.DataChunk
+	(*TransferDone)(nil),      // 16: dylaris.node.TransferDone
+	(*InspectOrphanReq)(nil),  // 17: dylaris.node.InspectOrphanReq
+	(*SubServerInfo)(nil),     // 18: dylaris.node.SubServerInfo
+	(*InspectOrphanResp)(nil), // 19: dylaris.node.InspectOrphanResp
+	(*OpResult)(nil),          // 20: dylaris.node.OpResult
+	(*OpError)(nil),           // 21: dylaris.node.OpError
 }
 var file_proto_node_node_proto_depIdxs = []int32{
 	1,  // 0: dylaris.node.NodeMessage.auth:type_name -> dylaris.node.NodeAuth
@@ -1459,17 +1666,20 @@ var file_proto_node_node_proto_depIdxs = []int32{
 	14, // 11: dylaris.node.NodeMessage.copy_req:type_name -> dylaris.node.CopyFileReq
 	15, // 12: dylaris.node.NodeMessage.chunk:type_name -> dylaris.node.DataChunk
 	16, // 13: dylaris.node.NodeMessage.transfer_done:type_name -> dylaris.node.TransferDone
-	17, // 14: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
-	18, // 15: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
-	3,  // 16: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
-	6,  // 17: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
-	0,  // 18: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
-	0,  // 19: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
-	19, // [19:20] is the sub-list for method output_type
-	18, // [18:19] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	17, // 14: dylaris.node.NodeMessage.inspect_orphan_req:type_name -> dylaris.node.InspectOrphanReq
+	19, // 15: dylaris.node.NodeMessage.inspect_orphan_resp:type_name -> dylaris.node.InspectOrphanResp
+	20, // 16: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
+	21, // 17: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
+	3,  // 18: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
+	6,  // 19: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
+	18, // 20: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
+	0,  // 21: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
+	0,  // 22: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
+	22, // [22:23] is the sub-list for method output_type
+	21, // [21:22] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_node_proto_init() }
@@ -1492,6 +1702,8 @@ func file_proto_node_node_proto_init() {
 		(*NodeMessage_CopyReq)(nil),
 		(*NodeMessage_Chunk)(nil),
 		(*NodeMessage_TransferDone)(nil),
+		(*NodeMessage_InspectOrphanReq)(nil),
+		(*NodeMessage_InspectOrphanResp)(nil),
 		(*NodeMessage_Result)(nil),
 		(*NodeMessage_Error)(nil),
 	}
@@ -1501,7 +1713,7 @@ func file_proto_node_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_node_proto_rawDesc), len(file_proto_node_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
