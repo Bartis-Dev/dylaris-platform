@@ -70,9 +70,13 @@ export default function ServerFilesPage() {
         try {
             const platform = detectBeamPlatform();
             const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+            // Match the rest of the panel: Bearer token only, no
+            // credentials:'include'. Asking for credentials triggers the
+            // stricter CORS path which Core (intentionally) doesn't
+            // allow — the browser then aborts the response with a bare
+            // "NetworkError" and we'd never see the real error.
             const res = await fetch(`${API_URL}/beam/download?platform=${platform}`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-                credentials: 'include',
             });
             if (!res.ok) {
                 let msg = `Download failed (HTTP ${res.status}).`;
