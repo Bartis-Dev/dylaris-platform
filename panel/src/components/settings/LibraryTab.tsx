@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getLibrarySettings, saveLibrarySettings, testLibraryConnection, LibrarySettings } from '@/lib/api';
-import { Cable, Save, CircleCheck, CircleAlert, HardDrive, Cloud } from 'lucide-react';
+import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const STORAGE_TYPES = [
     { id: 'local', label: 'Local Path', description: 'Files stored on this server\'s filesystem or a mounted network share (NFS/SMB).', icon: HardDrive },
@@ -41,6 +42,9 @@ export default function LibraryTab() {
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [selectedProvider, setSelectedProvider] = useState('custom');
 
+    // Snapshot of last-saved settings for dirty detection.
+    const snapshotRef = useRef<LibrarySettings | null>(null);
+
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
@@ -48,7 +52,10 @@ export default function LibraryTab() {
 
     useEffect(() => {
         getLibrarySettings().then(res => {
-            if (res.success && res.settings) setSettings(res.settings);
+            if (res.success && res.settings) {
+                setSettings(res.settings);
+                snapshotRef.current = res.settings;
+            }
             setLoading(false);
         });
     }, []);
@@ -58,11 +65,22 @@ export default function LibraryTab() {
         const res = await saveLibrarySettings(settings);
         if (res.success) {
             showToast('Library settings saved.');
+            snapshotRef.current = settings;
         } else {
             showToast(res.message || 'Save failed.', false);
         }
         setSaving(false);
     };
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setSettings(snapshotRef.current);
+    };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     const handleTest = async () => {
         setTesting(true);
@@ -241,14 +259,6 @@ export default function LibraryTab() {
                 >
                     <Cable size={14} />
                     {testing ? 'Testing...' : 'Test Connection'}
-                </button>
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary disabled:opacity-40"
-                >
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
                 </button>
             </div>
 

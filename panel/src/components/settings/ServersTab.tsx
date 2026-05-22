@@ -1,15 +1,19 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getServerSettings, saveServerSettings, ServerLimitSettings } from '@/lib/api';
-import { Save, CircleCheck, CircleAlert, Server } from 'lucide-react';
+import { CircleCheck, CircleAlert, Server } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 export default function ServersTab() {
     const [settings, setSettings] = useState<ServerLimitSettings>({ maxSubServers: 3 });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+    // Snapshot of last-saved settings for dirty detection.
+    const snapshotRef = useRef<ServerLimitSettings | null>(null);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -18,7 +22,10 @@ export default function ServersTab() {
 
     useEffect(() => {
         getServerSettings().then(res => {
-            if (res.success && res.settings) setSettings(res.settings);
+            if (res.success && res.settings) {
+                setSettings(res.settings);
+                snapshotRef.current = res.settings;
+            }
             setLoading(false);
         });
     }, []);
@@ -28,11 +35,22 @@ export default function ServersTab() {
         const res = await saveServerSettings(settings);
         if (res.success) {
             showToast('Server settings saved.');
+            snapshotRef.current = settings;
         } else {
             showToast(res.message || 'Save failed.', false);
         }
         setSaving(false);
     };
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setSettings(snapshotRef.current);
+    };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) return <LoadingState />;
 
@@ -70,18 +88,6 @@ export default function ServersTab() {
                         </span>
                     </div>
                 </div>
-            </div>
-
-            {/* Save */}
-            <div className="flex gap-3 pt-2">
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary disabled:opacity-40"
-                >
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
             </div>
 
             {/* Toast */}

@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getFileManagerSettings, saveFileManagerSettings, FileManagerSettings } from '@/lib/api';
-import { Save, CircleCheck, CircleAlert } from 'lucide-react';
+import { CircleCheck, CircleAlert } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const UNITS = [
     { label: 'MB', multiplier: 1024 * 1024 },
@@ -85,6 +86,9 @@ export default function FileManagerTab() {
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
+    // Snapshot of last-saved settings for dirty detection.
+    const snapshotRef = useRef<FileManagerSettings | null>(null);
+
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
@@ -92,7 +96,10 @@ export default function FileManagerTab() {
 
     useEffect(() => {
         getFileManagerSettings().then(res => {
-            if (res.success && res.settings) setSettings(res.settings);
+            if (res.success && res.settings) {
+                setSettings(res.settings);
+                snapshotRef.current = res.settings;
+            }
             setLoading(false);
         });
     }, []);
@@ -102,11 +109,22 @@ export default function FileManagerTab() {
         const res = await saveFileManagerSettings(settings);
         if (res.success) {
             showToast('File manager settings saved.');
+            snapshotRef.current = settings;
         } else {
             showToast(res.message || 'Save failed.', false);
         }
         setSaving(false);
     };
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setSettings(snapshotRef.current);
+    };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     const set = (key: keyof FileManagerSettings, value: number) =>
         setSettings(prev => ({ ...prev, [key]: value }));
@@ -136,18 +154,6 @@ export default function FileManagerTab() {
                     <LimitField label="Upload Limit" bytes={settings.userUploadLimit} onChange={v => set('userUploadLimit', v)} />
                     <LimitField label="Download Limit" bytes={settings.userDownloadLimit} onChange={v => set('userDownloadLimit', v)} />
                 </div>
-            </div>
-
-            {/* Save */}
-            <div className="flex gap-3 pt-2">
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary disabled:opacity-40"
-                >
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
             </div>
 
             {/* Toast */}

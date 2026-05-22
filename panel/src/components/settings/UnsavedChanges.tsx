@@ -5,9 +5,9 @@ import React, {
     useContext,
     useState,
     useEffect,
-    useCallback,
     useRef,
 } from 'react';
+import { Loader2 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,4 +105,66 @@ export function useUnsavedChanges(reg: {
 
 export function useUnsavedChangesState(): UnsavedChangesContextValue {
     return useContext(UnsavedChangesContext).registration;
+}
+
+// ---------------------------------------------------------------------------
+// Shared confirm dialog — shown when navigating away with unsaved changes
+// (used both by the settings tab bar and the Gateway tab's internal sub-nav)
+// ---------------------------------------------------------------------------
+
+export function UnsavedDialog({
+    onSave,
+    onDiscard,
+    onCancel,
+    saving,
+}: {
+    onSave: () => void | Promise<void>;
+    onDiscard: () => void;
+    onCancel: () => void;
+    saving: boolean;
+}) {
+    return (
+        <div className="modal-overlay animate-fade-in" onClick={onCancel}>
+            <div
+                className="modal-panel w-full max-w-sm"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="modal-header">
+                    <h3 className="modal-title">Unsaved changes</h3>
+                </div>
+                <div className="modal-body">
+                    <p className="text-sm text-(--base-07)">
+                        You have unsaved changes on this tab. What would you like to do?
+                    </p>
+                </div>
+                <div className="modal-footer">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="btn btn-secondary"
+                        disabled={saving}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onDiscard}
+                        className="btn btn-secondary text-(--error-light) border-(--error) hover:bg-(--error)/10"
+                        disabled={saving}
+                    >
+                        Discard
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onSave}
+                        disabled={saving}
+                        className="btn btn-primary disabled:opacity-40 inline-flex items-center gap-1.5"
+                    >
+                        {saving && <Loader2 size={13} className="animate-spin" />}
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 }

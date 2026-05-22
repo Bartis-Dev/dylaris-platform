@@ -10,6 +10,7 @@ import {
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield } from 'lucide-react';
 import LoadingState from '@/components/LoadingState';
 import Spinner from '@/components/Spinner';
+import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -99,6 +100,24 @@ const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
 // Beam panel
 // ─────────────────────────────────────────────
 
+// Editable Beam fields compared for dirty detection. bwLimit is the resolved
+// bytes value (derived from the unlimited toggle + value/unit inputs).
+interface BeamEditableSnapshot {
+    relayAddress: string;
+    downloadLink: string;
+    enabled: boolean;
+    bwLimit: number;
+}
+
+function beamSnapshot(s: BeamSettings, unlimited: boolean, bwValue: number, bwUnit: string): BeamEditableSnapshot {
+    return {
+        relayAddress: s.relayAddress,
+        downloadLink: s.downloadLink,
+        enabled: s.enabled,
+        bwLimit: unlimited ? 0 : displayToBw(bwValue, bwUnit),
+    };
+}
+
 function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
     const [settings, setSettings] = useState<BeamSettings>({ relayAddress: '', bwLimit: 0, enabled: true, downloadLink: '' });
     const [loading, setLoading] = useState(true);
@@ -107,17 +126,25 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
     const [bwUnit, setBwUnit] = useState('MB/s');
     const [unlimited, setUnlimited] = useState(true);
 
+    // Snapshot of last-saved editable fields for dirty detection.
+    const snapshotRef = useRef<BeamEditableSnapshot | null>(null);
+
     useEffect(() => {
         getBeamSettings().then(res => {
             if (res.success && res.settings) {
                 setSettings(res.settings);
                 const isUnlimited = res.settings.bwLimit === 0;
                 setUnlimited(isUnlimited);
+                let loadedValue = 0;
+                let loadedUnit = 'MB/s';
                 if (!isUnlimited) {
                     const d = bwToDisplay(res.settings.bwLimit);
+                    loadedValue = d.value;
+                    loadedUnit = d.unit;
                     setBwValue(d.value);
                     setBwUnit(d.unit);
                 }
+                snapshotRef.current = beamSnapshot(res.settings, isUnlimited, loadedValue, loadedUnit);
             }
             setLoading(false);
         });
@@ -128,8 +155,33 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         const bwLimit = unlimited ? 0 : displayToBw(bwValue, bwUnit);
         const res = await saveBeamSettings({ ...settings, bwLimit });
         showToast(res.success ? 'Beam settings saved.' : (res.message || 'Save failed.'), res.success);
+        if (res.success) {
+            snapshotRef.current = beamSnapshot(settings, unlimited, bwValue, bwUnit);
+        }
         setSaving(false);
     };
+
+    const handleDiscard = () => {
+        const snap = snapshotRef.current;
+        if (!snap) return;
+        setSettings(s => ({ ...s, relayAddress: snap.relayAddress, downloadLink: snap.downloadLink, enabled: snap.enabled }));
+        const isUnlimited = snap.bwLimit === 0;
+        setUnlimited(isUnlimited);
+        if (!isUnlimited) {
+            const d = bwToDisplay(snap.bwLimit);
+            setBwValue(d.value);
+            setBwUnit(d.unit);
+        } else {
+            setBwValue(0);
+            setBwUnit('MB/s');
+        }
+    };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(beamSnapshot(settings, unlimited, bwValue, bwUnit)) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) return <LoadingState />;
 
@@ -209,13 +261,6 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                     </div>
                 )}
             </div>
-
-            <div className="flex gap-3 pt-2">
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-40">
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
-            </div>
         </div>
     );
 }
@@ -248,15 +293,21 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     const [migration, setMigration] = useState<{ running: boolean; total: number; done: number; failed: number } | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+    // Snapshot of last-saved gateway settings for dirty detection. The routing
+    // mode has its own explicit "Apply Routing" flow and is tracked separately.
+    const snapshotRef = useRef<GatewaySettings | null>(null);
+
     useEffect(() => {
         Promise.all([getGatewaySettings(), getRoutingMode()]).then(([gwRes, rmRes]) => {
             if (gwRes.success && gwRes.settings) {
-                setSettings({
+                const loaded: GatewaySettings = {
                     ...gwRes.settings,
                     hosterDomains: gwRes.settings.hosterDomains || [],
                     customDomainsEnabled: !!gwRes.settings.customDomainsEnabled,
                     cnameTarget: gwRes.settings.cnameTarget || '',
-                });
+                };
+                setSettings(loaded);
+                snapshotRef.current = loaded;
             }
             if (rmRes.success) {
                 const m: RoutingMode = rmRes.mode || 'ip_port';
@@ -300,7 +351,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         setSaving(true);
         const res = await saveGatewaySettings(settings);
         showToast(res.success ? 'Gateway settings saved.' : (res.message || 'Save failed.'), res.success);
+        if (res.success) snapshotRef.current = settings;
         setSaving(false);
+    };
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setSettings(snapshotRef.current);
     };
 
     const setLimit = (key: LimitKey, value: number) =>
@@ -390,6 +446,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         { key: 'userDefault', label: 'Default Per-User Max', desc: 'Default limit for users without a custom override' },
         { key: 'perServer', label: 'Per-Server Max', desc: 'Max routes per individual MC server' },
     ];
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) return <LoadingState />;
 
@@ -724,13 +786,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
             </div>
 
-            <div className="flex gap-3 pt-2">
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-40">
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
-            </div>
-
             {/* Routing confirmation modal */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -907,11 +962,15 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     const [saving, setSaving] = useState(false);
     const [present, setPresent] = useState(false);
 
+    // Snapshot of last-saved config for dirty detection.
+    const snapshotRef = useRef<XDPConfig | null>(null);
+
     useEffect(() => {
         getXDPConfig().then(res => {
             if (res.success && res.config) {
                 setCfg(res.config);
                 setPresent(!!res.present);
+                snapshotRef.current = res.config;
             }
             setLoading(false);
         });
@@ -924,9 +983,22 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
         setSaving(true);
         const res = await saveXDPConfig(cfg);
         showToast(res.success ? 'XDP config saved — Edges reconcile within 30s.' : (res.message || 'Save failed.'), res.success);
-        if (res.success) setPresent(true);
+        if (res.success) {
+            setPresent(true);
+            snapshotRef.current = cfg;
+        }
         setSaving(false);
     };
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setCfg(snapshotRef.current);
+    };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(cfg) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) return <LoadingState />;
 
@@ -1085,17 +1157,6 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                     className="input-field font-mono text-xs resize-y"
                 />
             </div>
-
-            <div className="flex justify-end pt-2">
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary"
-                >
-                    {saving ? <Spinner /> : <Save size={14} />}
-                    Save
-                </button>
-            </div>
         </div>
     );
 }
@@ -1108,9 +1169,43 @@ export default function GatewayTab() {
     const [subTab, setSubTab] = useState<SubTab>('gateway');
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
+    // Sub-tab switch guard — the active panel registers its unsaved state with
+    // the shared bar; we intercept sub-nav clicks when it's dirty.
+    const registration = useUnsavedChangesState();
+    const [pendingSubTab, setPendingSubTab] = useState<SubTab | null>(null);
+    const [dialogSaving, setDialogSaving] = useState(false);
+
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
+    };
+
+    const requestSubTab = (id: SubTab) => {
+        if (id === subTab) return;
+        if (registration?.dirty) {
+            setPendingSubTab(id);
+        } else {
+            setSubTab(id);
+        }
+    };
+
+    const handleDialogSave = async () => {
+        if (!registration || pendingSubTab === null) return;
+        setDialogSaving(true);
+        try {
+            await registration.save();
+        } finally {
+            setDialogSaving(false);
+        }
+        setSubTab(pendingSubTab);
+        setPendingSubTab(null);
+    };
+
+    const handleDialogDiscard = () => {
+        if (!registration || pendingSubTab === null) return;
+        registration.discard();
+        setSubTab(pendingSubTab);
+        setPendingSubTab(null);
     };
 
     return (
@@ -1120,7 +1215,7 @@ export default function GatewayTab() {
                 {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
                     <button
                         key={id}
-                        onClick={() => setSubTab(id)}
+                        onClick={() => requestSubTab(id)}
                         className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left ${
                             subTab === id
                                 ? 'bg-(--accent)/10 text-(--accent-light)'
@@ -1139,6 +1234,16 @@ export default function GatewayTab() {
                 {subTab === 'beam' && <BeamPanel showToast={showToast} />}
                 {subTab === 'xdp' && <XDPPanel showToast={showToast} />}
             </div>
+
+            {/* Sub-tab switch confirm dialog */}
+            {pendingSubTab !== null && registration && (
+                <UnsavedDialog
+                    onSave={handleDialogSave}
+                    onDiscard={handleDialogDiscard}
+                    onCancel={() => { setPendingSubTab(null); setDialogSaving(false); }}
+                    saving={dialogSaving}
+                />
+            )}
 
             {/* Shared toast */}
             {toast && (

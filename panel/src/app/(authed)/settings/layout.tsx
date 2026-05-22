@@ -8,6 +8,7 @@ import { Loader2 } from 'lucide-react';
 import {
     UnsavedChangesProvider,
     useUnsavedChangesState,
+    UnsavedDialog,
 } from '@/components/settings/UnsavedChanges';
 
 const ALL_TABS = [
@@ -25,64 +26,6 @@ const ALL_TABS = [
     { slug: 'gateway', label: 'Gateway', always: true },
     { slug: 'backups', label: 'Backups', always: true },
 ] as const;
-
-// ---------------------------------------------------------------------------
-// Tab-switch confirm dialog
-// ---------------------------------------------------------------------------
-
-interface UnsavedDialogProps {
-    onSave: () => Promise<void>;
-    onDiscard: () => void;
-    onCancel: () => void;
-    saving: boolean;
-}
-
-function UnsavedDialog({ onSave, onDiscard, onCancel, saving }: UnsavedDialogProps) {
-    return (
-        <div className="modal-overlay animate-fade-in" onClick={onCancel}>
-            <div
-                className="modal-panel w-full max-w-sm"
-                onClick={e => e.stopPropagation()}
-            >
-                <div className="modal-header">
-                    <h3 className="modal-title">Unsaved changes</h3>
-                </div>
-                <div className="modal-body">
-                    <p className="text-sm text-(--base-07)">
-                        You have unsaved changes on this tab. What would you like to do?
-                    </p>
-                </div>
-                <div className="modal-footer">
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        className="btn btn-secondary"
-                        disabled={saving}
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onDiscard}
-                        className="btn btn-secondary text-(--error-light) border-(--error) hover:bg-(--error)/10"
-                        disabled={saving}
-                    >
-                        Discard
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onSave}
-                        disabled={saving}
-                        className="btn btn-primary disabled:opacity-40 inline-flex items-center gap-1.5"
-                    >
-                        {saving && <Loader2 size={13} className="animate-spin" />}
-                        Save
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
 
 // ---------------------------------------------------------------------------
 // Inner layout — sits inside the provider so it can read context
