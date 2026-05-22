@@ -1,7 +1,18 @@
 "use client";
 
-import React from 'react';
-import { RefreshCw } from 'lucide-react';
+import React, { useState } from 'react';
+import { RefreshCw, Info } from 'lucide-react';
+
+const SOFTWARE_META: Record<string, { desc: string; url: string }> = {
+    paper:      { desc: 'High-performance Spigot fork with major optimizations.',    url: 'https://papermc.io' },
+    vanilla:    { desc: 'The official, unmodified Minecraft server.',                url: 'https://www.minecraft.net/download/server' },
+    fabric:     { desc: 'Lightweight, modern modding toolchain.',                    url: 'https://fabricmc.net' },
+    forge:      { desc: 'The long-established large-mod platform.',                  url: 'https://files.minecraftforge.net' },
+    neoforge:   { desc: 'Community-driven fork of Forge.',                           url: 'https://neoforged.net' },
+    velocity:   { desc: 'Modern, high-performance Minecraft proxy.',                 url: 'https://papermc.io/software/velocity' },
+    waterfall:  { desc: 'Legacy BungeeCord fork (succeeded by Velocity).',           url: 'https://papermc.io' },
+    bungeecord: { desc: 'The classic Minecraft proxy.',                              url: 'https://www.spigotmc.org/wiki/bungeecord/' },
+};
 
 export interface VersionEntry {
     major: string;
@@ -41,6 +52,8 @@ export default function VersionPicker({
     allVersions, selectedMajor, onMajorChange, selectedBuild, onBuildChange,
     loading,
 }: VersionPickerProps) {
+    const [hoveredInfo, setHoveredInfo] = useState<string | null>(null);
+
     const isProxySoftware = ['velocity', 'waterfall', 'bungeecord'].includes(software);
     const availableSoftware = softwareList || (isProxySoftware ? ['velocity', 'waterfall', 'bungeecord'] : ['paper', 'vanilla', 'fabric', 'forge', 'neoforge']);
 
@@ -61,14 +74,43 @@ export default function VersionPicker({
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label">Software</label>
                 <div className="flex-1 border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5">
-                    {availableSoftware.map(s => (
-                        <button key={s} type="button" onClick={() => onSoftwareChange(s)}
-                            className={`w-full p-2 rounded-md text-left capitalize text-sm ${
-                                software === s ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
-                            }`}>
-                            {s}
-                        </button>
-                    ))}
+                    {availableSoftware.map(s => {
+                        const meta = SOFTWARE_META[s];
+                        return (
+                            <button key={s} type="button" onClick={() => onSoftwareChange(s)}
+                                className={`w-full p-2 rounded-md text-left capitalize text-sm flex items-center justify-between ${
+                                    software === s ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
+                                }`}>
+                                <span>{s}</span>
+                                {meta && (
+                                    <span className="relative shrink-0 ml-1">
+                                        <span
+                                            role="button"
+                                            aria-label={`Info: ${s}`}
+                                            onMouseEnter={() => setHoveredInfo(s)}
+                                            onMouseLeave={() => setHoveredInfo(null)}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                window.open(meta.url, '_blank', 'noopener,noreferrer');
+                                            }}
+                                            className={`inline-flex items-center justify-center rounded p-0.5 transition-colors cursor-pointer ${
+                                                software === s
+                                                    ? 'text-white/60 hover:text-white'
+                                                    : 'text-(--base-05) hover:text-(--base-08)'
+                                            }`}
+                                        >
+                                            <Info size={13} />
+                                        </span>
+                                        {hoveredInfo === s && (
+                                            <span className="absolute bottom-full right-0 mb-1.5 z-50 w-48 rounded-md bg-(--base-02) border border-(--base-03) px-2.5 py-1.5 text-[11px] text-(--base-07) leading-snug shadow-lg pointer-events-none whitespace-normal">
+                                                {meta.desc}
+                                            </span>
+                                        )}
+                                    </span>
+                                )}
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
