@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Terminal, Globe, FolderOpen, Copy } from 'lucide-react';
+import { Terminal, Globe, FolderOpen, Copy, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import FileBrowserView from '@/views/FileBrowserView';
 
@@ -24,18 +25,83 @@ function detectBeamPlatform(): BeamPlatform {
     return 'windows-amd64';
 }
 
+// Pulls the filename out of a Content-Disposition header, with a safe
+// fallback when the relay didn't set one. Windows binaries get .exe so the
+// OS knows what to do with the saved blob.
+function filenameFor(platform: BeamPlatform, contentDisp: string): string {
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(contentDisp);
+    if (m && m[1]) return decodeURIComponent(m[1]);
+    return platform.startsWith('windows') ? `beam-${platform}.exe` : `beam-${platform}`;
+}
+
 export default function ServerFilesPage() {
     const params = useParams();
     const { servers, user, fileAccessMode, beamSettings } = useAppData();
     const server = servers.find(s => s.id === Number(params?.id));
+
+    // Beam-download UI state: lives at page scope so the toast/spinner stay
+    // mounted even if the file browser below re-renders.
+    const [downloading, setDownloading] = useState(false);
+    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
     if (!server) return null;
 
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
-    const beamDownloadUrl = `${API_URL}/beam/download?platform=${detectBeamPlatform()}`;
     const beamEnabled = (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.enabled !== false;
 
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;
     const hasInfoBar = showSftp || beamEnabled;
+
+    const showToast = (msg: string, ok: boolean) => {
+        setToast({ msg, ok });
+        // Keep errors up longer than successes so the user can actually read
+        // the explanation before it disappears.
+        setTimeout(() => setToast(null), ok ? 3000 : 6000);
+    };
+
+    // Fetch the binary through Core (which proxies to the relay) instead of
+    // opening the URL in a new tab. The old <a href> approach made an error
+    // response — JSON {success:false, message:...} — render as a raw JSON
+    // page in a fresh tab, which is awful. With fetch we can parse the
+    // structured error and surface it as a toast.
+    const handleBeamDownload = async () => {
+        if (downloading) return;
+        setDownloading(true);
+        try {
+            const platform = detectBeamPlatform();
+            const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/beam/download?platform=${platform}`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                let msg = `Download failed (HTTP ${res.status}).`;
+                try {
+                    const body = await res.json();
+                    if (body?.message) msg = body.message;
+                } catch {
+                    // Response wasn't JSON — keep the generic HTTP message.
+                }
+                showToast(msg, false);
+                return;
+            }
+            const blob = await res.blob();
+            const filename = filenameFor(platform, res.headers.get('Content-Disposition') || '');
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showToast('Beam app downloaded.', true);
+        } catch (e) {
+            showToast(e instanceof Error ? e.message : 'Network error.', false);
+        } finally {
+            setDownloading(false);
+        }
+    };
 
     return (
         <div className="flex flex-col gap-3 h-full">
@@ -76,19 +142,32 @@ export default function ServerFilesPage() {
                         </div>
                     )}
                     {beamEnabled && (
-                        <a
-                            href={beamDownloadUrl}
-                            download
-                            className="btn btn-secondary btn-sm ml-auto shrink-0"
+                        <button
+                            type="button"
+                            onClick={handleBeamDownload}
+                            disabled={downloading}
+                            className="btn btn-secondary btn-sm ml-auto shrink-0 disabled:opacity-50"
                             title="Download the Beam Desktop app — connects directly to the relay so transfers don't hit Core"
                         >
-                            <FolderOpen size={12} />
-                            Download Beam
-                        </a>
+                            {downloading
+                                ? <Loader2 size={12} className="animate-spin" />
+                                : <FolderOpen size={12} />}
+                            {downloading ? 'Downloading…' : 'Download Beam'}
+                        </button>
                     )}
                 </div>
             )}
             <FileBrowserView serverUuid={server.uuid} currentServerPath={server.activeSubServer || ''} />
+
+            {toast && (
+                <div className="toast-container">
+                    <div className="toast">
+                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
+                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
+                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
