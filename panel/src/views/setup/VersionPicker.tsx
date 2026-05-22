@@ -20,6 +20,22 @@ interface VersionPickerProps {
     loading: boolean;
 }
 
+/**
+ * Compare two dotted-numeric version strings semantically (e.g. "1.20.2", "48.10.1").
+ * Returns a negative number if `a` should sort before `b` (i.e. a > b for descending order).
+ * Non-numeric or missing segments are treated as 0, sorting them last / lowest.
+ */
+function compareVersionsDesc(a: string, b: string): number {
+    const aParts = a.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
+    const bParts = b.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
+    const len = Math.max(aParts.length, bParts.length);
+    for (let i = 0; i < len; i++) {
+        const diff = (bParts[i] ?? 0) - (aParts[i] ?? 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
 export default function VersionPicker({
     software, onSoftwareChange, softwareList,
     allVersions, selectedMajor, onMajorChange, selectedBuild, onBuildChange,
@@ -28,9 +44,9 @@ export default function VersionPicker({
     const isProxySoftware = ['velocity', 'waterfall', 'bungeecord'].includes(software);
     const availableSoftware = softwareList || (isProxySoftware ? ['velocity', 'waterfall', 'bungeecord'] : ['paper', 'vanilla', 'fabric', 'forge', 'neoforge']);
 
-    const majorVersions = [...new Set(allVersions.map(v => v.major))];
+    const majorVersions = [...new Set(allVersions.map(v => v.major))].sort(compareVersionsDesc);
     const buildsForMajor = selectedMajor
-        ? allVersions.filter(v => v.major === selectedMajor).map(v => v.build)
+        ? allVersions.filter(v => v.major === selectedMajor).map(v => v.build).sort(compareVersionsDesc)
         : [];
 
     const spinner = (
@@ -63,7 +79,7 @@ export default function VersionPicker({
                     {loading ? spinner : majorVersions.map(m => (
                         <button key={m} type="button" onClick={() => {
                             onMajorChange(m);
-                            const builds = allVersions.filter(v => v.major === m).map(v => v.build);
+                            const builds = allVersions.filter(v => v.major === m).map(v => v.build).sort(compareVersionsDesc);
                             if (builds.length > 0 && !builds.includes(selectedBuild)) {
                                 onBuildChange(builds[0]);
                             }
