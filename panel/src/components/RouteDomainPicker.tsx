@@ -102,10 +102,29 @@ export default function RouteDomainPicker({ value, onChange, error, portChildren
         }
     }
 
+    // Compute the live preview domain from the current picker state.
+    const noDomainConfigured = !showHosterMode && !showCustomMode;
+    let previewDomain: string | null = null;
+    if (!noDomainConfigured) {
+        if (mode === 'hoster' && subdomain && hosterDomain) {
+            previewDomain = `${subdomain}.${hosterDomain}`;
+        } else if ((mode === 'custom' || mode === 'legacy') && customDomain) {
+            previewDomain = customDomain;
+        }
+    }
+
     return (
-        <div className="space-y-2">
+        <div className="max-w-md space-y-2">
+            {/* No-domain empty state */}
+            {noDomainConfigured && (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-md bg-(--base-02) border border-(--base-03) text-sm text-(--base-05) cursor-not-allowed select-none">
+                    <AlertCircle size={14} className="shrink-0 text-(--base-05)" />
+                    <span>No domain configured yet — add one under Settings → Gateway.</span>
+                </div>
+            )}
+
             {/* Mode tabs (only when both hoster and custom are available) */}
-            {showHosterMode && showCustomMode && (
+            {!noDomainConfigured && showHosterMode && showCustomMode && (
                 <div className="flex bg-(--base-03) p-1 rounded-md w-fit">
                     <button
                         type="button"
@@ -125,14 +144,14 @@ export default function RouteDomainPicker({ value, onChange, error, portChildren
             )}
 
             {/* Hoster mode */}
-            {mode === 'hoster' && showHosterMode && (
+            {!noDomainConfigured && mode === 'hoster' && showHosterMode && (
                 <div className="flex gap-2 items-stretch">
                     <input
                         type="text"
                         value={subdomain}
                         onChange={e => setSubdomain(e.target.value.toLowerCase())}
                         placeholder="play"
-                        className="input-field flex-1 text-sm"
+                        className="input-field text-sm w-28 min-w-0"
                     />
                     <span className="flex items-center text-(--base-06) text-sm font-mono px-1">.</span>
                     <select
@@ -149,7 +168,7 @@ export default function RouteDomainPicker({ value, onChange, error, portChildren
             )}
 
             {/* Custom mode */}
-            {mode === 'custom' && showCustomMode && (
+            {!noDomainConfigured && mode === 'custom' && showCustomMode && (
                 <div className="space-y-2">
                     <div className="flex gap-2 items-stretch">
                         <div className="flex-1 flex items-center gap-2">
@@ -177,18 +196,11 @@ export default function RouteDomainPicker({ value, onChange, error, portChildren
                 </div>
             )}
 
-            {/* Legacy fallback (no hoster, no custom) */}
-            {mode === 'legacy' && !showHosterMode && !showCustomMode && (
-                <div className="flex gap-2 items-stretch">
-                    <input
-                        type="text"
-                        value={customDomain}
-                        onChange={e => setCustomDomain(e.target.value.toLowerCase())}
-                        placeholder="play.example.com"
-                        className="input-field flex-1 text-sm"
-                    />
-                    {portChildren}
-                </div>
+            {/* Live preview */}
+            {previewDomain && (
+                <p className="text-xs text-(--base-06) font-mono">
+                    Your domain will be: <span className="text-(--primary-light)">{previewDomain}</span>
+                </p>
             )}
 
             {hint && (
