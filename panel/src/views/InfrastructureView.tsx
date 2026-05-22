@@ -173,19 +173,13 @@ function NodeCard({
               <Server size={11} className="text-(--base-05) shrink-0" />
               <span className="text-xs font-mono text-(--base-07)">
                 <span className="text-(--base-09) font-semibold">{serverCount}</span>
-                {diskCount !== null && (
-                  <>
-                    <span className="text-(--base-04)">/</span>
-                    <span className="text-(--base-09) font-semibold">{diskCount}</span>
-                  </>
-                )}
-                <span className="text-(--base-06)"> server</span>
+                <span className="text-(--base-06)"> server{serverCount !== 1 ? 's' : ''}</span>
               </span>
               {orphaned > 0 && (
                 <button
                   onClick={() => onNavigateToAdminDisk(node.id)}
                   className="px-1.5 py-0.5 rounded border border-(--warning-border) bg-(--warning-ghost) text-(--warning) text-[10px] font-mono hover:bg-(--warning-border)/30 transition-colors cursor-pointer"
-                  title="In Disk Analysis öffnen"
+                  title="Open in Disk Analysis"
                 >
                   {orphaned} orphaned
                 </button>
