@@ -448,22 +448,18 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 // resolveDownloadCandidates returns an ordered list of upstream URLs the
 // download proxy should try, best-first.
 //
-// This is a Core→Relay server-to-server fetch, so it must NOT be tied to
-// the client-facing relay address: the public download port (25552) is
-// normally firewalled — only the client port is exposed through a TCP
-// proxy. Core reaches the relay over the internal overlay instead.
+// This is a Core→Relay server-to-server fetch. It uses the relays
+// registered in Redis (beam:registry:*) directly — strictly internal
+// coordinates (overlay IP, private IP, BEAM_ID via Docker-DNS). The
+// client-facing beam.relay_address / beam.public_host settings are
+// deliberately NOT considered here: they pin where Beam.exe connects
+// from outside, where the download port (25552) is typically closed.
 //
-// The ordering rationale:
-//  1. download_link setting — full URL override, only thing tried if set
-//  2. every discovered relay's internal coordinates (overlay IP, private
-//     IP, and BEAM_ID as a Docker-DNS service name) — cheapest, reachable
-//     even when the public download port is closed
-//  3. the relay_address override host — fallback only; it pins the
-//     client-facing host, whose download port is usually not exposed
-//  4. each relay's public_host — last resort for cross-stack deploys
-//     where Core cannot reach the relay's overlay network at all
+// The only setting that can short-circuit discovery is beam.download_link
+// — an explicit full-URL override for admins who serve binaries from a
+// CDN/mirror instead of the relay itself.
 func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) []string {
-	// Full URL override — when set, it's the only thing tried.
+	// Full URL override — explicit admin opt-out from relay discovery.
 	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
 		base := strings.TrimRight(link, "/")
 		if strings.Contains(base, "/download/") {
@@ -473,8 +469,11 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 	}
 
 	relays := DiscoverBeamRelays(ctx, rdb)
+	if len(relays) == 0 {
+		return nil
+	}
 
-	urls := make([]string, 0, 3*len(relays)+1)
+	urls := make([]string, 0, 3*len(relays))
 	seen := make(map[string]bool)
 	addCandidate := func(host, port string) {
 		host = strings.TrimSpace(host)
@@ -495,28 +494,13 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 		urls = append(urls, u)
 	}
 
-	// Internal coordinates first — overlay IP, private IP, and the BEAM_ID
-	// (resolvable via Docker DNS when the relay's service is named after
-	// it). This is the hop that works while 25552 stays closed publicly.
+	// Every discovered relay contributes its registered IPs and BEAM_ID
+	// (resolvable via Docker DNS when the operator names the service after
+	// it). One of these will reach the relay on the internal overlay.
 	for _, info := range relays {
 		addCandidate(info.IP, info.DownloadPort)
 		addCandidate(info.PrivateIP, info.DownloadPort)
 		addCandidate(info.BeamID, info.DownloadPort)
-	}
-	// The beam.relay_address override pins the client-facing host; its
-	// download port is usually firewalled, so it's only a fallback here —
-	// never the sole candidate (that was the old bug).
-	if override := strings.TrimSpace(getSetting("beam.relay_address")); override != "" {
-		port := "25552"
-		if len(relays) > 0 && relays[0].DownloadPort != "" {
-			port = relays[0].DownloadPort
-		}
-		addCandidate(override, port)
-	}
-	// Public host last — for cross-stack deploys where Core can't reach
-	// the relay's overlay network at all.
-	for _, info := range relays {
-		addCandidate(info.PublicHost, info.DownloadPort)
 	}
 
 	if len(urls) == 0 {
