@@ -381,7 +381,7 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 	// We don't strictly require UUIDv4 since orphans are scanned from disk and
 	// may have non-UUID names from manual setups.
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "Invalid folder name (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 
@@ -431,7 +431,7 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 	orphanUUID := vars["uuid"]
 
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "Invalid folder name (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 
@@ -501,7 +501,7 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 	orphanUUID := vars["uuid"]
 
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "Invalid folder name (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 
@@ -607,7 +607,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 
 	// --- Input validation ---
 	if !isSafeOrphanName(req.UUID) {
-		sendJSONError(w, "Invalid UUID (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
@@ -616,6 +616,10 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MemoryMB <= 0 {
 		sendJSONError(w, "memory_mb must be > 0", 400)
+		return
+	}
+	if req.NodeID <= 0 {
+		sendJSONError(w, "node_id is required", 400)
 		return
 	}
 	// Exactly one owner source must be provided.
@@ -635,9 +639,19 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Duplicate check ---
-	existing, _ := h.state.Store.GetServerByUUID(req.UUID)
+	existing, err := h.state.Store.GetServerByUUID(req.UUID)
+	if err != nil {
+		sendJSONError(w, "database error checking existing server", 500)
+		return
+	}
 	if existing != nil {
 		sendJSONError(w, "A server with this UUID already exists in the database", 409)
+		return
+	}
+
+	// --- gRPC availability check (before any user creation) ---
+	if h.state.GRPCRegistry == nil {
+		sendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
@@ -672,11 +686,6 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Inspect the orphan on the node ---
-	if h.state.GRPCRegistry == nil {
-		sendJSONError(w, "gRPC not available", 503)
-		return
-	}
-
 	inspResp, err := h.state.GRPCRegistry.SendRequest(req.NodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: req.UUID,
