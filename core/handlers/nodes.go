@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"dylaris-core/models"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	pb "dylaris-proto/node"
@@ -410,5 +412,141 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Orphaned folder %s deleted", orphanUUID),
+	})
+}
+
+// ListOrphanFiles lists the files inside an orphaned folder on a node.
+// GET /api/disk/orphans/{nodeId}/{uuid}/files?path=...
+// Admin-only, read-only. No DB servers row required.
+func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+
+	vars := mux.Vars(r)
+	nodeID, _ := strconv.Atoi(vars["nodeId"])
+	orphanUUID := vars["uuid"]
+
+	if !isSafeOrphanName(orphanUUID) {
+		sendJSONError(w, "Invalid folder name (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		return
+	}
+
+	pathParam := r.URL.Query().Get("path")
+	// Reject any path containing ".." to prevent traversal outside the orphan root.
+	if strings.Contains(pathParam, "..") {
+		sendJSONError(w, "Path must not contain '..'", 400)
+		return
+	}
+	// Default to root when path is empty.
+	if pathParam == "" {
+		pathParam = "/"
+	}
+
+	if h.state.GRPCRegistry == nil {
+		sendJSONError(w, "gRPC not available", 503)
+		return
+	}
+
+	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+		RequestId:  uuid.NewString(),
+		ServerUuid: orphanUUID,
+		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: pathParam}},
+	}, 30*time.Second)
+	if err != nil {
+		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		return
+	}
+	if errResp := resp.GetError(); errResp != nil {
+		sendJSONError(w, errResp.Message, int(errResp.Code))
+		return
+	}
+
+	listResp := resp.GetListResp()
+	if listResp == nil {
+		sendJSONError(w, "Unexpected response from node", 500)
+		return
+	}
+
+	type fileEntry struct {
+		Name  string `json:"name"`
+		IsDir bool   `json:"is_dir"`
+		Size  int64  `json:"size"`
+	}
+	files := make([]fileEntry, 0, len(listResp.Files))
+	for _, f := range listResp.Files {
+		files = append(files, fileEntry{Name: f.Name, IsDir: f.IsDir, Size: f.Size})
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"files":   files,
+	})
+}
+
+// GetOrphanFileContent returns the text content of a file inside an orphaned folder.
+// GET /api/disk/orphans/{nodeId}/{uuid}/content?path=...
+// Admin-only, read-only. No DB servers row required.
+func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+
+	vars := mux.Vars(r)
+	nodeID, _ := strconv.Atoi(vars["nodeId"])
+	orphanUUID := vars["uuid"]
+
+	if !isSafeOrphanName(orphanUUID) {
+		sendJSONError(w, "Invalid folder name (only a-z, 0-9, '-' and '_' allowed, max 64 chars)", 400)
+		return
+	}
+
+	pathParam := r.URL.Query().Get("path")
+	if strings.Contains(pathParam, "..") {
+		sendJSONError(w, "Path must not contain '..'", 400)
+		return
+	}
+	if pathParam == "" {
+		sendJSONError(w, "path query param required", 400)
+		return
+	}
+
+	if h.state.GRPCRegistry == nil {
+		sendJSONError(w, "gRPC not available", 503)
+		return
+	}
+
+	reqID := uuid.NewString()
+	msg := &pb.NodeMessage{
+		RequestId:  reqID,
+		ServerUuid: orphanUUID,
+		Payload: &pb.NodeMessage_ReadReq{
+			ReadReq: &pb.ReadFileReq{Path: pathParam, ZipIfDir: false},
+		},
+	}
+
+	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
+	if err != nil {
+		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		return
+	}
+	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
+
+	var buf bytes.Buffer
+	for resp := range ch {
+		if errResp := resp.GetError(); errResp != nil {
+			sendJSONError(w, errResp.Message, int(errResp.Code))
+			return
+		}
+		if chunk := resp.GetChunk(); chunk != nil {
+			buf.Write(chunk.Data)
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"content": buf.String(),
 	})
 }

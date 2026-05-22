@@ -225,6 +225,10 @@ func main() {
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(nodeHandler.GetDiskAnalysis)).Methods("GET")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(nodeHandler.DeleteOrphanedFolder)).Methods("DELETE")
 
+	// Orphan file browser (admin-only, read-only — no DB servers row required)
+	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/files", authHandler.AuthMiddleware(nodeHandler.ListOrphanFiles)).Methods("GET")
+	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/content", authHandler.AuthMiddleware(nodeHandler.GetOrphanFileContent)).Methods("GET")
+
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/power", authHandler.AuthMiddleware(serverHandler.ServerPowerHandler)).Methods("POST")
