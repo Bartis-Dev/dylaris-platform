@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -337,14 +339,21 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 		Tty:          false,
 	}
 	hc := &container.HostConfig{
-		AutoRemove: true,
-		Binds:      []string{fmt.Sprintf("%s:/data", hostServerPath)},
+		Binds: []string{fmt.Sprintf("%s:/data", hostServerPath)},
 	}
 	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nil, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("installer container create: %w", err)
 	}
 	cid := resp.ID
+
+	// Remove the container ourselves once done. We deliberately avoid
+	// HostConfig.AutoRemove: with auto-remove Docker can delete the container
+	// the instant it exits, racing the ContainerLogs call below and losing
+	// the installer diagnostics. Remove explicitly after the logs are read.
+	defer func() {
+		_ = dm.cli.ContainerRemove(context.Background(), cid, container.RemoveOptions{Force: true})
+	}()
 
 	if err := dm.cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
 		return "", fmt.Errorf("installer container start: %w", err)
@@ -374,9 +383,13 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 	})
 	logs := ""
 	if logErr == nil {
-		buf, _ := io.ReadAll(logReader)
-		logs = string(buf)
+		// Non-TTY container logs are a multiplexed stream (8-byte frame
+		// headers); demux stdout+stderr into one readable buffer instead of
+		// dumping the raw framed bytes.
+		var logBuf bytes.Buffer
+		_, _ = stdcopy.StdCopy(&logBuf, &logBuf, logReader)
 		logReader.Close()
+		logs = strings.TrimSpace(logBuf.String())
 	}
 
 	if exitCode != 0 {
