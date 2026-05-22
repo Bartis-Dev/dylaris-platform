@@ -5,7 +5,7 @@ import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, delete
 import { uploadFiles } from '@/lib/api/files';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
 import { JAVA_IMAGES, recommendJavaForVersion } from './setup/JavaVersionPicker';
-import { VersionEntry } from './setup/VersionPicker';
+import { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import SubServerSidebar from './setup/SubServerSidebar';
 import SetupViewMode from './setup/SetupViewMode';
 import SetupNewWizard from './setup/SetupNewWizard';
@@ -184,10 +184,13 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             });
             const data = await res.json();
             if (data.versions && data.versions.length > 0) {
-                setAllVersions(data.versions);
-                setSelectedMajor(data.versions[0].major);
-                setSelectedBuild(data.versions[0].build);
-                prefillVersionFromServer(data.versions);
+                const sorted = [...data.versions].sort(
+                    (a, b) => compareVersionsDesc(a.major, b.major) || compareVersionsDesc(a.build, b.build),
+                );
+                setAllVersions(sorted);
+                setSelectedMajor(sorted[0].major);
+                setSelectedBuild(sorted[0].build);
+                prefillVersionFromServer(sorted);
             }
         } catch {}
         setLoadingVersions(false);

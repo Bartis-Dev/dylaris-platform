@@ -25,7 +25,7 @@ interface VersionPickerProps {
  * Returns a negative number if `a` should sort before `b` (i.e. a > b for descending order).
  * Non-numeric or missing segments are treated as 0, sorting them last / lowest.
  */
-function compareVersionsDesc(a: string, b: string): number {
+export function compareVersionsDesc(a: string, b: string): number {
     const aParts = a.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
     const bParts = b.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
     const len = Math.max(aParts.length, bParts.length);
