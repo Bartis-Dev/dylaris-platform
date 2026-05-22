@@ -77,15 +77,17 @@ export default function VersionPicker({
                     {availableSoftware.map(s => {
                         const meta = SOFTWARE_META[s];
                         return (
-                            <button key={s} type="button" onClick={() => onSoftwareChange(s)}
-                                className={`w-full p-2 rounded-md text-left capitalize text-sm flex items-center justify-between ${
-                                    software === s ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
-                                }`}>
-                                <span>{s}</span>
+                            <div key={s} className="flex items-center gap-1">
+                                <button type="button" onClick={() => onSoftwareChange(s)}
+                                    className={`flex-1 p-2 rounded-md text-left capitalize text-sm ${
+                                        software === s ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
+                                    }`}>
+                                    {s}
+                                </button>
                                 {meta && (
-                                    <span className="relative shrink-0 ml-1">
-                                        <span
-                                            role="button"
+                                    <div className="relative shrink-0">
+                                        <button
+                                            type="button"
                                             aria-label={`Info: ${s}`}
                                             onMouseEnter={() => setHoveredInfo(s)}
                                             onMouseLeave={() => setHoveredInfo(null)}
@@ -93,22 +95,22 @@ export default function VersionPicker({
                                                 e.stopPropagation();
                                                 window.open(meta.url, '_blank', 'noopener,noreferrer');
                                             }}
-                                            className={`inline-flex items-center justify-center rounded p-0.5 transition-colors cursor-pointer ${
+                                            className={`inline-flex items-center justify-center rounded p-0.5 transition-colors ${
                                                 software === s
                                                     ? 'text-white/60 hover:text-white'
                                                     : 'text-(--base-05) hover:text-(--base-08)'
                                             }`}
                                         >
                                             <Info size={13} />
-                                        </span>
+                                        </button>
                                         {hoveredInfo === s && (
                                             <span className="absolute bottom-full right-0 mb-1.5 z-50 w-48 rounded-md bg-(--base-02) border border-(--base-03) px-2.5 py-1.5 text-[11px] text-(--base-07) leading-snug shadow-lg pointer-events-none whitespace-normal">
                                                 {meta.desc}
                                             </span>
                                         )}
-                                    </span>
+                                    </div>
                                 )}
-                            </button>
+                            </div>
                         );
                     })}
                 </div>
