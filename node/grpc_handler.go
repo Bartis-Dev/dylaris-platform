@@ -692,6 +692,9 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 	}
 
 	// Scan sub-server directories.
+	// SubServerInfo intentionally carries only name + type; the full
+	// per-sub-server fields (minecraft_version, build, extra_jvm_flags) are
+	// available to Core via the metadata_json field of the response.
 	for _, sub := range scanSubServers(serverDir) {
 		resp.SubServers = append(resp.SubServers, &pb.SubServerInfo{
 			Name: sub.Name,
