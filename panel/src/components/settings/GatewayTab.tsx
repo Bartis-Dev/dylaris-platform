@@ -209,15 +209,31 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                     </button>
                 </div>
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Relay Address</label>
-                    <p className="text-xs text-(--base-06) mb-1">Public address of the Beam Relay service (e.g. beam.example.com:9095)</p>
+                    <label className="input-label">
+                        Relay Address
+                        <span className="ml-1 text-(--warning-light)">*</span>
+                    </label>
+                    <p className="text-xs text-(--base-06) mb-1">
+                        Public address of the Beam Relay (e.g. <span className="font-mono">beam.example.com:25550</span>).
+                        The desktop app fetches this on every login — without it, file transfers can&apos;t connect.
+                    </p>
                     <input
                         type="text"
                         value={settings.relayAddress}
                         onChange={e => setSettings(s => ({ ...s, relayAddress: e.target.value }))}
-                        placeholder="beam.example.com:9095"
-                        className="input-field"
+                        placeholder="beam.example.com:25550"
+                        className={`input-field ${
+                            !settings.relayAddress?.trim()
+                                ? 'border-(--warning) shadow-[0_0_0_2px_rgba(255,196,79,0.18)] focus:border-(--warning) focus:shadow-[0_0_0_3px_rgba(255,196,79,0.22)]'
+                                : ''
+                        }`}
                     />
+                    {!settings.relayAddress?.trim() && (
+                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-1">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>Required. Beam.exe gets this address from Core after login — leaving it blank breaks the desktop app for everyone.</span>
+                        </p>
+                    )}
                 </div>
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Beam Download Link</label>
@@ -1174,6 +1190,16 @@ export default function GatewayTab() {
     const registration = useUnsavedChangesState();
     const [pendingSubTab, setPendingSubTab] = useState<SubTab | null>(null);
     const [dialogSaving, setDialogSaving] = useState(false);
+
+    // Deep-link via URL hash, e.g. `/settings/gateway#beam` — used by the
+    // global notifications dropdown to jump straight to the right sub-tab.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const hash = window.location.hash.replace(/^#/, '');
+        if (hash === 'gateway' || hash === 'beam' || hash === 'xdp') {
+            setSubTab(hash as SubTab);
+        }
+    }, []);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });

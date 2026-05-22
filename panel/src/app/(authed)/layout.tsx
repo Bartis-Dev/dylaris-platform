@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { AppDataProvider, useAppData } from '@/lib/AppDataContext';
 import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import Navbar from '@/components/Navbar';
+import NotificationsDropdown from '@/components/NotificationsDropdown';
 import ProfilePopup from '@/components/ProfilePopup';
 import { ChevronDown, UserCog, LogOut, Wrench } from 'lucide-react';
 import Link from 'next/link';
@@ -56,6 +57,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             {/* Top Navbar */}
             <div className="relative z-30 shrink-0">
                 <Navbar>
+                    {user.isAdmin && <NotificationsDropdown />}
                     {user.isAdmin && (
                         <Link
                             href="/settings"
