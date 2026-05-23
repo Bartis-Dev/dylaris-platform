@@ -102,13 +102,21 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID string) 
 		ttl         = 30 * time.Second
 		refreshTick = 10 * time.Second
 	)
+	var lastLoggedIP string
 	publish := func() {
-		ip := outboundIP()
+		ip := overlayIP()
 		if ip == "" {
 			return
 		}
 		if err := rdb.Set(ctx, key+nodeID, ip+":"+port, ttl).Err(); err != nil {
 			log.Printf("beam-server: endpoint publish failed: %v", err)
+			return
+		}
+		// Log only when the published IP changes (typically once at boot,
+		// then on container restart) so the log isn't spammed every 10s.
+		if ip != lastLoggedIP {
+			log.Printf("beam-server: endpoint published to Redis (%s:%s for node %q)", ip, port, nodeID)
+			lastLoggedIP = ip
 		}
 	}
 	publish()
@@ -124,21 +132,44 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID string) 
 	}
 }
 
-// outboundIP returns the local IP the kernel would use to reach the
-// internet — on a Swarm overlay container this is the container's overlay
-// address. Pattern lifted from gateway/beam/relay so both sides report
-// the same "real" IP.
-func outboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+// overlayIP returns the container's IP on the Swarm overlay network the
+// Link needs to reach us on. The naive net.Dial("udp", "8.8.8.8:80") trick
+// returns the wrong interface here — in Swarm the default route goes
+// through docker_gwbridge (172.18.0.0/16), but overlay traffic to sibling
+// services flows through a separate eth attached to the overlay (10.x).
+// We need the latter, otherwise Link tries to dial a gwbridge IP that's
+// per-host and not routable from other containers.
+//
+// Selection: walk all non-loopback IPv4 interfaces and prefer 10.0.0.0/8
+// (Swarm overlay default range). Falls back to 172.x/192.x for unusual
+// deploys where the overlay subnet isn't in the 10.x range.
+func overlayIP() string {
+	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return ""
 	}
-	defer conn.Close()
-	addr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok || addr == nil {
-		return ""
+	var fallback string
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipnet.IP.To4()
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		// 10.0.0.0/8 — Swarm overlay's default range. First match wins.
+		if ip[0] == 10 {
+			return ip.String()
+		}
+		// 172.16.0.0/12 or 192.168.0.0/16 — saved as fallback for
+		// non-standard overlay subnets. The 172.18.x gwbridge IPs end
+		// up here too; we only use them if no 10.x is found.
+		if fallback == "" && (ip[0] == 172 || ip[0] == 192) {
+			fallback = ip.String()
+		}
 	}
-	return addr.IP.String()
+	return fallback
 }
 
 // validateBeamPath ensures the path stays within the server's data directory.
