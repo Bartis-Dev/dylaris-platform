@@ -175,7 +175,7 @@ func main() {
 	if beamJWTSecret == "" {
 		log.Printf("BEAM_JWT_SECRET unset — Beam authentication will reject all tickets")
 	}
-	go StartBeamServer(ctx, storageMgr, beamThrottle, beamJWTSecret, nodeID)
+	go StartBeamServer(ctx, rdb, storageMgr, beamThrottle, beamJWTSecret, nodeID)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)

@@ -14,6 +14,7 @@ import (
 	beamauth "dylaris-pkg/beam/auth"
 	pb "dylaris-proto/beam"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,7 +45,14 @@ type beamServer struct {
 // closes, and Beam.exe surfaces the misleading "error reading server
 // preface: EOF". Auth (JWT ticket) gates all RPCs so wider reachability
 // on the overlay doesn't open new attack surface.
-func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *BeamThrottle, jwtSecret, nodeID string) {
+//
+// Also publishes the Node's BeamNodeService endpoint to Redis (key
+// `beam:node-endpoint:<NodeID>`) so Link can discover the right
+// overlay IP without relying on Docker-DNS service-name conventions.
+// This is the canonical discovery path — works in any Swarm topology
+// (cross-stack, custom service names, mixed global/replicated), where
+// the NodeID is not necessarily a resolvable hostname.
+func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *StorageManager, throttle *BeamThrottle, jwtSecret, nodeID string) {
 	lis, err := net.Listen("tcp", ":9091")
 	if err != nil {
 		log.Printf("beam-server: failed to listen on :9091: %v", err)
@@ -61,6 +69,9 @@ func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *
 
 	log.Println("beam-server: listening on :9091 (reachable via overlay; JWT-gated)")
 
+	// Publish endpoint to Redis so Link can discover us via overlay IP.
+	go publishBeamEndpoint(ctx, rdb, nodeID)
+
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
@@ -69,6 +80,65 @@ func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *
 	if err := srv.Serve(lis); err != nil {
 		log.Printf("beam-server: serve error: %v", err)
 	}
+}
+
+// publishBeamEndpoint refreshes a Redis key with this Node's BeamNodeService
+// overlay endpoint every 10s (30s TTL). Link reads this key to find the
+// right address for its NodeID, sidestepping Docker-DNS service-name
+// conventions which break across Swarm stacks (Link in dylaris-gateway
+// can't resolve "node-eu-v01" — the Node's NODE_ID is a host hostname,
+// not a registered service alias).
+//
+// Best-effort: a Redis outage just causes Link to fall back to its
+// service-name / loopback guess. Beam.exe surfaces "could not reach the
+// Beam relay ..." in that case, so the failure mode is visible.
+func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID string) {
+	if rdb == nil || strings.TrimSpace(nodeID) == "" {
+		return
+	}
+	const (
+		port        = "9091"
+		key         = "beam:node-endpoint:"
+		ttl         = 30 * time.Second
+		refreshTick = 10 * time.Second
+	)
+	publish := func() {
+		ip := outboundIP()
+		if ip == "" {
+			return
+		}
+		if err := rdb.Set(ctx, key+nodeID, ip+":"+port, ttl).Err(); err != nil {
+			log.Printf("beam-server: endpoint publish failed: %v", err)
+		}
+	}
+	publish()
+	ticker := time.NewTicker(refreshTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			publish()
+		}
+	}
+}
+
+// outboundIP returns the local IP the kernel would use to reach the
+// internet — on a Swarm overlay container this is the container's overlay
+// address. Pattern lifted from gateway/beam/relay so both sides report
+// the same "real" IP.
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || addr == nil {
+		return ""
+	}
+	return addr.IP.String()
 }
 
 // validateBeamPath ensures the path stays within the server's data directory.
