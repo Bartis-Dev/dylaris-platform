@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -17,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -34,6 +36,18 @@ type beamServer struct {
 	throttle   *BeamThrottle
 	jwtSecret  string // BEAM_JWT_SECRET — must match the gateway's beam-relay
 	nodeID     string // local node id; tickets must claim this same id
+
+	// serverUUIDByPeer remembers which server a gRPC peer (= one Beam.exe
+	// session's TCP connection) is authenticated for. Authenticate writes
+	// it; every other RPC reads it via extractServerUUID. Without this
+	// the file-op handlers see an empty serverUUID and reject every call
+	// with "server_uuid required" — the symptom Beam.exe surfaces as EOF
+	// on the first upload chunk.
+	//
+	// Entries are keyed by peer address. Beam sessions are short-lived
+	// and the same port gets recycled / overwritten on a new Authenticate,
+	// so the map stays bounded without explicit cleanup.
+	serverUUIDByPeer sync.Map // map[string]string
 }
 
 // StartBeamServer starts the BeamNodeService gRPC server on :9091.
@@ -205,6 +219,12 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 	if s.nodeID != "" && claims.NodeID != s.nodeID {
 		return &pb.BeamAuthResp{Ok: false, Message: "ticket bound to a different node"}, nil
 	}
+	// Remember which server this gRPC connection is allowed to touch.
+	// extractServerUUID reads the same key on every subsequent RPC from
+	// the same Beam.exe session.
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
+		s.serverUUIDByPeer.Store(p.Addr.String(), claims.ServerUUID)
+	}
 	return &pb.BeamAuthResp{
 		Ok:         true,
 		ServerUuid: claims.ServerUUID,
@@ -214,7 +234,7 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 // ─── File Operations ─────────────────────────────────────────────────
 
 func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*pb.BeamFileListResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	dirPath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
 		return nil, status.Error(codes.PermissionDenied, err.Error())
@@ -249,7 +269,7 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 }
 
 func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadReq) (*pb.BeamFileContentResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
@@ -264,7 +284,7 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 }
 
 func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveReq) (*pb.BeamOpResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -278,7 +298,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 }
 
 func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) (*pb.BeamOpResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -303,7 +323,7 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 }
 
 func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) (*pb.BeamOpResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -317,7 +337,7 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 }
 
 func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) (*pb.BeamOpResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	oldPath, err := s.validateBeamPath(req.OldPath, serverUUID)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -338,7 +358,7 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 }
 
 func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb.BeamOpResp, error) {
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	srcPath, err := s.validateBeamPath(req.SrcPath, serverUUID)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -370,7 +390,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 
 func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
 	ctx := stream.Context()
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
@@ -432,7 +452,7 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 
 func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadMsg, pb.BeamOpResp]) error {
 	ctx := stream.Context()
-	serverUUID := extractServerUUID(ctx)
+	serverUUID := s.extractServerUUID(ctx)
 
 	var destPath string
 	var tmpFile *os.File
@@ -513,9 +533,25 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 
 // extractServerUUID extracts the server UUID from the gRPC context metadata.
 // TODO: This will be populated by the Authenticate interceptor from the ticket claims.
-func extractServerUUID(ctx context.Context) string {
-	// Placeholder: will be set from ticket JWT claims after Authenticate
-	return ""
+// extractServerUUID returns the server-UUID that Authenticate stashed for
+// this gRPC peer. One Beam.exe session = one TCP connection from Link to
+// the Node = one stable peer address, so this is reliable for the
+// lifetime of a session.
+//
+// Returns "" when the peer hasn't authenticated yet — validateBeamPath
+// then refuses with "server_uuid required" which surfaces upstream as a
+// PermissionDenied gRPC error.
+func (s *beamServer) extractServerUUID(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p == nil || p.Addr == nil {
+		return ""
+	}
+	v, ok := s.serverUUIDByPeer.Load(p.Addr.String())
+	if !ok {
+		return ""
+	}
+	uuid, _ := v.(string)
+	return uuid
 }
 
 // copyDir and copyFile are defined in installer.go — reused here.
