@@ -3,6 +3,8 @@
 import React, { useEffect, useMemo } from 'react';
 import { FileBrowser } from '@dylaris/ui-filebrowser';
 import { createBeamAdapter, isWails, syncSessionWithWails, connectWailsToServer } from '@/lib/adapters';
+import { useDevMode, devLog } from '@/lib/devLog';
+import DebugLogPanel from '@/components/DebugLogPanel';
 
 interface FileBrowserViewProps {
   currentServerPath: string;
@@ -14,13 +16,18 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
   // stays on gRPC. We don't memoize on isWails() because window.go is
   // available before render in Wails (no race).
   const adapter = useMemo(() => createBeamAdapter(), []);
+  const devMode = useDevMode();
 
   // Inside Beam Desktop, point the native relay tunnel at whatever server
   // the user is browsing. Re-runs whenever the URL changes server.
   // syncSessionWithWails MUST finish before connecting — ConnectToServer
   // needs the session token the sync pushes to the Wails side.
   useEffect(() => {
-    if (!isWails()) return;
+    if (!isWails()) {
+      devLog('beam.view', 'info', 'FileBrowserView mounted in browser mode (Wails not detected)');
+      return;
+    }
+    devLog('beam.view', 'info', `FileBrowserView mounted in Wails mode, serverUuid=${serverUuid}`);
     (async () => {
       await syncSessionWithWails();
       if (serverUuid) await connectWailsToServer(serverUuid);
@@ -28,11 +35,24 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
   }, [serverUuid]);
 
   return (
-    <FileBrowser
-      currentServerPath={currentServerPath}
-      serverUuid={serverUuid}
-      adapter={adapter}
-    />
+    <div className="flex flex-col gap-3 h-full overflow-hidden">
+      <div className="flex-1 min-h-0">
+        <FileBrowser
+          currentServerPath={currentServerPath}
+          serverUuid={serverUuid}
+          adapter={adapter}
+        />
+      </div>
+      {devMode && (
+        <div className="shrink-0">
+          <DebugLogPanel
+            filter="beam."
+            title="Beam Debug Log"
+            defaultOpen={true}
+          />
+        </div>
+      )}
+    </div>
   );
 };
 

@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle } from 'lucide-react';
+import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP } from '@/lib/api/auth';
+import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 
 interface UserProfile {
     username: string;
     minecraftUsername?: string;
     email?: string;
     is2FAEnabled?: boolean;
+    isAdmin?: boolean;
 }
 
 interface ProfilePopupProps {
@@ -72,6 +74,9 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
         <div className="flex gap-1 px-6 pt-4 border-b border-(--base-03)">
           <button onClick={() => setCurrentView("general")} className={`pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === "general" ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`}>General</button>
           <button onClick={() => setCurrentView("security")} className={`pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === "security" ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`}>Security</button>
+          {currentUser.isAdmin && (
+            <button onClick={() => setCurrentView("developer")} className={`pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === "developer" ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`}>Developer</button>
+          )}
         </div>
 
         <div className="modal-body">
@@ -94,6 +99,10 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                   <input type="text" value={minecraftUsername} onChange={e => setMinecraftUsername(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                 </div>
               </div>
+            )}
+
+            {currentView === "developer" && currentUser.isAdmin && (
+              <DeveloperPanel />
             )}
 
             {currentView === "security" && (
@@ -144,16 +153,23 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
               </div>
             )}
 
-            <div className="pt-4 border-t border-(--base-03)">
-              <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Current Password <span className="opacity-70">(required to save profile changes)</span></label>
-                <input type="password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
-              </div>
-            </div>
+            {/* The current-password gate and submit button only apply to
+                profile data (general/security). The developer tab toggles
+                live state in localStorage on its own — no save needed. */}
+            {currentView !== "developer" && (
+              <>
+                <div className="pt-4 border-t border-(--base-03)">
+                  <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Current Password <span className="opacity-70">(required to save profile changes)</span></label>
+                    <input type="password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
+                  </div>
+                </div>
 
-            <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full mt-4">
-              {loading ? 'Saving...' : 'Save Changes'}
-            </button>
+                <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full mt-4">
+                  {loading ? 'Saving...' : 'Save Changes'}
+                </button>
+              </>
+            )}
           </form>
         </div>
       </div>
@@ -392,6 +408,76 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Developer / Debug panel — admin only
+// ─────────────────────────────────────────────
+
+function DeveloperPanel() {
+  const devMode = useDevMode();
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="alert alert-warning text-xs">
+        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+        <span>
+          Developer mode exposes diagnostic windows and verbose logging across
+          the panel. Useful when chasing bugs; noisy in regular use. Persisted
+          per-browser only — does not affect other users.
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <Bug size={16} className={`shrink-0 mt-0.5 ${devMode ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+          <div className="min-w-0">
+            <div className="font-medium text-sm text-(--base-09)">Developer Mode</div>
+            <div className="text-xs text-(--base-06)">
+              {devMode
+                ? 'Active — debug log windows are visible.'
+                : 'Off — the panel behaves normally for end-users.'}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={devMode}
+          onClick={() => setDevModeEnabled(!devMode)}
+          className={`toggle-track shrink-0 ${devMode ? 'toggle-track-on' : 'toggle-track-off'}`}
+        >
+          <span className={`toggle-knob ${devMode ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+        </button>
+      </div>
+
+      <div>
+        <h3 className="mono-label mb-2">What this enables</h3>
+        <ul className="text-xs text-(--base-07) space-y-1.5 list-disc pl-5">
+          <li>
+            <strong className="text-(--base-09)">File browser debug log</strong> — a
+            timestamped panel below the file browser showing every Beam-tunnel
+            step (SetSession, ConnectToServer, BeamUploadStart/Chunk/Finish)
+            with the raw error message on failure. Useful for pinpointing where
+            an upload or browse breaks.
+          </li>
+          <li>
+            <strong className="text-(--base-09)">Future hooks</strong> — additional
+            diagnostic windows will gate on this same toggle, so flipping it
+            here is the single switch.
+          </li>
+        </ul>
+      </div>
+
+      <button
+        type="button"
+        onClick={clearDevLog}
+        className="btn btn-secondary btn-sm w-full"
+      >
+        <Trash2 size={12} /> Clear debug log buffer
+      </button>
     </div>
   );
 }

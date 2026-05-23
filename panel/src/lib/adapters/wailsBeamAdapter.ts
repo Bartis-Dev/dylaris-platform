@@ -9,6 +9,7 @@
 
 import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
 import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
+import { devLog } from '@/lib/devLog';
 
 // Chunk size for the JS → Go upload bridge. Smaller = more IPC calls
 // (overhead-bound on the JS side); larger = bigger base64 strings in
@@ -86,14 +87,25 @@ export function syncSessionWithWails(): Promise<void> {
 }
 
 async function doSyncSession(): Promise<void> {
+    devLog('beam.session', 'info', 'syncSessionWithWails: start');
     const app = getWailsApp();
-    if (!app || typeof app.SetSession !== 'function') return;
+    if (!app || typeof app.SetSession !== 'function') {
+        devLog('beam.session', 'warn', 'syncSessionWithWails: Wails app or SetSession binding unavailable');
+        return;
+    }
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+        devLog('beam.session', 'warn', 'syncSessionWithWails: no auth token in localStorage');
+        return;
+    }
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin + '/api';
+    devLog('beam.session', 'info', `SetSession → ${apiUrl}`);
     try {
         await app.SetSession(apiUrl, token);
+        devLog('beam.session', 'info', 'SetSession OK');
     } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        devLog('beam.session', 'error', `SetSession failed: ${message}`);
         console.warn('Wails SetSession failed:', err);
     }
 }
@@ -116,16 +128,31 @@ export async function ensureWailsConnection(
     serverUuid: string,
     opts: { force?: boolean } = {},
 ): Promise<void> {
+    devLog('beam.connect', 'info', `ensureWailsConnection: serverUuid=${serverUuid}, force=${opts.force ?? false}`);
     const app = getWailsApp();
-    if (!app || !serverUuid) return;
+    if (!app || !serverUuid) {
+        devLog('beam.connect', 'warn', 'ensureWailsConnection: skipped (no Wails app or no serverUuid)');
+        return;
+    }
     await syncSessionWithWails();
-    if (!opts.force && serverUuid === lastConnectedServer) return;
+    if (!opts.force && serverUuid === lastConnectedServer) {
+        devLog('beam.connect', 'info', 'ensureWailsConnection: cache hit, skipping reconnect');
+        return;
+    }
+    devLog('beam.connect', 'info', `ConnectToServer(${serverUuid}) → calling Wails binding`);
     // Drop the cache before the call: if ConnectToServer throws partway
     // through, the next attempt must re-dial — otherwise we'd treat a
     // failed half-connect as "still good".
     lastConnectedServer = '';
-    await app.ConnectToServer(serverUuid);
-    lastConnectedServer = serverUuid;
+    try {
+        await app.ConnectToServer(serverUuid);
+        lastConnectedServer = serverUuid;
+        devLog('beam.connect', 'info', 'ConnectToServer OK — relay tunnel established');
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        devLog('beam.connect', 'error', `ConnectToServer FAILED: ${message}`);
+        throw err;
+    }
 }
 
 // resetWailsConnectionCache invalidates the lastConnectedServer memo so
@@ -158,7 +185,7 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
     // intentionally loose — TS can't validate the gRPC payload shape
     // any tighter, and the FileBrowser code accesses fields structurally.
     type WrapResult = { success: boolean; message?: string } & Record<string, unknown>;
-    const wrap = async (fn: () => Promise<unknown>): Promise<WrapResult> => {
+    const wrap = async (label: string, fn: () => Promise<unknown>): Promise<WrapResult> => {
         try {
             // Wait for the session to reach the Wails side first — the
             // native ops reject with "not logged in" until SetSession
@@ -167,23 +194,28 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
             const result = await fn();
             if (result === undefined || result === null) return { success: true };
             if (typeof result === 'object' && 'success' in (result as Record<string, unknown>)) {
-                return result as WrapResult;
+                const r = result as WrapResult;
+                if (!r.success) {
+                    devLog('beam.op', 'error', `${label} returned success=false: ${r.message ?? '(no message)'}`);
+                }
+                return r;
             }
             return { success: true, ...(result as Record<string, unknown>) };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            devLog('beam.op', 'error', `${label} threw: ${message}`);
             return { success: false, message };
         }
     };
 
     return {
-        getFiles: (path, serverUuid) => wrap(() => app.ListFiles(path, serverUuid ?? '')) as ReturnType<FileBrowserAdapter['getFiles']>,
-        getFileContent: (path, serverUuid) => wrap(() => app.GetFileContent(path, serverUuid ?? '')) as ReturnType<FileBrowserAdapter['getFileContent']>,
-        saveFile: (path, content, serverUuid) => wrap(() => app.SaveFile(path, content, serverUuid ?? '')),
-        createFile: (path, isDir, serverUuid) => wrap(() => app.CreateFile(path, isDir, serverUuid ?? '')),
-        deleteFile: (path, serverUuid) => wrap(() => app.DeleteFile(path, serverUuid ?? '')),
-        renameFile: (oldPath, newPath, serverUuid) => wrap(() => app.RenameFile(oldPath, newPath, serverUuid ?? '')),
-        copyFile: (srcPath, dstPath, serverUuid) => wrap(() => app.CopyFile(srcPath, dstPath, serverUuid ?? '')),
+        getFiles: (path, serverUuid) => wrap(`ListFiles ${path}`, () => app.ListFiles(path, serverUuid ?? '')) as ReturnType<FileBrowserAdapter['getFiles']>,
+        getFileContent: (path, serverUuid) => wrap(`GetFileContent ${path}`, () => app.GetFileContent(path, serverUuid ?? '')) as ReturnType<FileBrowserAdapter['getFileContent']>,
+        saveFile: (path, content, serverUuid) => wrap(`SaveFile ${path}`, () => app.SaveFile(path, content, serverUuid ?? '')),
+        createFile: (path, isDir, serverUuid) => wrap(`CreateFile ${path}`, () => app.CreateFile(path, isDir, serverUuid ?? '')),
+        deleteFile: (path, serverUuid) => wrap(`DeleteFile ${path}`, () => app.DeleteFile(path, serverUuid ?? '')),
+        renameFile: (oldPath, newPath, serverUuid) => wrap(`RenameFile ${oldPath}→${newPath}`, () => app.RenameFile(oldPath, newPath, serverUuid ?? '')),
+        copyFile: (srcPath, dstPath, serverUuid) => wrap(`CopyFile ${srcPath}→${dstPath}`, () => app.CopyFile(srcPath, dstPath, serverUuid ?? '')),
         // Native chunked upload: bytes flow JS → Wails IPC → gRPC stream
         // → Relay tunnel → Node's temp file → atomic rename. Core never
         // sees the payload, so its body-size limit and the user's admin
@@ -195,9 +227,13 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 typeof app.BeamUploadChunk === 'function' &&
                 typeof app.BeamUploadFinish === 'function';
             if (!hasNative) {
+                devLog('beam.upload', 'warn', 'native bindings missing — falling back to HTTP upload via Core');
                 return apiUploadFiles(path, files, onProgress, strategy, mergeConflict, serverUuid);
             }
-            if (!files || files.length === 0) return { success: true };
+            if (!files || files.length === 0) {
+                devLog('beam.upload', 'info', 'uploadFiles: empty file list, no-op');
+                return { success: true };
+            }
             // FileBrowser zips folders into a single .zip before calling
             // the adapter, so we always upload exactly one File here.
             const file = files[0];
@@ -205,6 +241,7 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
                     ? crypto.randomUUID()
                     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            devLog('beam.upload', 'info', `uploadFiles: file="${file.name}" size=${file.size} path="${path}" serverUuid=${serverUuid ?? '?'} uploadID=${uploadID}`);
             try {
                 // The native upload has no HTTP fallback — it needs the
                 // relay tunnel. Force a fresh ConnectToServer here even
@@ -213,21 +250,37 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 // otherwise surface as a misleading "could not reach"
                 // gRPC error on the upload stream instead of failing
                 // upfront with the real reason.
-                if (serverUuid) await ensureWailsConnection(serverUuid, { force: true });
+                if (serverUuid) {
+                    devLog('beam.upload', 'info', 'forcing fresh ConnectToServer before upload');
+                    await ensureWailsConnection(serverUuid, { force: true });
+                }
+                devLog('beam.upload', 'info', `BeamUploadStart: opening gRPC stream (strategy="${strategy ?? ''}")`);
                 await app.BeamUploadStart!(uploadID, path, file.name, strategy ?? '', file.size);
+                devLog('beam.upload', 'info', 'BeamUploadStart OK — streaming chunks');
                 let offset = 0;
+                let chunks = 0;
                 while (offset < file.size) {
                     const end = Math.min(offset + UPLOAD_CHUNK_SIZE, file.size);
                     const buf = new Uint8Array(await file.slice(offset, end).arrayBuffer());
-                    await app.BeamUploadChunk!(uploadID, uint8ToBase64(buf), offset);
+                    try {
+                        await app.BeamUploadChunk!(uploadID, uint8ToBase64(buf), offset);
+                    } catch (chunkErr) {
+                        const m = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
+                        devLog('beam.upload', 'error', `BeamUploadChunk FAILED at offset ${offset} (chunk #${chunks}): ${m}`);
+                        throw chunkErr;
+                    }
                     offset = end;
+                    chunks++;
                     onProgress(Math.round((offset / Math.max(file.size, 1)) * 100));
                 }
+                devLog('beam.upload', 'info', `streamed ${chunks} chunks (${file.size} bytes total) — calling BeamUploadFinish`);
                 await app.BeamUploadFinish!(uploadID);
+                devLog('beam.upload', 'info', `upload "${file.name}" finished successfully`);
                 return { success: true };
             } catch (err) {
                 try { await app.BeamUploadCancel?.(uploadID); } catch { /* best-effort */ }
                 const message = err instanceof Error ? err.message : String(err);
+                devLog('beam.upload', 'error', `upload "${file.name}" FAILED: ${message}`);
                 return { success: false, message };
             }
         },
