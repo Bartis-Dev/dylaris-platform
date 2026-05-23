@@ -22,7 +22,11 @@ import (
 const beamChunkSize = 64 * 1024 // 64KB
 
 // beamServer implements the BeamNodeService gRPC interface.
-// It runs on localhost:9091 only — external access goes through BeamRelay + Link tunnel.
+// It listens on :9091 reachable on the container's overlay network so the
+// Link sidecar in a separate Swarm container can forward Yamux streams to
+// it. Public exposure is still blocked at the Swarm boundary — every RPC
+// must present a valid BEAM_JWT_SECRET-signed ticket via Authenticate
+// before any file op runs, so overlay-internal reachability is safe.
 type beamServer struct {
 	pb.UnimplementedBeamNodeServiceServer
 	storageMgr *StorageManager
@@ -31,9 +35,17 @@ type beamServer struct {
 	nodeID     string // local node id; tickets must claim this same id
 }
 
-// StartBeamServer starts the BeamNodeService gRPC server on localhost:9091.
+// StartBeamServer starts the BeamNodeService gRPC server on :9091.
+//
+// Binds to all interfaces (was 127.0.0.1) so a Link in a sibling Swarm
+// container — different network namespace, so different loopback — can
+// reach it via the overlay using the Node's service name. Without this,
+// Link's stream forwards fail at dial time, the relay's Yamux stream
+// closes, and Beam.exe surfaces the misleading "error reading server
+// preface: EOF". Auth (JWT ticket) gates all RPCs so wider reachability
+// on the overlay doesn't open new attack surface.
 func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *BeamThrottle, jwtSecret, nodeID string) {
-	lis, err := net.Listen("tcp", "127.0.0.1:9091")
+	lis, err := net.Listen("tcp", ":9091")
 	if err != nil {
 		log.Printf("beam-server: failed to listen on :9091: %v", err)
 		return
@@ -47,7 +59,7 @@ func StartBeamServer(ctx context.Context, storageMgr *StorageManager, throttle *
 		nodeID:     nodeID,
 	})
 
-	log.Println("beam-server: listening on 127.0.0.1:9091")
+	log.Println("beam-server: listening on :9091 (reachable via overlay; JWT-gated)")
 
 	go func() {
 		<-ctx.Done()
