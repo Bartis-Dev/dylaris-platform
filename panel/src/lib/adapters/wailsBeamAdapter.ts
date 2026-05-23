@@ -102,15 +102,37 @@ async function doSyncSession(): Promise<void> {
 // throwing the real Go-side error on failure so callers can surface it
 // (the Wails side lazily resolves the relay address, so this also
 // covers first-call bootstrap). Deduped: a server that's already the
-// live tunnel is a no-op.
+// live tunnel is a no-op — unless { force: true } is passed.
+//
+// Why force exists: the cheap "did we already connect?" check is just a
+// string compare, it can't tell whether the underlying gRPC tunnel
+// still works. Anything that disturbs the relay (restart, network
+// blip, panel-side relay-address change) leaves us thinking we're
+// connected when we aren't. Operations that are about to push real
+// bytes (uploads especially) opt into a fresh dial so they fail fast
+// with the actual reason instead of an Unavailable on a dead tunnel.
 let lastConnectedServer = '';
-export async function ensureWailsConnection(serverUuid: string): Promise<void> {
+export async function ensureWailsConnection(
+    serverUuid: string,
+    opts: { force?: boolean } = {},
+): Promise<void> {
     const app = getWailsApp();
     if (!app || !serverUuid) return;
     await syncSessionWithWails();
-    if (serverUuid === lastConnectedServer) return;
+    if (!opts.force && serverUuid === lastConnectedServer) return;
+    // Drop the cache before the call: if ConnectToServer throws partway
+    // through, the next attempt must re-dial — otherwise we'd treat a
+    // failed half-connect as "still good".
+    lastConnectedServer = '';
     await app.ConnectToServer(serverUuid);
     lastConnectedServer = serverUuid;
+}
+
+// resetWailsConnectionCache invalidates the lastConnectedServer memo so
+// the next ensureWailsConnection call re-dials. Used by callers that
+// know the tunnel is stale (e.g. logout, server switch, explicit retry).
+export function resetWailsConnectionCache(): void {
+    lastConnectedServer = '';
 }
 
 // connectWailsToServer is the best-effort pre-warm used on navigation:
@@ -185,9 +207,13 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
             try {
                 // The native upload has no HTTP fallback — it needs the
-                // relay tunnel. Make sure it's up (and surface the real
-                // reason if it isn't) before opening the upload stream.
-                if (serverUuid) await ensureWailsConnection(serverUuid);
+                // relay tunnel. Force a fresh ConnectToServer here even
+                // if we think we're already connected: a stale tunnel
+                // (relay restart, network drop, address change) would
+                // otherwise surface as a misleading "could not reach"
+                // gRPC error on the upload stream instead of failing
+                // upfront with the real reason.
+                if (serverUuid) await ensureWailsConnection(serverUuid, { force: true });
                 await app.BeamUploadStart!(uploadID, path, file.name, strategy ?? '', file.size);
                 let offset = 0;
                 while (offset < file.size) {
