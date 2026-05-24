@@ -75,6 +75,11 @@ interface WailsAppBindings {
     BeamUploadChunk?(uploadID: string, dataB64: string, offset: number): Promise<void>;
     BeamUploadFinish?(uploadID: string): Promise<void>;
     BeamUploadCancel?(uploadID: string): Promise<void>;
+    // Resume after a chunk Send failed (relay restart / transient drop).
+    // The Wails side tears down the dead session, reconnects to whichever
+    // relay Core hands out, and reopens a stream with the SAME upload id
+    // so the Node reattaches to the existing temp file.
+    BeamUploadResume?(uploadID: string, serverUUID: string, path: string, filename: string, strategy: string, totalSize: number): Promise<void>;
 }
 
 declare global {
@@ -306,6 +311,51 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 devLog('beam.upload', 'info', `BeamUploadStart: opening gRPC stream (strategy="${strategy ?? ''}")`);
                 await app.BeamUploadStart!(uploadID, path, file.name, strategy ?? '', file.size);
                 devLog('beam.upload', 'info', 'BeamUploadStart OK — streaming chunks');
+
+                // sendChunk wraps a single BeamUploadChunk call with
+                // up to MAX_RETRIES auto-resume attempts. Each retry
+                // tears down the dead session via BeamUploadResume —
+                // which forces a fresh ConnectToServer (potentially a
+                // different relay) and reopens the gRPC stream with
+                // the same upload id, so the Node reattaches to the
+                // existing temp file at its current size. WriteAt is
+                // idempotent on identical offsets, so re-sending the
+                // last-failed chunk is harmless.
+                const MAX_RETRIES = 3;
+                const RETRY_BACKOFF_MS = 2000;
+                const sendChunk = async (dataB64: string, off: number, chunkIdx: number) => {
+                    let lastErr: unknown;
+                    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                        if (cancelRequested) throw new Error('cancelled');
+                        try {
+                            await app.BeamUploadChunk!(uploadID, dataB64, off);
+                            if (attempt > 0) {
+                                devLog('beam.upload', 'info', `chunk #${chunkIdx} succeeded after ${attempt} retry/retries`);
+                            }
+                            return;
+                        } catch (err) {
+                            lastErr = err;
+                            const m = err instanceof Error ? err.message : String(err);
+                            if (attempt === MAX_RETRIES || !app.BeamUploadResume) {
+                                devLog('beam.upload', 'error', `chunk #${chunkIdx} at offset ${off} gave up after ${attempt} retry/retries: ${m}`);
+                                throw err;
+                            }
+                            devLog('beam.upload', 'warn', `chunk #${chunkIdx} at offset ${off} failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${m} — resuming in ${RETRY_BACKOFF_MS}ms`);
+                            await new Promise(r => setTimeout(r, RETRY_BACKOFF_MS));
+                            if (cancelRequested) throw new Error('cancelled');
+                            try {
+                                await app.BeamUploadResume(uploadID, serverUuid ?? '', path, file.name, strategy ?? '', file.size);
+                                devLog('beam.upload', 'info', `resumed upload "${file.name}" — retrying chunk #${chunkIdx}`);
+                            } catch (resumeErr) {
+                                const rm = resumeErr instanceof Error ? resumeErr.message : String(resumeErr);
+                                devLog('beam.upload', 'error', `resume failed: ${rm}`);
+                                throw resumeErr;
+                            }
+                        }
+                    }
+                    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+                };
+
                 let offset = 0;
                 let chunks = 0;
                 while (offset < file.size) {
@@ -315,13 +365,7 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                     }
                     const end = Math.min(offset + UPLOAD_CHUNK_SIZE, file.size);
                     const buf = new Uint8Array(await file.slice(offset, end).arrayBuffer());
-                    try {
-                        await app.BeamUploadChunk!(uploadID, uint8ToBase64(buf), offset);
-                    } catch (chunkErr) {
-                        const m = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
-                        devLog('beam.upload', 'error', `BeamUploadChunk FAILED at offset ${offset} (chunk #${chunks}): ${m}`);
-                        throw chunkErr;
-                    }
+                    await sendChunk(uint8ToBase64(buf), offset, chunks);
                     offset = end;
                     chunks++;
                     onProgress(Math.round((offset / Math.max(file.size, 1)) * 100));

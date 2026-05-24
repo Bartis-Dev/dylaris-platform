@@ -18,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -548,16 +549,59 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	return nil
 }
 
+// readUploadIDFromContext extracts the x-beam-upload-id gRPC metadata
+// header the client attaches per call so the server can identify which
+// session a chunk belongs to. Empty means non-resumable session — the
+// server falls back to a random temp name in that case.
+func readUploadIDFromContext(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	values := md.Get("x-beam-upload-id")
+	if len(values) == 0 {
+		return ""
+	}
+	// gRPC normalises metadata keys to lowercase; sanitise the value so a
+	// malicious client can't escape the filename it ends up in.
+	id := values[0]
+	id = strings.Map(func(r rune) rune {
+		switch {
+		case r >= '0' && r <= '9':
+			return r
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r == '-' || r == '_':
+			return r
+		default:
+			return -1
+		}
+	}, id)
+	if len(id) > 64 {
+		id = id[:64]
+	}
+	return id
+}
+
 func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadMsg, pb.BeamOpResp]) error {
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
+	uploadID := readUploadIDFromContext(ctx)
 
 	var destPath string
 	var tmpFile *os.File
+	var tmpPath string
 	// completed flips true after we receive the client's stream EOF — the
 	// signal that all chunks made it through. Until then any exit path
 	// (cancel, disconnect, error) must remove the temp file so a partial
 	// upload never gets renamed into place.
+	//
+	// EXCEPT when we have a stable uploadID. Then a mid-stream drop leaves
+	// the temp on disk so the client can resume into the same file on a
+	// follow-up BeamUploadStart with the same id. The 15s sweeper removes
+	// abandoned temps anyway.
 	completed := false
 
 	defer func() {
@@ -565,11 +609,19 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			return
 		}
 		tmpFile.Close()
-		if !completed {
-			// Cancel / disconnect / error path: discard partial.
-			os.Remove(tmpFile.Name())
-			log.Printf("beam-server: upload aborted, removed partial temp %s", filepath.Base(tmpFile.Name()))
+		if completed {
+			return
 		}
+		// Cancel / disconnect / error path.
+		if uploadID != "" {
+			// Stable id present → keep the temp so a resume can pick up
+			// where this stream left off. Sweeper trims it if no resume
+			// comes within the grace window.
+			log.Printf("beam-server: upload %s interrupted, keeping partial temp %s for resume", uploadID, filepath.Base(tmpPath))
+			return
+		}
+		os.Remove(tmpPath)
+		log.Printf("beam-server: upload aborted, removed partial temp %s", filepath.Base(tmpPath))
 	}()
 
 	for {
@@ -580,7 +632,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		}
 		if err != nil {
 			// Either ctx cancelled (client aborted) or stream broke. The
-			// defer above drops the temp.
+			// defer above either drops the temp (no id) or keeps it for
+			// resume (with id).
 			return err
 		}
 
@@ -593,11 +646,29 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			}
 			destPath = resolved
 
-			// Create temp file in the destination directory so the final
-			// os.Rename is atomic (same filesystem).
-			tmpFile, err = os.CreateTemp(filepath.Dir(destPath), ".beam-upload-*")
-			if err != nil {
-				return status.Errorf(codes.Internal, "create temp: %v", err)
+			if uploadID != "" {
+				// Stable temp name so a follow-up Start with the same id
+				// reattaches to the same file. RDWR so we don't truncate
+				// what previous chunks already wrote; O_CREATE so the
+				// very first Start makes it.
+				tmpPath = filepath.Join(filepath.Dir(destPath), ".beam-upload-"+uploadID)
+				f, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE, 0644)
+				if err != nil {
+					return status.Errorf(codes.Internal, "open temp: %v", err)
+				}
+				tmpFile = f
+				if info, statErr := f.Stat(); statErr == nil && info.Size() > 0 {
+					log.Printf("beam-server: upload %s resumed at offset %d (%s)", uploadID, info.Size(), filepath.Base(tmpPath))
+				}
+			} else {
+				// No uploadID → legacy single-shot path. Random suffix,
+				// dropped on any non-clean exit.
+				f, err := os.CreateTemp(filepath.Dir(destPath), ".beam-upload-*")
+				if err != nil {
+					return status.Errorf(codes.Internal, "create temp: %v", err)
+				}
+				tmpFile = f
+				tmpPath = f.Name()
 			}
 
 		case *pb.BeamUploadMsg_Chunk:
@@ -610,6 +681,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
 
+			// WriteAt is idempotent on identical offsets, so a client that
+			// resends the last (failed) chunk on resume produces the same
+			// bytes — no corruption risk.
 			if _, err := tmpFile.WriteAt(p.Chunk.Data, p.Chunk.Offset); err != nil {
 				return status.Errorf(codes.Internal, "write chunk: %v", err)
 			}
@@ -618,12 +692,11 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 
 	// EOF reached cleanly — promote temp to final.
 	if tmpFile != nil && destPath != "" {
-		tmpName := tmpFile.Name()
 		// Close before rename so Windows doesn't reject (no-op on Linux).
 		tmpFile.Close()
 		tmpFile = nil // skip the defer's removal — rename consumed it
-		if err := os.Rename(tmpName, destPath); err != nil {
-			os.Remove(tmpName)
+		if err := os.Rename(tmpPath, destPath); err != nil {
+			os.Remove(tmpPath)
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
 	}
