@@ -12,6 +12,9 @@ import (
 	"dylaris-core/models"
 	backupstorage "dylaris-core/storage/backup"
 
+	pbNode "dylaris-proto/node"
+
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -461,6 +464,64 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// BackupUsage GET /api/servers/{id}/backup-usage
+//
+// Returns the on-disk bytes used by node-local backups for the given
+// server, plus archive count. Available regardless of the active backup
+// mode — for s3/shared the numbers come back zero, which the Overview
+// tab uses to decide whether to render the split storage display.
+func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
+	serverID, srv, ok := h.resolveServerWithAccess(w, r, "overview")
+	if !ok {
+		return
+	}
+	_ = serverID
+
+	if h.state.GRPCRegistry == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"usedBytes": 0,
+			"count":     0,
+		})
+		return
+	}
+
+	reqID := uuid.NewString()
+	msg := &pbNode.NodeMessage{
+		RequestId:  reqID,
+		ServerUuid: srv.UUID,
+		Payload: &pbNode.NodeMessage_BackupUsageReq{
+			BackupUsageReq: &pbNode.BackupUsageReq{},
+		},
+	}
+	resp, err := h.state.GRPCRegistry.SendRequest(srv.NodeID, msg, 5*time.Second)
+	if err != nil {
+		// Node offline or RPC failure — return zeros so the Overview tab
+		// degrades gracefully (no quota row instead of an error toast).
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"usedBytes": 0,
+			"count":     0,
+			"degraded":  true,
+		})
+		return
+	}
+	usage := resp.GetBackupUsageResp()
+	if usage == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"usedBytes": 0,
+			"count":     0,
+		})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"usedBytes": usage.UsedBytes,
+		"count":     usage.Count,
+	})
 }
 
 // ───────────── helpers ─────────────

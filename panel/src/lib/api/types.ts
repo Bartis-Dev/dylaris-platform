@@ -241,6 +241,20 @@ export const getBackupConfig = (): Promise<{ success: boolean; settings?: Backup
     fetchAPI('/settings/backup');
 export const saveBackupConfig = (cfg: BackupConfig): Promise<{ success: boolean }> =>
     fetchAPI('/settings/backup', { method: 'POST', body: JSON.stringify(cfg) });
+
+// Per-server backup-folder usage (bytes on disk, archive count). Used by
+// the Overview tab to render a separate or combined storage bar when the
+// global backup.mode is "node-local". `degraded` is true when the Node
+// couldn't be reached — the UI uses that to suppress the row instead of
+// rendering misleading zeros.
+export interface BackupUsage {
+    success: boolean;
+    usedBytes: number;
+    count: number;
+    degraded?: boolean;
+}
+export const getBackupUsage = (serverId: number): Promise<BackupUsage> =>
+    fetchAPI(`/servers/${serverId}/backup-usage`);
 export interface BackupJob {
     id: number;
     serverId: number;

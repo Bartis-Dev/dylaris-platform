@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Server, ServerStats, DiskUsage, getStatsHistory, getDiskUsage } from '@/lib/api';
+import {
+  Server, ServerStats, DiskUsage, BackupConfig, BackupUsage,
+  getStatsHistory, getDiskUsage, getBackupConfig, getBackupUsage,
+} from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 
-import { Cpu, MemoryStick, AlertTriangle, HardDrive } from 'lucide-react';
+import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive } from 'lucide-react';
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
@@ -66,6 +69,8 @@ export default function OverviewView({ server }: OverviewViewProps) {
   const [historyData, setHistoryData] = useState<ServerStats[]>([]);
   const [historyRange, setHistoryRange] = useState('24h');
   const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
+  const [backupConfig, setBackupConfig] = useState<BackupConfig | null>(null);
+  const [backupUsage, setBackupUsage] = useState<BackupUsage | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -105,6 +110,31 @@ export default function OverviewView({ server }: OverviewViewProps) {
     }, 15000);
     return () => clearInterval(interval);
   }, [server.id]);
+
+  // Backup config is a global setting — fetch once on mount. Backup
+  // usage per server only matters when mode == "node-local"; refresh
+  // it on the same cadence as disk usage so the two stay coherent in
+  // the rendered storage card.
+  useEffect(() => {
+    getBackupConfig().then((res) => {
+      if (res.success && res.settings) setBackupConfig(res.settings);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!backupConfig || backupConfig.mode !== 'node-local') {
+      setBackupUsage(null);
+      return;
+    }
+    const tick = () => {
+      getBackupUsage(server.id).then((u) => {
+        if (u && u.success) setBackupUsage(u);
+      }).catch(() => {});
+    };
+    tick();
+    const interval = setInterval(tick, 15000);
+    return () => clearInterval(interval);
+  }, [server.id, backupConfig]);
 
   const chartData = mode === 'live' ? liveData : historyData;
   const timeFormatter = mode === 'live' ? formatTime : formatTimeShort;
@@ -266,6 +296,17 @@ export default function OverviewView({ server }: OverviewViewProps) {
         </div>
       )}
 
+      {/* Storage display.
+          Three layouts pick themselves automatically based on the global
+          backup mode + per-server share-quota setting:
+            - backup.mode != "node-local"            → single Disk Usage bar (legacy).
+            - "node-local" + !shareQuotaWithServer   → Disk Usage bar + a separate Backups bar.
+            - "node-local" +  shareQuotaWithServer   → one bar with a "Backups" segment folded in.
+          The combined-quota path is the one the docs warn about needing
+          XFS/ZFS project quotas to actually enforce; rendering them as a
+          single bar reflects the operator intent even when the cap is
+          still application-level. */}
+
       {/* Disk Usage Section — iPhone-style stacked bar */}
       {diskUsage && (() => {
         const segmentColors = [
@@ -278,21 +319,35 @@ export default function OverviewView({ server }: OverviewViewProps) {
           'var(--color-success-light)',
           'var(--color-error-light)',
         ];
+        const backupColor = 'var(--color-error)';
+
         const sorted = diskUsage.subServers
           ? Object.entries(diskUsage.subServers).sort(([, a], [, b]) => b - a)
           : [];
-        const capacity = diskUsage.limit > 0 ? diskUsage.limit : diskUsage.total;
-        const freeBytes = diskUsage.limit > 0 ? Math.max(diskUsage.limit - diskUsage.total, 0) : 0;
+
+        // When mode is "node-local" AND the admin folded the backup
+        // budget into the server quota, render the backup bytes as
+        // an extra segment of the same bar. Otherwise the backup card
+        // (rendered below) handles its own bar.
+        const folded = backupConfig?.mode === 'node-local'
+          && backupConfig.shareQuotaWithServer
+          && backupUsage
+          && !backupUsage.degraded;
+        const foldedBackupBytes = folded ? (backupUsage?.usedBytes ?? 0) : 0;
+
+        const total = diskUsage.total + foldedBackupBytes;
+        const capacity = diskUsage.limit > 0 ? diskUsage.limit : total;
+        const freeBytes = diskUsage.limit > 0 ? Math.max(diskUsage.limit - total, 0) : 0;
 
         return (
           <div className="card p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="input-label flex items-center gap-1.5">
                 <HardDrive size={16} className="text-(--base-07)" />
-                Disk Usage
+                {folded ? 'Disk Usage (incl. backups)' : 'Disk Usage'}
               </h3>
               <span className="font-mono text-sm text-(--base-09)">
-                {formatBytes(diskUsage.total)}
+                {formatBytes(total)}
                 {diskUsage.limit > 0 && <span className="text-(--base-06)"> / {formatBytes(diskUsage.limit)}</span>}
               </span>
             </div>
@@ -315,6 +370,18 @@ export default function OverviewView({ server }: OverviewViewProps) {
                   />
                 );
               })}
+              {folded && foldedBackupBytes > 0 && (() => {
+                const pct = capacity > 0 ? (foldedBackupBytes / capacity) * 100 : 0;
+                if (pct < 0.3) return null;
+                return (
+                  <div
+                    key="__backups"
+                    title={`Backups: ${formatBytes(foldedBackupBytes)}`}
+                    style={{ width: `${pct}%`, backgroundColor: backupColor, minWidth: '2px' }}
+                    className="h-full transition-all duration-300"
+                  />
+                );
+              })()}
             </div>
 
             {/* Legend */}
@@ -329,6 +396,13 @@ export default function OverviewView({ server }: OverviewViewProps) {
                   <span className="font-mono text-xs text-(--base-06)">{formatBytes(bytes)}</span>
                 </div>
               ))}
+              {folded && foldedBackupBytes > 0 && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: backupColor }} />
+                  <span className="text-(--base-08)">Backups</span>
+                  <span className="font-mono text-xs text-(--base-06)">{formatBytes(foldedBackupBytes)}</span>
+                </div>
+              )}
               {diskUsage.limit > 0 && freeBytes > 0 && (
                 <div className="flex items-center gap-2 text-sm">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0 bg-(--base-04)" />
@@ -340,6 +414,68 @@ export default function OverviewView({ server }: OverviewViewProps) {
           </div>
         );
       })()}
+
+      {/* Separate "Backups" card — only when mode is "node-local" and the
+          quota is NOT shared with server storage. Mirrors the disk-usage
+          card's layout so the two read as siblings. The quota number
+          comes from the global BackupConfig; the used bytes from the
+          per-server backup-usage RPC. */}
+      {backupConfig?.mode === 'node-local'
+        && !backupConfig.shareQuotaWithServer
+        && backupUsage
+        && !backupUsage.degraded
+        && (() => {
+          const used = backupUsage.usedBytes;
+          // backupConfig.quotaPerServerGb is the GLOBAL cap; 0 = unlimited.
+          const limit = backupConfig.quotaPerServerGb > 0
+            ? backupConfig.quotaPerServerGb * 1024 ** 3
+            : 0;
+          const capacity = limit > 0 ? limit : Math.max(used, 1);
+          const pct = capacity > 0 ? (used / capacity) * 100 : 0;
+          const freeBytes = limit > 0 ? Math.max(limit - used, 0) : 0;
+
+          return (
+            <div className="card p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="input-label flex items-center gap-1.5">
+                  <Archive size={16} className="text-(--base-07)" />
+                  Backups
+                </h3>
+                <span className="font-mono text-sm text-(--base-09)">
+                  {formatBytes(used)}
+                  {limit > 0 && <span className="text-(--base-06)"> / {formatBytes(limit)}</span>}
+                </span>
+              </div>
+
+              <div className="w-full h-4 bg-(--base-04) rounded-sm overflow-hidden flex">
+                {pct > 0 && (
+                  <div
+                    title={`Backups: ${formatBytes(used)}`}
+                    style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: 'var(--color-error)', minWidth: '2px' }}
+                    className="h-full transition-all duration-300"
+                  />
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-x-5 gap-y-2 mt-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0 bg-(--error)" />
+                  <span className="text-(--base-08)">
+                    {backupUsage.count} {backupUsage.count === 1 ? 'archive' : 'archives'}
+                  </span>
+                  <span className="font-mono text-xs text-(--base-06)">{formatBytes(used)}</span>
+                </div>
+                {limit > 0 && freeBytes > 0 && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="w-2.5 h-2.5 rounded-sm shrink-0 bg-(--base-04)" />
+                    <span className="text-(--base-06)">Free</span>
+                    <span className="font-mono text-xs text-(--base-06)">{formatBytes(freeBytes)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
     </div>
   );
