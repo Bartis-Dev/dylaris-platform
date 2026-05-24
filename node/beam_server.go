@@ -86,6 +86,13 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	// Publish endpoint to Redis so Link can discover us via overlay IP.
 	go publishBeamEndpoint(ctx, rdb, nodeID)
 
+	// Sweep stale .beam-upload-* temp files. The UploadFile handler's
+	// defer normally removes them on cancel/error, but a kill -9 or
+	// container restart mid-stream can leak. Anything untouched for >15s
+	// is fair game — successful uploads rename atomically the moment the
+	// stream EOFs, so a live partial is always actively being written.
+	go sweepStaleUploadTemps(ctx, storageMgr)
+
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
@@ -146,6 +153,69 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID string) 
 	}
 }
 
+// sweepStaleUploadTemps periodically removes orphaned .beam-upload-* temp
+// files. The UploadFile handler's defer normally removes them when a
+// session ends, but a process kill or sudden container shutdown can
+// leave them. Anything not modified for more than the grace period is
+// considered stale — a live upload is being actively written to, so its
+// mtime is always fresh.
+func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
+	const (
+		grace = 15 * time.Second
+		every = 30 * time.Second
+	)
+	sweep := func() {
+		for _, base := range sm.Paths() {
+			entries, err := os.ReadDir(base)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				// Each direct child of a storage path is a server UUID dir.
+				serverDir := filepath.Join(base, e.Name())
+				matches, _ := filepath.Glob(filepath.Join(serverDir, ".beam-upload-*"))
+				// Also check sub-server dirs (uploads land in a path *within*
+				// the server dir, not at its root). One level deep is enough.
+				if subs, err := os.ReadDir(serverDir); err == nil {
+					for _, sub := range subs {
+						if sub.IsDir() {
+							more, _ := filepath.Glob(filepath.Join(serverDir, sub.Name(), ".beam-upload-*"))
+							matches = append(matches, more...)
+						}
+					}
+				}
+				now := time.Now()
+				for _, m := range matches {
+					info, err := os.Stat(m)
+					if err != nil {
+						continue
+					}
+					if now.Sub(info.ModTime()) < grace {
+						continue
+					}
+					if err := os.Remove(m); err == nil {
+						log.Printf("beam-server: sweeper removed stale temp %s", m)
+					}
+				}
+			}
+		}
+	}
+	sweep()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
+		}
+	}
+}
+
 // overlayIP returns the container's IP on the Swarm overlay network the
 // Link needs to reach us on. The naive net.Dial("udp", "8.8.8.8:80") trick
 // returns the wrong interface here — in Swarm the default route goes
@@ -186,8 +256,33 @@ func overlayIP() string {
 	return fallback
 }
 
+// isPlatformReservedName returns true for filenames the platform manages
+// internally and users must NOT be able to overwrite via the Beam file
+// browser (writing to them would silently break server orchestration).
+// Read access stays allowed so the UI can still list them.
+func isPlatformReservedName(name string) bool {
+	switch {
+	case name == ".active_server":
+		return true
+	case strings.HasPrefix(name, ".dylaris"):
+		return true
+	}
+	return false
+}
+
 // validateBeamPath ensures the path stays within the server's data directory.
+// When op is "write" (upload, save, create, delete, rename, copy-dst), it
+// also refuses any platform-reserved filename. Read ops ("read", "list")
+// pass even on reserved names so the UI can show them.
 func (s *beamServer) validateBeamPath(reqPath, serverUUID string) (string, error) {
+	return s.validateBeamPathOp(reqPath, serverUUID, "write")
+}
+
+func (s *beamServer) validateBeamPathRead(reqPath, serverUUID string) (string, error) {
+	return s.validateBeamPathOp(reqPath, serverUUID, "read")
+}
+
+func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string, error) {
 	if serverUUID == "" {
 		return "", fmt.Errorf("server_uuid required")
 	}
@@ -198,6 +293,9 @@ func (s *beamServer) validateBeamPath(reqPath, serverUUID string) (string, error
 
 	if !strings.HasPrefix(cleanPath, filepath.Clean(dataPath)) {
 		return "", fmt.Errorf("access denied: path traversal")
+	}
+	if op == "write" && isPlatformReservedName(filepath.Base(cleanPath)) {
+		return "", fmt.Errorf("access denied: %q is platform-managed and cannot be overwritten", filepath.Base(cleanPath))
 	}
 	return cleanPath, nil
 }
@@ -235,7 +333,7 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 
 func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*pb.BeamFileListResp, error) {
 	serverUUID := s.extractServerUUID(ctx)
-	dirPath, err := s.validateBeamPath(req.Path, serverUUID)
+	dirPath, err := s.validateBeamPathRead(req.Path, serverUUID)
 	if err != nil {
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
@@ -270,7 +368,7 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 
 func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadReq) (*pb.BeamFileContentResp, error) {
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPath(req.Path, serverUUID)
+	filePath, err := s.validateBeamPathRead(req.Path, serverUUID)
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
 	}
@@ -391,7 +489,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPath(req.Path, serverUUID)
+	filePath, err := s.validateBeamPathRead(req.Path, serverUUID)
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
@@ -456,13 +554,33 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 
 	var destPath string
 	var tmpFile *os.File
+	// completed flips true after we receive the client's stream EOF — the
+	// signal that all chunks made it through. Until then any exit path
+	// (cancel, disconnect, error) must remove the temp file so a partial
+	// upload never gets renamed into place.
+	completed := false
+
+	defer func() {
+		if tmpFile == nil {
+			return
+		}
+		tmpFile.Close()
+		if !completed {
+			// Cancel / disconnect / error path: discard partial.
+			os.Remove(tmpFile.Name())
+			log.Printf("beam-server: upload aborted, removed partial temp %s", filepath.Base(tmpFile.Name()))
+		}
+	}()
 
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
+			completed = true
 			break
 		}
 		if err != nil {
+			// Either ctx cancelled (client aborted) or stream broke. The
+			// defer above drops the temp.
 			return err
 		}
 
@@ -475,7 +593,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			}
 			destPath = resolved
 
-			// Create temp file
+			// Create temp file in the destination directory so the final
+			// os.Rename is atomic (same filesystem).
 			tmpFile, err = os.CreateTemp(filepath.Dir(destPath), ".beam-upload-*")
 			if err != nil {
 				return status.Errorf(codes.Internal, "create temp: %v", err)
@@ -488,26 +607,24 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 
 			// Throttle bandwidth
 			if err := s.throttle.WaitN(ctx, len(p.Chunk.Data)); err != nil {
-				tmpFile.Close()
-				os.Remove(tmpFile.Name())
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
 
 			if _, err := tmpFile.WriteAt(p.Chunk.Data, p.Chunk.Offset); err != nil {
-				tmpFile.Close()
-				os.Remove(tmpFile.Name())
 				return status.Errorf(codes.Internal, "write chunk: %v", err)
 			}
 		}
 	}
 
-	if tmpFile != nil {
+	// EOF reached cleanly — promote temp to final.
+	if tmpFile != nil && destPath != "" {
+		tmpName := tmpFile.Name()
+		// Close before rename so Windows doesn't reject (no-op on Linux).
 		tmpFile.Close()
-		if destPath != "" {
-			if err := os.Rename(tmpFile.Name(), destPath); err != nil {
-				os.Remove(tmpFile.Name())
-				return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
-			}
+		tmpFile = nil // skip the defer's removal — rename consumed it
+		if err := os.Rename(tmpName, destPath); err != nil {
+			os.Remove(tmpName)
+			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
 	}
 
