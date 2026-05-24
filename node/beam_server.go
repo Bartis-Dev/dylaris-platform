@@ -518,8 +518,8 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	for {
 		n, readErr := f.Read(buf)
 		if n > 0 {
-			// Throttle bandwidth
-			if err := s.throttle.WaitN(ctx, n); err != nil {
+			// Throttle: this is the download direction (disk → client).
+			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
 
@@ -676,8 +676,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return status.Errorf(codes.FailedPrecondition, "no upload started")
 			}
 
-			// Throttle bandwidth
-			if err := s.throttle.WaitN(ctx, len(p.Chunk.Data)); err != nil {
+			// Throttle: this is the upload direction (client → disk).
+			if err := s.throttle.WaitN(ctx, DirectionUp, len(p.Chunk.Data)); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
 
@@ -712,10 +712,19 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 // ─── Quota ───────────────────────────────────────────────────────────
 
 func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq) (*pb.BeamQuotaResp, error) {
+	// BwLimit on the wire is a single number, so report the lower of the
+	// two directions (treating 0 as unlimited). Clients only use this for
+	// display hints; the actual enforcement is per-direction now.
+	up := s.throttle.UpLimit()
+	down := s.throttle.DownLimit()
+	limit := up
+	if down > 0 && (limit == 0 || down < limit) {
+		limit = down
+	}
 	return &pb.BeamQuotaResp{
 		DailyUsed:  0, // TODO: track daily transfer in Redis
 		DailyLimit: 0, // 0 = unlimited
-		BwLimit:    s.throttle.Limit(),
+		BwLimit:    limit,
 	}, nil
 }
 

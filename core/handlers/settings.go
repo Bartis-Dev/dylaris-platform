@@ -814,9 +814,17 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Publish the effective bw_limit to Redis so Nodes can pick it up.
+	// Publish to Redis so Nodes (per-direction internal caps) and the
+	// Relay (per-direction external caps) can pick up changes without a
+	// restart. The legacy beam:bw_limit key stays for back-compat with
+	// older nodes that don't read the split keys yet.
 	if h.state.Redis != nil {
-		h.state.Redis.Set(r.Context(), "beam:bw_limit", fmt.Sprintf("%d", effectiveBw), 0)
+		ctx := r.Context()
+		h.state.Redis.Set(ctx, "beam:bw_limit", fmt.Sprintf("%d", effectiveBw), 0)
+		h.state.Redis.Set(ctx, "beam:bw_up_internal", fmt.Sprintf("%d", req.BwUpInternal), 0)
+		h.state.Redis.Set(ctx, "beam:bw_down_internal", fmt.Sprintf("%d", req.BwDownInternal), 0)
+		h.state.Redis.Set(ctx, "beam:bw_up_external", fmt.Sprintf("%d", req.BwUpExternal), 0)
+		h.state.Redis.Set(ctx, "beam:bw_down_external", fmt.Sprintf("%d", req.BwDownExternal), 0)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{

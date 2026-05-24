@@ -10,72 +10,118 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// BeamThrottle manages bandwidth limiting for all Beam file transfer streams on this node.
-// A single shared rate.Limiter provides automatic max-min fair sharing:
-// - 2 users downloading → each gets ~half the bandwidth
-// - 1 fast + 1 slow user → fast user gets the remainder automatically
-// - Only 1 user → gets full bandwidth
+// BeamThrottle manages per-direction bandwidth limiting for all Beam file
+// transfer streams on this node. Two independent rate.Limiters back the
+// upload (bytes flowing from client → node, written to disk) and download
+// (bytes flowing from disk → client) paths so a hoster can cap them
+// asymmetrically — datacenter uplinks often advertise different up/down
+// speeds, and a Beam transfer should respect that.
+//
+// Each limiter is a shared instance across all streams in its direction,
+// which gives automatic max-min fair sharing:
+//   - 2 simultaneous uploads → each gets ~half the upload cap
+//   - 1 fast + 1 slow user → fast user gets the remainder automatically
+//   - Only 1 stream → gets the full cap
+//
+// Setting a cap to 0 removes the limiter (unlimited).
 type BeamThrottle struct {
-	limiter *rate.Limiter
-	mu      sync.RWMutex
-	limit   int64 // bytes/sec, 0 = unlimited
+	mu sync.RWMutex
+
+	upLimiter   *rate.Limiter // chunks written to disk on upload
+	upLimit     int64
+	downLimiter *rate.Limiter // chunks read from disk on download
+	downLimit   int64
 }
+
+// Direction selects which limiter WaitN applies.
+type Direction int
+
+const (
+	DirectionUp   Direction = iota // upload (client → disk)
+	DirectionDown                  // download (disk → client)
+)
 
 // NewBeamThrottle creates a new throttle. It starts a background goroutine
 // that watches Redis for bandwidth limit changes from Core settings.
+//
+// Reads three Redis keys (kept by Core's SaveBeamSettings handler):
+//   - beam:bw_up_internal   — upload cap, bytes/sec
+//   - beam:bw_down_internal — download cap, bytes/sec
+//   - beam:bw_limit         — legacy symmetric cap (back-compat)
+//
+// When the per-direction keys are unset, both directions fall back to
+// the legacy symmetric beam:bw_limit so existing deploys keep working.
 func NewBeamThrottle(ctx context.Context, rdb *redis.Client) *BeamThrottle {
 	bt := &BeamThrottle{}
 
-	// Load initial limit from Redis
 	if rdb != nil {
-		if val, err := rdb.Get(ctx, "beam:bw_limit").Int64(); err == nil && val > 0 {
-			bt.setLimit(val)
-		}
-	}
-
-	// Watch for limit changes
-	if rdb != nil {
-		go bt.watchLimit(ctx, rdb)
+		bt.reloadFromRedis(ctx, rdb)
+		go bt.watchLimits(ctx, rdb)
 	}
 
 	return bt
 }
 
-// WaitN blocks until n bytes are allowed or ctx is cancelled.
-// If unlimited (limit=0), returns immediately.
-func (bt *BeamThrottle) WaitN(ctx context.Context, n int) error {
+// WaitN blocks until n bytes are allowed in the given direction, or ctx
+// is cancelled. If the direction is unlimited (limit=0), returns
+// immediately. Choosing the direction matters: an asymmetric cap (say
+// 1 Gbit/s down, 100 Mbit/s up) only enforces correctly when each call
+// site selects the right one.
+func (bt *BeamThrottle) WaitN(ctx context.Context, dir Direction, n int) error {
 	bt.mu.RLock()
-	lim := bt.limiter
+	var lim *rate.Limiter
+	switch dir {
+	case DirectionUp:
+		lim = bt.upLimiter
+	case DirectionDown:
+		lim = bt.downLimiter
+	}
 	bt.mu.RUnlock()
 
 	if lim == nil {
 		return nil // unlimited
 	}
-
 	return lim.WaitN(ctx, n)
 }
 
-// Limit returns the current bandwidth limit in bytes/sec (0 = unlimited).
-func (bt *BeamThrottle) Limit() int64 {
+// UpLimit / DownLimit expose the current caps for diagnostics.
+func (bt *BeamThrottle) UpLimit() int64 {
 	bt.mu.RLock()
 	defer bt.mu.RUnlock()
-	return bt.limit
+	return bt.upLimit
 }
 
-// setLimit updates the rate limiter. 0 = unlimited (removes limiter).
-func (bt *BeamThrottle) setLimit(bytesPerSec int64) {
+func (bt *BeamThrottle) DownLimit() int64 {
+	bt.mu.RLock()
+	defer bt.mu.RUnlock()
+	return bt.downLimit
+}
+
+// setLimits writes both directions in one critical section so a watcher
+// update flips them together. A 0 value removes that direction's limiter
+// (unlimited).
+func (bt *BeamThrottle) setLimits(up, down int64) {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
 
-	bt.limit = bytesPerSec
-
-	if bytesPerSec <= 0 {
-		bt.limiter = nil
-		log.Println("beam-throttle: bandwidth unlimited")
-		return
+	if up != bt.upLimit {
+		bt.upLimiter = makeLimiter(up)
+		bt.upLimit = up
+		logLimit("up", up)
 	}
+	if down != bt.downLimit {
+		bt.downLimiter = makeLimiter(down)
+		bt.downLimit = down
+		logLimit("down", down)
+	}
+}
 
-	// Burst = 256KB or 1 second worth, whichever is larger
+func makeLimiter(bytesPerSec int64) *rate.Limiter {
+	if bytesPerSec <= 0 {
+		return nil
+	}
+	// Burst = up to 1s worth, capped at 256KB so a packed burst can't
+	// dwarf the running rate. Floor at 64KB so we don't stall tiny caps.
 	burst := int(bytesPerSec)
 	if burst > 256*1024 {
 		burst = 256 * 1024
@@ -83,34 +129,43 @@ func (bt *BeamThrottle) setLimit(bytesPerSec int64) {
 	if burst < 64*1024 {
 		burst = 64 * 1024
 	}
-
-	bt.limiter = rate.NewLimiter(rate.Limit(bytesPerSec), burst)
-	log.Printf("beam-throttle: bandwidth limit set to %d bytes/sec (%.1f MB/s)", bytesPerSec, float64(bytesPerSec)/(1024*1024))
+	return rate.NewLimiter(rate.Limit(bytesPerSec), burst)
 }
 
-// watchLimit polls Redis every 10 seconds for bandwidth limit changes.
-func (bt *BeamThrottle) watchLimit(ctx context.Context, rdb *redis.Client) {
+func logLimit(dir string, bytesPerSec int64) {
+	if bytesPerSec <= 0 {
+		log.Printf("beam-throttle: %s unlimited", dir)
+		return
+	}
+	log.Printf("beam-throttle: %s capped at %d bytes/sec (%.1f MB/s)", dir, bytesPerSec, float64(bytesPerSec)/(1024*1024))
+}
+
+// reloadFromRedis reads the current keys and applies them. The order
+// matters: per-direction keys win over the legacy symmetric key.
+func (bt *BeamThrottle) reloadFromRedis(ctx context.Context, rdb *redis.Client) {
+	legacy, _ := rdb.Get(ctx, "beam:bw_limit").Int64()
+	up, _ := rdb.Get(ctx, "beam:bw_up_internal").Int64()
+	down, _ := rdb.Get(ctx, "beam:bw_down_internal").Int64()
+
+	if up == 0 {
+		up = legacy
+	}
+	if down == 0 {
+		down = legacy
+	}
+	bt.setLimits(up, down)
+}
+
+// watchLimits polls Redis every 10 seconds for any cap change.
+func (bt *BeamThrottle) watchLimits(ctx context.Context, rdb *redis.Client) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			val, err := rdb.Get(ctx, "beam:bw_limit").Int64()
-			if err != nil {
-				// Key doesn't exist or Redis error — keep current limit
-				continue
-			}
-
-			bt.mu.RLock()
-			current := bt.limit
-			bt.mu.RUnlock()
-
-			if val != current {
-				bt.setLimit(val)
-			}
+			bt.reloadFromRedis(ctx, rdb)
 		}
 	}
 }
