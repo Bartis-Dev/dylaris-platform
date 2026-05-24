@@ -722,9 +722,31 @@ type BeamSettings struct {
 	ManualOverride   string          `json:"manualOverride"`   // Admin-configured override (empty = use auto-discovery)
 	PublicHost       string          `json:"publicHost"`       // Externally reachable hostname for discovered relays (e.g. beam.dylaris.com)
 	DiscoveredRelays []BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
-	BwLimit          int64           `json:"bwLimit"`          // Bytes/sec, 0 = unlimited
-	Enabled          bool            `json:"enabled"`
-	DownloadLink     string          `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
+	// BwLimit is the legacy single-value Node throttle (bytes/sec, 0 =
+	// unlimited). It stays the source of truth for the actual Node-side
+	// rate.Limiter so older deploys keep working. The four-direction
+	// fields below are saved alongside and will replace it once asymmetric
+	// node + dedicated relay throttles ship.
+	BwLimit      int64 `json:"bwLimit"`
+	Enabled      bool  `json:"enabled"`
+	DownloadLink string `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
+
+	// Throttle splits (bytes/sec, 0 = unlimited). Stored verbatim. Until
+	// the per-direction limiters land in node + relay these are advisory:
+	// BwLimit (above) is computed by SaveBeamSettings as the lower of
+	// the two internal directions so existing behavior is preserved.
+	BwUpInternal   int64 `json:"bwUpInternal"`
+	BwDownInternal int64 `json:"bwDownInternal"`
+	BwUpExternal   int64 `json:"bwUpExternal"`
+	BwDownExternal int64 `json:"bwDownExternal"`
+
+	// Reference values the admin records about the host hardware
+	// (datacenter internal + external uplink). Pure informational —
+	// never enforced. Help operators size their throttle values.
+	RefUpInternal   int64 `json:"refUpInternal"`
+	RefDownInternal int64 `json:"refDownInternal"`
+	RefUpExternal   int64 `json:"refUpExternal"`
+	RefDownExternal int64 `json:"refDownExternal"`
 }
 
 // GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)
@@ -756,12 +778,34 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		enabledStr = "true"
 	}
 
+	// Until per-direction throttles exist, the effective Node cap is the
+	// lower bound of the two internal directions (file write/read both
+	// flow over the internal hop). Operators see the same effect they'd
+	// get from the legacy single field if they leave the splits at 0.
+	effectiveBw := req.BwLimit
+	if req.BwUpInternal > 0 || req.BwDownInternal > 0 {
+		effectiveBw = minNonZeroInt64(req.BwUpInternal, req.BwDownInternal)
+	}
+
 	pairs := []struct{ k, v string }{
 		{"beam.relay_address", req.RelayAddress},
 		{"beam.public_host", strings.TrimSpace(req.PublicHost)},
-		{"beam.bw_limit", fmt.Sprintf("%d", req.BwLimit)},
+		{"beam.bw_limit", fmt.Sprintf("%d", effectiveBw)},
 		{"beam.enabled", enabledStr},
 		{"beam.download_link", req.DownloadLink},
+
+		// New per-direction throttle splits (advisory until relay-side
+		// throttle ships). Stored verbatim so the UI round-trips.
+		{"beam.bw_up_internal", fmt.Sprintf("%d", req.BwUpInternal)},
+		{"beam.bw_down_internal", fmt.Sprintf("%d", req.BwDownInternal)},
+		{"beam.bw_up_external", fmt.Sprintf("%d", req.BwUpExternal)},
+		{"beam.bw_down_external", fmt.Sprintf("%d", req.BwDownExternal)},
+
+		// Operator-recorded host hardware references (informational only).
+		{"beam.ref_up_internal", fmt.Sprintf("%d", req.RefUpInternal)},
+		{"beam.ref_down_internal", fmt.Sprintf("%d", req.RefDownInternal)},
+		{"beam.ref_up_external", fmt.Sprintf("%d", req.RefUpExternal)},
+		{"beam.ref_down_external", fmt.Sprintf("%d", req.RefDownExternal)},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -770,9 +814,9 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Publish bw_limit to Redis so Nodes can pick it up
+	// Publish the effective bw_limit to Redis so Nodes can pick it up.
 	if h.state.Redis != nil {
-		h.state.Redis.Set(r.Context(), "beam:bw_limit", fmt.Sprintf("%d", req.BwLimit), 0)
+		h.state.Redis.Set(r.Context(), "beam:bw_limit", fmt.Sprintf("%d", effectiveBw), 0)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -809,7 +853,35 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 		fmt.Sscanf(val, "%d", &settings.BwLimit)
 	}
 
+	// Per-direction throttle splits + operator-recorded references.
+	// Defaults stay 0 so they round-trip cleanly when never set.
+	fmt.Sscanf(getSetting("beam.bw_up_internal"), "%d", &settings.BwUpInternal)
+	fmt.Sscanf(getSetting("beam.bw_down_internal"), "%d", &settings.BwDownInternal)
+	fmt.Sscanf(getSetting("beam.bw_up_external"), "%d", &settings.BwUpExternal)
+	fmt.Sscanf(getSetting("beam.bw_down_external"), "%d", &settings.BwDownExternal)
+	fmt.Sscanf(getSetting("beam.ref_up_internal"), "%d", &settings.RefUpInternal)
+	fmt.Sscanf(getSetting("beam.ref_down_internal"), "%d", &settings.RefDownInternal)
+	fmt.Sscanf(getSetting("beam.ref_up_external"), "%d", &settings.RefUpExternal)
+	fmt.Sscanf(getSetting("beam.ref_down_external"), "%d", &settings.RefDownExternal)
+
 	return settings
+}
+
+// minNonZeroInt64 returns the smaller of two values, treating 0 as
+// "unlimited" so it never wins over a real cap. Used to fold the two
+// internal-direction throttle splits into a single legacy bw_limit
+// until per-direction enforcement ships.
+func minNonZeroInt64(a, b int64) int64 {
+	if a == 0 {
+		return b
+	}
+	if b == 0 {
+		return a
+	}
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // --- Routing Mode Settings ---

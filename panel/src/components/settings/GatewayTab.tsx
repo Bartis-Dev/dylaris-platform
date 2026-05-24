@@ -21,6 +21,22 @@ interface BeamSettings {
     bwLimit: number;
     enabled: boolean;
     downloadLink: string;
+
+    // Per-direction throttle splits (bytes/sec, 0 = unlimited). Stored
+    // alongside bwLimit; Core folds the internal pair into bwLimit until
+    // the per-direction enforcement ships.
+    bwUpInternal?: number;
+    bwDownInternal?: number;
+    bwUpExternal?: number;
+    bwDownExternal?: number;
+
+    // Operator-recorded host hardware references. Pure informational —
+    // never enforced. Surfaced as captions on the throttle inputs so
+    // admins can size limits against what the host actually provides.
+    refUpInternal?: number;
+    refDownInternal?: number;
+    refUpExternal?: number;
+    refDownExternal?: number;
 }
 
 const BW_UNITS = [
@@ -100,31 +116,128 @@ const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
 // Beam panel
 // ─────────────────────────────────────────────
 
-// Editable Beam fields compared for dirty detection. bwLimit is the resolved
-// bytes value (derived from the unlimited toggle + value/unit inputs).
+// BwField is one cell of the per-direction throttle grid: a single
+// Mbit/s number input with the operator's matching hardware-reference
+// value (refValue) surfaced as a caption underneath, so caps get
+// chosen against real link capacity instead of typed blind.
+function BwField({
+    label,
+    value,
+    refValue,
+    onChange,
+}: {
+    label: string;
+    value: number;
+    refValue?: number;
+    onChange: (v: number) => void;
+}) {
+    const refMbit = refValue ? Math.round(refValue / MBIT_TO_BPS) : 0;
+    return (
+        <div className="flex flex-col gap-[5px]">
+            <label className="input-label">{label}</label>
+            <div className="flex items-center gap-2">
+                <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={value || ''}
+                    onChange={e => onChange(Math.max(0, parseInt(e.target.value) || 0))}
+                    placeholder="0"
+                    className="input-field w-28 text-right"
+                />
+                <span className="text-[11px] font-mono text-(--base-06)">Mbit/s</span>
+            </div>
+            <p className="text-[10px] text-(--base-06)">
+                {value === 0 ? 'Unlimited' : `Capped at ${value} Mbit/s`}
+                {refMbit > 0 ? ` · host: ${refMbit} Mbit/s` : ''}
+            </p>
+        </div>
+    );
+}
+
+function RefField({
+    label,
+    value,
+    onChange,
+}: {
+    label: string;
+    value: number;
+    onChange: (v: number) => void;
+}) {
+    return (
+        <div className="flex flex-col gap-[5px]">
+            <label className="input-label">{label}</label>
+            <div className="flex items-center gap-2">
+                <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={value || ''}
+                    onChange={e => onChange(Math.max(0, parseInt(e.target.value) || 0))}
+                    placeholder="0"
+                    className="input-field w-28 text-right"
+                />
+                <span className="text-[11px] font-mono text-(--base-06)">Mbit/s</span>
+            </div>
+        </div>
+    );
+}
+
+// Bandwidth values flow as bytes/sec through the API but the operator
+// thinks in Mbit/s — this is the canonical UI unit. 1 Mbit/s = 125,000
+// bytes/sec (decimal Mbit, matches what hosters advertise on uplinks).
+const MBIT_TO_BPS = 125_000;
+function mbitToBps(mbit: number): number {
+    if (!Number.isFinite(mbit) || mbit <= 0) return 0;
+    return Math.round(mbit * MBIT_TO_BPS);
+}
+function bpsToMbit(bps: number | undefined): number {
+    if (!bps || bps <= 0) return 0;
+    return Math.round(bps / MBIT_TO_BPS);
+}
+
+// Snapshot of every field a dirty-check should follow. Everything is
+// numeric in bytes/sec for the bw/ref fields so the JSON.stringify
+// equality check is exact.
 interface BeamEditableSnapshot {
     relayAddress: string;
     downloadLink: string;
     enabled: boolean;
-    bwLimit: number;
+    bwUpInternal: number;
+    bwDownInternal: number;
+    bwUpExternal: number;
+    bwDownExternal: number;
+    refUpInternal: number;
+    refDownInternal: number;
+    refUpExternal: number;
+    refDownExternal: number;
 }
 
-function beamSnapshot(s: BeamSettings, unlimited: boolean, bwValue: number, bwUnit: string): BeamEditableSnapshot {
+function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
     return {
         relayAddress: s.relayAddress,
         downloadLink: s.downloadLink,
         enabled: s.enabled,
-        bwLimit: unlimited ? 0 : displayToBw(bwValue, bwUnit),
+        bwUpInternal: s.bwUpInternal ?? 0,
+        bwDownInternal: s.bwDownInternal ?? 0,
+        bwUpExternal: s.bwUpExternal ?? 0,
+        bwDownExternal: s.bwDownExternal ?? 0,
+        refUpInternal: s.refUpInternal ?? 0,
+        refDownInternal: s.refDownInternal ?? 0,
+        refUpExternal: s.refUpExternal ?? 0,
+        refDownExternal: s.refDownExternal ?? 0,
     };
 }
 
 function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
-    const [settings, setSettings] = useState<BeamSettings>({ relayAddress: '', bwLimit: 0, enabled: true, downloadLink: '' });
+    const [settings, setSettings] = useState<BeamSettings>({
+        relayAddress: '',
+        bwLimit: 0,
+        enabled: true,
+        downloadLink: '',
+    });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [bwValue, setBwValue] = useState(0);
-    const [bwUnit, setBwUnit] = useState('MB/s');
-    const [unlimited, setUnlimited] = useState(true);
 
     // Snapshot of last-saved editable fields for dirty detection.
     const snapshotRef = useRef<BeamEditableSnapshot | null>(null);
@@ -133,18 +246,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         getBeamSettings().then(res => {
             if (res.success && res.settings) {
                 setSettings(res.settings);
-                const isUnlimited = res.settings.bwLimit === 0;
-                setUnlimited(isUnlimited);
-                let loadedValue = 0;
-                let loadedUnit = 'MB/s';
-                if (!isUnlimited) {
-                    const d = bwToDisplay(res.settings.bwLimit);
-                    loadedValue = d.value;
-                    loadedUnit = d.unit;
-                    setBwValue(d.value);
-                    setBwUnit(d.unit);
-                }
-                snapshotRef.current = beamSnapshot(res.settings, isUnlimited, loadedValue, loadedUnit);
+                snapshotRef.current = beamSnapshot(res.settings);
             }
             setLoading(false);
         });
@@ -152,11 +254,13 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
 
     const handleSave = async () => {
         setSaving(true);
-        const bwLimit = unlimited ? 0 : displayToBw(bwValue, bwUnit);
-        const res = await saveBeamSettings({ ...settings, bwLimit });
+        // bwLimit stays in the payload for back-compat — Core will overwrite
+        // it from min(bwUpInternal, bwDownInternal) when those are non-zero,
+        // so we just pass through whatever the API loaded.
+        const res = await saveBeamSettings(settings);
         showToast(res.success ? 'Beam settings saved.' : (res.message || 'Save failed.'), res.success);
         if (res.success) {
-            snapshotRef.current = beamSnapshot(settings, unlimited, bwValue, bwUnit);
+            snapshotRef.current = beamSnapshot(settings);
         }
         setSaving(false);
     };
@@ -164,24 +268,38 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
     const handleDiscard = () => {
         const snap = snapshotRef.current;
         if (!snap) return;
-        setSettings(s => ({ ...s, relayAddress: snap.relayAddress, downloadLink: snap.downloadLink, enabled: snap.enabled }));
-        const isUnlimited = snap.bwLimit === 0;
-        setUnlimited(isUnlimited);
-        if (!isUnlimited) {
-            const d = bwToDisplay(snap.bwLimit);
-            setBwValue(d.value);
-            setBwUnit(d.unit);
-        } else {
-            setBwValue(0);
-            setBwUnit('MB/s');
-        }
+        setSettings(s => ({
+            ...s,
+            relayAddress: snap.relayAddress,
+            downloadLink: snap.downloadLink,
+            enabled: snap.enabled,
+            bwUpInternal: snap.bwUpInternal,
+            bwDownInternal: snap.bwDownInternal,
+            bwUpExternal: snap.bwUpExternal,
+            bwDownExternal: snap.bwDownExternal,
+            refUpInternal: snap.refUpInternal,
+            refDownInternal: snap.refDownInternal,
+            refUpExternal: snap.refUpExternal,
+            refDownExternal: snap.refDownExternal,
+        }));
     };
 
     const dirty =
         snapshotRef.current !== null &&
-        JSON.stringify(beamSnapshot(settings, unlimited, bwValue, bwUnit)) !== JSON.stringify(snapshotRef.current);
+        JSON.stringify(beamSnapshot(settings)) !== JSON.stringify(snapshotRef.current);
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
+
+    // ─── Per-direction bandwidth input ──────────────────────────────
+    // Renders a labelled Mbit/s input with the operator's reference
+    // value as an info caption below ("Host says: 1000 Mbit/s") so
+    // limits get sized against real hardware, not guesses.
+    type BwKey = 'bwUpInternal' | 'bwDownInternal' | 'bwUpExternal' | 'bwDownExternal';
+    type RefKey = 'refUpInternal' | 'refDownInternal' | 'refUpExternal' | 'refDownExternal';
+    const setBwField = (k: BwKey, mbit: number) =>
+        setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
+    const setRefField = (k: RefKey, mbit: number) =>
+        setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
 
     if (loading) return <LoadingState />;
 
@@ -248,34 +366,96 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 </div>
             </div>
 
+            {/* ─── Throttle (enforced) ─── */}
             <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Bandwidth Limit</h3>
-                <p className="text-xs text-(--base-06)">Global bandwidth cap shared across all Beam transfers on each node. Fair sharing is automatic.</p>
-                <div className="flex items-center justify-between">
-                    <label className="input-label">Unlimited</label>
-                    <button
-                        onClick={() => setUnlimited(!unlimited)}
-                        className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        role="switch"
-                        aria-checked={unlimited}
-                    >
-                        <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
+                <div>
+                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1">Bandwidth Throttle</h3>
+                    <p className="text-xs text-(--base-06)">
+                        Caps applied across all Beam transfers. Values in <span className="font-mono">Mbit/s</span> — <strong>0 = unlimited</strong>.
+                        Fair sharing is automatic within each cap (max-min via rate.Limiter).
+                    </p>
+                    <p className="text-[11px] text-(--base-05) mt-1.5">
+                        Note: until the per-direction limiter ships in node + relay, the lower of <em>Up Internal</em> and <em>Down Internal</em> is folded into the legacy single throttle and applied symmetrically on the Node. The external pair is stored for the upcoming relay-side throttle.
+                    </p>
                 </div>
-                {!unlimited && (
-                    <div className="flex gap-2">
-                        <input
-                            type="number"
-                            min={1}
-                            value={bwValue}
-                            onChange={e => setBwValue(Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field w-28 text-right"
+
+                <div>
+                    <h4 className="mono-label mb-2">Internal (Node ↔ Relay over the overlay)</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                        <BwField
+                            label="Up"
+                            value={bpsToMbit(settings.bwUpInternal)}
+                            refValue={settings.refUpInternal}
+                            onChange={v => setBwField('bwUpInternal', v)}
                         />
-                        <select value={bwUnit} onChange={e => setBwUnit(e.target.value)} className="input-field w-28">
-                            {BW_UNITS.map(u => <option key={u.label} value={u.label}>{u.label}</option>)}
-                        </select>
+                        <BwField
+                            label="Down"
+                            value={bpsToMbit(settings.bwDownInternal)}
+                            refValue={settings.refDownInternal}
+                            onChange={v => setBwField('bwDownInternal', v)}
+                        />
                     </div>
-                )}
+                </div>
+
+                <div>
+                    <h4 className="mono-label mb-2">External (Relay ↔ Beam.exe over the internet)</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                        <BwField
+                            label="Up"
+                            value={bpsToMbit(settings.bwUpExternal)}
+                            refValue={settings.refUpExternal}
+                            onChange={v => setBwField('bwUpExternal', v)}
+                        />
+                        <BwField
+                            label="Down"
+                            value={bpsToMbit(settings.bwDownExternal)}
+                            refValue={settings.refDownExternal}
+                            onChange={v => setBwField('bwDownExternal', v)}
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* ─── Reference (host hardware — informational only) ─── */}
+            <div className="card p-5 space-y-4">
+                <div>
+                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1">Host Hardware Reference</h3>
+                    <p className="text-xs text-(--base-06)">
+                        Record what the host actually provides. Pure informational — never enforced. Helps you size the throttle values above against what the link can really do. Values in <span className="font-mono">Mbit/s</span>, leave at 0 if unknown.
+                    </p>
+                </div>
+
+                <div>
+                    <h4 className="mono-label mb-2">Internal (datacenter network)</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                        <RefField
+                            label="Up"
+                            value={bpsToMbit(settings.refUpInternal)}
+                            onChange={v => setRefField('refUpInternal', v)}
+                        />
+                        <RefField
+                            label="Down"
+                            value={bpsToMbit(settings.refDownInternal)}
+                            onChange={v => setRefField('refDownInternal', v)}
+                        />
+                    </div>
+                </div>
+
+                <div>
+                    <h4 className="mono-label mb-2">External (public uplink)</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                        <RefField
+                            label="Up"
+                            value={bpsToMbit(settings.refUpExternal)}
+                            onChange={v => setRefField('refUpExternal', v)}
+                        />
+                        <RefField
+                            label="Down"
+                            value={bpsToMbit(settings.refDownExternal)}
+                            onChange={v => setRefField('refDownExternal', v)}
+                        />
+                    </div>
+                </div>
             </div>
         </div>
     );
