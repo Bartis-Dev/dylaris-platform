@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Upload, X, CircleCheck, CircleAlert, Trash2 } from 'lucide-react';
+import { Upload, X, CircleCheck, CircleAlert, Trash2, Loader2 } from 'lucide-react';
 import {
     useUploadManager,
     jobSpeedBps,
@@ -150,7 +150,7 @@ export default function UploadManagerWidget() {
                     <Upload size={16} />
                 )}
                 {mgr.activeCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-(--accent-light) text-(--base-00) text-[10px] font-mono font-bold flex items-center justify-center leading-none">
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-(--accent-light) text-(--base-00) text-[10px] font-mono font-bold flex items-center justify-center leading-none">
                         {mgr.activeCount}
                     </span>
                 )}
@@ -220,7 +220,11 @@ function UploadRow({ job }: { job: UploadJob }) {
     const bps = jobSpeedBps(job);
     const eta = jobEtaSeconds(job);
 
-    const isLive = job.status === 'running' || job.status === 'cancelling';
+    const isLive =
+        job.status === 'running' ||
+        job.status === 'retrying' ||
+        job.status === 'cancelling';
+    const isRetrying = job.status === 'retrying';
 
     const barColor =
         job.status === 'error'
@@ -229,7 +233,9 @@ function UploadRow({ job }: { job: UploadJob }) {
                 ? 'bg-(--warning-light)'
                 : job.status === 'done'
                     ? 'bg-(--success-light)'
-                    : 'bg-(--accent-light)';
+                    : isRetrying
+                        ? 'bg-(--warning-light)'
+                        : 'bg-(--accent-light)';
 
     return (
         <div className="px-3 py-2.5 border-b border-(--base-03) last:border-b-0">
@@ -243,6 +249,7 @@ function UploadRow({ job }: { job: UploadJob }) {
                     </div>
                 </div>
                 <div className="shrink-0 flex items-center gap-1">
+                    {isRetrying && <Loader2 size={13} className="animate-spin text-(--warning-light)" />}
                     {job.status === 'done' && <CircleCheck size={14} className="text-(--success-light)" />}
                     {job.status === 'error' && <CircleAlert size={14} className="text-(--error-light)" />}
                     {isLive && (
@@ -259,6 +266,15 @@ function UploadRow({ job }: { job: UploadJob }) {
                 </div>
             </div>
 
+            {isRetrying && (
+                // Pulled-out warning row so the retry state is visible
+                // without competing with the speed/ETA line.
+                <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-(--warning-light) font-medium">
+                    <Loader2 size={11} className="animate-spin" />
+                    <span>Reconnecting… retrying upload</span>
+                </div>
+            )}
+
             <div className="mt-1.5 h-1 rounded-full bg-(--base-03) overflow-hidden">
                 <div
                     className={`h-full rounded-full ${barColor}`}
@@ -271,7 +287,9 @@ function UploadRow({ job }: { job: UploadJob }) {
                     {Math.round(p * 100)}% — {formatBytes(job.sentBytes)} / {formatBytes(job.size)}
                 </span>
                 <span className="tabular-nums">
-                    {isLive ? (
+                    {isRetrying ? (
+                        'retrying…'
+                    ) : isLive ? (
                         <>
                             {formatBytesPerSec(bps)} · ETA {formatEta(eta)}
                         </>

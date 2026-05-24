@@ -16,6 +16,7 @@ import React, {
 
 export type UploadStatus =
     | 'running'
+    | 'retrying'
     | 'cancelling'
     | 'cancelled'
     | 'done'
@@ -131,7 +132,7 @@ export function UploadManagerProvider({ children }: { children: React.ReactNode 
     const requestCancel: UploadManagerCtx['requestCancel'] = useCallback(id => {
         const job = jobsRef.current.find(j => j.id === id);
         if (!job) return;
-        if (job.status !== 'running') return;
+        if (job.status !== 'running' && job.status !== 'retrying') return;
         // Flip to cancelling immediately so the UI reflects the intent
         // even before the Go side acknowledges.
         setJobs(prev => prev.map(j => (j.id === id ? { ...j, status: 'cancelling' as UploadStatus } : j)));
@@ -164,10 +165,13 @@ export function UploadManagerProvider({ children }: { children: React.ReactNode 
         return () => clearTimeout(t);
     }, [jobs]);
 
-    const activeCount = jobs.filter(j => j.status === 'running' || j.status === 'cancelling').length;
+    // "Active" counts retrying jobs too — they're still in flight from the
+    // user's perspective, just paused mid-chunk while we re-handshake.
+    const isLive = (s: UploadStatus) => s === 'running' || s === 'retrying' || s === 'cancelling';
+    const activeCount = jobs.filter(j => isLive(j.status)).length;
 
     const aggregateProgress = useMemo(() => {
-        const running = jobs.filter(j => j.status === 'running' || j.status === 'cancelling');
+        const running = jobs.filter(j => isLive(j.status));
         if (running.length === 0) return 0;
         const sentTotal = running.reduce((s, j) => s + j.sentBytes, 0);
         const sizeTotal = running.reduce((s, j) => s + Math.max(j.size, 1), 0);
@@ -175,9 +179,7 @@ export function UploadManagerProvider({ children }: { children: React.ReactNode 
     }, [jobs]);
 
     const isServerLocked = useCallback((serverUuid: string) => {
-        return jobs.some(
-            j => j.serverUuid === serverUuid && (j.status === 'running' || j.status === 'cancelling'),
-        );
+        return jobs.some(j => j.serverUuid === serverUuid && isLive(j.status));
     }, [jobs]);
 
     const value: UploadManagerCtx = {
@@ -223,7 +225,7 @@ export function useServerUploadLock(serverUuid: string | undefined): boolean {
 // Computed lazily by readers rather than stored on the job so we don't
 // pay a re-render on every chunk just to refresh a derived number.
 export function jobSpeedBps(job: UploadJob): number {
-    if (job.status !== 'running' && job.status !== 'cancelling') return 0;
+    if (job.status !== 'running' && job.status !== 'retrying' && job.status !== 'cancelling') return 0;
     if (job.samples.length < 2) return 0;
     const first = job.samples[0];
     const last = job.samples[job.samples.length - 1];

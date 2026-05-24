@@ -14,6 +14,7 @@ import {
     reportUploadStart,
     reportUploadProgress,
     reportUploadFinish,
+    reportUploadUpdate,
     isServerUploadLocked,
 } from '@/lib/uploadManager';
 
@@ -312,48 +313,77 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 await app.BeamUploadStart!(uploadID, path, file.name, strategy ?? '', file.size);
                 devLog('beam.upload', 'info', 'BeamUploadStart OK — streaming chunks');
 
-                // sendChunk wraps a single BeamUploadChunk call with
-                // up to MAX_RETRIES auto-resume attempts. Each retry
-                // tears down the dead session via BeamUploadResume —
-                // which forces a fresh ConnectToServer (potentially a
-                // different relay) and reopens the gRPC stream with
-                // the same upload id, so the Node reattaches to the
-                // existing temp file at its current size. WriteAt is
-                // idempotent on identical offsets, so re-sending the
-                // last-failed chunk is harmless.
-                const MAX_RETRIES = 3;
+                // sendChunk wraps a single BeamUploadChunk call with a
+                // time-budgeted retry loop. The loop tries the chunk,
+                // tears the dead session down via BeamUploadResume on
+                // failure (forces a fresh ConnectToServer — picks up
+                // whichever relay Core hands out), and re-attempts.
+                //
+                // Two thresholds tuned for UX:
+                //   * RETRY_VISIBLE_AFTER_MS — until this elapses,
+                //     transient blips stay invisible (running status,
+                //     no flicker). The user only sees "retrying" when
+                //     the failure persists past this point.
+                //   * RETRY_GIVE_UP_AFTER_MS — past this, we throw a
+                //     user-facing "Connection unstable" message so
+                //     the upload row clearly says try again rather
+                //     than hanging in retry forever.
+                //
+                // WriteAt on the Node side is idempotent on identical
+                // offsets, so re-sending the failed chunk after a
+                // resume is safe.
+                const RETRY_VISIBLE_AFTER_MS = 5000;
+                const RETRY_GIVE_UP_AFTER_MS = 20000;
                 const RETRY_BACKOFF_MS = 2000;
                 const sendChunk = async (dataB64: string, off: number, chunkIdx: number) => {
-                    let lastErr: unknown;
-                    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                    let firstFailureAt = 0;
+                    let attempt = 0;
+                    let visibleFlipped = false;
+                    while (true) {
                         if (cancelRequested) throw new Error('cancelled');
                         try {
                             await app.BeamUploadChunk!(uploadID, dataB64, off);
-                            if (attempt > 0) {
-                                devLog('beam.upload', 'info', `chunk #${chunkIdx} succeeded after ${attempt} retry/retries`);
+                            if (visibleFlipped) {
+                                // Recovered from a visible retry — back to running.
+                                reportUploadUpdate(uploadID, { status: 'running' });
+                                devLog('beam.upload', 'info', `chunk #${chunkIdx} recovered after ${attempt} retry/retries`);
+                            } else if (attempt > 0) {
+                                devLog('beam.upload', 'info', `chunk #${chunkIdx} succeeded after ${attempt} silent retry/retries`);
                             }
                             return;
                         } catch (err) {
-                            lastErr = err;
+                            attempt++;
+                            if (firstFailureAt === 0) firstFailureAt = Date.now();
+                            const elapsed = Date.now() - firstFailureAt;
                             const m = err instanceof Error ? err.message : String(err);
-                            if (attempt === MAX_RETRIES || !app.BeamUploadResume) {
-                                devLog('beam.upload', 'error', `chunk #${chunkIdx} at offset ${off} gave up after ${attempt} retry/retries: ${m}`);
-                                throw err;
+
+                            if (elapsed > RETRY_GIVE_UP_AFTER_MS || !app.BeamUploadResume) {
+                                devLog('beam.upload', 'error', `chunk #${chunkIdx} gave up after ${attempt} attempt(s) / ${elapsed}ms: ${m}`);
+                                throw new Error('Connection unstable — please try again. Underlying: ' + m);
                             }
-                            devLog('beam.upload', 'warn', `chunk #${chunkIdx} at offset ${off} failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${m} — resuming in ${RETRY_BACKOFF_MS}ms`);
+
+                            if (!visibleFlipped && elapsed >= RETRY_VISIBLE_AFTER_MS) {
+                                // Cross the visibility threshold — surface "retrying"
+                                // so the user knows we're working on it.
+                                reportUploadUpdate(uploadID, { status: 'retrying' });
+                                visibleFlipped = true;
+                            }
+
+                            devLog('beam.upload', 'warn', `chunk #${chunkIdx} at offset ${off} failed (attempt ${attempt}, elapsed ${elapsed}ms): ${m} — resuming in ${RETRY_BACKOFF_MS}ms`);
                             await new Promise(r => setTimeout(r, RETRY_BACKOFF_MS));
                             if (cancelRequested) throw new Error('cancelled');
+
                             try {
                                 await app.BeamUploadResume(uploadID, serverUuid ?? '', path, file.name, strategy ?? '', file.size);
                                 devLog('beam.upload', 'info', `resumed upload "${file.name}" — retrying chunk #${chunkIdx}`);
                             } catch (resumeErr) {
+                                // Resume failed too — the loop continues; the time
+                                // budget above caps how long we keep trying.
                                 const rm = resumeErr instanceof Error ? resumeErr.message : String(resumeErr);
-                                devLog('beam.upload', 'error', `resume failed: ${rm}`);
-                                throw resumeErr;
+                                devLog('beam.upload', 'warn', `resume attempt ${attempt} failed (elapsed ${elapsed}ms): ${rm}`);
                             }
                         }
                     }
-                    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
                 };
 
                 let offset = 0;
