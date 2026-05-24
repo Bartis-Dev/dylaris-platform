@@ -726,9 +726,31 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 // --- Helpers ---
 
 // isProtectedFile checks if a path points to a protected system file.
+//
+// Used by the gRPC file handlers and the SFTP virtual-FS adapter to reject
+// writes/deletes/renames against names the platform manages internally.
+// SFTP additionally uses this set as a *listing* filter (entries excluded
+// here never show up in Readdir / Stat output), which is why
+// ".dylaris-backups" is included — node-local backups must stay completely
+// invisible from the SFTP file browser, including the parent directory.
+//
+// The check also fires when ANY component of the path is .dylaris-backups,
+// so a user that somehow guesses ".dylaris-backups/foo.tar.gz" can't write
+// or rename it through the regular file API. The dedicated backup RPCs
+// (handleBackupList/Open/Delete in grpc_backup.go) reach those files
+// without going through this guard.
 func isProtectedFile(path string) bool {
-	name := filepath.Base(filepath.Clean(path))
-	return name == ".active_server" || name == ".node_config.json"
+	clean := filepath.Clean(path)
+	name := filepath.Base(clean)
+	if name == ".active_server" || name == ".node_config.json" || name == ".dylaris-backups" {
+		return true
+	}
+	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
+		if part == ".dylaris-backups" {
+			return true
+		}
+	}
+	return false
 }
 
 func errorMsg(reqID string, code int32, message string) *pb.NodeMessage {

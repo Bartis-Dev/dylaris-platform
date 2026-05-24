@@ -358,7 +358,13 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 
 	var files []*pb.BeamFileInfo
 	for _, e := range entries {
-		if e.Name() == ".active_server" {
+		// Hidden platform-managed entries — keep them out of the file
+		// browser entirely. .dylaris-backups is the node-local backup
+		// store: still readable via the dedicated DownloadFile path
+		// (validateBeamPathRead allows reads on dot-prefixed names) so
+		// Beam.exe can grab an archive when given a direct path, but
+		// it must not appear in a regular directory listing.
+		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" {
 			continue
 		}
 		info, err := e.Info()
