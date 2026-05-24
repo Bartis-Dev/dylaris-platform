@@ -216,14 +216,31 @@ export const unlinkServerFromProxy = (serverId: number) =>
     fetchAPI(`/servers/${serverId}/proxy`, { method: 'DELETE' });
 
 // --- BACKUPS ---
+export type BackupProvider = 'local' | 's3' | 'node-local' | 'shared';
+
 export interface BackupStorage {
     id: number;
     name: string;
-    provider: 'local' | 's3';
+    provider: BackupProvider;
     config: Record<string, unknown>;
     isDefault: boolean;
     createdAt?: string;
 }
+
+// Global backup-mode + quota config (persisted server-side under
+// backup.mode / backup.quota_per_server_gb / backup.share_quota_with_server).
+// The mode picks which provider the panel exposes as creatable; per-instance
+// credentials still live in the BackupStorage rows above.
+export interface BackupConfig {
+    mode: 'shared' | 's3' | 'node-local';
+    quotaPerServerGb: number;        // 0 = unlimited
+    shareQuotaWithServer: boolean;
+}
+
+export const getBackupConfig = (): Promise<{ success: boolean; settings?: BackupConfig }> =>
+    fetchAPI('/settings/backup');
+export const saveBackupConfig = (cfg: BackupConfig): Promise<{ success: boolean }> =>
+    fetchAPI('/settings/backup', { method: 'POST', body: JSON.stringify(cfg) });
 export interface BackupJob {
     id: number;
     serverId: number;

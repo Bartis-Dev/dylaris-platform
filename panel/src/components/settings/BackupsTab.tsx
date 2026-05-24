@@ -2,11 +2,14 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable,
+    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable, Server, Info,
 } from 'lucide-react';
 import {
     BackupStorage,
+    BackupConfig,
+    BackupProvider,
     listBackupStorages, createBackupStorage, updateBackupStorage, deleteBackupStorage, testBackupStorage,
+    getBackupConfig, saveBackupConfig,
 } from '@/lib/api';
 import LoadingState from '@/components/LoadingState';
 
@@ -32,11 +35,181 @@ const EMPTY_S3: S3Config = {
     forcePathStyle: true,
 };
 
+// The DB provider column is still "local" for the legacy NFS/shared
+// implementation — the UI just relabels it "shared". When the admin picks
+// "shared" mode in the panel, the BackupStorage rows continue to be
+// provider == "local" on disk; the factory aliases the two so either name
+// resolves to the same implementation.
+const PROVIDER_FOR_MODE: Record<BackupConfig['mode'], BackupProvider> = {
+    shared: 'local',
+    s3: 's3',
+    'node-local': 'node-local',
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Storage mode picker — the three options the admin chooses between.
+// Lives at the top of the tab so the *_storages section below can hide
+// the "Add Local" / "Add S3" buttons that don't match the current mode.
+// ─────────────────────────────────────────────────────────────────────
+function StorageModeCard({
+    config,
+    onChange,
+}: {
+    config: BackupConfig;
+    onChange: (next: BackupConfig) => void;
+}) {
+    const setMode = (mode: BackupConfig['mode']) => onChange({ ...config, mode });
+
+    return (
+        <div className="card card-pad space-y-4">
+            <div>
+                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-1">Storage Mode</h3>
+                <p className="text-xs text-(--base-06)">Pick where backup archives live. Per-job credentials (S3 keys, NFS paths) still come from the Storages list below.</p>
+            </div>
+
+            <div className="space-y-2">
+                <ModeOption
+                    selected={config.mode === 's3'}
+                    onClick={() => setMode('s3')}
+                    icon={<Cloud size={16} className="text-(--accent-light)" />}
+                    title="S3 / Object Storage"
+                    desc="Backups stream to a configured bucket (Hetzner, AWS, R2). Independent of the Nodes — survives any single host."
+                />
+                <ModeOption
+                    selected={config.mode === 'node-local'}
+                    onClick={() => setMode('node-local')}
+                    icon={<Server size={16} className="text-(--primary-light)" />}
+                    title="Node-local (on MC host)"
+                    desc="Backups are stored inside each server's container folder under a hidden .dylaris-backups/ subdirectory. They migrate automatically when the server moves nodes. Separate quota tracking still applies."
+                />
+                <ModeOption
+                    selected={config.mode === 'shared'}
+                    onClick={() => setMode('shared')}
+                    icon={<HardDrive size={16} className="text-(--base-07)" />}
+                    title="Shared filesystem (NFS / network mount)"
+                    desc="Backups land in a directory the Core reaches over a network mount. Use when every Core replica sees the same disk."
+                />
+            </div>
+
+            {config.mode === 'node-local' && (
+                <NodeLocalQuotaPanel config={config} onChange={onChange} />
+            )}
+        </div>
+    );
+}
+
+function ModeOption({
+    selected, onClick, icon, title, desc,
+}: {
+    selected: boolean;
+    onClick: () => void;
+    icon: React.ReactNode;
+    title: string;
+    desc: string;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`w-full text-left rounded-md border px-3 py-2.5 transition flex items-start gap-3
+                ${selected
+                    ? 'border-(--accent) bg-(--accent)/8 shadow-[0_0_0_3px_rgba(112,72,200,0.10)]'
+                    : 'border-(--base-04) bg-(--base-03) hover:border-(--base-05)'}`}
+        >
+            <span
+                aria-hidden
+                className={`mt-1 inline-flex w-3.5 h-3.5 rounded-full border-2 shrink-0
+                    ${selected ? 'border-(--accent) bg-(--accent)' : 'border-(--base-05) bg-transparent'}`}
+            />
+            <span className="mt-0.5 shrink-0">{icon}</span>
+            <span className="min-w-0">
+                <span className="block text-sm font-medium text-(--base-09)">{title}</span>
+                <span className="block text-xs text-(--base-06) mt-0.5">{desc}</span>
+            </span>
+        </button>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Quota controls shown only when mode == "node-local". The hard quota
+// is currently advisory at the filesystem level — Core checks current
+// usage before approving a new run. XFS / ZFS project quota
+// enforcement is on the roadmap; the banner below makes the gap
+// visible to the admin so nothing's pretending to be enforced.
+// ─────────────────────────────────────────────────────────────────────
+function NodeLocalQuotaPanel({
+    config, onChange,
+}: {
+    config: BackupConfig;
+    onChange: (next: BackupConfig) => void;
+}) {
+    const unlimited = config.quotaPerServerGb === 0;
+    return (
+        <div className="rounded-md border border-(--base-04) bg-(--base-02) p-3 space-y-3">
+            <div className="flex items-start gap-2 text-xs text-(--base-06)">
+                <Info size={13} className="mt-0.5 shrink-0" />
+                <span>
+                    Per-server backup-folder caps. Enforcement is application-level — Core checks current usage before approving a new run. Filesystem-level enforcement (XFS / ZFS project quotas) requires extra host setup and is a follow-up.
+                </span>
+            </div>
+
+            <div className="flex items-center gap-3">
+                <label className="input-label whitespace-nowrap">Backup quota per server</label>
+                <div className="flex items-center gap-2">
+                    <input
+                        type="number"
+                        min={0}
+                        disabled={unlimited}
+                        value={unlimited ? '' : config.quotaPerServerGb}
+                        onChange={(e) => {
+                            const n = Math.max(0, parseInt(e.target.value || '0', 10));
+                            onChange({ ...config, quotaPerServerGb: n });
+                        }}
+                        className="input-field input-sm w-24 font-mono"
+                        placeholder="10"
+                    />
+                    <span className="text-xs text-(--base-06)">GB</span>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-(--base-08) cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={unlimited}
+                        onChange={(e) => onChange({
+                            ...config,
+                            quotaPerServerGb: e.target.checked ? 0 : Math.max(1, config.quotaPerServerGb || 10),
+                        })}
+                        className="accent-(--accent)"
+                    />
+                    unlimited
+                </label>
+            </div>
+
+            <label className="flex items-start gap-2 text-xs text-(--base-08) cursor-pointer">
+                <input
+                    type="checkbox"
+                    checked={config.shareQuotaWithServer}
+                    onChange={(e) => onChange({ ...config, shareQuotaWithServer: e.target.checked })}
+                    className="accent-(--accent) mt-0.5"
+                />
+                <span>
+                    <span className="block">Share quota with server container storage</span>
+                    <span className="block text-(--base-06)">
+                        When on, the backup folder is folded into the server's main disk quota — one combined cap covers both, no separate budget.
+                    </span>
+                </span>
+            </label>
+        </div>
+    );
+}
+
 export default function BackupsTab() {
     const [storages, setStorages] = useState<BackupStorage[]>([]);
+    const [config, setConfig] = useState<BackupConfig | null>(null);
+    const [savedConfig, setSavedConfig] = useState<BackupConfig | null>(null);
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<BackupStorage | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [saving, setSaving] = useState(false);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -45,17 +218,29 @@ export default function BackupsTab() {
 
     const reload = useCallback(async () => {
         setLoading(true);
-        const res = await listBackupStorages();
-        if (res.success && res.storages) setStorages(res.storages);
+        const [stRes, cfgRes] = await Promise.all([
+            listBackupStorages(),
+            getBackupConfig(),
+        ]);
+        if (stRes.success && stRes.storages) setStorages(stRes.storages);
+        if (cfgRes.success && cfgRes.settings) {
+            setConfig(cfgRes.settings);
+            setSavedConfig(cfgRes.settings);
+        }
         setLoading(false);
     }, []);
 
     useEffect(() => { reload(); }, [reload]);
 
-    const handleNew = (provider: 'local' | 's3') => {
+    const handleNew = (mode: BackupConfig['mode']) => {
+        const provider = PROVIDER_FOR_MODE[mode];
         setEditing({
             id: 0,
-            name: provider === 's3' ? 'Hetzner Object Storage' : 'Local backups',
+            name: provider === 's3'
+                ? 'Hetzner Object Storage'
+                : provider === 'node-local'
+                    ? 'Node-local backups'
+                    : 'Shared backups',
             provider,
             config: (provider === 's3' ? EMPTY_S3 : EMPTY_LOCAL) as unknown as Record<string, unknown>,
             isDefault: storages.length === 0,
@@ -88,25 +273,72 @@ export default function BackupsTab() {
         showToast(res.success ? 'Connection OK' : (res.message || 'Connection failed'), res.success);
     };
 
-    if (loading) return <LoadingState />;
+    const handleConfigSave = async () => {
+        if (!config) return;
+        setSaving(true);
+        const res = await saveBackupConfig(config);
+        setSaving(false);
+        if (res.success) {
+            setSavedConfig(config);
+            showToast('Storage mode saved.');
+        } else {
+            showToast('Save failed.', false);
+        }
+    };
+
+    if (loading || !config) return <LoadingState />;
+
+    const configDirty = savedConfig && JSON.stringify(savedConfig) !== JSON.stringify(config);
+    const activeProvider = PROVIDER_FOR_MODE[config.mode];
 
     return (
         <div className="max-w-3xl space-y-6">
             <div>
-                <h2 className="h-section mb-1">Backup Storages</h2>
-                <p className="text-sm text-(--base-07)">Configure where backup archives are written. Each server can pick a storage per backup-job. Set one as default to apply it to jobs that don't pick explicitly.</p>
+                <h2 className="h-section mb-1">Backups</h2>
+                <p className="text-sm text-(--base-07)">Choose how backup archives are stored, then configure per-instance credentials (S3 keys, NFS paths) below.</p>
             </div>
+
+            <StorageModeCard config={config} onChange={setConfig} />
+
+            {configDirty && (
+                <div className="flex items-center gap-2 justify-end">
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setConfig(savedConfig!)}
+                    >
+                        Discard
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={handleConfigSave}
+                        disabled={saving}
+                    >
+                        <Save size={13} /> {saving ? 'Saving…' : 'Save mode'}
+                    </button>
+                </div>
+            )}
 
             <div className="card card-pad">
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-display font-semibold text-(--accent-light)">Configured Storages</h3>
                     <div className="flex gap-2">
-                        <button onClick={() => handleNew('local')} className="btn btn-secondary btn-sm">
-                            <HardDrive size={12} /> Add Local
-                        </button>
-                        <button onClick={() => handleNew('s3')} className="btn btn-primary btn-sm">
-                            <Cloud size={12} /> Add S3
-                        </button>
+                        {activeProvider === 'local' && (
+                            <button onClick={() => handleNew('shared')} className="btn btn-secondary btn-sm">
+                                <HardDrive size={12} /> Add Shared
+                            </button>
+                        )}
+                        {activeProvider === 's3' && (
+                            <button onClick={() => handleNew('s3')} className="btn btn-primary btn-sm">
+                                <Cloud size={12} /> Add S3
+                            </button>
+                        )}
+                        {activeProvider === 'node-local' && (
+                            <button onClick={() => handleNew('node-local')} className="btn btn-primary btn-sm">
+                                <Plus size={12} /> Add Node-local
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -119,13 +351,17 @@ export default function BackupsTab() {
                                 <div className="flex items-center gap-3 min-w-0">
                                     {s.provider === 's3'
                                         ? <Cloud size={16} className="text-(--accent-light) shrink-0" />
-                                        : <HardDrive size={16} className="text-(--primary-light) shrink-0" />}
+                                        : s.provider === 'node-local'
+                                            ? <Server size={16} className="text-(--primary-light) shrink-0" />
+                                            : <HardDrive size={16} className="text-(--primary-light) shrink-0" />}
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-medium text-(--base-09)">{s.name}</span>
                                             {s.isDefault && <span className="badge badge-accent">default</span>}
                                         </div>
-                                        <div className="mono-label">{s.provider}</div>
+                                        <div className="mono-label">
+                                            {s.provider === 'local' ? 'shared' : s.provider}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1.5">
@@ -171,6 +407,12 @@ export default function BackupsTab() {
                                         placeholder="/var/lib/dylaris/backups"
                                     />
                                     <p className="text-xs text-(--base-06)">Backups land in this directory on the Core host. Use a mount that survives container restarts.</p>
+                                </div>
+                            )}
+
+                            {editing.provider === 'node-local' && (
+                                <div className="alert alert-info text-xs">
+                                    Node-local stores have no per-instance config — backups live inside each server's container folder on whichever Node hosts it. This row exists so the rest of the system can reference a storage id; you can name it whatever helps you tell instances apart.
                                 </div>
                             )}
 
