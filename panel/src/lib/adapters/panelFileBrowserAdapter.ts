@@ -1,16 +1,28 @@
 import type { FileBrowserAdapter } from '@dylaris/ui-filebrowser';
 import { getFiles, getFileContent, saveFile, createFile, deleteFile, renameFile, copyFile, uploadFiles, downloadFile, selectiveDownload, getUserLimits } from '@/lib/api';
-import { reportUploadStart, reportUploadProgress, reportUploadFinish } from '@/lib/uploadManager';
+import { reportUploadStart, reportUploadProgress, reportUploadFinish, isServerUploadLocked } from '@/lib/uploadManager';
+
+const UPLOAD_LOCK_MSG = 'Upload in progress on this server — file actions are paused until it finishes or is cancelled.';
+
+function guardWrite(serverUuid: string | undefined): { success: false; message: string } | null {
+  if (serverUuid && isServerUploadLocked(serverUuid)) {
+    return { success: false, message: UPLOAD_LOCK_MSG };
+  }
+  return null;
+}
 
 export function createPanelAdapter(): FileBrowserAdapter {
   return {
     getFiles: (path, serverUuid) => getFiles(path, serverUuid),
     getFileContent: (path, serverUuid) => getFileContent(path, serverUuid),
-    saveFile: (path, content, serverUuid) => saveFile(path, content, serverUuid),
-    createFile: (path, isDir, serverUuid) => createFile(path, isDir, serverUuid),
-    deleteFile: (path, serverUuid) => deleteFile(path, serverUuid),
-    renameFile: (oldPath, newPath, serverUuid) => renameFile(oldPath, newPath, serverUuid),
-    copyFile: (srcPath, dstPath, serverUuid) => copyFile(srcPath, dstPath, serverUuid),
+    // Write ops short-circuit when an upload is active for the same
+    // server — same UX as the Wails adapter so the safety story is
+    // identical in browser and desktop.
+    saveFile: async (path, content, serverUuid) => guardWrite(serverUuid) ?? saveFile(path, content, serverUuid),
+    createFile: async (path, isDir, serverUuid) => guardWrite(serverUuid) ?? createFile(path, isDir, serverUuid),
+    deleteFile: async (path, serverUuid) => guardWrite(serverUuid) ?? deleteFile(path, serverUuid),
+    renameFile: async (oldPath, newPath, serverUuid) => guardWrite(serverUuid) ?? renameFile(oldPath, newPath, serverUuid),
+    copyFile: async (srcPath, dstPath, serverUuid) => guardWrite(serverUuid) ?? copyFile(srcPath, dstPath, serverUuid),
     // Browser-side HTTP upload: same FileBrowser contract as Wails so the
     // FileBrowser code stays unaware of which transport is active. We tap
     // the onProgress to mirror progress into the global UploadManager so

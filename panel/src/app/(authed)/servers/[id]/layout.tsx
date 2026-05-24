@@ -15,6 +15,8 @@ import {
 } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
+import { useServerUploadLock } from '@/lib/uploadManager';
+import { Upload } from 'lucide-react';
 
 export default function ServerLayout({ children }: { children: React.ReactNode }) {
     const params = useParams();
@@ -91,6 +93,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const isDiskFull = selectedServer.status === 'disk_full';
     const isServerOffline = ['stopped', 'offline', 'pending_setup', 'disk_full'].includes(selectedServer.status);
     const powerWaiting = waitingForStatus !== null || powerLoading !== null;
+
+    // Safety lock: while one or more uploads are streaming bytes into this
+    // server's directory, the only mutating actions allowed are the ones
+    // the upload itself drives. Power buttons (Start/Stop/Restart/Kill)
+    // and the Configuration tab are gated until uploads finish, so a user
+    // can't e.g. boot the server with a half-uploaded file in place. The
+    // FileBrowser stays navigable on purpose so the user can watch progress.
+    const uploadLocked = useServerUploadLock(selectedServer.uuid);
 
     const handleStartEditName = () => {
         setEditedName(selectedServer.name || '');
@@ -206,13 +216,16 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const tabDisabled = (perm: keyof TabPermissions) => isPendingSetup || (!isOwner && !!perms && !perms[perm]);
     const canPower = isOwner || (perms?.power ?? false);
 
-    // Tabs (path segments)
+    // Tabs (path segments). When an upload is active for this server the
+    // Configuration tab is locked — editing properties / JVM flags while
+    // bytes are still being written into the same directory is exactly
+    // the kind of foot-gun the safety lock prevents.
     const tabs: { slug: string; icon: string; label: string; disabled: boolean }[] = [
         { slug: 'setup',   icon: 'wrench',          label: 'Setup',         disabled: !isOwner && !!perms && !perms.setup },
         { slug: 'overview',icon: 'house',           label: 'Overview',      disabled: isPendingSetup },
         { slug: 'console', icon: 'square-terminal', label: 'Console',       disabled: tabDisabled('console') },
         { slug: 'files',   icon: 'folder-open',     label: 'Files',         disabled: tabDisabled('files') },
-        { slug: 'config',  icon: 'settings',        label: 'Configuration', disabled: tabDisabled('config') },
+        { slug: 'config',  icon: 'settings',        label: 'Configuration', disabled: tabDisabled('config') || uploadLocked },
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
         { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
         { slug: 'members', icon: 'users',           label: 'Members',       disabled: !isOwner && (!perms || !perms.members) },
@@ -285,7 +298,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             )}
                             <button
                                 onClick={() => handlePower('start')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline}
+                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline || uploadLocked}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed border ${
                                     isServerOffline && !isPendingSetup && !isDiskFull && canPower
                                         ? 'bg-(--success) text-white border-(--success) hover:bg-(--success-light)'
@@ -298,7 +311,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </button>
                             <button
                                 onClick={() => handlePower('restart')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline}
+                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--warning-ghost) hover:bg-(--warning)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--warning)/15"
                                 title={isDiskFull ? 'Speicher voll' : canPower ? 'Restart server' : 'No permission'}
                             >
@@ -307,7 +320,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </button>
                             <button
                                 onClick={() => handlePower('stop')}
-                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline}
+                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
                                 title={canPower ? 'Stop server' : 'No permission'}
                             >
@@ -316,7 +329,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </button>
                             <button
                                 onClick={() => setShowKillConfirm(true)}
-                                disabled={!canPower || killCooldown || isServerOffline}
+                                disabled={!canPower || killCooldown || isServerOffline || uploadLocked}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
                                 title={canPower ? 'Force kill container' : 'No permission'}
                             >
@@ -327,11 +340,21 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         {user?.isAdmin && <div className="w-px h-6 bg-(--base-04)" />}
                         {user?.isAdmin && (
                             <div className="flex items-center gap-1.5">
-                                <button onClick={handleOpenEditResources} className="btn btn-secondary btn-sm">
+                                <button
+                                    onClick={handleOpenEditResources}
+                                    disabled={uploadLocked}
+                                    className="btn btn-secondary btn-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title={uploadLocked ? 'Upload in progress — wait or cancel it first' : undefined}
+                                >
                                     <SlidersHorizontal size={14} />
                                     Resources
                                 </button>
-                                <button onClick={handleOpenDeletePopup} className="btn btn-danger btn-sm">
+                                <button
+                                    onClick={handleOpenDeletePopup}
+                                    disabled={uploadLocked}
+                                    className="btn btn-danger btn-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title={uploadLocked ? 'Upload in progress — wait or cancel it first' : undefined}
+                                >
                                     <Trash2 size={14} />
                                     Delete
                                 </button>
@@ -440,6 +463,19 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     })}
                 </div>
             </div>
+
+            {uploadLocked && (
+                <div className="px-6 pt-3 shrink-0">
+                    <div className="flex items-center gap-2.5 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs">
+                        <Upload size={13} className="shrink-0" />
+                        <span>
+                            <strong className="font-semibold">Upload in progress</strong> — destructive actions
+                            (power, resources, delete, config) are locked until the transfer finishes or is cancelled.
+                            The file browser stays available.
+                        </span>
+                    </div>
+                </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-6">{children}</div>
 

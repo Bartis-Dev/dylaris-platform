@@ -14,7 +14,21 @@ import {
     reportUploadStart,
     reportUploadProgress,
     reportUploadFinish,
+    isServerUploadLocked,
 } from '@/lib/uploadManager';
+
+// uploadLockedError is the error every mutating Beam op throws when the
+// target server is currently being written to by an active upload. The
+// FileBrowserAdapter contract turns this into a {success:false, message:…}
+// pair that the FileBrowser surfaces inline.
+const UPLOAD_LOCK_MSG = 'Upload in progress on this server — file actions are paused until it finishes or is cancelled.';
+
+function guardWrite(serverUuid: string | undefined): { success: false; message: string } | null {
+    if (serverUuid && isServerUploadLocked(serverUuid)) {
+        return { success: false, message: UPLOAD_LOCK_MSG };
+    }
+    return null;
+}
 
 // Chunk size for the JS → Go upload bridge. Smaller = more IPC calls
 // (overhead-bound on the JS side); larger = bigger base64 strings in
@@ -214,13 +228,17 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
     };
 
     return {
+        // Reads stay open even while an upload is mid-stream so the user
+        // can navigate the FileBrowser to watch progress.
         getFiles: (path, serverUuid) => wrap(`ListFiles ${path}`, () => app.ListFiles(path, serverUuid ?? '')) as ReturnType<FileBrowserAdapter['getFiles']>,
         getFileContent: (path, serverUuid) => wrap(`GetFileContent ${path}`, () => app.GetFileContent(path, serverUuid ?? '')) as ReturnType<FileBrowserAdapter['getFileContent']>,
-        saveFile: (path, content, serverUuid) => wrap(`SaveFile ${path}`, () => app.SaveFile(path, content, serverUuid ?? '')),
-        createFile: (path, isDir, serverUuid) => wrap(`CreateFile ${path}`, () => app.CreateFile(path, isDir, serverUuid ?? '')),
-        deleteFile: (path, serverUuid) => wrap(`DeleteFile ${path}`, () => app.DeleteFile(path, serverUuid ?? '')),
-        renameFile: (oldPath, newPath, serverUuid) => wrap(`RenameFile ${oldPath}→${newPath}`, () => app.RenameFile(oldPath, newPath, serverUuid ?? '')),
-        copyFile: (srcPath, dstPath, serverUuid) => wrap(`CopyFile ${srcPath}→${dstPath}`, () => app.CopyFile(srcPath, dstPath, serverUuid ?? '')),
+        // Writes are blocked at the adapter so the FileBrowser surfaces a
+        // clean inline error instead of letting an op race a live upload.
+        saveFile: async (path, content, serverUuid) => guardWrite(serverUuid) ?? wrap(`SaveFile ${path}`, () => app.SaveFile(path, content, serverUuid ?? '')),
+        createFile: async (path, isDir, serverUuid) => guardWrite(serverUuid) ?? wrap(`CreateFile ${path}`, () => app.CreateFile(path, isDir, serverUuid ?? '')),
+        deleteFile: async (path, serverUuid) => guardWrite(serverUuid) ?? wrap(`DeleteFile ${path}`, () => app.DeleteFile(path, serverUuid ?? '')),
+        renameFile: async (oldPath, newPath, serverUuid) => guardWrite(serverUuid) ?? wrap(`RenameFile ${oldPath}→${newPath}`, () => app.RenameFile(oldPath, newPath, serverUuid ?? '')),
+        copyFile: async (srcPath, dstPath, serverUuid) => guardWrite(serverUuid) ?? wrap(`CopyFile ${srcPath}→${dstPath}`, () => app.CopyFile(srcPath, dstPath, serverUuid ?? '')),
         // Native chunked upload: bytes flow JS → Wails IPC → gRPC stream
         // → Relay tunnel → Node's temp file → atomic rename. Core never
         // sees the payload, so its body-size limit and the user's admin

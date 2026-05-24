@@ -271,6 +271,7 @@ declare global {
             recordProgress: UploadManagerCtx['recordProgress'];
             finishJob: UploadManagerCtx['finishJob'];
             updateJob: UploadManagerCtx['updateJob'];
+            isServerLocked: UploadManagerCtx['isServerLocked'];
         };
     }
 }
@@ -284,12 +285,21 @@ export function UploadManagerBridge() {
             recordProgress: mgr.recordProgress,
             finishJob: mgr.finishJob,
             updateJob: mgr.updateJob,
+            isServerLocked: mgr.isServerLocked,
         };
         return () => {
             delete window.__dylarisUploadBridge;
         };
     }, [mgr]);
     return null;
+}
+
+// isServerUploadLocked is the non-React mirror of useServerUploadLock —
+// callable from adapters that need to refuse write ops while an upload
+// is still streaming bytes into the same server's directory.
+export function isServerUploadLocked(serverUuid: string): boolean {
+    if (typeof window === 'undefined') return false;
+    return window.__dylarisUploadBridge?.isServerLocked(serverUuid) ?? false;
 }
 
 export function reportUploadStart(input: Parameters<UploadManagerCtx['addJob']>[0]): void {
