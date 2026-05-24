@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
@@ -20,12 +21,21 @@ import (
 // commands directly to Redis (mirrors handlers.startBackupRun without the
 // HTTP-specific bits to avoid an import cycle).
 type BackupScheduler struct {
-	store store.Store
-	redis *redis.Client
+	store    store.Store
+	redis    *redis.Client
+	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
 }
 
 func NewBackupScheduler(s store.Store, r *redis.Client) *BackupScheduler {
 	return &BackupScheduler{store: s, redis: r}
+}
+
+// SetRegistry wires the gRPC mesh registry so the retention sweep can call
+// into Nodes to delete node-local backups. Optional: a scheduler running
+// without a registry simply logs and skips node-local deletes (the Node-side
+// retention pass still trims its own folder).
+func (b *BackupScheduler) SetRegistry(reg *nodegrpc.Registry) {
+	b.registry = reg
 }
 
 // Start runs the scheduler tick loop until ctx is cancelled. Polls every
@@ -153,7 +163,8 @@ func (b *BackupScheduler) enforceRetention(ctx context.Context, jobID int) {
 // deleteStorageObject opens the configured backend and deletes a single
 // object. Used by the retention pass after a successful run.
 func (b *BackupScheduler) deleteStorageObject(ctx context.Context, bs *models.BackupStorage, key string) error {
-	provider, err := backupstorage.Open(ctx, bs)
+	deps := backupstorage.Deps{Registry: b.registry, NodeStore: b.store}
+	provider, err := backupstorage.Open(ctx, bs, deps)
 	if err != nil {
 		return err
 	}

@@ -892,6 +892,109 @@ func minNonZeroInt64(a, b int64) int64 {
 	return b
 }
 
+// --- Backup Settings ---
+
+// BackupConfig captures the GLOBAL knobs that decide which kind of backup
+// storage the panel will let users pick, plus the per-server quota policy.
+// Per-instance credentials (S3 keys, NFS paths) stay in the backup_storages
+// table; this struct only governs which provider rows are usable and how
+// large each server's backup folder is allowed to get on node-local hosts.
+type BackupConfig struct {
+	// Mode is one of "s3", "node-local", or "shared". It picks which
+	// backup_storages rows (by provider) the UI exposes as creatable, and
+	// — for node-local — turns on the quota fields below.
+	Mode string `json:"mode"`
+
+	// QuotaPerServerGB is the per-server hard cap on the .dylaris-backups/
+	// folder when Mode == "node-local". 0 means unlimited. The cap is
+	// enforced at the application layer (Core checks current usage before
+	// approving a new backup); filesystem-level enforcement via XFS project
+	// quotas is intentionally out of scope for this round.
+	QuotaPerServerGB int `json:"quotaPerServerGb"`
+
+	// ShareQuotaWithServer folds the backup folder into the same quota
+	// the server's container storage uses, instead of accounting for it
+	// separately. Useful when ops doesn't want two quotas to monitor.
+	// Only honored when Mode == "node-local"; ignored otherwise.
+	ShareQuotaWithServer bool `json:"shareQuotaWithServer"`
+}
+
+var defaultBackupConfig = BackupConfig{
+	Mode:                 "shared",
+	QuotaPerServerGB:     10,
+	ShareQuotaWithServer: false,
+}
+
+// validBackupMode keeps the three accepted modes literal — adding a new
+// one has to be a conscious change here AND in the storage factory.
+func validBackupMode(m string) bool {
+	return m == "s3" || m == "node-local" || m == "shared"
+}
+
+// GetBackupConfig GET /api/settings/backup — admin only.
+func (h *SettingsHandler) GetBackupConfig(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"settings": h.LoadBackupConfig(),
+	})
+}
+
+// SaveBackupConfig POST /api/settings/backup — admin only.
+func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req BackupConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if !validBackupMode(req.Mode) {
+		sendJSONError(w, "Invalid backup mode (expected s3, node-local, or shared)", http.StatusBadRequest)
+		return
+	}
+	if req.QuotaPerServerGB < 0 {
+		req.QuotaPerServerGB = 0
+	}
+
+	pairs := []struct{ k, v string }{
+		{"backup.mode", req.Mode},
+		{"backup.quota_per_server_gb", fmt.Sprintf("%d", req.QuotaPerServerGB)},
+		{"backup.share_quota_with_server", fmt.Sprintf("%t", req.ShareQuotaWithServer)},
+	}
+	for _, p := range pairs {
+		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
+			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			return
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// LoadBackupConfig reads the persisted BackupConfig, returning defaults
+// for any missing keys so the panel always has something usable to render.
+func (h *SettingsHandler) LoadBackupConfig() BackupConfig {
+	cfg := defaultBackupConfig
+	if v, _ := h.state.Store.GetSetting("backup.mode"); v != "" && validBackupMode(v) {
+		cfg.Mode = v
+	}
+	if v, _ := h.state.Store.GetSetting("backup.quota_per_server_gb"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+			cfg.QuotaPerServerGB = n
+		}
+	}
+	if v, _ := h.state.Store.GetSetting("backup.share_quota_with_server"); v != "" {
+		cfg.ShareQuotaWithServer = v == "true"
+	}
+	return cfg
+}
+
 // --- Routing Mode Settings ---
 
 type RoutingModeSettings struct {

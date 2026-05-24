@@ -159,7 +159,9 @@ func main() {
 	coreHeartbeat.Start()
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
+	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
 	backupScheduler := services.NewBackupScheduler(pgStore, redisClient)
+	backupScheduler.SetRegistry(grpcRegistry)
 	backupScheduler.Start(context.Background())
 
 	// Router & API Endpunkte einrichten
@@ -342,6 +344,8 @@ func main() {
 	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(settingsHandler.SaveBeamSettings)).Methods("POST")
 	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.GetRoutingMode)).Methods("GET")
 	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.SaveRoutingMode)).Methods("POST")
+	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.GetBackupConfig)).Methods("GET")
+	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.SaveBackupConfig)).Methods("POST")
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")

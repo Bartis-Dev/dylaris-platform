@@ -49,6 +49,16 @@ message NodeMessage {
     InspectOrphanReq  inspect_orphan_req  = 92;
     InspectOrphanResp inspect_orphan_resp = 93;
 
+    // Node-local backup ops (server_uuid is carried in NodeMessage.server_uuid).
+    // Used when backup.mode == "node-local" — the .tar.gz archives live inside
+    // each server's <server-dir>/.dylaris-backups/ folder on the Node's disk.
+    BackupListReq     backup_list_req     = 100;
+    BackupListResp    backup_list_resp    = 101;
+    BackupOpenReq     backup_open_req     = 102;   // streaming read of one archive
+    BackupDeleteReq   backup_delete_req   = 103;
+    BackupUsageReq    backup_usage_req    = 104;
+    BackupUsageResp   backup_usage_resp   = 105;
+
     // Generic result / error
     OpResult          result        = 90;
     OpError           error         = 91;
@@ -158,6 +168,34 @@ message InspectOrphanResp {
   string metadata_json     = 2;   // raw JSON of .dylaris.json (only when has_metadata=true)
   string active_sub_server = 3;   // content of .active_server, or "" if absent
   repeated SubServerInfo sub_servers = 4;
+}
+
+// ─── Node-local backups ──────────────────────────────────────────────
+message BackupListReq {}  // server_uuid in NodeMessage.server_uuid
+
+message BackupObject {
+  string key  = 1;   // archive filename (e.g. "20260524-141200.tar.gz")
+  int64  size = 2;
+  int64  modified_unix = 3;
+}
+
+message BackupListResp {
+  repeated BackupObject objects = 1;
+}
+
+message BackupOpenReq {
+  string key = 1;   // filename within .dylaris-backups/
+}
+
+message BackupDeleteReq {
+  string key = 1;
+}
+
+message BackupUsageReq {}  // server_uuid in NodeMessage.server_uuid
+
+message BackupUsageResp {
+  int64 used_bytes = 1;
+  int32 count      = 2;
 }
 
 // ─── Results ─────────────────────────────────────────────────────────

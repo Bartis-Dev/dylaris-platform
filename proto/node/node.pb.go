@@ -44,6 +44,12 @@ type NodeMessage struct {
 	//	*NodeMessage_TransferDone
 	//	*NodeMessage_InspectOrphanReq
 	//	*NodeMessage_InspectOrphanResp
+	//	*NodeMessage_BackupListReq
+	//	*NodeMessage_BackupListResp
+	//	*NodeMessage_BackupOpenReq
+	//	*NodeMessage_BackupDeleteReq
+	//	*NodeMessage_BackupUsageReq
+	//	*NodeMessage_BackupUsageResp
 	//	*NodeMessage_Result
 	//	*NodeMessage_Error
 	Payload       isNodeMessage_Payload `protobuf_oneof:"payload"`
@@ -246,6 +252,60 @@ func (x *NodeMessage) GetInspectOrphanResp() *InspectOrphanResp {
 	return nil
 }
 
+func (x *NodeMessage) GetBackupListReq() *BackupListReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_BackupListReq); ok {
+			return x.BackupListReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetBackupListResp() *BackupListResp {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_BackupListResp); ok {
+			return x.BackupListResp
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetBackupOpenReq() *BackupOpenReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_BackupOpenReq); ok {
+			return x.BackupOpenReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetBackupDeleteReq() *BackupDeleteReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_BackupDeleteReq); ok {
+			return x.BackupDeleteReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetBackupUsageReq() *BackupUsageReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_BackupUsageReq); ok {
+			return x.BackupUsageReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetBackupUsageResp() *BackupUsageResp {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_BackupUsageResp); ok {
+			return x.BackupUsageResp
+		}
+	}
+	return nil
+}
+
 func (x *NodeMessage) GetResult() *OpResult {
 	if x != nil {
 		if x, ok := x.Payload.(*NodeMessage_Result); ok {
@@ -341,6 +401,33 @@ type NodeMessage_InspectOrphanResp struct {
 	InspectOrphanResp *InspectOrphanResp `protobuf:"bytes,93,opt,name=inspect_orphan_resp,json=inspectOrphanResp,proto3,oneof"`
 }
 
+type NodeMessage_BackupListReq struct {
+	// Node-local backup ops (server_uuid is carried in NodeMessage.server_uuid).
+	// Used when backup.mode == "node-local" — the .tar.gz archives live inside
+	// each server's <server-dir>/.dylaris-backups/ folder on the Node's disk.
+	BackupListReq *BackupListReq `protobuf:"bytes,100,opt,name=backup_list_req,json=backupListReq,proto3,oneof"`
+}
+
+type NodeMessage_BackupListResp struct {
+	BackupListResp *BackupListResp `protobuf:"bytes,101,opt,name=backup_list_resp,json=backupListResp,proto3,oneof"`
+}
+
+type NodeMessage_BackupOpenReq struct {
+	BackupOpenReq *BackupOpenReq `protobuf:"bytes,102,opt,name=backup_open_req,json=backupOpenReq,proto3,oneof"` // streaming read of one archive
+}
+
+type NodeMessage_BackupDeleteReq struct {
+	BackupDeleteReq *BackupDeleteReq `protobuf:"bytes,103,opt,name=backup_delete_req,json=backupDeleteReq,proto3,oneof"`
+}
+
+type NodeMessage_BackupUsageReq struct {
+	BackupUsageReq *BackupUsageReq `protobuf:"bytes,104,opt,name=backup_usage_req,json=backupUsageReq,proto3,oneof"`
+}
+
+type NodeMessage_BackupUsageResp struct {
+	BackupUsageResp *BackupUsageResp `protobuf:"bytes,105,opt,name=backup_usage_resp,json=backupUsageResp,proto3,oneof"`
+}
+
 type NodeMessage_Result struct {
 	// Generic result / error
 	Result *OpResult `protobuf:"bytes,90,opt,name=result,proto3,oneof"`
@@ -381,6 +468,18 @@ func (*NodeMessage_TransferDone) isNodeMessage_Payload() {}
 func (*NodeMessage_InspectOrphanReq) isNodeMessage_Payload() {}
 
 func (*NodeMessage_InspectOrphanResp) isNodeMessage_Payload() {}
+
+func (*NodeMessage_BackupListReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_BackupListResp) isNodeMessage_Payload() {}
+
+func (*NodeMessage_BackupOpenReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_BackupDeleteReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_BackupUsageReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_BackupUsageResp) isNodeMessage_Payload() {}
 
 func (*NodeMessage_Result) isNodeMessage_Payload() {}
 
@@ -1406,6 +1505,323 @@ func (x *InspectOrphanResp) GetSubServers() []*SubServerInfo {
 	return nil
 }
 
+// ─── Node-local backups ──────────────────────────────────────────────
+type BackupListReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupListReq) Reset() {
+	*x = BackupListReq{}
+	mi := &file_proto_node_node_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupListReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupListReq) ProtoMessage() {}
+
+func (x *BackupListReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupListReq.ProtoReflect.Descriptor instead.
+func (*BackupListReq) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{20}
+}
+
+type BackupObject struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"` // archive filename (e.g. "20260524-141200.tar.gz")
+	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	ModifiedUnix  int64                  `protobuf:"varint,3,opt,name=modified_unix,json=modifiedUnix,proto3" json:"modified_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupObject) Reset() {
+	*x = BackupObject{}
+	mi := &file_proto_node_node_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupObject) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupObject) ProtoMessage() {}
+
+func (x *BackupObject) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupObject.ProtoReflect.Descriptor instead.
+func (*BackupObject) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *BackupObject) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *BackupObject) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *BackupObject) GetModifiedUnix() int64 {
+	if x != nil {
+		return x.ModifiedUnix
+	}
+	return 0
+}
+
+type BackupListResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Objects       []*BackupObject        `protobuf:"bytes,1,rep,name=objects,proto3" json:"objects,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupListResp) Reset() {
+	*x = BackupListResp{}
+	mi := &file_proto_node_node_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupListResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupListResp) ProtoMessage() {}
+
+func (x *BackupListResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupListResp.ProtoReflect.Descriptor instead.
+func (*BackupListResp) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *BackupListResp) GetObjects() []*BackupObject {
+	if x != nil {
+		return x.Objects
+	}
+	return nil
+}
+
+type BackupOpenReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"` // filename within .dylaris-backups/
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupOpenReq) Reset() {
+	*x = BackupOpenReq{}
+	mi := &file_proto_node_node_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupOpenReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupOpenReq) ProtoMessage() {}
+
+func (x *BackupOpenReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupOpenReq.ProtoReflect.Descriptor instead.
+func (*BackupOpenReq) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *BackupOpenReq) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type BackupDeleteReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupDeleteReq) Reset() {
+	*x = BackupDeleteReq{}
+	mi := &file_proto_node_node_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupDeleteReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupDeleteReq) ProtoMessage() {}
+
+func (x *BackupDeleteReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupDeleteReq.ProtoReflect.Descriptor instead.
+func (*BackupDeleteReq) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *BackupDeleteReq) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type BackupUsageReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupUsageReq) Reset() {
+	*x = BackupUsageReq{}
+	mi := &file_proto_node_node_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupUsageReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupUsageReq) ProtoMessage() {}
+
+func (x *BackupUsageReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupUsageReq.ProtoReflect.Descriptor instead.
+func (*BackupUsageReq) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{25}
+}
+
+type BackupUsageResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UsedBytes     int64                  `protobuf:"varint,1,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
+	Count         int32                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupUsageResp) Reset() {
+	*x = BackupUsageResp{}
+	mi := &file_proto_node_node_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupUsageResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupUsageResp) ProtoMessage() {}
+
+func (x *BackupUsageResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupUsageResp.ProtoReflect.Descriptor instead.
+func (*BackupUsageResp) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *BackupUsageResp) GetUsedBytes() int64 {
+	if x != nil {
+		return x.UsedBytes
+	}
+	return 0
+}
+
+func (x *BackupUsageResp) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
 // ─── Results ─────────────────────────────────────────────────────────
 type OpResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1416,7 +1832,7 @@ type OpResult struct {
 
 func (x *OpResult) Reset() {
 	*x = OpResult{}
-	mi := &file_proto_node_node_proto_msgTypes[20]
+	mi := &file_proto_node_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1428,7 +1844,7 @@ func (x *OpResult) String() string {
 func (*OpResult) ProtoMessage() {}
 
 func (x *OpResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_node_proto_msgTypes[20]
+	mi := &file_proto_node_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1441,7 +1857,7 @@ func (x *OpResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpResult.ProtoReflect.Descriptor instead.
 func (*OpResult) Descriptor() ([]byte, []int) {
-	return file_proto_node_node_proto_rawDescGZIP(), []int{20}
+	return file_proto_node_node_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *OpResult) GetMessage() string {
@@ -1461,7 +1877,7 @@ type OpError struct {
 
 func (x *OpError) Reset() {
 	*x = OpError{}
-	mi := &file_proto_node_node_proto_msgTypes[21]
+	mi := &file_proto_node_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1473,7 +1889,7 @@ func (x *OpError) String() string {
 func (*OpError) ProtoMessage() {}
 
 func (x *OpError) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_node_proto_msgTypes[21]
+	mi := &file_proto_node_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1486,7 +1902,7 @@ func (x *OpError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpError.ProtoReflect.Descriptor instead.
 func (*OpError) Descriptor() ([]byte, []int) {
-	return file_proto_node_node_proto_rawDescGZIP(), []int{21}
+	return file_proto_node_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *OpError) GetCode() int32 {
@@ -1507,7 +1923,7 @@ var File_proto_node_node_proto protoreflect.FileDescriptor
 
 const file_proto_node_node_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/node/node.proto\x12\fdylaris.node\"\xa3\t\n" +
+	"\x15proto/node/node.proto\x12\fdylaris.node\"\xdf\f\n" +
 	"\vNodeMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n" +
@@ -1534,7 +1950,13 @@ const file_proto_node_node_proto_rawDesc = "" +
 	"\x05chunk\x18< \x01(\v2\x17.dylaris.node.DataChunkH\x00R\x05chunk\x12A\n" +
 	"\rtransfer_done\x18= \x01(\v2\x1a.dylaris.node.TransferDoneH\x00R\ftransferDone\x12N\n" +
 	"\x12inspect_orphan_req\x18\\ \x01(\v2\x1e.dylaris.node.InspectOrphanReqH\x00R\x10inspectOrphanReq\x12Q\n" +
-	"\x13inspect_orphan_resp\x18] \x01(\v2\x1f.dylaris.node.InspectOrphanRespH\x00R\x11inspectOrphanResp\x120\n" +
+	"\x13inspect_orphan_resp\x18] \x01(\v2\x1f.dylaris.node.InspectOrphanRespH\x00R\x11inspectOrphanResp\x12E\n" +
+	"\x0fbackup_list_req\x18d \x01(\v2\x1b.dylaris.node.BackupListReqH\x00R\rbackupListReq\x12H\n" +
+	"\x10backup_list_resp\x18e \x01(\v2\x1c.dylaris.node.BackupListRespH\x00R\x0ebackupListResp\x12E\n" +
+	"\x0fbackup_open_req\x18f \x01(\v2\x1b.dylaris.node.BackupOpenReqH\x00R\rbackupOpenReq\x12K\n" +
+	"\x11backup_delete_req\x18g \x01(\v2\x1d.dylaris.node.BackupDeleteReqH\x00R\x0fbackupDeleteReq\x12H\n" +
+	"\x10backup_usage_req\x18h \x01(\v2\x1c.dylaris.node.BackupUsageReqH\x00R\x0ebackupUsageReq\x12K\n" +
+	"\x11backup_usage_resp\x18i \x01(\v2\x1d.dylaris.node.BackupUsageRespH\x00R\x0fbackupUsageResp\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
 	"\apayload\"R\n" +
@@ -1605,7 +2027,23 @@ const file_proto_node_node_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x02 \x01(\tR\fmetadataJson\x12*\n" +
 	"\x11active_sub_server\x18\x03 \x01(\tR\x0factiveSubServer\x12<\n" +
 	"\vsub_servers\x18\x04 \x03(\v2\x1b.dylaris.node.SubServerInfoR\n" +
-	"subServers\"$\n" +
+	"subServers\"\x0f\n" +
+	"\rBackupListReq\"Y\n" +
+	"\fBackupObject\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x03R\x04size\x12#\n" +
+	"\rmodified_unix\x18\x03 \x01(\x03R\fmodifiedUnix\"F\n" +
+	"\x0eBackupListResp\x124\n" +
+	"\aobjects\x18\x01 \x03(\v2\x1a.dylaris.node.BackupObjectR\aobjects\"!\n" +
+	"\rBackupOpenReq\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\"#\n" +
+	"\x0fBackupDeleteReq\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\"\x10\n" +
+	"\x0eBackupUsageReq\"F\n" +
+	"\x0fBackupUsageResp\x12\x1d\n" +
+	"\n" +
+	"used_bytes\x18\x01 \x01(\x03R\tusedBytes\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count\"$\n" +
 	"\bOpResult\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"7\n" +
 	"\aOpError\x12\x12\n" +
@@ -1626,7 +2064,7 @@ func file_proto_node_node_proto_rawDescGZIP() []byte {
 	return file_proto_node_node_proto_rawDescData
 }
 
-var file_proto_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_proto_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_proto_node_node_proto_goTypes = []any{
 	(*NodeMessage)(nil),       // 0: dylaris.node.NodeMessage
 	(*NodeAuth)(nil),          // 1: dylaris.node.NodeAuth
@@ -1648,8 +2086,15 @@ var file_proto_node_node_proto_goTypes = []any{
 	(*InspectOrphanReq)(nil),  // 17: dylaris.node.InspectOrphanReq
 	(*SubServerInfo)(nil),     // 18: dylaris.node.SubServerInfo
 	(*InspectOrphanResp)(nil), // 19: dylaris.node.InspectOrphanResp
-	(*OpResult)(nil),          // 20: dylaris.node.OpResult
-	(*OpError)(nil),           // 21: dylaris.node.OpError
+	(*BackupListReq)(nil),     // 20: dylaris.node.BackupListReq
+	(*BackupObject)(nil),      // 21: dylaris.node.BackupObject
+	(*BackupListResp)(nil),    // 22: dylaris.node.BackupListResp
+	(*BackupOpenReq)(nil),     // 23: dylaris.node.BackupOpenReq
+	(*BackupDeleteReq)(nil),   // 24: dylaris.node.BackupDeleteReq
+	(*BackupUsageReq)(nil),    // 25: dylaris.node.BackupUsageReq
+	(*BackupUsageResp)(nil),   // 26: dylaris.node.BackupUsageResp
+	(*OpResult)(nil),          // 27: dylaris.node.OpResult
+	(*OpError)(nil),           // 28: dylaris.node.OpError
 }
 var file_proto_node_node_proto_depIdxs = []int32{
 	1,  // 0: dylaris.node.NodeMessage.auth:type_name -> dylaris.node.NodeAuth
@@ -1668,18 +2113,25 @@ var file_proto_node_node_proto_depIdxs = []int32{
 	16, // 13: dylaris.node.NodeMessage.transfer_done:type_name -> dylaris.node.TransferDone
 	17, // 14: dylaris.node.NodeMessage.inspect_orphan_req:type_name -> dylaris.node.InspectOrphanReq
 	19, // 15: dylaris.node.NodeMessage.inspect_orphan_resp:type_name -> dylaris.node.InspectOrphanResp
-	20, // 16: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
-	21, // 17: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
-	3,  // 18: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
-	6,  // 19: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
-	18, // 20: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
-	0,  // 21: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
-	0,  // 22: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
-	22, // [22:23] is the sub-list for method output_type
-	21, // [21:22] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	20, // 16: dylaris.node.NodeMessage.backup_list_req:type_name -> dylaris.node.BackupListReq
+	22, // 17: dylaris.node.NodeMessage.backup_list_resp:type_name -> dylaris.node.BackupListResp
+	23, // 18: dylaris.node.NodeMessage.backup_open_req:type_name -> dylaris.node.BackupOpenReq
+	24, // 19: dylaris.node.NodeMessage.backup_delete_req:type_name -> dylaris.node.BackupDeleteReq
+	25, // 20: dylaris.node.NodeMessage.backup_usage_req:type_name -> dylaris.node.BackupUsageReq
+	26, // 21: dylaris.node.NodeMessage.backup_usage_resp:type_name -> dylaris.node.BackupUsageResp
+	27, // 22: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
+	28, // 23: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
+	3,  // 24: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
+	6,  // 25: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
+	18, // 26: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
+	21, // 27: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
+	0,  // 28: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
+	0,  // 29: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
+	29, // [29:30] is the sub-list for method output_type
+	28, // [28:29] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_node_proto_init() }
@@ -1704,6 +2156,12 @@ func file_proto_node_node_proto_init() {
 		(*NodeMessage_TransferDone)(nil),
 		(*NodeMessage_InspectOrphanReq)(nil),
 		(*NodeMessage_InspectOrphanResp)(nil),
+		(*NodeMessage_BackupListReq)(nil),
+		(*NodeMessage_BackupListResp)(nil),
+		(*NodeMessage_BackupOpenReq)(nil),
+		(*NodeMessage_BackupDeleteReq)(nil),
+		(*NodeMessage_BackupUsageReq)(nil),
+		(*NodeMessage_BackupUsageResp)(nil),
 		(*NodeMessage_Result)(nil),
 		(*NodeMessage_Error)(nil),
 	}
@@ -1713,7 +2171,7 @@ func file_proto_node_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_node_proto_rawDesc), len(file_proto_node_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

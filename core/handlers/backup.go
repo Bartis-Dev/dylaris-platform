@@ -124,7 +124,7 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Storage not found", 404)
 		return
 	}
-	provider, err := backupstorage.Open(r.Context(), storage)
+	provider, err := backupstorage.Open(r.Context(), storage, h.backupDeps())
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error()})
 		return
@@ -290,7 +290,7 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Storage not found", 404)
 		return
 	}
-	provider, err := backupstorage.Open(r.Context(), bs)
+	provider, err := backupstorage.Open(r.Context(), bs, h.backupDeps())
 	if err != nil {
 		sendJSONError(w, err.Error(), 500)
 		return
@@ -451,7 +451,7 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	// still remove the DB row so the UI doesn't keep a phantom entry.
 	if job.StorageID != nil {
 		if bs, sErr := h.state.Store.GetBackupStorage(*job.StorageID); sErr == nil {
-			if provider, pErr := backupstorage.Open(r.Context(), bs); pErr == nil {
+			if provider, pErr := backupstorage.Open(r.Context(), bs, h.backupDeps()); pErr == nil {
 				provider.Delete(r.Context(), run.StorageKey)
 			}
 		}
@@ -464,6 +464,17 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // ───────────── helpers ─────────────
+
+// backupDeps assembles the runtime handles the storage factory passes to
+// the node-local provider. s3 / shared ignore the registry + store, so
+// the same Deps can be reused everywhere a Storage is opened in this
+// handler — keeps the call-sites uniform.
+func (h *BackupHandler) backupDeps() backupstorage.Deps {
+	return backupstorage.Deps{
+		Registry:  h.state.GRPCRegistry,
+		NodeStore: h.state.Store,
+	}
+}
 
 // resolveServerWithAccess validates that the caller can manage backups for
 // the server in the URL. Returns (serverID, server, ok); when ok is false a
