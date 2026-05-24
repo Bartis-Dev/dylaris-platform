@@ -46,6 +46,12 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 		return []*pb.NodeMessage{h.handleCopy(msg.RequestId, msg.ServerUuid, p.CopyReq)}
 	case *pb.NodeMessage_InspectOrphanReq:
 		return []*pb.NodeMessage{h.handleInspectOrphan(msg.RequestId, msg.ServerUuid)}
+	case *pb.NodeMessage_BackupListReq:
+		return []*pb.NodeMessage{h.handleBackupList(msg.RequestId, msg.ServerUuid)}
+	case *pb.NodeMessage_BackupDeleteReq:
+		return []*pb.NodeMessage{h.handleBackupDelete(msg.RequestId, msg.ServerUuid, p.BackupDeleteReq)}
+	case *pb.NodeMessage_BackupUsageReq:
+		return []*pb.NodeMessage{h.handleBackupUsage(msg.RequestId, msg.ServerUuid)}
 	default:
 		return []*pb.NodeMessage{errorMsg(msg.RequestId, 400, "unknown request type")}
 	}
@@ -60,9 +66,18 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 		return
 	}
 
+	// BackupOpenReq: stream one .dylaris-backups/<key>.tar.gz to Core. Path
+	// resolution is the same as a regular file read but pinned to the hidden
+	// backup directory so Core can't accidentally fetch arbitrary files
+	// using the backup-open RPC.
+	if openReq := msg.GetBackupOpenReq(); openReq != nil {
+		h.streamBackupArchive(msg.RequestId, msg.ServerUuid, openReq, sendFn)
+		return
+	}
+
 	readReq := msg.GetReadReq()
 	if readReq == nil {
-		sendFn(errorMsg(msg.RequestId, 400, "HandleStreaming only supports ReadReq/SelectiveReadReq"))
+		sendFn(errorMsg(msg.RequestId, 400, "HandleStreaming only supports ReadReq/SelectiveReadReq/BackupOpenReq"))
 		return
 	}
 

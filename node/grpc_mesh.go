@@ -344,8 +344,9 @@ func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg
 		}
 	}
 
-	// ReadReq / SelectiveReadReq: use streaming handler (io.Pipe, constant ~128KB RAM)
-	if msg.GetReadReq() != nil || msg.GetSelectiveReadReq() != nil {
+	// ReadReq / SelectiveReadReq / BackupOpenReq: streaming downloads
+	// (io.Pipe / file read, constant ~128KB RAM regardless of size).
+	if msg.GetReadReq() != nil || msg.GetSelectiveReadReq() != nil || msg.GetBackupOpenReq() != nil {
 		m.handler.HandleStreaming(msg, func(resp *pb.NodeMessage) error {
 			return stream.Send(resp)
 		})

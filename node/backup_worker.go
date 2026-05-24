@@ -77,6 +77,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 		return
 	}
 
+	// For node-local storage the destination is on the same disk we're
+	// reading from — no pipe/uploader is needed. We still want to keep
+	// the streaming tar+gzip path so RAM stays bounded for large worlds,
+	// so we use the same io.Pipe + uploader plumbing and let
+	// uploadBackup() switch on storage.Provider to do the right thing
+	// (io.Copy to a hidden .dylaris-backups/<id>.tar.gz on the Node).
 	pr, pw := io.Pipe()
 	// counting writer wraps the pipe writer so we can report the archived
 	// size without waiting for the upload to complete.
@@ -154,7 +160,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 	}()
 
 	// Upload reads from the pipe. Returns once EOF (or pipe error) reached.
-	if err := uploadBackup(ctx, storage, cmd.StorageKey, pr); err != nil {
+	if err := uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pr); err != nil {
 		// Drain any remaining bytes so the writer goroutine doesn't block on
 		// a full pipe; CloseWithError unblocks the writer immediately.
 		pr.CloseWithError(err)
@@ -166,7 +172,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 	if !addedAny {
 		// We still uploaded a 0-file archive; clean up storage and surface
 		// the friendlier error so the UI doesn't show a zero-byte success.
-		deleteBackup(ctx, storage, cmd.StorageKey)
+		deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 		reportBackup(ctx, rdb, cmd.RunID, "failed", "no files matched include/exclude patterns", 0)
 		return
 	}
@@ -188,13 +194,18 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 func (c *countingWriter) Total() int64 { return c.n.Load() }
 
 // uploadBackup streams the body to whatever provider the storage config
-// names. For local that's a simple io.Copy to disk; for S3 we use the
-// SDK manager.Uploader which transparently switches to multipart upload
-// when the body exceeds the part-size threshold, so we never have to
-// know the final archive size up front.
-func uploadBackup(ctx context.Context, info storageInfo, key string, r io.Reader) error {
+// names. For local/shared that's a simple io.Copy to disk; for S3 we use
+// the SDK manager.Uploader which transparently switches to multipart
+// upload when the body exceeds the part-size threshold, so we never have
+// to know the final archive size up front. For node-local the archive
+// lands inside the server's own .dylaris-backups/ folder on this Node's
+// disk — the storage key's tail filename is taken as the archive name and
+// the directory is created on demand.
+func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string, r io.Reader) error {
 	switch info.Provider {
-	case "local":
+	case "local", "shared":
+		// "shared" is the new UI label for the legacy "local" provider —
+		// same Core-side filesystem path, just relabeled in the panel.
 		var cfg localCfg
 		if err := json.Unmarshal(info.Config, &cfg); err != nil {
 			return fmt.Errorf("invalid local cfg: %w", err)
@@ -206,6 +217,26 @@ func uploadBackup(ctx context.Context, info storageInfo, key string, r io.Reader
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
+		f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(f, r)
+		return err
+
+	case "node-local":
+		// Resolve <server-dir>/.dylaris-backups/<archive>. The Core-side
+		// storage key includes a "backups/<serverUUID>/job-<jobID>/..."
+		// prefix for display, but on-disk we collapse it to the leaf
+		// filename — the directory is server-scoped already so the prefix
+		// adds no information.
+		dir := filepath.Join(resolveServerRoot(sm, serverUUID), nodeLocalBackupDir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create node-local backup dir: %w", err)
+		}
+		archive := nodeLocalArchiveName(key)
+		full := filepath.Join(dir, archive)
 		f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 		if err != nil {
 			return err
@@ -235,18 +266,35 @@ func uploadBackup(ctx context.Context, info storageInfo, key string, r io.Reader
 	}
 }
 
+// nodeLocalBackupDir is the hidden subdirectory used by the node-local
+// storage mode. Keeping it as a constant alongside the worker means
+// grpc_backup.go and backup_worker.go agree on the location without
+// either importing the other.
+const nodeLocalBackupDir = ".dylaris-backups"
+
+// nodeLocalArchiveName collapses a storage key into its leaf filename so
+// archives land directly under .dylaris-backups/ regardless of how Core
+// chose to encode the key (job-N/, server-uuid/, etc.).
+func nodeLocalArchiveName(key string) string {
+	parts := strings.Split(filepath.ToSlash(key), "/")
+	return parts[len(parts)-1]
+}
+
 // deleteBackup removes an archive that we already started writing but then
 // decided to abort (e.g. empty include/exclude result). Best-effort —
 // surfaces nothing back to the caller because the original error already
 // covers the user-visible outcome.
-func deleteBackup(ctx context.Context, info storageInfo, key string) {
+func deleteBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string) {
 	switch info.Provider {
-	case "local":
+	case "local", "shared":
 		var cfg localCfg
 		if json.Unmarshal(info.Config, &cfg) != nil || cfg.BasePath == "" {
 			return
 		}
 		os.Remove(filepath.Join(cfg.BasePath, filepath.Clean("/"+key)))
+	case "node-local":
+		archive := nodeLocalArchiveName(key)
+		os.Remove(filepath.Join(resolveServerRoot(sm, serverUUID), nodeLocalBackupDir, archive))
 	case "s3":
 		client, bucket, err := buildS3Client(ctx, info.Config)
 		if err != nil {

@@ -70,7 +70,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		gracefulStop(rdb, cmd.ServerUUID, dm)
 	}
 
-	body, err := downloadBackup(ctx, storage, cmd.StorageKey)
+	body, err := downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 	if err != nil {
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "download failed: "+err.Error())
@@ -182,10 +182,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 
 // downloadBackup returns an io.ReadCloser streaming the archive from
 // whichever storage provider holds it. The caller is responsible for
-// closing.
-func downloadBackup(ctx context.Context, info storageInfo, key string) (io.ReadCloser, error) {
+// closing. For the node-local mode the source is on the same disk we'll
+// extract into, so this is just a plain file open — no network hop.
+func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string) (io.ReadCloser, error) {
 	switch info.Provider {
-	case "local":
+	case "local", "shared":
 		var cfg localCfg
 		if err := json.Unmarshal(info.Config, &cfg); err != nil {
 			return nil, fmt.Errorf("invalid local cfg: %w", err)
@@ -194,6 +195,11 @@ func downloadBackup(ctx context.Context, info storageInfo, key string) (io.ReadC
 			return nil, fmt.Errorf("local storage requires basePath")
 		}
 		full := filepath.Join(cfg.BasePath, filepath.Clean("/"+key))
+		return os.Open(full)
+
+	case "node-local":
+		archive := nodeLocalArchiveName(key)
+		full := filepath.Join(resolveServerRoot(sm, serverUUID), nodeLocalBackupDir, archive)
 		return os.Open(full)
 
 	case "s3":
