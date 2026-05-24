@@ -8,7 +8,9 @@ import Navbar from '@/components/Navbar';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import ProfilePopup from '@/components/ProfilePopup';
 import GuardedLink from '@/components/GuardedLink';
+import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
+import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ChevronDown, UserCog, LogOut, Wrench } from 'lucide-react';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
@@ -58,6 +60,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             {/* Top Navbar */}
             <div className="relative z-30 shrink-0">
                 <Navbar>
+                    <UploadManagerWidget />
                     {user.isAdmin && <NotificationsDropdown />}
                     {user.isAdmin && (
                         <GuardedLink
@@ -161,7 +164,10 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
     return (
         <AppDataProvider onUnauthenticated={handleUnauthenticated}>
             <UnsavedChangesProvider>
-                <AuthedShell>{children}</AuthedShell>
+                <UploadManagerProvider>
+                    <UploadManagerBridge />
+                    <AuthedShell>{children}</AuthedShell>
+                </UploadManagerProvider>
             </UnsavedChangesProvider>
         </AppDataProvider>
     );

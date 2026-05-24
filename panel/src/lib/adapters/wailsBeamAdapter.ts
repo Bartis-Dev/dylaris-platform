@@ -10,6 +10,11 @@
 import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
 import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
 import { devLog } from '@/lib/devLog';
+import {
+    reportUploadStart,
+    reportUploadProgress,
+    reportUploadFinish,
+} from '@/lib/uploadManager';
 
 // Chunk size for the JS → Go upload bridge. Smaller = more IPC calls
 // (overhead-bound on the JS side); larger = bigger base64 strings in
@@ -242,6 +247,32 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                     ? crypto.randomUUID()
                     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
             devLog('beam.upload', 'info', `uploadFiles: file="${file.name}" size=${file.size} path="${path}" serverUuid=${serverUuid ?? '?'} uploadID=${uploadID}`);
+
+            // cancelRequested flips true when the user clicks the cancel
+            // button in the UploadManager widget. The chunk loop checks it
+            // between writes so a click takes effect on the next chunk
+            // boundary instead of having to abort mid-WriteAt. We also
+            // call app.BeamUploadCancel to tear the gRPC stream down
+            // server-side immediately — that's what actually deletes the
+            // temp file. The local flag just suppresses further chunks.
+            let cancelRequested = false;
+            const cancel = () => {
+                cancelRequested = true;
+                try { app.BeamUploadCancel?.(uploadID); } catch { /* best-effort */ }
+            };
+
+            // Register the job with the global UploadManager so the navbar
+            // widget + modal can show it, and so the cancel button on the
+            // row can invoke the cancel callback above.
+            reportUploadStart({
+                id: uploadID,
+                filename: file.name,
+                size: file.size,
+                serverUuid: serverUuid ?? '',
+                path,
+                cancel,
+            });
+
             try {
                 // The native upload has no HTTP fallback — it needs the
                 // relay tunnel. Force a fresh ConnectToServer here even
@@ -260,6 +291,10 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 let offset = 0;
                 let chunks = 0;
                 while (offset < file.size) {
+                    if (cancelRequested) {
+                        devLog('beam.upload', 'warn', `upload "${file.name}" cancelled by user at offset ${offset}`);
+                        throw new Error('cancelled');
+                    }
                     const end = Math.min(offset + UPLOAD_CHUNK_SIZE, file.size);
                     const buf = new Uint8Array(await file.slice(offset, end).arrayBuffer());
                     try {
@@ -272,15 +307,22 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                     offset = end;
                     chunks++;
                     onProgress(Math.round((offset / Math.max(file.size, 1)) * 100));
+                    reportUploadProgress(uploadID, offset);
                 }
                 devLog('beam.upload', 'info', `streamed ${chunks} chunks (${file.size} bytes total) — calling BeamUploadFinish`);
                 await app.BeamUploadFinish!(uploadID);
                 devLog('beam.upload', 'info', `upload "${file.name}" finished successfully`);
+                reportUploadFinish(uploadID, 'done');
                 return { success: true };
             } catch (err) {
                 try { await app.BeamUploadCancel?.(uploadID); } catch { /* best-effort */ }
                 const message = err instanceof Error ? err.message : String(err);
                 devLog('beam.upload', 'error', `upload "${file.name}" FAILED: ${message}`);
+                reportUploadFinish(
+                    uploadID,
+                    cancelRequested || message === 'cancelled' ? 'cancelled' : 'error',
+                    message,
+                );
                 return { success: false, message };
             }
         },
