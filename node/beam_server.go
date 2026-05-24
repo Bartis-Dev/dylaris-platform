@@ -275,6 +275,15 @@ func isPlatformReservedName(name string) bool {
 // When op is "write" (upload, save, create, delete, rename, copy-dst), it
 // also refuses any platform-reserved filename. Read ops ("read", "list")
 // pass even on reserved names so the UI can show them.
+//
+// The read-op carve-out is what lets the Beam.exe desktop app download a
+// backup archive directly from .dylaris-backups/<id>.tar.gz: Core hands
+// the client a ticket for the owning server, the client opens a
+// DownloadFile stream with the relative path, and validateBeamPathRead
+// resolves it against the server dir like any other file. The hidden
+// .dylaris- prefix only blocks writes — perfect for read-only backup
+// downloads while still preventing tampering through the regular file
+// browser.
 func (s *beamServer) validateBeamPath(reqPath, serverUUID string) (string, error) {
 	return s.validateBeamPathOp(reqPath, serverUUID, "write")
 }
