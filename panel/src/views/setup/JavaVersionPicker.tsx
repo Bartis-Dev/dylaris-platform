@@ -9,15 +9,24 @@ export const JAVA_IMAGES = [
     { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java8:latest',  label: 'Java 8',  note: '1.8–1.16', proxyNote: 'BungeeCord only' },
 ];
 
-/** Returns the recommended Java image ID for a given MC major version string (e.g. "1.20.4"). */
-export function recommendJavaForVersion(major: string): string | null {
-    const parts = major.split('.').map(Number);
+/** Returns the recommended Java image ID for a given MC version string (e.g. "1.20.4"). */
+export function recommendJavaForVersion(version: string): string | null {
+    const parts = version.split('.').map(Number);
     const minor = parts[1] ?? 0;
     const patch = parts[2] ?? 0;
     if (minor >= 21 || (minor === 20 && patch >= 5)) return JAVA_IMAGES[0].id; // Java 21
     if (minor >= 18) return JAVA_IMAGES[1].id; // Java 17
     if (minor >= 8) return JAVA_IMAGES[2].id; // Java 8
     return null;
+}
+
+// For Paper/Vanilla the "build" is a patch version like "1.20.11" — more
+// precise than the major "1.20" and worth using for Java recommendation.
+// For Fabric/Forge the build is a loader version ("0.15.0", "47.2.0") that
+// doesn't start with the major, so we fall back to the major in those cases.
+export function effectiveMcVersion(major: string, build: string): string {
+    if (build && (build === major || build.startsWith(major + '.'))) return build;
+    return major;
 }
 
 interface JavaVersionPickerProps {

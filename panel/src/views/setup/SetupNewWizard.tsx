@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
 import { CreateRouteRequest } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
-import JavaVersionPicker, { recommendJavaForVersion } from './JavaVersionPicker';
+import JavaVersionPicker, { recommendJavaForVersion, effectiveMcVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
@@ -75,7 +75,11 @@ interface SetupNewWizardProps {
 
 export default function SetupNewWizard(props: SetupNewWizardProps) {
     const sanitized = sanitizeName(props.subName);
-    const recommendedJava = useMemo(() => recommendJavaForVersion(props.selectedMajor), [props.selectedMajor]);
+    const effectiveVersion = useMemo(
+        () => effectiveMcVersion(props.selectedMajor, props.selectedBuild),
+        [props.selectedMajor, props.selectedBuild],
+    );
+    const recommendedJava = useMemo(() => recommendJavaForVersion(effectiveVersion), [effectiveVersion]);
 
     // Domain row only matters when the gateway actually handles traffic.
     // In ip_port mode players connect via Node IP + port, so showing a
@@ -150,7 +154,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     onChange={props.onJavaChange}
                     serverType={props.serverType}
                     recommended={recommendedJava ?? undefined}
-                    mcVersion={props.selectedMajor || undefined}
+                    mcVersion={effectiveVersion || undefined}
                 />
 
                 {/* Install tabs */}

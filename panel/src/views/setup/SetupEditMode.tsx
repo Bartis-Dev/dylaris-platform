@@ -1,8 +1,8 @@
 "use client";
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { X, RotateCcw, Trash2, RefreshCw, AlertTriangle } from 'lucide-react';
-import JavaVersionPicker from './JavaVersionPicker';
+import JavaVersionPicker, { recommendJavaForVersion, effectiveMcVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
@@ -62,6 +62,12 @@ interface SetupEditModeProps {
 }
 
 export default function SetupEditMode(props: SetupEditModeProps) {
+    const effectiveVersion = useMemo(
+        () => effectiveMcVersion(props.selectedMajor, props.selectedBuild),
+        [props.selectedMajor, props.selectedBuild],
+    );
+    const recommendedJava = useMemo(() => recommendJavaForVersion(effectiveVersion), [effectiveVersion]);
+
     return (
         <div className="flex-1 card flex flex-col overflow-hidden min-w-0">
             {/* Header */}
@@ -101,6 +107,8 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                         value={props.javaImage}
                         onChange={props.onJavaChange}
                         serverType={props.serverType}
+                        recommended={recommendedJava ?? undefined}
+                        mcVersion={effectiveVersion || undefined}
                     />
 
                     <JvmFlagsSection

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, CreateRouteRequest } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
-import { JAVA_IMAGES, recommendJavaForVersion } from './setup/JavaVersionPicker';
+import { JAVA_IMAGES, recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
 import { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import SubServerSidebar from './setup/SubServerSidebar';
 import SetupViewMode from './setup/SetupViewMode';
@@ -64,19 +64,16 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [selectedBuild, setSelectedBuild] = useState('');
     const [loadingVersions, setLoadingVersions] = useState(false);
 
-    // Auto-select Java version based on selected major version (e.g. "1.20")
+    // Auto-select Java image when MC version changes. We use the build when it
+    // is a true MC patch version (Paper "1.20.11" / Vanilla "1.20.6"), and fall
+    // back to the major when the build is a loader version (Fabric/Forge).
     useEffect(() => {
-        if (!selectedMajor || formMode === 'view') return;
-        const rec = recommendJavaForVersion(selectedMajor);
+        if (formMode === 'view') return;
+        const v = effectiveMcVersion(selectedMajor, selectedBuild);
+        if (!v) return;
+        const rec = recommendJavaForVersion(v);
         if (rec) setJavaImage(rec);
-    }, [selectedMajor, formMode]);
-
-    // Auto-select Java version based on selected build (e.g. "1.20.6" for vanilla)
-    useEffect(() => {
-        if (!selectedBuild || formMode === 'view') return;
-        const rec = recommendJavaForVersion(selectedBuild);
-        if (rec) setJavaImage(rec);
-    }, [selectedBuild, formMode]);
+    }, [selectedMajor, selectedBuild, formMode]);
 
     // Pre-populate version when entering edit mode (handles case where software didn't change)
     useEffect(() => {
