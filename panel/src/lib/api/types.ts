@@ -190,6 +190,10 @@ export const createServer = (data: any) => fetchAPI('/servers', { method: 'POST'
 export const deleteServer = (id: number) => fetchAPI(`/servers/${id}`, { method: 'DELETE' });
 export const deleteSubServer = (id: number, subServerName: string) => fetchAPI(`/servers/${id}/sub-servers/${encodeURIComponent(subServerName)}`, { method: 'DELETE' });
 export const serverPower = (id: number, action: string) => fetchAPI(`/servers/${id}/power`, { method: 'POST', body: JSON.stringify({ action }) });
+// Seconds remaining on the post-install cooldown. Reads the same Redis TTL
+// the backend's PowerAction handler enforces, so the UI shows the truth.
+export const getInstallCooldown = (id: number): Promise<{ success: boolean; seconds: number }> =>
+    fetchAPI(`/servers/${id}/install-cooldown`);
 export const setupServer = (id: number, data: any) => fetchAPI(`/servers/${id}/setup`, { method: 'POST', body: JSON.stringify(data) });
 export const switchSubServer = (id: number, subServerName: string) => fetchAPI(`/servers/${id}/switch`, { method: 'POST', body: JSON.stringify({ subServerName }) });
 export const getSftpCredentials = (id: number) => fetchAPI(`/servers/${id}/sftp-credentials`);

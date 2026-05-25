@@ -5,12 +5,13 @@ import { useParams, usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
     Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull,
-    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move,
+    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
+    getInstallCooldown,
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
@@ -53,6 +54,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [waitingForStatus, setWaitingForStatus] = useState<string | null>(null);
     const [killCooldown, setKillCooldown] = useState(false);
     const [showKillConfirm, setShowKillConfirm] = useState(false);
+    const [powerError, setPowerError] = useState<string>('');
+
+    // Auto-clear power error after a few seconds so it doesn't stick on screen.
+    useEffect(() => {
+        if (!powerError) return;
+        const t = setTimeout(() => setPowerError(''), 4500);
+        return () => clearTimeout(t);
+    }, [powerError]);
 
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
@@ -78,6 +87,49 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         const timeout = setTimeout(() => setWaitingForStatus(null), 60000);
         return () => clearTimeout(timeout);
     }, [waitingForStatus]);
+
+    // Post-install cooldown. The node sets a Redis key with 30s TTL on
+    // setup/reinstall; the core PowerAction handler gates start/stop/
+    // restart/kill on it for non-admins. We fetch the TTL here so the UI
+    // can show a countdown and pre-disable buttons instead of letting the
+    // user click and eat a 429. Reload survives because the TTL lives in
+    // Redis and we re-fetch on mount.
+    const [cooldownEndsAt, setCooldownEndsAt] = useState<number | null>(null);
+    const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
+    useEffect(() => {
+        if (!selectedServer) return;
+        let cancelled = false;
+        getInstallCooldown(selectedServer.id).then(res => {
+            if (cancelled) return;
+            if (res?.seconds && res.seconds > 0) {
+                setCooldownEndsAt(Date.now() + res.seconds * 1000);
+            } else {
+                setCooldownEndsAt(null);
+            }
+        }).catch(() => { /* non-fatal: backend still gates via 429 */ });
+        return () => { cancelled = true; };
+        // selectedServer.status is included so we refetch when the server
+        // flips out of pending_setup (i.e. install just completed) — that's
+        // the exact moment the 30s window starts.
+    }, [selectedServer?.id, selectedServer?.status]);
+
+    useEffect(() => {
+        if (!cooldownEndsAt) return;
+        const tick = setInterval(() => {
+            const now = Date.now();
+            setNowTick(now);
+            if (now >= cooldownEndsAt) setCooldownEndsAt(null);
+        }, 1000);
+        return () => clearInterval(tick);
+    }, [cooldownEndsAt]);
+
+    const cooldownSecondsLeft = cooldownEndsAt
+        ? Math.max(0, Math.ceil((cooldownEndsAt - nowTick) / 1000))
+        : 0;
+    // Admins bypass the gate server-side; mirror that here so the buttons
+    // stay live for them and only the badge is shown.
+    const powerCooldownActive = cooldownSecondsLeft > 0 && !user?.isAdmin;
 
     if (!selectedServer) {
         return (
@@ -194,7 +246,23 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         } else {
             setWaitingForStatus(action === 'stop' ? 'stopped' : 'online');
         }
-        try { await serverPower(selectedServer.id, action); } catch { /* ignore */ }
+        try {
+            const res: any = await serverPower(selectedServer.id, action);
+            // The backend may reject (e.g. 429 install cooldown). fetchAPI
+            // now wraps that as {success:false, error, message}. Reset the
+            // optimistic waiter and surface the message so the user knows
+            // why nothing happened.
+            if (res && (res.success === false || res.error)) {
+                setWaitingForStatus(null);
+                setPowerError(res.error || res.message || 'Action rejected');
+                // Re-fetch cooldown — a 429 means we missed the install
+                // window's start (different tab finished setup, etc.).
+                try {
+                    const c = await getInstallCooldown(selectedServer.id);
+                    if (c?.seconds && c.seconds > 0) setCooldownEndsAt(Date.now() + c.seconds * 1000);
+                } catch { /* non-fatal */ }
+            }
+        } catch { /* network error — leave waiter, user can retry */ }
         setPowerLoading(null);
         if (action === 'kill' && !user?.isAdmin) {
             setTimeout(() => setKillCooldown(false), 60000);
@@ -296,42 +364,51 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                     Speicher voll
                                 </span>
                             )}
+                            {cooldownSecondsLeft > 0 && (
+                                <span
+                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-(--accent-ghost) border border-(--accent)/20 text-(--accent-light) text-xs font-mono"
+                                    title="Server is finishing install — power actions will unlock when this counter reaches 0."
+                                >
+                                    <Clock size={12} />
+                                    Settling {cooldownSecondsLeft}s
+                                </span>
+                            )}
                             <button
                                 onClick={() => handlePower('start')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline || uploadLocked}
+                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline || uploadLocked || powerCooldownActive}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed border ${
                                     isServerOffline && !isPendingSetup && !isDiskFull && canPower
                                         ? 'bg-(--success) text-white border-(--success) hover:bg-(--success-light)'
                                         : 'bg-(--success-ghost) text-(--success-light) border-(--success)/15 hover:bg-(--success)/15'
                                 }`}
-                                title={isDiskFull ? 'Speicher voll — Dateien loeschen oder Limit erhoehen' : canPower ? 'Start server' : 'No permission'}
+                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Speicher voll — Dateien loeschen oder Limit erhoehen' : canPower ? 'Start server' : 'No permission'}
                             >
                                 <Play size={16} />
                                 <span className="text-xs font-semibold">Start</span>
                             </button>
                             <button
                                 onClick={() => handlePower('restart')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked}
+                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--warning-ghost) hover:bg-(--warning)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--warning)/15"
-                                title={isDiskFull ? 'Speicher voll' : canPower ? 'Restart server' : 'No permission'}
+                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Speicher voll' : canPower ? 'Restart server' : 'No permission'}
                             >
                                 <RotateCcw size={16} className="text-(--warning)" />
                                 <span className="text-xs font-semibold text-(--warning)">Restart</span>
                             </button>
                             <button
                                 onClick={() => handlePower('stop')}
-                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked}
+                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
-                                title={canPower ? 'Stop server' : 'No permission'}
+                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Stop server' : 'No permission'}
                             >
                                 <Square size={16} className="text-(--error)" />
                                 <span className="text-xs font-semibold text-(--error)">Stop</span>
                             </button>
                             <button
                                 onClick={() => setShowKillConfirm(true)}
-                                disabled={!canPower || killCooldown || isServerOffline || uploadLocked}
+                                disabled={!canPower || killCooldown || isServerOffline || uploadLocked || powerCooldownActive}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
-                                title={canPower ? 'Force kill container' : 'No permission'}
+                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Force kill container' : 'No permission'}
                             >
                                 <Skull size={16} className="text-(--error)" />
                                 <span className="text-xs font-semibold text-(--error)">Kill</span>
@@ -662,6 +739,15 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     onClose={() => setShowRoutesModal(false)}
                     onRoutesChanged={setServerRoutes}
                 />
+            )}
+
+            {/* Floating toast for power-action rejections (cooldown 429s,
+                permission errors, etc.). Auto-dismisses after a few seconds. */}
+            {powerError && (
+                <div className="fixed bottom-6 right-6 z-50 flex items-start gap-2.5 px-4 py-3 rounded-md bg-(--error-ghost) border border-(--error)/30 text-(--error-light) text-sm shadow-lg max-w-sm">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                    <span>{powerError}</span>
+                </div>
             )}
         </main>
     );

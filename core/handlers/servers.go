@@ -661,6 +661,34 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 }
 
 
+// GetInstallCooldown returns how many seconds remain on the post-install
+// cooldown for a server, so the UI can disable power actions and show a
+// countdown instead of letting the user click and get a 429. Returns 0
+// when no cooldown is active. Admins still see the real number; the gate
+// in ServerPowerHandler is the one that exempts them.
+func (h *ServerHandler) GetInstallCooldown(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	seconds := 0
+	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+	if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
+		seconds = int(ttl.Seconds())
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"seconds": seconds,
+	})
+}
+
 // ServerPowerHandler: Controls Start, Stop, Kill and Restart
 func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -721,6 +749,19 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	if srv.Status == "suspended" && !isAdmin {
 		sendJSONError(w, "Server is suspended. Action blocked.", 403)
 		return
+	}
+
+	// Install cooldown: 30s after setup/reinstall the node sets a Redis key
+	// with TTL so the freshly-installed server can boot to a stable state
+	// without a foot-gun start/stop/kill during world generation. The same
+	// key is checked on setup + reinstall to debounce double-clicks; we
+	// gate power actions on it too. Admins bypass.
+	if !isAdmin {
+		cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
+			sendJSONError(w, fmt.Sprintf("Server is finishing install — please wait %d seconds", int(ttl.Seconds())), 429)
+			return
+		}
 	}
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
