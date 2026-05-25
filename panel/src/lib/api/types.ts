@@ -397,6 +397,13 @@ export interface ServerStats {
     cpuLimit: number;
     memUsed: number;
     memLimit: number;
+    // Post-GC live JVM heap size in MB. Populated by the log-shipper's
+    // GC log parser; absent on Java 8 (which can't emit -Xlog), or for
+    // the first few seconds of a fresh boot before the JVM has GC'd.
+    // When present this is the "real" memory usage that fluctuates with
+    // GC cycles; memUsed is the container-level metric that always
+    // reads near Xmx because the heap is pre-committed.
+    javaHeapUsed?: number;
     players: number;
     maxPlayers: number;
     motd: string;

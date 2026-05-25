@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -145,11 +146,11 @@ func TestBuildStartCommand(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "paper-1.20.1.jar"), []byte("x"), 0644); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		cmd, err := buildStartCommand(dir, 4096, "-XX:+UseG1GC")
+		cmd, err := buildStartCommand(dir, 4096, "-XX:+UseG1GC", "ghcr.io/example/mc-java17:latest")
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "java -XX:+UseG1GC -Xms4096M -Xmx4096M -jar paper-1.20.1.jar nogui"
+		want := "java -Xlog:gc::utctime,level,tags -XX:+UseG1GC -Xms4096M -Xmx4096M -jar paper-1.20.1.jar nogui"
 		if cmd != want {
 			t.Fatalf("got %q want %q", cmd, want)
 		}
@@ -166,11 +167,11 @@ func TestBuildStartCommand(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "user_jvm_args.txt"), []byte("x"), 0644); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		cmd, err := buildStartCommand(dir, 6144, "")
+		cmd, err := buildStartCommand(dir, 6144, "", "ghcr.io/example/mc-java17:latest")
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "java @user_jvm_args.txt -Xms6144M -Xmx6144M " +
+		want := "java -Xlog:gc::utctime,level,tags @user_jvm_args.txt -Xms6144M -Xmx6144M " +
 			"@libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt nogui"
 		if cmd != want {
 			t.Fatalf("got %q want %q", cmd, want)
@@ -188,19 +189,32 @@ func TestBuildStartCommand(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "user_jvm_args.txt"), []byte("x"), 0644); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		cmd, err := buildStartCommand(dir, 4096, "-Dfoo=bar")
+		cmd, err := buildStartCommand(dir, 4096, "-Dfoo=bar", "ghcr.io/example/mc-java17:latest")
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "java -Dfoo=bar @user_jvm_args.txt -Xms4096M -Xmx4096M " +
+		want := "java -Xlog:gc::utctime,level,tags -Dfoo=bar @user_jvm_args.txt -Xms4096M -Xmx4096M " +
 			"@libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt nogui"
 		if cmd != want {
 			t.Fatalf("got %q want %q", cmd, want)
 		}
 	})
 	t.Run("nothing runnable is an error", func(t *testing.T) {
-		if _, err := buildStartCommand(t.TempDir(), 1024, ""); err == nil {
+		if _, err := buildStartCommand(t.TempDir(), 1024, "", ""); err == nil {
 			t.Fatal("expected error for empty dir")
+		}
+	})
+	t.Run("java8 image skips -Xlog (would refuse to start)", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "paper-1.16.5.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		cmd, err := buildStartCommand(dir, 2048, "", "ghcr.io/example/mc-java8:latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(cmd, "-Xlog") {
+			t.Fatalf("java8 must not include -Xlog: %s", cmd)
 		}
 	})
 }

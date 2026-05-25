@@ -696,7 +696,7 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 			oldCmd = strings.Join(info.Config.Cmd, " ")
 		}
 		extraFlags := extractJvmFlagsFromCommand(oldCmd)
-		if startCmd, err := buildStartCommand(subServerDir, config.Docker.RAM, extraFlags); err == nil {
+		if startCmd, err := buildStartCommand(subServerDir, config.Docker.RAM, extraFlags, config.Docker.Image); err == nil {
 			config.Docker.Command = startCmd
 		} else {
 			// Fall back to the stored command so the container still starts.
@@ -741,7 +741,7 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 				oldCmd = strings.Join(info.Config.Cmd, " ")
 			}
 			extraFlags := extractJvmFlagsFromCommand(oldCmd)
-			if startCmd, buildErr := buildStartCommand(subServerDir, config.Docker.RAM, extraFlags); buildErr == nil {
+			if startCmd, buildErr := buildStartCommand(subServerDir, config.Docker.RAM, extraFlags, config.Docker.Image); buildErr == nil {
 				config.Docker.Command = startCmd
 			} else {
 				log.Printf("UpdateResources %s: buildStartCommand failed (%v), reusing stored command", config.UUID, buildErr)

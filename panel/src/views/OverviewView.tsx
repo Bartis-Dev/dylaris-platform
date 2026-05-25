@@ -142,7 +142,14 @@ export default function OverviewView({ server }: OverviewViewProps) {
   const isOffline = server.status === 'stopped' || server.status === 'offline' || server.status === 'pending_setup';
 
   const latestCpu = chartData.length > 0 ? (chartData[chartData.length - 1].cpu ?? 0) : 0;
-  const latestRamMb = chartData.length > 0 ? (chartData[chartData.length - 1].memUsed ?? 0) : 0;
+  // Prefer JVM heap (post-GC, fluctuates with the GC cycle) over the
+  // container-level metric: with Xms=Xmx the container always reads
+  // near the limit, hiding the actual live usage. Fall back to memUsed
+  // when no GC has happened yet (early startup) or for Java 8 servers.
+  const ramKey: keyof ServerStats = chartData.some(d => typeof d.javaHeapUsed === 'number' && d.javaHeapUsed > 0)
+    ? 'javaHeapUsed'
+    : 'memUsed';
+  const latestRamMb = chartData.length > 0 ? ((chartData[chartData.length - 1] as any)[ramKey] ?? 0) : 0;
 
   const tooltipStyle = {
     backgroundColor: 'var(--base-02)',
@@ -238,7 +245,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
         {/* RAM Chart */}
         <ChartCard
           icon={<MemoryStick size={14} className="text-(--base-06)" />}
-          label="RAM"
+          label={ramKey === 'javaHeapUsed' ? 'JVM Heap' : 'RAM'}
           currentValue={chartData.length > 0 ? (latestRamMb >= 1024 ? `${(latestRamMb / 1024).toFixed(1)} GB` : `${Math.round(latestRamMb)} MB`) : '—'}
           accentColor="var(--accent-light)"
         >
@@ -260,7 +267,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
                   formatter={(v) => { const n = Number(v); return [`${n >= 1024 ? (n / 1024).toFixed(1) + ' GB' : n + ' MB'}`, 'RAM']; }}
                   cursor={{ stroke: 'var(--base-05)', strokeWidth: 1, strokeDasharray: '4 4' }}
                 />
-                <Area type="monotone" dataKey="memUsed" stroke="var(--accent)" fill="url(#ramFill)" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Area type="monotone" dataKey={ramKey} stroke="var(--accent)" fill="url(#ramFill)" strokeWidth={2} dot={false} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           ) : emptyState}

@@ -23,9 +23,15 @@ type StatsPayload struct {
 	CPULimit   float64 `json:"cpuLimit"`
 	MemUsedMB  int64   `json:"memUsed"`
 	MemLimitMB int64   `json:"memLimit"`
-	Players    int     `json:"players"`
-	MaxPlayers int     `json:"maxPlayers"`
-	MOTD       string  `json:"motd"`
+	// JavaHeapUsedMB is the post-GC live-heap size in MB, populated by
+	// the log-shipper from `-Xlog:gc` summary lines. Omitted when no
+	// GC has been observed yet (early startup, Java 8 image, etc.) so
+	// the panel can fall back to the container metric without inferring
+	// a misleading zero.
+	JavaHeapUsedMB int64  `json:"javaHeapUsed,omitempty"`
+	Players        int    `json:"players"`
+	MaxPlayers     int    `json:"maxPlayers"`
+	MOTD           string `json:"motd"`
 }
 
 // DiskUsagePayload is stored per-server in Redis.
@@ -85,13 +91,14 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 					snap.mu.Lock()
 					if snap.payload != nil {
 						items = append(items, map[string]interface{}{
-							"uuid":       snap.uuid,
-							"cpu":        snap.payload.CPU,
-							"cpuLimit":   snap.cpuLimit,
-							"memUsed":    snap.payload.MemUsedMB,
-							"memLimit":   snap.payload.MemLimitMB,
-							"players":    snap.payload.Players,
-							"maxPlayers": snap.payload.MaxPlayers,
+							"uuid":         snap.uuid,
+							"cpu":          snap.payload.CPU,
+							"cpuLimit":     snap.cpuLimit,
+							"memUsed":      snap.payload.MemUsedMB,
+							"memLimit":     snap.payload.MemLimitMB,
+							"javaHeapUsed": snap.payload.JavaHeapUsedMB,
+							"players":      snap.payload.Players,
+							"maxPlayers":   snap.payload.MaxPlayers,
 						})
 					}
 					snap.mu.Unlock()
@@ -203,6 +210,10 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	watchKey := fmt.Sprintf("dylaris:server:%s:stats:watching", uuid)
 	diskKey := fmt.Sprintf("dylaris:server:%s:stats:disk", uuid)
 	statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
+	// Live heap size from the log-shipper's GC log parser. May be absent
+	// (no GC yet, Java 8 image, etc.) -- we treat that as "no value" and
+	// the panel falls back to the container metric.
+	heapKey := fmt.Sprintf("dylaris:server:%s:java-heap", uuid)
 
 	var lastPing *SLPResponse
 	var pingMu sync.Mutex
@@ -285,6 +296,15 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			CPULimit:   cpuLimit,
 			MemUsedMB:  stats.MemUsedMB,
 			MemLimitMB: stats.MemLimitMB,
+		}
+		// Pull the latest post-GC heap size if the log-shipper has seen
+		// one. Best-effort: a missing/unparseable key just means we omit
+		// the field for this tick and the panel keeps using the previous
+		// value (chart smoothing) or falls back to container memory.
+		if heapStr, err := rdb.Get(ctx, heapKey).Result(); err == nil {
+			if mb, perr := strconv.ParseInt(heapStr, 10, 64); perr == nil && mb > 0 {
+				payload.JavaHeapUsedMB = mb
+			}
 		}
 		if ping != nil {
 			payload.Players = ping.Players

@@ -114,17 +114,38 @@ func subServerType(subServerDir string) string {
 	}
 }
 
+// gcLogFlag is the unified-logging directive that makes the JVM print
+// G1/parallel GC summary lines like "GC(0) Pause Young ... 256M->50M(2048M)"
+// to stdout. The log-shipper parses these lines to surface live JVM heap
+// usage to the panel -- without this the only memory metric we can show
+// is the container's anon-RSS, which sits at Xmx forever because we force
+// Xms=Xmx and Java never gives heap back to the OS.
+//
+// Java 11+ accepts -Xlog. Java 8 will fail to start if it sees this flag,
+// so we omit it for Java-8 images (detected by the configured Java image
+// tag in buildStartCommand). Java 8 servers fall back to the old
+// container-level memory metric on the panel.
+const gcLogFlag = "-Xlog:gc::utctime,level,tags"
+
 // buildStartCommand assembles the full `java …` invocation for an
 // installed sub-server. The platform -Xms/-Xmx is always the LAST JVM
 // argument before the main-class token (-jar / @argsfile), so it wins
 // over anything the user put in extraJvmFlags or user_jvm_args.txt.
-func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string) (string, error) {
+//
+// javaImage is used to detect Java 8 (which rejects -Xlog) so we can
+// skip the GC-logging flag in that case. Pass an empty string to keep
+// the flag on by default (Java 11+ behavior).
+func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, javaImage string) (string, error) {
 	lf := resolveLaunch(subServerDir)
 	parts := []string{"java"}
 	add := func(s string) {
 		if s = strings.TrimSpace(s); s != "" {
 			parts = append(parts, s)
 		}
+	}
+	// Inject GC logging first so it survives any user-extraFlags reorder.
+	if !strings.Contains(javaImage, "java8") {
+		add(gcLogFlag)
 	}
 	switch lf.Mode {
 	case launchJar:

@@ -606,7 +606,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					// and any server-specific custom flags, already combined and trimmed).
 					subServerDir := filepath.Join(serverPath, subName)
 					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
-					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags)
+					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 					if err != nil {
 						log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
@@ -650,7 +650,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					// ExtraJvmFlags is passed directly from Core as a dedicated field.
 					switchSubDir := filepath.Join(serverPath, subName)
 					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
-					startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags)
+					startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 					if err != nil {
 						log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
 						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
@@ -822,7 +822,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					// Build the start command after reinstall (type-aware).
 					// ExtraJvmFlags is passed directly from Core as a dedicated field.
 					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
-					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags)
+					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 					if err != nil {
 						log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)
 						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +22,44 @@ const (
 	batchInterval = 200 * time.Millisecond
 	maxStreamLen  = 1000
 	lineChanSize  = 512
+	// Key TTL: long enough that a low-GC-frequency server (large heap, idle
+	// MC) still has a fresh-ish value when the node samples at 2s. If GC
+	// hasn't fired in 5min the value is effectively stale anyway, and the
+	// panel falls back to the container metric.
+	heapKeyTTL = 5 * time.Minute
 )
+
+// gcLineRegex matches the GC summary lines emitted by both Java 9+
+// unified logging (`-Xlog:gc`) and the legacy Java-8 `-XX:+PrintGCDetails`
+// format. Captures: before-GC, after-GC, total -- each with a K or M
+// unit suffix.
+//
+//	Java 17 G1: "[...][info][gc] GC(0) Pause Young (Normal) ... 256M->50M(2048M) 12.345ms"
+//	Java 8 PG:  "[GC (Allocation Failure)  256000K->50000K(2048000K), 0.012345 secs]"
+var gcLineRegex = regexp.MustCompile(`(\d+)([KM])->(\d+)([KM])\((\d+)([KM])\)`)
+
+// parseHeapAfterGC extracts the post-GC live-heap size (in MB) from a
+// JVM GC log line. Returns 0 + false if no GC summary is on the line.
+func parseHeapAfterGC(line string) (int64, bool) {
+	m := gcLineRegex.FindStringSubmatch(line)
+	if m == nil {
+		return 0, false
+	}
+	val, err := strconv.ParseInt(m[3], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	if m[4] == "K" {
+		val /= 1024
+	}
+	// Reject zero/negative: a 0 MB heap "value" right after a Full GC
+	// would publish a misleading dip to zero in the live chart. Skipping
+	// it lets the previous value stand until a meaningful GC happens.
+	if val <= 0 {
+		return 0, false
+	}
+	return val, true
+}
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -90,7 +128,10 @@ func scanLines(r io.Reader, ch chan<- string) {
 
 // shipLogs batches log lines and writes them to the Redis Stream.
 // Flushes every 200ms or when 50 lines accumulate, whichever comes first.
-func shipLogs(ctx context.Context, rdb *redis.Client, streamKey string, lineCh <-chan string) {
+// Side effect: also scans each line for JVM GC summaries and updates a
+// per-server Redis key with the latest post-GC heap size so the node
+// stats collector can surface live heap usage to the panel.
+func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string, lineCh <-chan string) {
 	ticker := time.NewTicker(batchInterval)
 	defer ticker.Stop()
 
@@ -126,6 +167,19 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey string, lineCh <
 			if !ok {
 				flush()
 				return
+			}
+			// JVM heap accounting: pulls "100M->50M(2048M)" out of GC
+			// summary lines and stores the post-GC value. Container-level
+			// stats from Docker are anon-RSS = Xms (since we force
+			// Xms=Xmx) and so look pinned at the limit forever; this is
+			// the actual live heap.
+			if heapKey != "" {
+				if mb, ok := parseHeapAfterGC(line); ok {
+					// Non-blocking: a slow Redis must not stall the log
+					// shipper, so we fire-and-forget. Stale values fall
+					// out via TTL.
+					rdb.Set(ctx, heapKey, mb, heapKeyTTL)
+				}
 			}
 			buf = append(buf, line)
 			if len(buf) >= batchSize {
@@ -181,6 +235,11 @@ func main() {
 	if subServer != "" {
 		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", serverUUID, subServer)
 	}
+	// Heap key holds the latest post-GC live-heap size (in MB) parsed
+	// off the JVM's stdout. Only one sub-server is active at a time and
+	// the container restarts on switch, so a single unified key is
+	// enough -- a fresh log-shipper instance overwrites stale values.
+	heapKey := fmt.Sprintf("dylaris:server:%s:java-heap", serverUUID)
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", serverUUID)
 
 	rdb := connectRedis()
@@ -237,7 +296,7 @@ func main() {
 		go func() { defer scanWG.Done(); scanLines(stderrPipe, lineCh) }()
 
 		go forwardInput(ctx, rdb, inputKey, stdinPipe)
-		go shipLogs(ctx, rdb, streamKey, lineCh)
+		go shipLogs(ctx, rdb, streamKey, heapKey, lineCh)
 
 		// Wait for Java process to exit
 		if err := javaCmd.Wait(); err != nil {
