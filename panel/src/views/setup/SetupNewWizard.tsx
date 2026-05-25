@@ -123,7 +123,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     {props.subNameError && <p className="text-xs text-(--error-light)">{props.subNameError}</p>}
                     {props.subName && !props.subNameError && (
                         <p className="text-xs text-(--base-07) font-mono">
-                            Stored as: <span className="text-(--primary-light)">/data/{sanitized}/</span>
+                            Stored as: <span className="text-(--primary-light)">/{sanitized}/</span>
                         </p>
                     )}
                 </div>

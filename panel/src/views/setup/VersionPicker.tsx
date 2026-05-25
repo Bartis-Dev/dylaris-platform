@@ -68,12 +68,21 @@ export default function VersionPicker({
         </div>
     );
 
+    // Hard cap at ~10 visible items per column. Above that the panel would
+    // start eating the rest of the page; we'd rather have a tight self-
+    // contained box that scrolls internally than a wizard that grows every
+    // time a new MC build appears. The columns differ in row height
+    // (software is the tallest), so we set per-column maxes.
+    const SOFTWARE_MAX_H = 'max-h-[360px]'; // ~9 entries @ 38px
+    const VERSION_MAX_H = 'max-h-[300px]';  // ~10 entries @ 28px
+    const BUILD_MAX_H = 'max-h-[260px]';    // ~10 entries @ 24px
+
     return (
-        <div className="grid grid-cols-3 gap-3 flex-1 min-h-0">
+        <div className="grid grid-cols-3 gap-3 items-start">
             {/* Software column */}
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label">Software</label>
-                <div className="flex-1 border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5">
+                <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${SOFTWARE_MAX_H}`}>
                     {availableSoftware.map(s => {
                         const meta = SOFTWARE_META[s];
                         return (
@@ -119,7 +128,7 @@ export default function VersionPicker({
             {/* Major Version column */}
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label">Version</label>
-                <div className="flex-1 border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5">
+                <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${VERSION_MAX_H}`}>
                     {loading ? spinner : majorVersions.map(m => (
                         <button key={m} type="button" onClick={() => {
                             onMajorChange(m);
@@ -140,7 +149,7 @@ export default function VersionPicker({
             {/* Build column */}
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label">Build</label>
-                <div className="flex-1 border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5">
+                <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${BUILD_MAX_H}`}>
                     {loading ? spinner : buildsForMajor.map(b => (
                         <button key={b} type="button" onClick={() => onBuildChange(b)}
                             className={`w-full p-1 text-xs rounded-md text-left font-mono ${
