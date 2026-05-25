@@ -755,11 +755,32 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// with TTL so the freshly-installed server can boot to a stable state
 	// without a foot-gun start/stop/kill during world generation. The same
 	// key is checked on setup + reinstall to debounce double-clicks; we
-	// gate power actions on it too. Admins bypass.
+	// gate power actions on it too. Admins bypass but the frontend prompts
+	// for an explicit confirmation.
 	if !isAdmin {
 		cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
 		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
 			sendJSONError(w, fmt.Sprintf("Server is finishing install — please wait %d seconds", int(ttl.Seconds())), 429)
+			return
+		}
+	}
+
+	// Status-transition sanity: the frontend already disables nonsensical
+	// transitions (Start on an online server, Stop on an offline one) but
+	// the API was happy to forward them to the node anyway -- a misbehaving
+	// client could spam Stop on a stopped server, queueing N redundant
+	// commands the node has to chew through. Reject them at the boundary.
+	isOffline := srv.Status == "stopped" || srv.Status == "offline" || srv.Status == "disk_full"
+	isOnline := srv.Status == "online"
+	switch req.Action {
+	case "start":
+		if isOnline {
+			sendJSONError(w, "Server is already running", 409)
+			return
+		}
+	case "stop", "kill", "restart":
+		if isOffline {
+			sendJSONError(w, "Server is not running", 409)
 			return
 		}
 	}
@@ -1096,6 +1117,24 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		// remove-error and clean up later).
 		if srv.ServerType == "proxy" {
 			h.state.Queue.SendProxyNetworkCommand(context.Background(), node.Token, "proxy_network_destroy", srv.UUID, "")
+		}
+	}
+
+	// Gateway routes are stored independently from the DB row (in Redis +
+	// the Hub) so they don't cascade with DeleteServer. We have to fan them
+	// out here, otherwise stale routes linger after the server is gone and
+	// the next user picking that subdomain hits a phantom "already taken".
+	// Errors are logged-but-not-fatal: the server delete itself must not
+	// fail because a route delete couldn't propagate.
+	if h.state.Gateway != nil && h.state.Redis != nil {
+		routes := services.GetRoutesFromRedis(context.Background(), h.state.Redis)
+		for _, rt := range routes {
+			if rt.ServerUUID != srv.UUID {
+				continue
+			}
+			if delErr := h.state.Gateway.DeleteRoute(rt.Domain); delErr != nil {
+				log.Printf("DeleteServer: failed to delete route %s for server %s: %v", rt.Domain, srv.UUID, delErr)
+			}
 		}
 	}
 

@@ -56,6 +56,11 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [showKillConfirm, setShowKillConfirm] = useState(false);
     const [powerError, setPowerError] = useState<string>('');
 
+    // Admins bypass the install cooldown on the backend, but we still warn
+    // them client-side so a Kill mid world-generation isn't a silent footgun.
+    // Holds the action the admin is trying to perform; null = no prompt.
+    const [pendingCooldownAction, setPendingCooldownAction] = useState<'start' | 'stop' | 'restart' | 'kill' | null>(null);
+
     // Auto-clear power error after a few seconds so it doesn't stick on screen.
     useEffect(() => {
         if (!powerError) return;
@@ -238,7 +243,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         setStorageMigrating(false);
     };
 
-    const handlePower = async (action: 'start' | 'stop' | 'restart' | 'kill') => {
+    const handlePower = async (action: 'start' | 'stop' | 'restart' | 'kill', opts?: { skipCooldownPrompt?: boolean }) => {
+        // Admins get an explicit "still settling" prompt before we send the
+        // command. Non-admins are already disabled by powerCooldownActive
+        // upstream, so this branch only ever fires for admins.
+        if (cooldownSecondsLeft > 0 && user?.isAdmin && !opts?.skipCooldownPrompt) {
+            setPendingCooldownAction(action);
+            return;
+        }
         setPowerLoading(action);
         if (action === 'kill') {
             setWaitingForStatus(null);
@@ -405,7 +417,13 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 <span className="text-xs font-semibold text-(--error)">Stop</span>
                             </button>
                             <button
-                                onClick={() => setShowKillConfirm(true)}
+                                onClick={() => {
+                                    if (cooldownSecondsLeft > 0 && user?.isAdmin) {
+                                        setPendingCooldownAction('kill');
+                                    } else {
+                                        setShowKillConfirm(true);
+                                    }
+                                }}
                                 disabled={!canPower || killCooldown || isServerOffline || uploadLocked || powerCooldownActive}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
                                 title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Force kill container' : 'No permission'}
@@ -586,6 +604,54 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 </div>
             )}
 
+            {/* Cooldown override (admin only). Lets the admin push through
+                the post-install settling window after explicit confirmation
+                instead of bypassing it silently. For Kill we hand off to the
+                existing destructive-confirm modal so the admin sees both
+                warnings -- they're independent risks. */}
+            {pendingCooldownAction && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setPendingCooldownAction(null)}>
+                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
+                                <AlertTriangle size={20} />
+                                Server is still installing
+                            </h3>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">
+                                The post-install settling window has{' '}
+                                <span className="font-mono text-(--accent-light)">{cooldownSecondsLeft}s</span>{' '}
+                                left. Power actions during this window can leave the freshly-installed world in a half-written state or kill the JVM mid chunk-generation.
+                            </p>
+                            <p className="text-sm text-(--base-07)">
+                                As an admin you can override the cooldown — only do this if you understand the consequences.
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => setPendingCooldownAction(null)} className="btn btn-secondary flex-1">
+                                Wait for settle
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const action = pendingCooldownAction;
+                                    setPendingCooldownAction(null);
+                                    if (action === 'kill') {
+                                        // Kill has its own dedicated confirm; chain to it.
+                                        setShowKillConfirm(true);
+                                    } else if (action) {
+                                        handlePower(action, { skipCooldownPrompt: true });
+                                    }
+                                }}
+                                className="btn btn-danger flex-1"
+                            >
+                                Override &amp; continue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Kill Confirmation */}
             {showKillConfirm && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setShowKillConfirm(false)}>
@@ -603,7 +669,19 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setShowKillConfirm(false)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => { handlePower('kill'); setShowKillConfirm(false); }} className="btn btn-danger">Kill</button>
+                            <button
+                                onClick={() => {
+                                    // skipCooldownPrompt because if cooldown was active we
+                                    // routed through the override modal first; re-firing
+                                    // it here would chain a second prompt for the same
+                                    // decision.
+                                    handlePower('kill', { skipCooldownPrompt: true });
+                                    setShowKillConfirm(false);
+                                }}
+                                className="btn btn-danger"
+                            >
+                                Kill
+                            </button>
                         </div>
                     </div>
                 </div>
