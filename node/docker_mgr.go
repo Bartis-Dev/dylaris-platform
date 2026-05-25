@@ -316,14 +316,23 @@ func (dm *DockerManager) DisconnectFromProxyNetwork(containerUUID, proxyUUID str
 //
 // Errors are returned with the container logs appended so callers can
 // surface a useful failure reason to the panel.
-func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, image string, cmd []string) (string, error) {
+func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, subServerName, image string, cmd []string) (string, error) {
 	if image == "" {
 		return "", fmt.Errorf("installer image is required")
+	}
+	if subServerName == "" {
+		return "", fmt.Errorf("installer container requires a sub-server name")
 	}
 	hostServerPath := dm.resolveHostServerPath(serverUUID)
 	if hostServerPath == "" {
 		return "", fmt.Errorf("could not resolve host path for server %s", serverUUID)
 	}
+	// Mount the SUB-SERVER directory at /data so /data/<jar> resolves
+	// to where the installer downloads its JAR. Mounting the server root
+	// was a stale shortcut from the single-sub-server era; now the JAR
+	// lives one level deeper inside the active sub-server's folder, and
+	// java -jar /data/<jar> would otherwise miss it and exit 1 silently.
+	hostSubServerPath := filepath.Join(hostServerPath, subServerName)
 
 	// Pull the image first — many user-selected Java images won't be on
 	// the node yet at first setup. Ignore errors; container create will
@@ -339,7 +348,7 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 		Tty:          false,
 	}
 	hc := &container.HostConfig{
-		Binds: []string{fmt.Sprintf("%s:/data", hostServerPath)},
+		Binds: []string{fmt.Sprintf("%s:/data", hostSubServerPath)},
 	}
 	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nil, nil, "")
 	if err != nil {

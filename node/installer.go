@@ -199,7 +199,7 @@ func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 	defer os.Remove(installerPath)
 
 	log.Printf("Running Forge --installServer inside %s ...", javaImage)
-	return runJavaInstaller(serverUUID, javaImage, "_forge-installer.jar", "--installServer")
+	return runJavaInstaller(serverUUID, filepath.Base(dir), javaImage, "_forge-installer.jar", "--installServer")
 }
 
 // installNeoForge resolves the requested NeoForge version (or latest if blank)
@@ -246,22 +246,28 @@ func installNeoForge(dir, version, javaImage, serverUUID string) error {
 	defer os.Remove(installerPath)
 
 	log.Printf("Running NeoForge --install-server inside %s ...", javaImage)
-	return runJavaInstaller(serverUUID, javaImage, "_neoforge-installer.jar", "--install-server")
+	return runJavaInstaller(serverUUID, filepath.Base(dir), javaImage, "_neoforge-installer.jar", "--install-server")
 }
 
 // runJavaInstaller wraps the installer-JAR execution inside a one-shot Java
-// container. The server's data directory is mounted at /data and the JAR
-// runs with /data as workdir, so paths inside the installer line up with
-// how the runtime container will see the same directory.
-func runJavaInstaller(serverUUID, javaImage, installerJAR string, args ...string) error {
+// container. The sub-server directory (not the server root) is mounted at
+// /data so /data/<installerJAR> resolves where the JAR was actually
+// downloaded to. Previously the bind mounted the server root and the cmd
+// looked for the JAR at /data/_forge-installer.jar — but the JAR lives in
+// <server-dir>/<sub-server>/_forge-installer.jar, so Java exited 1 with
+// no useful stderr (JVM "Unable to access jarfile" beats stdcopy to it).
+func runJavaInstaller(serverUUID, subServerName, javaImage, installerJAR string, args ...string) error {
 	if dockerManager == nil {
 		return fmt.Errorf("docker manager unavailable — installer cannot run")
 	}
 	if javaImage == "" {
 		return fmt.Errorf("installer requires a Java image (set during setup)")
 	}
+	if subServerName == "" {
+		return fmt.Errorf("installer requires a sub-server name (cannot resolve mount path)")
+	}
 	cmd := append([]string{"java", "-jar", "/data/" + installerJAR}, args...)
-	logs, err := dockerManager.RunInstallerContainer(context.Background(), serverUUID, javaImage, cmd)
+	logs, err := dockerManager.RunInstallerContainer(context.Background(), serverUUID, subServerName, javaImage, cmd)
 	if err != nil {
 		if logs != "" {
 			return fmt.Errorf("%w\n%s", err, logs)
