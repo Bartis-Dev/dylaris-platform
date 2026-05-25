@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -340,7 +341,14 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 	dm.PullImage(image)
 
 	cc := &container.Config{
-		Image:        image,
+		Image: image,
+		// The mc-java* images set ENTRYPOINT to the log-shipper wrapper so
+		// the actual MC server stdout streams to Redis. For one-shot
+		// installer runs we want plain `java -jar ...` -- the log-shipper
+		// would otherwise refuse to start (it fatals out without
+		// SERVER_UUID set) and the installer JAR would never be invoked.
+		// Clearing the entrypoint forces Docker to exec our Cmd directly.
+		Entrypoint:   strslice.StrSlice{},
 		Cmd:          cmd,
 		WorkingDir:   "/data",
 		AttachStdout: true,
