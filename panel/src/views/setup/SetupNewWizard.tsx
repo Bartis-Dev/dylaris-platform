@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
 import { CreateRouteRequest } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
@@ -9,7 +9,7 @@ import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
-import RouteDomainPicker from '@/components/RouteDomainPicker';
+import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 
 const nameRegex = /^[a-zA-Z0-9\-_+]+$/;
 function sanitizeName(raw: string): string {
@@ -87,6 +87,12 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
     const { routingMode } = useAppData();
     const showDomainField = routingMode !== 'ip_port';
 
+    // Block submit while we're mid-check or sitting on a taken domain.
+    // Idle / available are both fine (idle covers "empty input — skip route
+    // creation entirely", which is the no-domain case).
+    const [domainAvailability, setDomainAvailability] = useState<DomainAvailability>('idle');
+    const domainBlocksSubmit = showDomainField && (domainAvailability === 'checking' || domainAvailability === 'taken');
+
     return (
         <div className="flex-1 card flex flex-col overflow-hidden min-w-0">
             {/* Header */}
@@ -132,6 +138,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                         <RouteDomainPicker
                             value={props.gatewayRoute || { targetPort: 25565 }}
                             onChange={next => props.onGatewayRouteChange?.(next)}
+                            onAvailabilityChange={setDomainAvailability}
                             portChildren={
                                 <select
                                     value={props.gatewayRoute?.targetPort || 25565}
@@ -234,7 +241,10 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                 <button
                     type="button"
                     onClick={props.onSubmit}
-                    disabled={props.submitting || !sanitized || props.fileTooLarge}
+                    disabled={props.submitting || !sanitized || props.fileTooLarge || domainBlocksSubmit}
+                    title={domainBlocksSubmit
+                        ? (domainAvailability === 'checking' ? 'Checking domain availability…' : 'Pick an available domain or clear the field.')
+                        : undefined}
                     className="btn btn-primary btn-lg flex-1"
                 >
                     {props.submitting

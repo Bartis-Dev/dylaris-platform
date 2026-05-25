@@ -322,16 +322,37 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         });
 
         if (res.success) {
-            // Create gateway route if any domain field was filled
+            // Create gateway route if any domain field was filled. We surface
+            // failures inline so a typo'd domain or a race-loss against
+            // another tab doesn't silently drop the route -- the server is
+            // already installed at this point, but the user needs to know
+            // the routing piece didn't go through so they can retry from
+            // the Setup tab.
             const hasDomain = !!(gatewayRoute.subdomain || gatewayRoute.customDomain || gatewayRoute.domain);
+            let routeError = '';
             if (hasDomain) {
                 try {
-                    await createServerRoute(server.id, gatewayRoute);
-                } catch { /* non-fatal */ }
-                setGatewayRoute({ targetPort: 25565 });
+                    const routeRes = await createServerRoute(server.id, gatewayRoute);
+                    // fetchAPI now wraps text/plain errors as
+                    // {success: false, error, message}. The success response
+                    // from CreateServerRoute is {message, domain} with no
+                    // explicit success flag, so we treat the absence of
+                    // success:false / error as a pass.
+                    if (routeRes && (routeRes.success === false || routeRes.error)) {
+                        routeError = routeRes.error || routeRes.message || 'Could not create domain route';
+                    } else {
+                        setGatewayRoute({ targetPort: 25565 });
+                    }
+                } catch (e: any) {
+                    routeError = e?.message || 'Could not create domain route';
+                }
             }
             await loadSubServers();
-            onSetupComplete();
+            if (routeError) {
+                setError(`Server installed, but domain route failed: ${routeError}`);
+            } else {
+                onSetupComplete();
+            }
         } else setError(res.message || 'Setup failed');
         setSubmitting(false);
         setUploadStatus('');

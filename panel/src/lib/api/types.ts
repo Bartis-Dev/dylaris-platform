@@ -141,7 +141,24 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
         localStorage.removeItem('token');
         if (typeof window !== 'undefined') window.location.href = '/login';
     }
-    return res.json();
+    // Some Go handlers send `http.Error(...)` which is text/plain. Trying to
+    // parse that as JSON throws an unhelpful SyntaxError and callers lose the
+    // server's actual message. Read the body once, parse it if it's JSON, and
+    // otherwise wrap the text in a typed-shape envelope so callers can read
+    // res.error / res.message uniformly.
+    const text = await res.text();
+    let parsed: any = null;
+    try {
+        parsed = text ? JSON.parse(text) : null;
+    } catch {
+        parsed = null;
+    }
+    if (parsed !== null) return parsed;
+    if (!res.ok) {
+        const msg = text.trim() || `Request failed with status ${res.status}`;
+        return { success: false, error: msg, message: msg };
+    }
+    return {};
 }
 
 // --- MODULES ---

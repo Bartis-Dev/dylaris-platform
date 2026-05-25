@@ -1,12 +1,24 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { CreateRouteRequest, GatewayRouteOptions, getGatewayRouteOptions, HosterValidation } from '@/lib/api';
-import { Globe, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+    CreateRouteRequest,
+    DomainCheckRequest,
+    GatewayRouteOptions,
+    HosterValidation,
+    checkDomainAvailability,
+    getGatewayRouteOptions,
+} from '@/lib/api';
+import { AlertCircle, Check, Globe, Loader2, X } from 'lucide-react';
+
+// Availability state surfaced to the parent so it can disable submit when
+// the picker is mid-check or has landed on a taken domain.
+export type DomainAvailability = 'idle' | 'checking' | 'available' | 'taken';
 
 interface Props {
     value: CreateRouteRequest;
     onChange: (next: CreateRouteRequest) => void;
+    onAvailabilityChange?: (state: DomainAvailability) => void;
     error?: string;
     portChildren?: React.ReactNode; // The port select rendered next to the domain
 }
@@ -41,12 +53,22 @@ function customDomainLabelsOk(d: string) {
  * The component owns the mode toggle and writes the right shape into
  * `value` so the caller can post the request as-is.
  */
-export default function RouteDomainPicker({ value, onChange, error, portChildren }: Props) {
+export default function RouteDomainPicker({ value, onChange, onAvailabilityChange, error, portChildren }: Props) {
     const [opts, setOpts] = useState<GatewayRouteOptions | null>(null);
     const [mode, setMode] = useState<'hoster' | 'custom' | 'legacy'>('legacy');
     const [subdomain, setSubdomain] = useState('');
     const [hosterDomain, setHosterDomain] = useState('');
     const [customDomain, setCustomDomain] = useState('');
+
+    // Live availability state. The server endpoint is cheap; we still debounce
+    // ~600ms so a fast typist doesn't fire one request per keystroke. A request
+    // counter guards against out-of-order responses overwriting a fresher one
+    // (e.g. user types "play", check fires, user backspaces to "pla", second
+    // check fires; if the first response lands last we'd otherwise show the
+    // wrong result).
+    const [availability, setAvailability] = useState<DomainAvailability>('idle');
+    const [availabilityReason, setAvailabilityReason] = useState<string>('');
+    const reqCounter = useRef(0);
 
     useEffect(() => {
         getGatewayRouteOptions().then(res => {
@@ -79,6 +101,60 @@ export default function RouteDomainPicker({ value, onChange, error, portChildren
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mode, subdomain, hosterDomain, customDomain]);
+
+    // Debounced availability check. We only hit the API when the input passes
+    // local format validation, so the user never sees a "checking..." spinner
+    // for input we already know is malformed.
+    useEffect(() => {
+        let req: DomainCheckRequest | null = null;
+        if (mode === 'hoster' && subdomain && hosterDomain && activeHoster) {
+            const lower = subdomain.toLowerCase();
+            if (VALIDATION_REGEX[activeHoster.validation].test(lower)) {
+                req = { subdomain: lower, hosterDomain };
+            }
+        } else if (mode === 'custom' && customDomain) {
+            const lower = customDomain.toLowerCase();
+            if (CUSTOM_DOMAIN_REGEX.test(lower) && customDomainLabelsOk(lower)) {
+                req = { customDomain: lower };
+            }
+        } else if (mode === 'legacy' && customDomain) {
+            req = { domain: customDomain.toLowerCase() };
+        }
+
+        if (!req) {
+            setAvailability('idle');
+            setAvailabilityReason('');
+            return;
+        }
+
+        setAvailability('checking');
+        const myReq = ++reqCounter.current;
+        const handle = setTimeout(async () => {
+            try {
+                const res = await checkDomainAvailability(req!);
+                if (myReq !== reqCounter.current) return; // stale
+                if (res.available) {
+                    setAvailability('available');
+                    setAvailabilityReason('');
+                } else {
+                    setAvailability('taken');
+                    setAvailabilityReason(res.reason || 'already taken');
+                }
+            } catch {
+                if (myReq !== reqCounter.current) return;
+                // Network / 500 — don't block the user; treat as idle so the
+                // server-side create is still the source of truth.
+                setAvailability('idle');
+                setAvailabilityReason('');
+            }
+        }, 600);
+
+        return () => clearTimeout(handle);
+    }, [mode, subdomain, hosterDomain, customDomain, activeHoster]);
+
+    useEffect(() => {
+        onAvailabilityChange?.(availability);
+    }, [availability, onAvailabilityChange]);
 
     if (!opts) {
         return <div className="h-10 bg-(--base-02) rounded-md animate-pulse" />;
@@ -201,6 +277,28 @@ export default function RouteDomainPicker({ value, onChange, error, portChildren
                 <p className="text-xs text-(--base-06) font-mono">
                     Your domain will be: <span className="text-(--primary-light)">{previewDomain}</span>
                 </p>
+            )}
+
+            {/* Availability indicator. Suppressed when a local format hint is
+                already visible, since the API never gets called for invalid
+                input and would just show a stale state. */}
+            {!hint && availability === 'checking' && (
+                <div className="flex items-center gap-1.5 text-xs text-(--base-06)">
+                    <Loader2 size={12} className="animate-spin" />
+                    Checking availability…
+                </div>
+            )}
+            {!hint && availability === 'available' && (
+                <div className="flex items-center gap-1.5 text-xs text-(--success-light)">
+                    <Check size={12} />
+                    Available
+                </div>
+            )}
+            {!hint && availability === 'taken' && (
+                <div className="flex items-center gap-1.5 text-xs text-(--error-light)">
+                    <X size={12} />
+                    {availabilityReason || 'Not available'}
+                </div>
             )}
 
             {hint && (
