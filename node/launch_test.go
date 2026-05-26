@@ -217,4 +217,37 @@ func TestBuildStartCommand(t *testing.T) {
 			t.Fatalf("java8 must not include -Xlog: %s", cmd)
 		}
 	})
+	t.Run("java8 image strips java-9+ flags from extra (ShrinkHeapInSteps would crash)", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "paper-1.16.5.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		// Frontend's default GC flags include -XX:-ShrinkHeapInSteps. On
+		// Java 8 the JVM rejects it with "Unrecognized VM option" and
+		// fails to start.
+		extra := "-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps"
+		cmd, err := buildStartCommand(dir, 2048, extra, "ghcr.io/example/mc-java8:latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(cmd, "ShrinkHeapInSteps") {
+			t.Fatalf("java8 must strip ShrinkHeapInSteps: %s", cmd)
+		}
+		if !strings.Contains(cmd, "-XX:+UseG1GC") || !strings.Contains(cmd, "MaxHeapFreeRatio=40") {
+			t.Fatalf("java8 must preserve java-8-safe flags: %s", cmd)
+		}
+	})
+	t.Run("java17 image keeps all flags including ShrinkHeapInSteps", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "paper-1.20.1.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		cmd, err := buildStartCommand(dir, 2048, "-XX:-ShrinkHeapInSteps", "ghcr.io/example/mc-java17:latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(cmd, "ShrinkHeapInSteps") {
+			t.Fatalf("java17 must NOT strip ShrinkHeapInSteps: %s", cmd)
+		}
+	})
 }

@@ -127,6 +127,45 @@ func subServerType(subServerDir string) string {
 // container-level memory metric on the panel.
 const gcLogFlag = "-Xlog:gc::utctime,level,tags"
 
+// java8IncompatibleFlags lists VM options that the Java-8 HotSpot doesn't
+// recognize and will fatal-crash on at startup ("Unrecognized VM option").
+// They were added in Java 9+. The frontend's DEFAULT_GC_FLAGS ships some
+// of these because most users are on Java 17/21 -- but if the user wires
+// up a Java-8 image (e.g. for 1.8.x servers) we have to strip them or the
+// container loops on "Could not create the Java Virtual Machine" and the
+// node respawns it forever. New incompatibilities go here as we hit them.
+var java8IncompatibleFlags = []string{
+	"-XX:+ShrinkHeapInSteps",
+	"-XX:-ShrinkHeapInSteps",
+	"-Xlog:", // any -Xlog:... directive
+}
+
+// stripJava8IncompatibleFlags removes tokens from extraJvmFlags that
+// Java 8 would refuse to parse. Match is prefix-based for the
+// `-Xlog:` family (which takes free-form arguments) and exact for the
+// rest. Whitespace is normalized by re-joining survivors.
+func stripJava8IncompatibleFlags(extraJvmFlags string) string {
+	if extraJvmFlags == "" {
+		return ""
+	}
+	tokens := strings.Fields(extraJvmFlags)
+	out := tokens[:0]
+TokenLoop:
+	for _, tok := range tokens {
+		for _, bad := range java8IncompatibleFlags {
+			if strings.HasSuffix(bad, ":") {
+				if strings.HasPrefix(tok, bad) {
+					continue TokenLoop
+				}
+			} else if tok == bad {
+				continue TokenLoop
+			}
+		}
+		out = append(out, tok)
+	}
+	return strings.Join(out, " ")
+}
+
 // buildStartCommand assembles the full `java …` invocation for an
 // installed sub-server. The platform -Xms/-Xmx is always the LAST JVM
 // argument before the main-class token (-jar / @argsfile), so it wins
@@ -137,6 +176,14 @@ const gcLogFlag = "-Xlog:gc::utctime,level,tags"
 // the flag on by default (Java 11+ behavior).
 func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, javaImage string) (string, error) {
 	lf := resolveLaunch(subServerDir)
+	isJava8 := strings.Contains(javaImage, "java8")
+	// Java 8 fatals on any of our Java-9+ flags (ShrinkHeapInSteps, -Xlog,
+	// etc.), and the platform respawns the container in a tight crash
+	// loop because the JVM never even starts. Filter the offenders out
+	// of the user-supplied extra flags before we assemble the command.
+	if isJava8 {
+		extraJvmFlags = stripJava8IncompatibleFlags(extraJvmFlags)
+	}
 	parts := []string{"java"}
 	add := func(s string) {
 		if s = strings.TrimSpace(s); s != "" {
@@ -144,7 +191,7 @@ func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, jav
 		}
 	}
 	// Inject GC logging first so it survives any user-extraFlags reorder.
-	if !strings.Contains(javaImage, "java8") {
+	if !isJava8 {
 		add(gcLogFlag)
 	}
 	switch lf.Mode {

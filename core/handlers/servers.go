@@ -1121,21 +1121,49 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Gateway routes are stored independently from the DB row (in Redis +
-	// the Hub) so they don't cascade with DeleteServer. We have to fan them
-	// out here, otherwise stale routes linger after the server is gone and
-	// the next user picking that subdomain hits a phantom "already taken".
-	// Errors are logged-but-not-fatal: the server delete itself must not
-	// fail because a route delete couldn't propagate.
-	if h.state.Gateway != nil && h.state.Redis != nil {
-		routes := services.GetRoutesFromRedis(context.Background(), h.state.Redis)
+	// Hub's own DB), so they don't cascade with DeleteServer. Two layers
+	// of cleanup, because both have failure modes:
+	//
+	//   1. Push delete_route to the Hub queue (Gateway.DeleteRoute). This
+	//      is the source of truth -- Hub soft-deletes the row in its DB
+	//      so SyncData doesn't re-publish the route to Redis on its next
+	//      tick. If the Hub queue worker is wedged this step is a no-op
+	//      and the route would otherwise come back from Hub's DB.
+	//   2. Delete the cache keys directly in Redis. Immediate effect on
+	//      traffic routing while we wait for Hub to catch up. Belt-and-
+	//      suspenders -- harmless if Hub is healthy (the keys would
+	//      vanish from the next SyncData anyway), and the only thing
+	//      that works if it isn't.
+	//
+	// The previous version only did step 1, which is why the route kept
+	// reappearing in Redis: when Hub's queue lag bumped into Hub's
+	// SyncData cadence, the route was re-published before the delete
+	// landed.
+	if h.state.Redis != nil {
+		ctx := context.Background()
+		routes := services.GetRoutesFromRedis(ctx, h.state.Redis)
+		matched := 0
 		for _, rt := range routes {
 			if rt.ServerUUID != srv.UUID {
 				continue
 			}
-			if delErr := h.state.Gateway.DeleteRoute(rt.Domain); delErr != nil {
-				log.Printf("DeleteServer: failed to delete route %s for server %s: %v", rt.Domain, srv.UUID, delErr)
+			matched++
+			// Tell Hub to soft-delete the row (source of truth).
+			if h.state.Gateway != nil {
+				if delErr := h.state.Gateway.DeleteRoute(rt.Domain); delErr != nil {
+					log.Printf("DeleteServer: gateway DeleteRoute %s for %s failed: %v", rt.Domain, srv.UUID, delErr)
+				}
+			}
+			// Drop the Redis cache entry immediately so the route stops
+			// resolving while Hub processes the queue message.
+			pipe := h.state.Redis.Pipeline()
+			pipe.Del(ctx, "route:"+rt.Domain)
+			pipe.SRem(ctx, "sys:index:routes", rt.Domain)
+			if _, err := pipe.Exec(ctx); err != nil {
+				log.Printf("DeleteServer: redis cache drop for route %s failed: %v", rt.Domain, err)
 			}
 		}
+		log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
 	}
 
 	if err := h.state.Store.DeleteServer(serverID); err != nil {
