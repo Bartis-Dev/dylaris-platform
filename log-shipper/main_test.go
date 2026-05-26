@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestParseHeapAfterGC(t *testing.T) {
 	cases := []struct {
@@ -54,6 +56,58 @@ func TestParseHeapAfterGC(t *testing.T) {
 			}
 			if ok && got != c.want {
 				t.Fatalf("value mismatch: got %d want %d", got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsUnifiedGCLine(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "g1 young pause",
+			line: "[2026-05-26T16:13:18.366+0000][info][gc] GC(16) Pause Young (Concurrent Start) (Metadata GC Threshold) 434M->179M(2048M) 52.013ms",
+			want: true,
+		},
+		{
+			name: "concurrent mark cycle (no heap value)",
+			line: "[2026-05-26T16:13:18.366+0000][info][gc] GC(17) Concurrent Mark Cycle",
+			want: true,
+		},
+		{
+			name: "gc heap subtag",
+			line: "[2026-05-26T16:13:18.612+0000][info][gc,heap] Some heap-related info",
+			want: true,
+		},
+		{
+			name: "paper info line (not gc)",
+			line: "[16:13:18 INFO]: Starting Minecraft server on *:25565",
+			want: false,
+		},
+		{
+			name: "paper warn timings",
+			line: "[16:13:18 WARN]: [!] The timings profiler has been enabled but has been scheduled for removal from Paper in the future.",
+			want: false,
+		},
+		{
+			name: "chat with brackets that look gc-ish but not the tag form",
+			line: "[Server thread/INFO]: <player> [gc] is not a real player",
+			want: false,
+		},
+		{
+			name: "legacy java8 GC format passes through",
+			line: "[GC (Allocation Failure)  256000K->50000K(2048000K), 0.012345 secs]",
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := isUnifiedGCLine(c.line)
+			if got != c.want {
+				t.Fatalf("got %v want %v for %q", got, c.want, c.line)
 			}
 		})
 	}

@@ -61,6 +61,23 @@ func parseHeapAfterGC(line string) (int64, bool) {
 	return val, true
 }
 
+// isUnifiedGCLine reports whether a stdout line is a JVM unified-logging
+// GC summary that we should hide from the user-facing console. The lines
+// only exist because the platform injects `-Xlog:gc::utctime,level,tags`
+// to feed the live heap metric -- the operator never asked for them and
+// they drown out the actual MC server output. We still parse the heap
+// number out before filtering, so the metric stays accurate.
+//
+// The unified-logging format is `[<timestamp>][<level>][gc] ...` (and
+// `][gc,heap]`, `][gc,start]` etc. variants). Substring `][gc` is unique
+// enough; MC's own log4j format uses `[Server thread/INFO]:` so there's
+// no overlap. Java 8's legacy `[GC (...)]` format is not filtered: we
+// don't inject -Xlog on Java 8 anyway, so anything in that shape is
+// user-requested and should pass through.
+func isUnifiedGCLine(line string) bool {
+	return strings.Contains(line, "][gc")
+}
+
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -180,6 +197,14 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 					// out via TTL.
 					rdb.Set(ctx, heapKey, mb, heapKeyTTL)
 				}
+			}
+			// Hide JVM GC log noise from the user console. Parsing above
+			// still runs so the heap chart keeps updating; only the
+			// stream-shipping is skipped. Without -Xlog the JVM is silent
+			// here anyway, so this is purely about not exposing platform-
+			// internal logs to the operator.
+			if isUnifiedGCLine(line) {
+				continue
 			}
 			buf = append(buf, line)
 			if len(buf) >= batchSize {
