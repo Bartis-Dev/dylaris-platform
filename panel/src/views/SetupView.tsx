@@ -168,7 +168,10 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             } else {
                 const activeExists = dirs.includes(server.activeSubServer || '');
                 setActiveServerMissing(!activeExists && !!server.activeSubServer);
-                if (!activeExists && dirs.length > 0) setSwitchTarget(dirs[0]);
+                // Don't auto-set switchTarget when the active is
+                // missing -- with the new design that opens a switch
+                // modal unbidden. The warning banner already prompts
+                // the user; they click the Play icon to switch.
                 enterViewMode();
             }
         }
@@ -453,33 +456,36 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
     return (
         <div className="flex gap-6 h-full min-h-0">
-            {/* Sidebar */}
-            {subServers.length > 0 && (
-                <SubServerSidebar
-                    subServers={subServers}
-                    activeSubServer={server.activeSubServer}
-                    switchTarget={switchTarget}
-                    onSwitchSelect={s => formMode === 'view' ? setSwitchTarget(s) : undefined}
-                    onSwitchConfirm={handleSwitchServer}
-                    onAddNew={enterNewMode}
-                    onEditSubServer={(name) => {
-                        // Switch to the right slot first, then jump
-                        // straight into edit. enterEditMode reads
-                        // subName from server.activeSubServer, so we
-                        // need the panel state to match the picked
-                        // entry before we transition.
-                        setSubName(name);
-                        enterEditMode();
-                    }}
-                    onDeleteSubServer={(name) => {
-                        setSubName(name);
-                        setShowDeleteConfirm(true);
-                    }}
-                    submitting={submitting}
-                    disabled={formMode !== 'view'}
-                    maxSubServers={maxSubServers}
-                />
-            )}
+            {/* Sidebar -- always rendered, including during
+                pending_setup of a fresh container so the user can
+                Add Server right away. Empty-state hint inside the
+                sidebar orients new servers; once any sub-server
+                exists the list takes over. */}
+            <SubServerSidebar
+                subServers={subServers}
+                activeSubServer={server.activeSubServer}
+                onSwitch={(name) => {
+                    if (formMode !== 'view') return;
+                    setSwitchTarget(name);
+                }}
+                onAddNew={enterNewMode}
+                onEditSubServer={(name) => {
+                    // Switch to the right slot first, then jump
+                    // straight into edit. enterEditMode reads
+                    // subName from server.activeSubServer, so we
+                    // need the panel state to match the picked
+                    // entry before we transition.
+                    setSubName(name);
+                    enterEditMode();
+                }}
+                onDeleteSubServer={(name) => {
+                    setSubName(name);
+                    setShowDeleteConfirm(true);
+                }}
+                submitting={submitting}
+                disabled={formMode !== 'view'}
+                maxSubServers={maxSubServers}
+            />
 
             {/* Right panel - mode dependent */}
             {formMode === 'view' && (
@@ -535,6 +541,48 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                     fileTooLarge={fileTooLarge}
                     error={error}
                 />
+            )}
+
+            {/* Switch confirmation modal. Triggered by the Play icon
+                on a non-active sub-server. Switching stops the
+                currently-running container so this stays an explicit
+                opt-in (not silent) -- destructive transition for any
+                player connected to the live server. */}
+            {switchTarget && switchTarget !== server.activeSubServer && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setSwitchTarget(null)}>
+                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
+                                <RefreshCw size={20} /> Switch Sub-Server
+                            </h3>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-08)">
+                                Switch active sub-server to{' '}
+                                <span className="font-mono font-semibold text-(--warning-light)">{switchTarget}</span>?
+                            </p>
+                            <p className="text-sm text-(--base-06)">
+                                The currently-running container will be stopped and the new sub-server will be
+                                started in its place. Any connected players will be disconnected.
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => setSwitchTarget(null)} className="btn btn-secondary flex-1">
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSwitchServer}
+                                disabled={submitting}
+                                className="btn btn-primary flex-1 bg-(--warning) border-(--warning) hover:bg-(--warning-light)"
+                            >
+                                {submitting
+                                    ? <><RefreshCw size={14} className="animate-spin" /> Switching...</>
+                                    : <><RefreshCw size={14} /> Switch</>
+                                }
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {/* Delete Confirmation Modal */}
