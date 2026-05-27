@@ -784,26 +784,64 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 
 					serverPath := storage.GetServerDir(cmd.Config.UUID)
 					subServerPath := filepath.Join(serverPath, subName)
-					// Retry the dir delete a few times in case the FS
-					// hasn't caught up with the container tear-down.
-					// Verify with stat each round -- RemoveAll can
-					// "succeed" while leaving stragglers behind.
-					var removeErr error
-					for attempt := 1; attempt <= 4; attempt++ {
-						removeErr = os.RemoveAll(subServerPath)
-						if removeErr == nil {
-							if _, statErr := os.Stat(subServerPath); os.IsNotExist(statErr) {
-								removeErr = nil
-								break
+
+					// Two-phase delete to survive busy filesystems.
+					//
+					// Phase 1 (sync): atomic rename to a hidden
+					// `.pending-delete-<name>-<ns>` sibling. Rename only
+					// changes the inode-to-name mapping in the parent
+					// dir, which works even if the kernel still holds
+					// the original dir open via a bind. Once the rename
+					// returns success, the sub-server name is gone from
+					// every listing (file browser, scanSubServers, etc.)
+					// so the user sees the deletion as instant.
+					//
+					// Phase 2 (async): RemoveAll the tombstone in the
+					// background with retries. If it fails the
+					// tombstone stays on disk (hidden) until a future
+					// node start sweeps it up; the user-facing state
+					// is already correct.
+					//
+					// Previous attempts called RemoveAll directly and
+					// aborted the entire command on dir-still-present,
+					// which left .dylaris.json untouched and the empty
+					// dir visible -- exactly the symptom the user
+					// reported.
+					pendingPath := filepath.Join(serverPath, fmt.Sprintf(".pending-delete-%s-%d", subName, time.Now().UnixNano()))
+					removed := false
+					if renameErr := os.Rename(subServerPath, pendingPath); renameErr == nil {
+						removed = true
+						go func(p string) {
+							for attempt := 0; attempt < 12; attempt++ {
+								if err := os.RemoveAll(p); err == nil {
+									return
+								}
+								time.Sleep(time.Duration(attempt+1) * time.Second)
 							}
-							removeErr = fmt.Errorf("dir still present after RemoveAll")
+							log.Printf("delete_sub_server: background cleanup of %s gave up after retries (will retry on next node start)", p)
+						}(pendingPath)
+					} else {
+						// Rename failed (typically EXDEV across filesystems
+						// or ENOENT race) -- fall back to in-place
+						// RemoveAll with stat-verified retries.
+						log.Printf("delete_sub_server %s/%s: rename to tombstone failed (%v) -- falling back to in-place RemoveAll", cmd.Config.UUID, subName, renameErr)
+						var removeErr error
+						for attempt := 1; attempt <= 4; attempt++ {
+							removeErr = os.RemoveAll(subServerPath)
+							if removeErr == nil {
+								if _, statErr := os.Stat(subServerPath); os.IsNotExist(statErr) {
+									removed = true
+									break
+								}
+								removeErr = fmt.Errorf("dir still present after RemoveAll")
+							}
+							log.Printf("delete_sub_server %s/%s: remove attempt %d: %v", cmd.Config.UUID, subName, attempt, removeErr)
+							time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 						}
-						log.Printf("delete_sub_server %s/%s: remove attempt %d: %v", cmd.Config.UUID, subName, attempt, removeErr)
-						time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-					}
-					if removeErr != nil {
-						log.Printf("Failed to delete sub-server directory %s after retries: %v", subServerPath, removeErr)
-						return
+						if !removed {
+							log.Printf("Failed to delete sub-server directory %s after retries: %v", subServerPath, removeErr)
+							return
+						}
 					}
 
 					// Check if this was the active sub-server

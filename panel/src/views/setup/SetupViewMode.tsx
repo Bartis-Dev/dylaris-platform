@@ -2,13 +2,15 @@
 
 import React, { useState } from 'react';
 import { Server } from '@/lib/api';
-import { Pencil, Plus, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { Pencil, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { JAVA_IMAGES } from './JavaVersionPicker';
 
 interface SetupViewModeProps {
     server: Server;
     activeServerMissing: boolean;
     onEdit: () => void;
+    // onAddNew kept for compatibility with parent wiring even though
+    // the inline header button moved into the sub-server sidebar.
     onAddNew: () => void;
     hasSubServers: boolean;
 }
@@ -20,7 +22,7 @@ const formatInstallerType = (type?: string) => {
     return type.charAt(0).toUpperCase() + type.slice(1);
 };
 
-export default function SetupViewMode({ server, activeServerMissing, onEdit, onAddNew, hasSubServers }: SetupViewModeProps) {
+export default function SetupViewMode({ server, activeServerMissing, onEdit, onAddNew: _onAddNew, hasSubServers }: SetupViewModeProps) {
     const [flagsOpen, setFlagsOpen] = useState(false);
     const javaLabel = JAVA_IMAGES.find(j => j.id === server.image)?.label || 'Unknown';
     const javaNote = JAVA_IMAGES.find(j => j.id === server.image)?.note || '';
@@ -43,9 +45,6 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                     <div className="flex gap-2">
                         <button onClick={onEdit} className="btn btn-secondary btn-sm">
                             <Pencil size={14} /> Edit
-                        </button>
-                        <button onClick={onAddNew} className="btn btn-primary btn-sm">
-                            <Plus size={14} /> Add Server
                         </button>
                     </div>
                 )}

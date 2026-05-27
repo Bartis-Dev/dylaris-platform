@@ -14,6 +14,13 @@ import (
 // the restore caused damage, short enough that disk doesn't fill up.
 const preRestoreTTL = 24 * time.Hour
 
+// pendingDeleteTTL is the grace window for .pending-delete-* tombstones
+// produced by delete_sub_server. The inline async retry already tries
+// for ~78s; this catches the rare case where every retry hit busy-FS.
+// 10 minutes is plenty -- the tombstone is hidden from the user the
+// whole time, this is just disk-hygiene.
+const pendingDeleteTTL = 10 * time.Minute
+
 // restoreCleanupInterval is how often we walk the storage paths looking
 // for stale .pre-restore-* directories.
 const restoreCleanupInterval = time.Hour
@@ -45,8 +52,9 @@ func StartRestoreCleanup(ctx context.Context, sm *StorageManager) {
 func runRestoreCleanup(sm *StorageManager) {
 	roots := storageRoots(sm)
 	now := time.Now()
-	cutoff := now.Add(-preRestoreTTL)
-	purged := 0
+	preRestoreCutoff := now.Add(-preRestoreTTL)
+	pendingCutoff := now.Add(-pendingDeleteTTL)
+	purgedRestore, purgedPending := 0, 0
 	for _, root := range roots {
 		// root is e.g. ./dylaris_data/servers; one level down are
 		// per-server UUID directories. The stash sits one more level
@@ -59,7 +67,9 @@ func runRestoreCleanup(sm *StorageManager) {
 				return nil
 			}
 			base := filepath.Base(path)
-			if !strings.Contains(base, ".pre-restore-") {
+			isRestore := strings.Contains(base, ".pre-restore-")
+			isPending := strings.HasPrefix(base, ".pending-delete-")
+			if !isRestore && !isPending {
 				// Avoid descending into world-data unnecessarily; we only
 				// care about top two levels (server / sub-server).
 				if depthBelow(root, path) > 2 {
@@ -67,20 +77,27 @@ func runRestoreCleanup(sm *StorageManager) {
 				}
 				return nil
 			}
-			// .pre-restore-* found — only purge when info.ModTime is older
-			// than the TTL. ModTime survives Docker volume mounts, atime
-			// often does not.
+			cutoff := preRestoreCutoff
+			label := "pre-restore stash"
+			if isPending {
+				cutoff = pendingCutoff
+				label = "pending-delete tombstone"
+			}
 			if info.ModTime().Before(cutoff) {
-				log.Printf("restore-cleanup: removing %s (age %v)", path, now.Sub(info.ModTime()).Round(time.Minute))
+				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(info.ModTime()).Round(time.Minute))
 				if err := os.RemoveAll(path); err == nil {
-					purged++
+					if isRestore {
+						purgedRestore++
+					} else {
+						purgedPending++
+					}
 				}
 			}
 			return filepath.SkipDir // never recurse into the stash itself
 		})
 	}
-	if purged > 0 {
-		log.Printf("restore-cleanup: removed %d stale stash dir(s)", purged)
+	if purgedRestore > 0 || purgedPending > 0 {
+		log.Printf("restore-cleanup: removed %d stash + %d pending-delete dir(s)", purgedRestore, purgedPending)
 	}
 }
 

@@ -364,7 +364,12 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 		// (validateBeamPathRead allows reads on dot-prefixed names) so
 		// Beam.exe can grab an archive when given a direct path, but
 		// it must not appear in a regular directory listing.
-		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" {
+		// .dylaris.json holds platform metadata; .pending-delete-* are
+		// rename tombstones from sub-server cleanup.
+		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" || e.Name() == ".dylaris.json" {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), ".pending-delete-") {
 			continue
 		}
 		info, err := e.Info()

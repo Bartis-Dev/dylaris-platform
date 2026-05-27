@@ -742,11 +742,19 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 func isProtectedFile(path string) bool {
 	clean := filepath.Clean(path)
 	name := filepath.Base(clean)
-	if name == ".active_server" || name == ".node_config.json" || name == ".dylaris-backups" {
+	if name == ".active_server" || name == ".node_config.json" || name == ".dylaris-backups" || name == ".dylaris.json" {
+		return true
+	}
+	// .pending-delete-* are short-lived rename targets used by the
+	// sub-server delete pipeline -- the dir is moved here so the
+	// browser stops seeing the original name immediately, with
+	// async RemoveAll cleaning up the tombstone in the background.
+	// Either way the user has no business seeing it.
+	if strings.HasPrefix(name, ".pending-delete-") {
 		return true
 	}
 	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
-		if part == ".dylaris-backups" {
+		if part == ".dylaris-backups" || strings.HasPrefix(part, ".pending-delete-") {
 			return true
 		}
 	}

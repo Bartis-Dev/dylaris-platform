@@ -521,6 +521,12 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                             <p className="text-sm text-(--base-06)">
                                 All data will be permanently deleted. This action cannot be undone.
                             </p>
+                            <div className="text-xs text-(--base-07) bg-(--base-02) border border-(--base-03) rounded-md p-2.5 leading-relaxed">
+                                <span className="font-semibold text-(--accent-light)">Note:</span> Domain routes
+                                belong to the server, not individual sub-servers, so they stay attached and keep
+                                pointing at whichever sub-server you make active next. Manage them under{' '}
+                                <span className="font-mono">Network → Routes</span>.
+                            </div>
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setShowDeleteConfirm(false)} className="btn btn-secondary flex-1">

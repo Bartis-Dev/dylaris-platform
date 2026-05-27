@@ -46,22 +46,10 @@ export default function SubServerSidebar({
     }, [ctxMenu]);
     return (
         <div className="w-60 shrink-0 card flex flex-col overflow-hidden">
-            {/* Header */}
+            {/* Header — no inline + button anymore; the Add action moved
+                to a dedicated violet button at the bottom of the list. */}
             <div className="px-3 py-3 border-b border-(--base-03) flex items-center justify-between">
                 <p className="input-label mb-0">Servers</p>
-                <button
-                    type="button"
-                    onClick={onAddNew}
-                    disabled={disabled || limitReached}
-                    className={`p-1 rounded-sm transition-all ${
-                        limitReached
-                            ? 'text-(--base-05) cursor-not-allowed'
-                            : 'text-(--accent-light) hover:bg-(--accent-ghost)'
-                    }`}
-                    title={limitReached ? `Limit reached (${maxSubServers})` : 'Add sub-server'}
-                >
-                    <Plus size={16} />
-                </button>
             </div>
 
             {/* Server list */}
@@ -100,6 +88,24 @@ export default function SubServerSidebar({
                         </button>
                     );
                 })}
+
+                {/* Add-server CTA at the bottom of the list. Sits
+                    inside the scroll area so it stays adjacent to the
+                    last item, not floating in a separate footer. */}
+                <button
+                    type="button"
+                    onClick={onAddNew}
+                    disabled={disabled || limitReached}
+                    className={`w-full mt-2 px-3 py-2 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all border ${
+                        disabled || limitReached
+                            ? 'border-(--base-04) text-(--base-05) bg-(--base-02) cursor-not-allowed'
+                            : 'border-(--accent-border) bg-(--accent) text-white hover:bg-(--accent-light)'
+                    }`}
+                    title={limitReached ? `Limit reached (${maxSubServers})` : 'Add sub-server'}
+                >
+                    <Plus size={14} />
+                    <span>Add Server</span>
+                </button>
             </div>
 
             {/* Right-click context menu. Position-fixed so it pierces
