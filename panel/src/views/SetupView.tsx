@@ -136,6 +136,12 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [deleteCountdown, setDeleteCountdown] = useState(5);
     const [deleting, setDeleting] = useState(false);
+    // Sub-server names whose backend deletion is still in flight. The
+    // sidebar greys them out with a spinner so the user sees the row
+    // hasn't been forgotten while the Node tears the container down +
+    // removes the dir + Hub catches up. Removed once the polling loop
+    // confirms the dir is gone server-side.
+    const [pendingDelete, setPendingDelete] = useState<Set<string>>(new Set());
 
     // ---------- Data Loading ----------
 
@@ -403,21 +409,79 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     }, [showDeleteConfirm, deleteCountdown]);
 
     const handleDeleteSubServer = async () => {
+        const target = subName;
         setDeleting(true);
-        const res = await deleteSubServer(server.id, subName);
+        const res = await deleteSubServer(server.id, target);
         setDeleting(false);
         setShowDeleteConfirm(false);
-        if (res.success) {
-            await loadSubServers();
-            // Pull the latest server row so an immediate flip to
-            // pending_setup (when the deleted sub-server was the only
-            // one) lands in the layout's `isPendingSetup` check
-            // without waiting for the 5s context refresh.
-            await refreshServers();
-            onSetupComplete();
-        } else {
+        if (!res.success) {
             setError(res.message || 'Delete failed');
+            return;
         }
+
+        // Optimistic UI: mark the row as pending-delete so the sidebar
+        // greys it out + shows a spinner; the row stays visible so the
+        // user knows we're working on it. We do NOT call loadSubServers
+        // yet -- that would re-fetch the still-present dir from the
+        // Node and "un-delete" the row in the UI.
+        setPendingDelete(prev => new Set(prev).add(target));
+
+        // Background poll: hit the file listing every 500ms until the
+        // target dir is gone. Capped at 30s so a wedged delete (FS
+        // refuses to release, Node crashed, etc.) doesn't leave the
+        // sidebar in pending-state forever -- we fall back to a normal
+        // reload after the timeout. Important: this loop never calls
+        // enterNewMode / enterViewMode while formMode === 'new'; the
+        // user might be filling the new-server form right now and we
+        // mustn't blow away their progress because an unrelated
+        // sidebar row finished deleting.
+        const startedAt = Date.now();
+        const maxWait = 30_000;
+        const wasInNewMode = formMode === 'new';
+        let confirmed = false;
+        while (Date.now() - startedAt < maxWait) {
+            await new Promise(r => setTimeout(r, 500));
+            try {
+                const lst = await getFiles('', server.uuid);
+                if (lst.success && Array.isArray(lst.files)) {
+                    const dirs = (lst.files as any[]).filter(f => f.is_dir).map(f => f.name);
+                    if (!dirs.includes(target)) {
+                        setSubServers(dirs);
+                        confirmed = true;
+                        if (dirs.length === 0) {
+                            setActiveServerMissing(false);
+                            // Only auto-enter new mode if the user
+                            // isn't already in it. They could be
+                            // mid-form for a different sub-server
+                            // creation and getting wiped to a fresh
+                            // new-mode would lose their typing.
+                            if (!wasInNewMode) enterNewMode();
+                        } else {
+                            const activeExists = dirs.includes(server.activeSubServer || '');
+                            setActiveServerMissing(!activeExists && !!server.activeSubServer);
+                        }
+                        break;
+                    }
+                }
+            } catch { /* swallow & keep polling */ }
+        }
+
+        setPendingDelete(prev => {
+            const next = new Set(prev);
+            next.delete(target);
+            return next;
+        });
+        // Fallback if polling timed out without the dir disappearing.
+        // The Node may have been slow but eventually catches up; reload
+        // so the next view reflects whatever state actually exists.
+        if (!confirmed) {
+            await loadSubServers();
+        }
+        await refreshServers();
+        // Only signal "setup complete" upstream when we're not in the
+        // middle of a new-sub-server flow -- otherwise the parent
+        // refresh could yank the user out.
+        if (!wasInNewMode) onSetupComplete();
     };
 
     // ---------- Shared props for install sections ----------
@@ -464,6 +528,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             <SubServerSidebar
                 subServers={subServers}
                 activeSubServer={server.activeSubServer}
+                pendingDelete={pendingDelete}
                 onSwitch={(name) => {
                     if (formMode !== 'view') return;
                     setSwitchTarget(name);

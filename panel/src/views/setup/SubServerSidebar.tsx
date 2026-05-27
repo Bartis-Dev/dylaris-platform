@@ -1,11 +1,18 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Server as ServerIcon, Plus, Pencil, Trash2, Play } from 'lucide-react';
+import { Server as ServerIcon, Plus, Pencil, Trash2, Play, Loader2 } from 'lucide-react';
 
 interface SubServerSidebarProps {
     subServers: string[];
     activeSubServer?: string;
+    // Names that are mid-delete on the backend. The row stays
+    // rendered but greyed out + spinner-overlaid so the user gets
+    // immediate feedback that the delete is in flight without the
+    // row disappearing prematurely (the Node tear-down takes a
+    // couple of seconds and an early reload would re-fetch the
+    // still-present dir and "un-delete" the row visually).
+    pendingDelete?: Set<string>;
     onSwitch?: (name: string) => void;
     onAddNew: () => void;
     onEditSubServer?: (name: string) => void;
@@ -22,6 +29,7 @@ const SIDEBAR_WIDTH = 'w-[360px]';
 
 export default function SubServerSidebar({
     subServers, activeSubServer,
+    pendingDelete,
     onSwitch, onAddNew,
     onEditSubServer, onDeleteSubServer,
     submitting: _submitting, disabled, maxSubServers,
@@ -66,19 +74,22 @@ export default function SubServerSidebar({
 
                 {subServers.map(name => {
                     const isActive = name === activeSubServer;
+                    const isPendingDelete = !!pendingDelete?.has(name);
+                    const rowDisabled = !!disabled || isPendingDelete;
                     return (
                         <div
                             key={name}
                             onContextMenu={e => {
+                                if (isPendingDelete) return;
                                 if (!onEditSubServer && !onDeleteSubServer) return;
                                 e.preventDefault();
                                 setCtxMenu({ name, x: e.clientX, y: e.clientY });
                             }}
-                            className={`group flex items-center gap-2 px-2.5 py-2 rounded-md text-sm font-mono border ${
+                            className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-md text-sm font-mono border transition-opacity ${
                                 isActive
                                     ? 'border-(--success-border) bg-(--success-ghost) text-(--success-light)'
                                     : 'border-transparent hover:bg-(--base-04) text-(--base-07) hover:text-(--base-09)'
-                            }`}
+                            } ${isPendingDelete ? 'opacity-50 pointer-events-none' : ''}`}
                         >
                             {isActive ? (
                                 <span className="w-2 h-2 rounded-full bg-(--success-light) shrink-0" title="Active" />
@@ -92,11 +103,11 @@ export default function SubServerSidebar({
                                 (delete-active is allowed and falls
                                 through to the existing confirm flow). */}
                             <div className="flex items-center gap-0.5 shrink-0">
-                                {!isActive && onSwitch && (
+                                {!isActive && onSwitch && !isPendingDelete && (
                                     <button
                                         type="button"
-                                        onClick={() => !disabled && onSwitch(name)}
-                                        disabled={disabled}
+                                        onClick={() => !rowDisabled && onSwitch(name)}
+                                        disabled={rowDisabled}
                                         title="Switch active sub-server to this"
                                         aria-label={`Switch to ${name}`}
                                         className="p-1.5 rounded text-(--success-light) hover:bg-(--success-ghost) disabled:opacity-40 disabled:cursor-not-allowed"
@@ -104,11 +115,11 @@ export default function SubServerSidebar({
                                         <Play size={12} />
                                     </button>
                                 )}
-                                {onEditSubServer && (
+                                {onEditSubServer && !isPendingDelete && (
                                     <button
                                         type="button"
-                                        onClick={() => !disabled && onEditSubServer(name)}
-                                        disabled={disabled}
+                                        onClick={() => !rowDisabled && onEditSubServer(name)}
+                                        disabled={rowDisabled}
                                         title="Edit"
                                         aria-label={`Edit ${name}`}
                                         className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--base-09) disabled:opacity-40 disabled:cursor-not-allowed"
@@ -116,11 +127,11 @@ export default function SubServerSidebar({
                                         <Pencil size={12} />
                                     </button>
                                 )}
-                                {onDeleteSubServer && (
+                                {onDeleteSubServer && !isPendingDelete && (
                                     <button
                                         type="button"
-                                        onClick={() => !disabled && onDeleteSubServer(name)}
-                                        disabled={disabled}
+                                        onClick={() => !rowDisabled && onDeleteSubServer(name)}
+                                        disabled={rowDisabled}
                                         title="Delete"
                                         aria-label={`Delete ${name}`}
                                         className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost) disabled:opacity-40 disabled:cursor-not-allowed"
@@ -129,6 +140,18 @@ export default function SubServerSidebar({
                                     </button>
                                 )}
                             </div>
+
+                            {/* Loading overlay while the backend delete
+                                is in flight. Sits over the row's
+                                action area so it's visually clear that
+                                the row is being torn down, not just
+                                disabled. */}
+                            {isPendingDelete && (
+                                <span className="absolute inset-y-0 right-2 flex items-center gap-1.5 text-xs font-mono text-(--base-06) pointer-events-none">
+                                    <Loader2 size={12} className="animate-spin" />
+                                    deleting…
+                                </span>
+                            )}
                         </div>
                     );
                 })}
