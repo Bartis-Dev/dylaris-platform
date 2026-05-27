@@ -151,7 +151,15 @@ export default function ServerPropertiesView() {
     const [search, setSearch] = useState('');
     const [openGroups, setOpenGroups] = useState<Set<PropertyGroup>>(new Set(['world', 'network', 'performance']));
 
-    const filePath = 'server.properties';
+    // server.properties lives inside the active sub-server dir, not
+    // at the server root. The Node's validatePath resolves request
+    // paths relative to <storage>/<uuid>/, so without the sub-server
+    // prefix we get "file not found" no matter how many times the
+    // user clicks retry. If no active sub-server is selected we
+    // surface that as a friendly empty state instead of a 404 storm.
+    const filePath = server?.activeSubServer
+        ? `${server.activeSubServer}/server.properties`
+        : '';
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
@@ -159,6 +167,15 @@ export default function ServerPropertiesView() {
 
     const reload = useCallback(async () => {
         if (!server) return;
+        // No active sub-server -> no file to load. Treat it as a soft
+        // empty state, not an error -- retrying won't help until the
+        // user installs / switches to a sub-server.
+        if (!filePath) {
+            setLoading(false);
+            setError('No active sub-server selected. Install or switch to one in the Setup tab to edit server.properties.');
+            setDoc(null);
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
@@ -177,7 +194,7 @@ export default function ServerPropertiesView() {
             setError('Network error while loading server.properties.');
         }
         setLoading(false);
-    }, [server]);
+    }, [server, filePath]);
 
     useEffect(() => { reload(); }, [reload]);
 

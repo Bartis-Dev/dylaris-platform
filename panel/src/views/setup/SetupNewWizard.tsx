@@ -173,7 +173,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                                 </select>
                             }
                         />
-                        <p className="text-xs text-(--base-06)">Can also be configured later in the Setup tab.</p>
+                        <p className="text-xs text-(--base-06)">Routes are managed via the globe button above or the Routes button next to the power actions.</p>
                     </div>
                 )}
 
