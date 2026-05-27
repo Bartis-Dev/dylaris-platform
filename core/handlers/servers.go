@@ -1067,10 +1067,18 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		h.state.Queue.SendCommand(context.Background(), node.Token, "delete_sub_server", configPayload, nil)
 	}
 
-	// If deleting the active sub-server, reset to pending_setup
+	// If deleting the active sub-server, reset to pending_setup AND
+	// flip desired_state to "stopped". Without the desired_state flip
+	// the Node reconciler races against the delete: it sees the
+	// container missing, reads desired_state="online", and recreates
+	// the container from the saved config -- which still references
+	// the just-deleted sub-server, so Docker auto-creates an empty
+	// bind dir and the user's deleted slot resurrects empty. Setting
+	// desired_state="stopped" tells the reconciler to leave it alone.
 	if srv.ActiveSubServer == subServerName {
 		h.state.Store.UpdateServerStatus(serverID, "pending_setup")
 		h.state.Store.UpdateServerActiveSubServer(serverID, "")
+		h.state.Store.UpdateServerDesiredState(serverID, "stopped")
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

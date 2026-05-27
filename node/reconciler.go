@@ -104,6 +104,30 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 				continue
 			}
 
+			// Guard against resurrecting a server whose active sub-server
+			// was just deleted. The saved config still references the
+			// dead sub-server name; if we Recreate*, Docker happily
+			// auto-creates the empty bind-source dir and we end up with
+			// a phantom MC server in a freshly-rebuilt empty folder. The
+			// fix is to require both:
+			//   a) the saved active sub-server name is non-empty, AND
+			//   b) the corresponding dir actually exists on disk.
+			// Anything else means there's no valid sub-server to start
+			// and the server should stay down until the user picks one
+			// in the Setup tab. Also force status to pending_setup so
+			// the panel reflects that reality.
+			if config.ActiveSubServer == "" {
+				log.Printf("reconciler(deleted): mc_%s has empty active sub-server — leaving stopped, marking pending_setup", uuid)
+				rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
+				continue
+			}
+			activeSubPath := filepath.Join(storagePath, uuid, config.ActiveSubServer)
+			if st, err := os.Stat(activeSubPath); err != nil || !st.IsDir() {
+				log.Printf("reconciler(deleted): mc_%s active sub-server %q missing on disk — leaving stopped, marking pending_setup", uuid, config.ActiveSubServer)
+				rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
+				continue
+			}
+
 			log.Printf("reconciler(deleted): container mc_%s missing — recreating from saved config", uuid)
 
 			// RecreateWithCommand handles stop+remove (no-op if missing), port binding, and start.
