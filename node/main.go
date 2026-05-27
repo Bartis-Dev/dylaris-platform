@@ -19,6 +19,7 @@ import (
 
 	agent "dylaris-agent"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
@@ -747,13 +748,61 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					}
 					log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
 
-					// Kill the container
-					dm.PowerAction(cmd.Config.UUID, "kill")
+					// Tear down the container fully before touching the
+					// filesystem. The container's bind is rooted at the
+					// server dir (not the sub-server dir), so even an
+					// inactive sub-server can show up busy if the kernel
+					// hasn't released the overlay mount yet. Steps:
+					//   1) SIGKILL the JVM (cheap, non-blocking)
+					//   2) Wait for Docker to actually report the
+					//      container stopped — ContainerKill returns
+					//      after sending the signal, not after exit
+					//   3) Remove the container so the bind goes away
+					// Earlier we relied on PowerAction("kill") alone and
+					// then immediately RemoveAll'd, which lost a race
+					// to a still-held bind and looked to the user like
+					// "the delete button does nothing".
+					mcName := fmt.Sprintf("mc_%s", cmd.Config.UUID)
+					killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
+					if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
+						log.Printf("delete_sub_server %s: ContainerKill: %v (probably already stopped — continuing)", cmd.Config.UUID, killErr)
+					}
+					statusCh, errCh := dm.cli.ContainerWait(killCtx, mcName, container.WaitConditionNotRunning)
+					select {
+					case <-statusCh:
+					case waitErr := <-errCh:
+						if waitErr != nil {
+							log.Printf("delete_sub_server %s: container wait: %v", cmd.Config.UUID, waitErr)
+						}
+					case <-killCtx.Done():
+						log.Printf("delete_sub_server %s: kill wait timed out, proceeding anyway", cmd.Config.UUID)
+					}
+					killCancel()
+					if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+						log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
+					}
 
 					serverPath := storage.GetServerDir(cmd.Config.UUID)
 					subServerPath := filepath.Join(serverPath, subName)
-					if err := os.RemoveAll(subServerPath); err != nil {
-						log.Printf("Failed to delete sub-server directory %s: %v", subServerPath, err)
+					// Retry the dir delete a few times in case the FS
+					// hasn't caught up with the container tear-down.
+					// Verify with stat each round -- RemoveAll can
+					// "succeed" while leaving stragglers behind.
+					var removeErr error
+					for attempt := 1; attempt <= 4; attempt++ {
+						removeErr = os.RemoveAll(subServerPath)
+						if removeErr == nil {
+							if _, statErr := os.Stat(subServerPath); os.IsNotExist(statErr) {
+								removeErr = nil
+								break
+							}
+							removeErr = fmt.Errorf("dir still present after RemoveAll")
+						}
+						log.Printf("delete_sub_server %s/%s: remove attempt %d: %v", cmd.Config.UUID, subName, attempt, removeErr)
+						time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+					}
+					if removeErr != nil {
+						log.Printf("Failed to delete sub-server directory %s after retries: %v", subServerPath, removeErr)
 						return
 					}
 
@@ -780,6 +829,20 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 							log.Printf("No sub-servers remaining for %s, pending_setup", cmd.Config.UUID)
 							delFinalActive = ""
 						}
+					}
+					// Reflect the post-delete reality in Redis-status so
+					// the panel doesn't keep showing "online" / "stopped"
+					// for a server that no longer has anything to run.
+					// Core resets the DB row optimistically when the
+					// active sub-server is deleted, but if the user just
+					// dropped the last *inactive* one we still need to
+					// notice that nothing's left -- and the stats
+					// collector won't fire for a non-existent container.
+					statusKey := fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID)
+					if delFinalActive == "" {
+						rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
+					} else {
+						rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 					}
 					log.Printf("Sub-server %s/%s deleted", cmd.Config.UUID, subName)
 					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, delFinalActive)

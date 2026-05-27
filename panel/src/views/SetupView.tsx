@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, CreateRouteRequest } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
+import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
 import { JAVA_IMAGES, recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
 import { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
@@ -35,6 +36,7 @@ interface SetupViewProps {
 }
 
 export default function SetupView({ server, onSetupComplete, libraryEnabled }: SetupViewProps) {
+    const { refreshServers } = useAppData();
     const [subServers, setSubServers] = useState<string[]>([]);
     const [maxSubServers, setMaxSubServers] = useState<number>(3);
     const [formMode, setFormMode] = useState<FormMode>('view');
@@ -374,6 +376,11 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         setShowDeleteConfirm(false);
         if (res.success) {
             await loadSubServers();
+            // Pull the latest server row so an immediate flip to
+            // pending_setup (when the deleted sub-server was the only
+            // one) lands in the layout's `isPendingSetup` check
+            // without waiting for the 5s context refresh.
+            await refreshServers();
             onSetupComplete();
         } else {
             setError(res.message || 'Delete failed');
@@ -425,6 +432,19 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                     onSwitchSelect={s => formMode === 'view' ? setSwitchTarget(s) : undefined}
                     onSwitchConfirm={handleSwitchServer}
                     onAddNew={enterNewMode}
+                    onEditSubServer={(name) => {
+                        // Switch to the right slot first, then jump
+                        // straight into edit. enterEditMode reads
+                        // subName from server.activeSubServer, so we
+                        // need the panel state to match the picked
+                        // entry before we transition.
+                        setSubName(name);
+                        enterEditMode();
+                    }}
+                    onDeleteSubServer={(name) => {
+                        setSubName(name);
+                        setShowDeleteConfirm(true);
+                    }}
                     submitting={submitting}
                     disabled={formMode !== 'view'}
                     maxSubServers={maxSubServers}

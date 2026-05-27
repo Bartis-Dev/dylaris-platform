@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { RefreshCw, Info } from 'lucide-react';
 
 const SOFTWARE_META: Record<string, { desc: string; url: string }> = {
@@ -53,6 +54,12 @@ export default function VersionPicker({
     loading,
 }: VersionPickerProps) {
     const [hoveredInfo, setHoveredInfo] = useState<string | null>(null);
+    // Tooltip needs to escape the software box's overflow-y-auto, which
+    // otherwise clips the popup of the FIRST entry (positioned above
+    // its anchor). Anchor coords are captured per-row and the popup
+    // renders into document.body via a portal with position: fixed.
+    const [tooltipAt, setTooltipAt] = useState<{ x: number; y: number } | null>(null);
+    const portalRoot = typeof document !== 'undefined' ? document.body : null;
 
     const isProxySoftware = ['velocity', 'waterfall', 'bungeecord'].includes(software);
     const availableSoftware = softwareList || (isProxySoftware ? ['velocity', 'waterfall', 'bungeecord'] : ['paper', 'vanilla', 'fabric', 'forge', 'neoforge']);
@@ -98,8 +105,16 @@ export default function VersionPicker({
                                         <button
                                             type="button"
                                             aria-label={`Info: ${s}`}
-                                            onMouseEnter={() => setHoveredInfo(s)}
-                                            onMouseLeave={() => setHoveredInfo(null)}
+                                            onMouseEnter={e => {
+                                                // Capture viewport coords for a portal-rendered tooltip
+                                                // so the popup escapes the software column's
+                                                // overflow-y-auto -- otherwise the first row's
+                                                // tooltip is clipped against the top of the box.
+                                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                                setTooltipAt({ x: rect.right, y: rect.top });
+                                                setHoveredInfo(s);
+                                            }}
+                                            onMouseLeave={() => { setHoveredInfo(null); setTooltipAt(null); }}
                                             onClick={e => {
                                                 e.stopPropagation();
                                                 window.open(meta.url, '_blank', 'noopener,noreferrer');
@@ -112,11 +127,6 @@ export default function VersionPicker({
                                         >
                                             <Info size={13} />
                                         </button>
-                                        {hoveredInfo === s && (
-                                            <span className="absolute bottom-full right-0 mb-1.5 z-50 w-48 rounded-md bg-(--base-02) border border-(--base-03) px-2.5 py-1.5 text-[11px] text-(--base-07) leading-snug shadow-lg pointer-events-none whitespace-normal">
-                                                {meta.desc}
-                                            </span>
-                                        )}
                                     </div>
                                 )}
                             </div>
@@ -166,6 +176,20 @@ export default function VersionPicker({
                     )}
                 </div>
             </div>
+
+            {/* Tooltip rendered into document.body to escape the
+                software column's overflow clipping. transform-translate
+                shifts it above-left of the anchor (mirrors the original
+                bottom-full right-0 positioning). */}
+            {hoveredInfo && tooltipAt && portalRoot && SOFTWARE_META[hoveredInfo] && createPortal(
+                <div
+                    className="fixed z-1000 w-48 rounded-md bg-(--base-02) border border-(--base-03) px-2.5 py-1.5 text-[11px] text-(--base-07) leading-snug shadow-lg pointer-events-none whitespace-normal"
+                    style={{ left: tooltipAt.x, top: tooltipAt.y, transform: 'translate(-100%, calc(-100% - 6px))' }}
+                >
+                    {SOFTWARE_META[hoveredInfo].desc}
+                </div>,
+                portalRoot,
+            )}
         </div>
     );
 }

@@ -88,8 +88,15 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
     return servers.filter(s => directMatches.has(s.id) || neededProxyIds.has(s.id));
   }, [servers, searchQuery]);
 
+  // Backend returns ALL servers when the caller is an admin, tagging
+  // foreign-owned ones with role='admin' so the admin view can list
+  // them. Without the explicit exclusion here those rows would land in
+  // "my servers" -- so an admin sees every server on the platform in
+  // the default sidebar without ever toggling admin-mode. Exclude
+  // role='admin' from both lanes; it only belongs in the dedicated
+  // admin-mode view (renderAdminList).
   const myServers = useMemo(() =>
-    filteredServers.filter(s => s.role !== 'invited' && s.role !== 'inherited'),
+    filteredServers.filter(s => s.role !== 'invited' && s.role !== 'inherited' && s.role !== 'admin'),
     [filteredServers]
   );
   const invitedServers = useMemo(() =>

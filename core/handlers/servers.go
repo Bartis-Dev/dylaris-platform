@@ -1143,12 +1143,17 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		routes := services.GetRoutesFromRedis(ctx, h.state.Redis)
 		matched := 0
+		targetIP := fmt.Sprintf("mc_%s", srv.UUID)
 		for _, rt := range routes {
-			if rt.ServerUUID != srv.UUID {
+			// Match on either field. Older routes (pre `server_uuid`
+			// column being persisted) only have target_ip = "mc_<uuid>";
+			// newer ones have both. Match-or means the cleanup catches
+			// every shape we've ever written.
+			if rt.ServerUUID != srv.UUID && rt.TargetIP != targetIP {
 				continue
 			}
 			matched++
-			// Tell Hub to soft-delete the row (source of truth).
+			// Tell Hub to hard-delete the row (source of truth).
 			if h.state.Gateway != nil {
 				if delErr := h.state.Gateway.DeleteRoute(rt.Domain); delErr != nil {
 					log.Printf("DeleteServer: gateway DeleteRoute %s for %s failed: %v", rt.Domain, srv.UUID, delErr)

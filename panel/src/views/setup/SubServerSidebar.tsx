@@ -1,7 +1,7 @@
 "use client";
 
-import React from 'react';
-import { PlayCircle, Server as ServerIcon, Plus, RefreshCw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Server as ServerIcon, Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react';
 
 interface SubServerSidebarProps {
     subServers: string[];
@@ -10,6 +10,8 @@ interface SubServerSidebarProps {
     onSwitchSelect: (name: string | null) => void;
     onSwitchConfirm: () => void;
     onAddNew: () => void;
+    onEditSubServer?: (name: string) => void;
+    onDeleteSubServer?: (name: string) => void;
     submitting: boolean;
     disabled?: boolean;
     maxSubServers?: number;
@@ -18,9 +20,30 @@ interface SubServerSidebarProps {
 export default function SubServerSidebar({
     subServers, activeSubServer, switchTarget,
     onSwitchSelect, onSwitchConfirm, onAddNew,
+    onEditSubServer, onDeleteSubServer,
     submitting, disabled, maxSubServers,
 }: SubServerSidebarProps) {
     const limitReached = maxSubServers != null && maxSubServers > 0 && subServers.length >= maxSubServers;
+    // Per-item context menu. Tracks the sub-server whose menu is open and
+    // the viewport anchor (in client coords) — we render with position:
+    // fixed so the popup escapes the sidebar's own overflow clipping.
+    const [ctxMenu, setCtxMenu] = useState<{ name: string; x: number; y: number } | null>(null);
+
+    // Close the menu on any outside click / escape so it doesn't get
+    // stranded over the page when the user clicks elsewhere.
+    useEffect(() => {
+        if (!ctxMenu) return;
+        const close = () => setCtxMenu(null);
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+        window.addEventListener('click', close);
+        window.addEventListener('contextmenu', close);
+        window.addEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('click', close);
+            window.removeEventListener('contextmenu', close);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [ctxMenu]);
     return (
         <div className="w-60 shrink-0 card flex flex-col overflow-hidden">
             {/* Header */}
@@ -55,6 +78,11 @@ export default function SubServerSidebar({
                                     onSwitchSelect(isSwitch ? null : name);
                                 }
                             }}
+                            onContextMenu={e => {
+                                if (!onEditSubServer && !onDeleteSubServer) return;
+                                e.preventDefault();
+                                setCtxMenu({ name, x: e.clientX, y: e.clientY });
+                            }}
                             className={`w-full text-left px-3 py-2 rounded-md text-sm font-mono flex items-center gap-2.5 transition-all border ${
                                 isActive
                                     ? 'border-(--success-border) bg-(--success-ghost) text-(--success-light)'
@@ -73,6 +101,37 @@ export default function SubServerSidebar({
                     );
                 })}
             </div>
+
+            {/* Right-click context menu. Position-fixed so it pierces
+                the sidebar's overflow-y-auto clipping; click-outside
+                closes via the global listener registered in useEffect. */}
+            {ctxMenu && (
+                <div
+                    className="fixed z-50 min-w-[140px] rounded-md bg-(--base-02) border border-(--base-03) shadow-lg py-1 text-sm"
+                    style={{ left: ctxMenu.x, top: ctxMenu.y }}
+                    onClick={e => e.stopPropagation()}
+                    onContextMenu={e => e.preventDefault()}
+                >
+                    {onEditSubServer && (
+                        <button
+                            type="button"
+                            onClick={() => { onEditSubServer(ctxMenu.name); setCtxMenu(null); }}
+                            className="w-full px-3 py-1.5 flex items-center gap-2 text-(--base-08) hover:bg-(--base-04) hover:text-(--base-09)"
+                        >
+                            <Pencil size={13} /> Edit
+                        </button>
+                    )}
+                    {onDeleteSubServer && (
+                        <button
+                            type="button"
+                            onClick={() => { onDeleteSubServer(ctxMenu.name); setCtxMenu(null); }}
+                            className="w-full px-3 py-1.5 flex items-center gap-2 text-(--error-light) hover:bg-(--error-ghost)"
+                        >
+                            <Trash2 size={13} /> Delete
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* Switch confirmation */}
             {switchTarget && switchTarget !== activeSubServer && (
