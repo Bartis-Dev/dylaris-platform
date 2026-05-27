@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, CreateRouteRequest } from '@/lib/api';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
@@ -11,6 +11,7 @@ import SubServerSidebar from './setup/SubServerSidebar';
 import SetupViewMode from './setup/SetupViewMode';
 import SetupNewWizard from './setup/SetupNewWizard';
 import SetupEditMode from './setup/SetupEditMode';
+import RoutesModal from '@/components/RoutesModal';
 import { API_URL } from '@/lib/api/core';
 const DEFAULT_GC_FLAGS = '-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps';
 
@@ -114,6 +115,22 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
     // Gateway route (optional, for setup wizard)
     const [gatewayRoute, setGatewayRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
+    // Routes already attached to this server. Used by the picker to
+    // distinguish "domain is yours" from "domain is taken by someone
+    // else" (different colour + can submit unchanged), and to suppress
+    // the createServerRoute call on submit when the user picked a
+    // domain that's already routed to this same server.
+    const [existingRoutes, setExistingRoutes] = useState<GatewayRoute[]>([]);
+    const [showRoutesModal, setShowRoutesModal] = useState(false);
+    const loadRoutes = useCallback(async () => {
+        try {
+            const res: any = await getServerRoutes(server.id);
+            if (Array.isArray(res)) setExistingRoutes(res);
+            else if (res && Array.isArray(res.routes)) setExistingRoutes(res.routes);
+            else setExistingRoutes([]);
+        } catch { /* non-fatal: tooltip just won't know about own routes */ }
+    }, [server.id]);
+    useEffect(() => { loadRoutes(); }, [loadRoutes]);
 
     // Delete sub-server
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -331,8 +348,21 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             // the routing piece didn't go through so they can retry from
             // the Setup tab.
             const hasDomain = !!(gatewayRoute.subdomain || gatewayRoute.customDomain || gatewayRoute.domain);
+            // Effective domain for own-route detection. Mirrors the
+            // picker's preview computation so the comparison sees the
+            // same string that ends up in createServerRoute.
+            const effectiveDomain = (gatewayRoute.subdomain && gatewayRoute.hosterDomain)
+                ? `${gatewayRoute.subdomain}.${gatewayRoute.hosterDomain}`.toLowerCase()
+                : (gatewayRoute.customDomain || gatewayRoute.domain || '').toLowerCase();
+            const alreadyOurs = !!effectiveDomain && existingRoutes.some(r => r.domain.toLowerCase() === effectiveDomain);
             let routeError = '';
-            if (hasDomain) {
+            if (hasDomain && alreadyOurs) {
+                // Domain is already routed to this server; nothing to do
+                // on the API side, just clear the field so the wizard
+                // resets cleanly for the next round.
+                setGatewayRoute({ targetPort: 25565 });
+            }
+            if (hasDomain && !alreadyOurs) {
                 try {
                     const routeRes = await createServerRoute(server.id, gatewayRoute);
                     // fetchAPI now wraps text/plain errors as
@@ -482,6 +512,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                     isFirstSetup={subServers.length === 0}
                     gatewayRoute={gatewayRoute}
                     onGatewayRouteChange={setGatewayRoute}
+                    existingRoutes={existingRoutes}
+                    onOpenRoutesModal={() => setShowRoutesModal(true)}
                 />
             )}
 
@@ -547,6 +579,21 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Inline routes management. Same component the server-
+                header globe icon opens; we mount it here too so the
+                setup-tab globe shortcut works without round-tripping
+                through the layout. Reload local existingRoutes when
+                the user mutates anything so the picker's "own route"
+                check stays in sync. */}
+            {showRoutesModal && (
+                <RoutesModal
+                    serverId={server.id}
+                    serverName={server.name}
+                    onClose={() => { setShowRoutesModal(false); loadRoutes(); }}
+                    onRoutesChanged={(rs) => setExistingRoutes(rs)}
+                />
             )}
         </div>
     );

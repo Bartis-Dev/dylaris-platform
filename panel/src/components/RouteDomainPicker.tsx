@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     CreateRouteRequest,
     DomainCheckRequest,
+    GatewayRoute,
     GatewayRouteOptions,
     HosterValidation,
     checkDomainAvailability,
@@ -13,12 +14,20 @@ import { AlertCircle, Check, Globe, Loader2, X } from 'lucide-react';
 
 // Availability state surfaced to the parent so it can disable submit when
 // the picker is mid-check or has landed on a taken domain.
-export type DomainAvailability = 'idle' | 'checking' | 'available' | 'taken';
+// 'own' = the domain is already routed to THIS server -- treated as
+// non-blocking on submit (the parent skips the createServerRoute call).
+export type DomainAvailability = 'idle' | 'checking' | 'available' | 'taken' | 'own';
 
 interface Props {
     value: CreateRouteRequest;
     onChange: (next: CreateRouteRequest) => void;
     onAvailabilityChange?: (state: DomainAvailability) => void;
+    // Routes already attached to the parent's server. When the typed
+    // domain matches one of these we short-circuit the "taken" path
+    // and show a friendly "you already have this one" indicator
+    // instead -- the submit path treats it as a no-op for the route
+    // create, but install can still proceed.
+    existingRoutes?: GatewayRoute[];
     error?: string;
     portChildren?: React.ReactNode; // The port select rendered next to the domain
 }
@@ -53,7 +62,7 @@ function customDomainLabelsOk(d: string) {
  * The component owns the mode toggle and writes the right shape into
  * `value` so the caller can post the request as-is.
  */
-export default function RouteDomainPicker({ value, onChange, onAvailabilityChange, error, portChildren }: Props) {
+export default function RouteDomainPicker({ value, onChange, onAvailabilityChange, existingRoutes, error, portChildren }: Props) {
     const [opts, setOpts] = useState<GatewayRouteOptions | null>(null);
     const [mode, setMode] = useState<'hoster' | 'custom' | 'legacy'>('legacy');
     const [subdomain, setSubdomain] = useState('');
@@ -102,9 +111,24 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mode, subdomain, hosterDomain, customDomain]);
 
+    // Effective domain the user is typing. Mirrors previewDomain below
+    // and the parent's submit-path computation so all three agree on
+    // the same string for own-route matching.
+    const effectiveDomain = useMemo(() => {
+        if (mode === 'hoster' && subdomain && hosterDomain) {
+            return `${subdomain}.${hosterDomain}`.toLowerCase();
+        }
+        if ((mode === 'custom' || mode === 'legacy') && customDomain) {
+            return customDomain.toLowerCase();
+        }
+        return '';
+    }, [mode, subdomain, hosterDomain, customDomain]);
+
     // Debounced availability check. We only hit the API when the input passes
     // local format validation, so the user never sees a "checking..." spinner
-    // for input we already know is malformed.
+    // for input we already know is malformed. If the domain is already
+    // attached to this server we short-circuit to 'own' and skip the API
+    // entirely -- spamming /check-domain for our own domain would be silly.
     useEffect(() => {
         let req: DomainCheckRequest | null = null;
         if (mode === 'hoster' && subdomain && hosterDomain && activeHoster) {
@@ -123,6 +147,15 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
 
         if (!req) {
             setAvailability('idle');
+            setAvailabilityReason('');
+            return;
+        }
+
+        // Own-route short-circuit. Done after the local format check so a
+        // partial type ("p") doesn't accidentally match anything; only the
+        // full constructed effectiveDomain compares.
+        if (effectiveDomain && existingRoutes && existingRoutes.some(r => r.domain.toLowerCase() === effectiveDomain)) {
+            setAvailability('own');
             setAvailabilityReason('');
             return;
         }
@@ -150,7 +183,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
         }, 600);
 
         return () => clearTimeout(handle);
-    }, [mode, subdomain, hosterDomain, customDomain, activeHoster]);
+    }, [mode, subdomain, hosterDomain, customDomain, activeHoster, effectiveDomain, existingRoutes]);
 
     useEffect(() => {
         onAvailabilityChange?.(availability);
@@ -298,6 +331,12 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 <div className="flex items-center gap-1.5 text-xs text-(--error-light)">
                     <X size={12} />
                     {availabilityReason || 'Not available'}
+                </div>
+            )}
+            {!hint && availability === 'own' && (
+                <div className="flex items-center gap-1.5 text-xs text-(--accent-light)">
+                    <Check size={12} />
+                    You already have that one — install will skip re-creating it.
                 </div>
             )}
 

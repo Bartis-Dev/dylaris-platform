@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
-import { CreateRouteRequest } from '@/lib/api';
+import { CreateRouteRequest, GatewayRoute } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
 import JavaVersionPicker, { recommendJavaForVersion, effectiveMcVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
@@ -63,6 +63,14 @@ interface SetupNewWizardProps {
     // Gateway route (optional)
     gatewayRoute?: CreateRouteRequest;
     onGatewayRouteChange?: (next: CreateRouteRequest) => void;
+    // Routes already attached to this server. Lets the picker show a
+    // friendly "you already have this one" tag (instead of "taken")
+    // when the user types one of their own domains, and lets the
+    // submit path skip the create call for that case.
+    existingRoutes?: GatewayRoute[];
+    // Opens the full routes-management modal (the same one available
+    // from the server header globe icon).
+    onOpenRoutesModal?: () => void;
     // Actions
     onSubmit: () => void;
     onClose: () => void;
@@ -131,14 +139,28 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                 {/* Row 2: Optional gateway route (only when gateway routes traffic) */}
                 {showDomainField && (
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label flex items-center gap-1.5">
-                            <Globe size={12} className="text-(--accent-light)" /> Domain Route
-                            <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1 py-0.5 rounded-sm ml-1">Optional</span>
-                        </label>
+                        <div className="flex items-center gap-2">
+                            <label className="input-label flex items-center gap-1.5 mb-0">
+                                Domain Route
+                                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1 py-0.5 rounded-sm ml-1">Optional</span>
+                            </label>
+                            {props.onOpenRoutesModal && (
+                                <button
+                                    type="button"
+                                    onClick={props.onOpenRoutesModal}
+                                    title="Manage all routes for this server"
+                                    aria-label="Manage routes"
+                                    className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) hover:bg-(--accent)/15 transition-colors"
+                                >
+                                    <Globe size={12} />
+                                </button>
+                            )}
+                        </div>
                         <RouteDomainPicker
                             value={props.gatewayRoute || { targetPort: 25565 }}
                             onChange={next => props.onGatewayRouteChange?.(next)}
                             onAvailabilityChange={setDomainAvailability}
+                            existingRoutes={props.existingRoutes}
                             portChildren={
                                 <select
                                     value={props.gatewayRoute?.targetPort || 25565}
