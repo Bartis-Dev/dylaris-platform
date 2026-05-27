@@ -782,6 +782,19 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 						log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
 					}
 
+					// Drop the per-sub-server log stream. The console
+					// keeps its history per (server, sub-server), so a
+					// deleted sub-server's logs would otherwise linger
+					// in Redis forever -- and reappear in the browser
+					// if someone created a new sub-server with the
+					// same name. Browser-side clearing happens for
+					// free: ConsoleView's effect depends on activeSub
+					// and re-fetches when that flips.
+					logKey := fmt.Sprintf("dylaris:server:%s:logs:%s", cmd.Config.UUID, subName)
+					if delErr := rdb.Del(ctx, logKey).Err(); delErr != nil {
+						log.Printf("delete_sub_server %s/%s: log stream delete: %v", cmd.Config.UUID, subName, delErr)
+					}
+
 					serverPath := storage.GetServerDir(cmd.Config.UUID)
 					subServerPath := filepath.Join(serverPath, subName)
 
