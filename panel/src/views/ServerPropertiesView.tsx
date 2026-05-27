@@ -155,23 +155,39 @@ export default function ServerPropertiesView() {
     const [search, setSearch] = useState('');
     const [openGroups, setOpenGroups] = useState<Set<PropertyGroup>>(new Set(['world', 'network', 'performance']));
 
+    // External-change banner state: the text we last loaded/saved so
+    // the background poll can tell apart "nothing changed" from "the
+    // server (or another panel session) just rewrote the file". When
+    // non-null, the banner offers the user a chance to reload the
+    // remote version or stick with their in-progress edits.
+    const lastLoadedTextRef = useRef<string>('');
+    const [externalChange, setExternalChange] = useState<string | null>(null);
+
+    // Stable primitives derived from the server object. `server` itself
+    // is replaced on every 5s useAppData poll (different reference, same
+    // content), and depending on it directly made reload's identity
+    // churn on every tick -- which fired the whole load pipeline every
+    // 5 seconds and made the tab visibly flicker. The reload/save
+    // callbacks now key off these primitives instead.
+    const serverUuid = server?.uuid ?? '';
+    const activeSubServer = server?.activeSubServer ?? '';
+
     // server.properties lives inside the active sub-server dir, not
     // at the server root. The Node's validatePath resolves request
     // paths relative to <storage>/<uuid>/, so without the sub-server
     // prefix we get "file not found" no matter how many times the
     // user clicks retry. If no active sub-server is selected we
     // surface that as a friendly empty state instead of a 404 storm.
-    const filePath = server?.activeSubServer
-        ? `${server.activeSubServer}/server.properties`
-        : '';
+    const filePath = activeSubServer ? `${activeSubServer}/server.properties` : '';
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
     }, []);
 
     const reload = useCallback(async () => {
-        if (!server) return;
+        if (!serverUuid) return;
         setNotFound(false);
+        setExternalChange(null);
         // No active sub-server -> no file to load. Treat it as a soft
         // empty state, not an error -- retrying won't help until the
         // user installs / switches to a sub-server.
@@ -185,7 +201,7 @@ export default function ServerPropertiesView() {
         setLoading(true);
         setError(null);
         try {
-            const res = await getFileContent(filePath, server.uuid);
+            const res = await getFileContent(filePath, serverUuid);
             if (res?.success === false) {
                 // File-not-found is the expected state for a brand-new
                 // sub-server that hasn't run yet (MC generates
@@ -205,17 +221,64 @@ export default function ServerPropertiesView() {
                 setDoc(parsed);
                 setAdvancedText(text);
                 setAdvancedDirty(false);
+                lastLoadedTextRef.current = text;
             }
         } catch {
             setError('Network error while loading server.properties.');
         }
         setLoading(false);
-    }, [server, filePath]);
+    }, [serverUuid, filePath]);
 
     useEffect(() => { reload(); }, [reload]);
 
+    // Background change-detection. Polls the file every 30s and
+    // surfaces a banner if the content on disk has drifted from what
+    // we last loaded/saved. Doesn't auto-overwrite the user's view --
+    // they choose between Reload (take theirs) and Keep mine (next
+    // save will overwrite). Skipped when there's no file yet, when
+    // we're in an error state, or when the user is mid-edit in
+    // Advanced mode (a fresh remote write at the wrong moment would
+    // be noise -- we still flag it, the user just sees an offer to
+    // resolve).
+    useEffect(() => {
+        if (!serverUuid || !filePath || notFound || error) return;
+        let cancelled = false;
+        const check = async () => {
+            try {
+                const res = await getFileContent(filePath, serverUuid);
+                if (cancelled) return;
+                if (res?.success === false) return;
+                const text: string = res.content ?? res.text ?? '';
+                if (text !== lastLoadedTextRef.current) {
+                    setExternalChange(text);
+                }
+            } catch { /* network blip; try again next tick */ }
+        };
+        const interval = setInterval(check, 30_000);
+        return () => { cancelled = true; clearInterval(interval); };
+    }, [serverUuid, filePath, notFound, error]);
+
+    const acceptExternalChange = useCallback(() => {
+        if (externalChange === null) return;
+        const text = externalChange;
+        setDoc(parseProperties(text));
+        setAdvancedText(text);
+        setAdvancedDirty(false);
+        lastLoadedTextRef.current = text;
+        setExternalChange(null);
+        showToast('Reloaded from disk');
+    }, [externalChange, showToast]);
+
+    const dismissExternalChange = useCallback(() => {
+        // Stamp the baseline to whatever's currently on disk so the
+        // banner doesn't immediately reappear -- the user said "keep
+        // mine", they'll overwrite on next save.
+        if (externalChange !== null) lastLoadedTextRef.current = externalChange;
+        setExternalChange(null);
+    }, [externalChange]);
+
     const inlineSave = useCallback(async (key: string, newRaw: string) => {
-        if (!doc || !server) return;
+        if (!doc || !serverUuid) return;
         const def = VANILLA_SCHEMA.find(d => d.key === key);
         // Optimistic update — keeps the UI responsive between keystrokes.
         const nextValues = { ...doc.values, [key]: newRaw };
@@ -225,7 +288,7 @@ export default function ServerPropertiesView() {
 
         const fileText = serializeProperties(doc, { [key]: newRaw });
         try {
-            const res = await saveFile(filePath, fileText, server.uuid);
+            const res = await saveFile(filePath, fileText, serverUuid);
             if (res?.success === false) {
                 showToast(res.message || 'Save failed.', false);
                 return;
@@ -234,24 +297,28 @@ export default function ServerPropertiesView() {
             // next inline save.
             setDoc(parseProperties(fileText));
             setAdvancedText(fileText);
+            // Bump the change-detection baseline so the background
+            // poll doesn't see our own save as an external change.
+            lastLoadedTextRef.current = fileText;
             if (def?.requiresRestart) setRestartPending(true);
             showToast(`Saved ${key}`);
         } catch {
             showToast('Network error', false);
         }
-    }, [doc, server, showToast]);
+    }, [doc, serverUuid, filePath, showToast]);
 
     const saveAdvanced = useCallback(async () => {
-        if (!server) return;
+        if (!serverUuid) return;
         setSavingAdvanced(true);
         try {
-            const res = await saveFile(filePath, advancedText, server.uuid);
+            const res = await saveFile(filePath, advancedText, serverUuid);
             if (res?.success === false) {
                 showToast(res.message || 'Save failed.', false);
             } else {
                 const parsed = parseProperties(advancedText);
                 setDoc(parsed);
                 setAdvancedDirty(false);
+                lastLoadedTextRef.current = advancedText;
                 setRestartPending(true);
                 showToast('Saved server.properties');
             }
@@ -259,7 +326,7 @@ export default function ServerPropertiesView() {
             showToast('Network error', false);
         }
         setSavingAdvanced(false);
-    }, [server, advancedText, showToast]);
+    }, [serverUuid, filePath, advancedText, showToast]);
 
     const switchMode = (next: Mode) => {
         if (next === mode) return;
@@ -327,6 +394,32 @@ export default function ServerPropertiesView() {
                 <span className="mono-label">{server.activeSubServer || 'no sub-server selected'}</span>
 
                 <div className="ml-auto flex items-center gap-2">
+                    {/* External-change banner. Shown when the
+                        background poll noticed the file on disk
+                        drifted from what we loaded -- usually because
+                        the server itself rewrote it (a /restart, an
+                        SFTP/Beam edit, another panel tab). Reload =
+                        take theirs (discard local view); Keep mine =
+                        re-baseline so the banner stops nagging, the
+                        next save will overwrite. */}
+                    {externalChange !== null && (
+                        <span className="flex items-center gap-2 text-xs py-1.5 px-3 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light)">
+                            <AlertTriangle size={13} className="shrink-0" />
+                            File changed externally
+                            <button
+                                onClick={acceptExternalChange}
+                                className="ml-1 px-2 py-0.5 rounded bg-(--accent) text-white text-[11px] font-medium hover:bg-(--accent-light)"
+                            >
+                                Reload
+                            </button>
+                            <button
+                                onClick={dismissExternalChange}
+                                className="px-2 py-0.5 rounded border border-(--base-04) text-[11px] font-medium text-(--base-07) hover:bg-(--base-04)"
+                            >
+                                Keep mine
+                            </button>
+                        </span>
+                    )}
                     {restartPending && (
                         <span className="alert alert-warning text-xs py-1.5 px-3">
                             <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
