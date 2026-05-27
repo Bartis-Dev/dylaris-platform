@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { useParams } from 'next/navigation';
-import { AlertTriangle, Save, RotateCcw, Code2, ListChecks, Search, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Save, RotateCcw, Code2, ListChecks, Search, ChevronDown, FileQuestion, Power } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile } from '@/lib/api';
 import {
@@ -142,6 +142,10 @@ export default function ServerPropertiesView() {
     const [mode, setMode] = useState<Mode>('simple');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Separate state for "the file just doesn't exist yet" so the UI
+    // can show a calm empty state with actionable guidance, instead of
+    // a red error + Retry that just re-fires the same 404.
+    const [notFound, setNotFound] = useState(false);
     const [doc, setDoc] = useState<PropertiesDoc | null>(null);
     const [advancedText, setAdvancedText] = useState('');
     const [advancedDirty, setAdvancedDirty] = useState(false);
@@ -167,12 +171,14 @@ export default function ServerPropertiesView() {
 
     const reload = useCallback(async () => {
         if (!server) return;
+        setNotFound(false);
         // No active sub-server -> no file to load. Treat it as a soft
         // empty state, not an error -- retrying won't help until the
         // user installs / switches to a sub-server.
         if (!filePath) {
             setLoading(false);
-            setError('No active sub-server selected. Install or switch to one in the Setup tab to edit server.properties.');
+            setError(null);
+            setNotFound(true);
             setDoc(null);
             return;
         }
@@ -181,8 +187,18 @@ export default function ServerPropertiesView() {
         try {
             const res = await getFileContent(filePath, server.uuid);
             if (res?.success === false) {
-                setError(res.message || 'Could not load server.properties.');
-                setDoc(null);
+                // File-not-found is the expected state for a brand-new
+                // sub-server that hasn't run yet (MC generates
+                // server.properties on first boot). Tell that apart
+                // from real errors so the UI doesn't yell at the user.
+                const msg = (res.message || '').toLowerCase();
+                if (msg.includes('not found') || msg.includes('no such file') || msg.includes('does not exist') || msg.includes('enoent')) {
+                    setNotFound(true);
+                    setDoc(null);
+                } else {
+                    setError(res.message || 'Could not load server.properties.');
+                    setDoc(null);
+                }
             } else {
                 const text: string = res.content ?? res.text ?? '';
                 const parsed = parseProperties(text);
@@ -271,6 +287,27 @@ export default function ServerPropertiesView() {
         return out as Record<PropertyGroup, PropertyDef[]>;
     }, [groups, groupKeys, search]);
 
+    // Keys present in the file but not in the platform's schema.
+    // Surfaces those as raw key + text input at the bottom of Simple
+    // mode so the panel stays useful when MC adds new properties (or
+    // a plugin/mod injects custom ones) before our schema catches up.
+    // Without this they'd silently disappear from the UI and only be
+    // visible in Advanced mode.
+    const unknownEntries = useMemo(() => {
+        if (!doc) return [] as Array<{ key: string; value: string }>;
+        const known = new Set(VANILLA_SCHEMA.map(d => d.key));
+        const needle = search.trim().toLowerCase();
+        const entries: Array<{ key: string; value: string }> = [];
+        for (const key of doc.order) {
+            if (known.has(key)) continue;
+            if (needle && !key.toLowerCase().includes(needle) && !(doc.values[key] ?? '').toLowerCase().includes(needle)) {
+                continue;
+            }
+            entries.push({ key, value: doc.values[key] ?? '' });
+        }
+        return entries;
+    }, [doc, search]);
+
     const toggleGroup = (key: PropertyGroup) => {
         setOpenGroups(prev => {
             const next = new Set(prev);
@@ -329,6 +366,44 @@ export default function ServerPropertiesView() {
                 </div>
             )}
 
+            {/* Empty state: the file doesn't exist yet. Minecraft
+                generates server.properties on first boot, so for a
+                freshly-installed sub-server this is the normal state.
+                We don't auto-create it -- that would let stale defaults
+                stomp the JAR's. The user starts the server once, MC
+                writes the file, then the tab works. */}
+            {!loading && notFound && !filePath && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center text-(--base-07) gap-3 py-12">
+                    <FileQuestion size={40} className="opacity-40" />
+                    <div>
+                        <p className="text-sm font-medium text-(--base-09)">No active sub-server selected</p>
+                        <p className="text-xs text-(--base-06) mt-1">Install or switch to a sub-server in the Setup tab to edit its server.properties.</p>
+                    </div>
+                </div>
+            )}
+            {!loading && notFound && !!filePath && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center text-(--base-07) gap-3 py-12">
+                    <FileQuestion size={40} className="opacity-40" />
+                    <div>
+                        <p className="text-sm font-medium text-(--base-09)">
+                            <code className="font-mono text-(--base-08)">server.properties</code> doesn&apos;t exist yet
+                        </p>
+                        <p className="text-xs text-(--base-06) mt-1 max-w-md">
+                            Minecraft generates this file the first time the server boots.
+                            Start the server once from the power buttons; the tab will pick it up automatically.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                        <span className="inline-flex items-center gap-1.5 text-xs text-(--base-06) font-mono">
+                            <Power size={12} /> Start the server from the header
+                        </span>
+                        <button onClick={reload} className="btn btn-secondary btn-sm">
+                            <RotateCcw size={12} /> Check again
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {!loading && !error && doc && mode === 'simple' && (
                 <div className="flex-1 overflow-auto card card-pad">
                     <div className="flex items-center gap-2 mb-4 sticky top-0 bg-(--base-02) z-10 -mx-5 -mt-5 px-5 pt-5 pb-3 border-b border-(--base-03)">
@@ -367,6 +442,55 @@ export default function ServerPropertiesView() {
                             )}
                         </section>
                     ))}
+
+                    {/* Unknown keys -- anything in server.properties that
+                        our VANILLA_SCHEMA doesn't describe. New MC
+                        versions, plugins / mods, or admin-customized
+                        properties end up here so they're still editable
+                        from Simple mode instead of being silently
+                        invisible. Raw key on the left, free-form text
+                        input on the right; same inlineSave path as the
+                        typed rows. */}
+                    {unknownEntries.length > 0 && (
+                        <section className="mb-4 mt-6">
+                            <div className="flex items-center justify-between py-2 mb-1 mono-label text-(--warning-light)">
+                                <span className="flex items-center gap-1.5">
+                                    <FileQuestion size={12} />
+                                    Custom / Unknown Properties
+                                </span>
+                                <span>{unknownEntries.length}</span>
+                            </div>
+                            <p className="text-xs text-(--base-06) mb-2 pl-1">
+                                Keys we don&apos;t have a schema entry for. Edits save the same way as the typed rows above.
+                            </p>
+                            <div className="pl-3 border-l border-(--warning-border)">
+                                {unknownEntries.map(entry => (
+                                    <div key={entry.key} className="grid grid-cols-[1fr_auto] gap-4 items-center py-3 border-b border-(--base-03) last:border-b-0">
+                                        <div className="min-w-0">
+                                            <code className="font-mono text-xs text-(--base-08) break-all">{entry.key}</code>
+                                        </div>
+                                        <div className="flex justify-end items-center min-w-[200px]">
+                                            <input
+                                                type="text"
+                                                defaultValue={entry.value}
+                                                onBlur={e => {
+                                                    const next = e.target.value;
+                                                    if (next !== entry.value) inlineSave(entry.key, next);
+                                                }}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter') {
+                                                        (e.currentTarget as HTMLInputElement).blur();
+                                                    }
+                                                }}
+                                                className="input-field w-72 font-mono text-xs"
+                                                placeholder="(empty)"
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
                 </div>
             )}
 
