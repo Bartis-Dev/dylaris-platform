@@ -108,6 +108,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase10Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase11Schema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
@@ -368,6 +371,28 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
+	return nil
+}
+
+// applyPhase11Schema sets up Phase 11 (Spark Profiler):
+//   - spark_profiles: profile-completion records keyed by spark.lucko.me URL
+func applyPhase11Schema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS spark_profiles (
+		id              SERIAL PRIMARY KEY,
+		server_id       INTEGER     NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		sub_server_name VARCHAR(128) NOT NULL DEFAULT '',
+		url             VARCHAR(512) NOT NULL,
+		started_at      TIMESTAMPTZ,
+		completed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		requested_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		UNIQUE(server_id, url)
+	)`); err != nil {
+		return fmt.Errorf("phase 11: create spark_profiles: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_spark_profiles_server
+		ON spark_profiles(server_id, completed_at DESC)`); err != nil {
+		return fmt.Errorf("phase 11: create spark_profiles index: %w", err)
+	}
 	return nil
 }
 

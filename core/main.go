@@ -206,6 +206,7 @@ func main() {
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 	modrinthHandler := handlers.NewModrinthHandler(appState, "Dylaris/0.10 (+https://github.com/Bartis-Dev/dylaris-platform)")
 	serverModsHandler := handlers.NewServerModsHandler(appState)
+	sparkHandler := handlers.NewSparkHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -307,6 +308,11 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.List)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.Install)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(serverModsHandler.Uninstall)).Methods("DELETE")
+
+	// --- Spark profiles (Phase 11) ---
+	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.List)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.Record)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}", authHandler.AuthMiddleware(sparkHandler.Delete)).Methods("DELETE")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---
