@@ -4,6 +4,7 @@ import (
 	"context"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -47,6 +48,12 @@ func (s *StatusWatcherService) scan() {
 		return
 	}
 
+	// Track whether anything panel-visible changed this tick so we can fire
+	// exactly one servers.changed event per scan cycle, regardless of how
+	// many servers flipped. Avoids flooding the SSE channel when 10 servers
+	// boot at once.
+	dirty := false
+
 	for _, key := range keys {
 		// Key format: dylaris:server:<uuid>:status
 		parts := strings.Split(key, ":")
@@ -69,6 +76,7 @@ func (s *StatusWatcherService) scan() {
 		if srv.Status != newStatus {
 			log.Printf("Status update for %s: %s -> %s", uuid, srv.Status, newStatus)
 			s.store.UpdateServerStatus(srv.ID, newStatus)
+			dirty = true
 		}
 
 		// Delete key after processing
@@ -78,18 +86,40 @@ func (s *StatusWatcherService) scan() {
 	// Publish desired states to Redis so nodes can reconcile
 	s.publishDesiredStates(ctx)
 
-	// Sync host ports: Redis → DB
-	s.syncPortsFromRedis(ctx)
+	// Sync host ports: Redis → DB (sets dirty=true if anything moved)
+	if s.syncPortsFromRedis(ctx) {
+		dirty = true
+	}
+
+	if dirty {
+		s.publishServersChanged(ctx)
+	}
+}
+
+// publishServersChanged drops one servers.changed event into the system-events
+// channel. Uses the same wire format as services.SystemEventsPublisher but
+// inlined so the watcher doesn't need a publisher dependency injected.
+func (s *StatusWatcherService) publishServersChanged(ctx context.Context) {
+	payload, err := json.Marshal(SystemEvent{Type: "servers.changed"})
+	if err != nil {
+		return
+	}
+	if err := s.redis.Publish(ctx, SystemEventsChannel, payload).Err(); err != nil {
+		log.Printf("status-watcher: publish servers.changed failed: %v", err)
+	}
 }
 
 // syncPortsFromRedis reads port allocations written by Nodes and updates DB host_port.
-// Key format: dylaris:node:{nodeID}:port:{serverUUID} → port number
-func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) {
+// Key format: dylaris:node:{nodeID}:port:{serverUUID} → port number.
+// Returns true when at least one DB row was updated so the caller can drop a
+// single servers.changed event per scan instead of one per row.
+func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) bool {
+	changed := false
 	var cursor uint64
 	for {
 		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:node:*:port:*", 100).Result()
 		if err != nil {
-			return
+			return changed
 		}
 		for _, key := range keys {
 			// Parse: dylaris:node:{nodeID}:port:{uuid}
@@ -119,6 +149,7 @@ func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) {
 					containerPort = 25565
 				}
 				s.store.UpdateServerPorts(srv.ID, redisPort, containerPort)
+				changed = true
 			}
 		}
 		cursor = next
@@ -126,6 +157,7 @@ func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) {
 			break
 		}
 	}
+	return changed
 }
 
 // publishDesiredStates syncs desired_state from DB to Redis for node reconciliation.

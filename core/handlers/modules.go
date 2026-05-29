@@ -127,6 +127,7 @@ func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *htt
 		sendJSONError(w, "Update failed", 500)
 		return
 	}
+	h.state.Events.Publish(r.Context(), "modules.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -159,6 +160,7 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 
 	req.ID = id
 	req.IsEnabled = true
+	h.state.Events.Publish(r.Context(), "modules.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "module": req})
 }
 
@@ -201,6 +203,7 @@ func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Delete failed", 500)
 		return
 	}
+	h.state.Events.Publish(r.Context(), "modules.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -230,6 +233,7 @@ func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *ht
 		sendJSONError(w, "Update failed", 500)
 		return
 	}
+	h.state.Events.Publish(r.Context(), "modules.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -270,5 +274,6 @@ func (h *ModuleHandler) ToggleModuleHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Update failed", 500)
 		return
 	}
+	h.state.Events.Publish(r.Context(), "modules.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -113,6 +113,8 @@ func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 		"display_name": region.DisplayName,
 	})
 
+	h.state.Events.Publish(r.Context(), "regions.changed", nil)
+
 	// Re-read so created_at is populated.
 	created, _ := h.state.Store.GetRegion(region.ID)
 	if created == nil {
@@ -163,6 +165,8 @@ func (h *RegionsHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
 		"enabled":   existing.Enabled,
 	})
 
+	h.state.Events.Publish(r.Context(), "regions.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"region":  existing,
@@ -201,6 +205,8 @@ func (h *RegionsHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 	LogIdentityAudit(h.state, r, AuditEventRegionDeleted, actorID, 0, map[string]interface{}{
 		"region_id": id,
 	})
+
+	h.state.Events.Publish(r.Context(), "regions.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

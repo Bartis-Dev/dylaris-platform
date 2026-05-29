@@ -7,6 +7,7 @@ import {
 } from '@/lib/api';
 import { listRegions, Region } from '@/lib/api/regions';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
+import { systemEvents } from '@/lib/systemEvents';
 
 interface CoreInfo {
     region: string;
@@ -125,12 +126,35 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         init();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Poll server list every 5s for status updates (parity with old Dashboard)
+    // Phase 7 — subscribe to /api/system/events SSE for live config refresh.
+    // Replaces the old 5s setInterval(refreshServers) poll: status flips and
+    // CRUD mutations on any Core publish servers.changed / regions.changed /
+    // modules.changed / features.changed / maintenance.changed, and each
+    // listener re-fetches just its own slice. systemEvents reconnects on
+    // its own with exponential backoff if the stream drops.
     useEffect(() => {
         if (!ready) return;
-        const interval = setInterval(refreshServers, 5000);
-        return () => clearInterval(interval);
-    }, [ready, refreshServers]);
+        systemEvents.start();
+        const unsubs = [
+            systemEvents.on('servers.changed', () => { refreshServers(); }),
+            systemEvents.on('regions.changed', () => { refreshRegions(); }),
+            systemEvents.on('modules.changed', () => { refreshModules(); }),
+            systemEvents.on('features.changed', () => { refreshSettings(); }),
+            // maintenance state is consumed by MaintenanceBanner via its own
+            // fetcher; we re-broadcast through window event so it (and any
+            // other isolated subscriber) can react without threading a
+            // refresher through context.
+            systemEvents.on('maintenance.changed', () => {
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('dylaris:maintenance.changed'));
+                }
+            }),
+        ];
+        return () => {
+            unsubs.forEach(u => u());
+            systemEvents.stop();
+        };
+    }, [ready, refreshServers, refreshRegions, refreshModules, refreshSettings]);
 
     // Gateway is no longer a standalone module — its on/off lives in the
     // Features tab as a dedicated `gatewayEnabled` flag (separate from the

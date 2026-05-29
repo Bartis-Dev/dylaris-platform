@@ -268,6 +268,8 @@ func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	h.state.Events.Publish(r.Context(), "features.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

@@ -78,6 +78,13 @@ func main() {
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
 
+	// Phase 7 — system-events publisher. Mutating handlers (regions,
+	// modules, features, maintenance, servers CRUD) drop events into a
+	// single Redis Pub/Sub channel; panels subscribe via SSE so they refresh
+	// without polling. Construction is cheap — wired before any handler so
+	// every code path can call h.state.Events.Publish unconditionally.
+	appState.Events = services.NewSystemEventsPublisher(redisClient)
+
 	// Leader election (Phase 0b): a single Redis lease named for the
 	// "core-leader" role, identified by this instance's CoreID. Every
 	// scheduled background loop consults the leader's IsLeader() to
@@ -193,6 +200,7 @@ func main() {
 	serverAuditHandler := handlers.NewServerAuditHandler(appState)
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
 	ticketMigrationHandler := handlers.NewTicketMigrationHandler(appState)
+	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -250,6 +258,10 @@ func main() {
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
 	// Public — used by the topbar to display "Connected to <region> Core".
 	api.HandleFunc("/system/core-info", systemHandler.GetCoreInfo).Methods("GET")
+	// Phase 7 — SSE stream of platform-wide config-change events. Panel
+	// subscribes once on boot and refreshes its caches reactively. Auth via
+	// ?token= query param since EventSource can't set Authorization headers.
+	api.HandleFunc("/system/events", authHandler.AuthMiddleware(systemEventsHandler.StreamEvents)).Methods("GET")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---

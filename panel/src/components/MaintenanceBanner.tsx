@@ -5,8 +5,10 @@ import { Wrench, Clock } from 'lucide-react';
 import { getMaintenance, MaintenanceState } from '@/lib/api';
 
 // MaintenanceBanner is mounted globally in the authenticated layout. It polls
-// the public /api/maintenance endpoint every 30s so an admin enabling
-// maintenance from another tab makes the banner appear without a refresh.
+// the public /api/maintenance endpoint every 30s as a safety net and also
+// reacts to the `dylaris:maintenance.changed` window event fired by
+// AppDataContext when the SSE stream signals an admin flip — so the banner
+// appears within ~1s of the toggle instead of waiting up to 30s.
 // Renders nothing when maintenance is off — zero footprint in steady state.
 export default function MaintenanceBanner() {
     const [state, setState] = useState<MaintenanceState | null>(null);
@@ -23,7 +25,13 @@ export default function MaintenanceBanner() {
         };
         fetchState();
         const id = setInterval(fetchState, 30_000);
-        return () => { cancelled = true; clearInterval(id); };
+        const onPush = () => { fetchState(); };
+        window.addEventListener('dylaris:maintenance.changed', onPush);
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+            window.removeEventListener('dylaris:maintenance.changed', onPush);
+        };
     }, []);
 
     if (!state || !state.active || state.blockLevel === 'off') return null;

@@ -24,4 +24,9 @@ type AppState struct {
 	// connection string for the external ticket DB. Empty when not
 	// configured; the migration handler reads this to drive the UI.
 	ExternalTicketDBURL string
+
+	// Events (Phase 7) publishes platform-wide config-change events into
+	// Redis Pub/Sub so connected panels refresh without polling. Nil-safe:
+	// publishers handle a nil pointer / nil Redis gracefully.
+	Events *services.SystemEventsPublisher
 }

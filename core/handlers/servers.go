@@ -311,6 +311,8 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
 		"server_id": serverID,
@@ -449,6 +451,8 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// Setup installs and starts the server — mark desired state as online
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
 	}
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -590,6 +594,8 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
 	}
 
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Server reinstall queued",
@@ -658,6 +664,8 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 			h.state.Queue.SendCommand(context.Background(), node.Token, "switch_server", switchPayload, nil)
 		}
 	}
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -883,6 +891,8 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 		"to":   name,
 	})
 
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -1019,6 +1029,8 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		"diskLimit":  req.DiskLimit,
 	})
 
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -1112,6 +1124,8 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		h.state.Store.UpdateServerActiveSubServer(serverID, "")
 		h.state.Store.UpdateServerDesiredState(serverID, "stopped")
 	}
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -1226,6 +1240,8 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -1308,6 +1324,8 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -1463,6 +1481,8 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -1571,6 +1591,7 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 	}
 
 	log.Printf("migrate_storage queued for server %d (%s) → %s", serverID, srv.UUID, req.TargetPath)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Migration queued. Server will be stopped and data moved to the new path.",
@@ -1648,6 +1669,8 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 		sendJSONError(w, "Failed to update owner", 500)
 		return
 	}
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

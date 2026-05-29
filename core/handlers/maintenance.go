@@ -117,6 +117,8 @@ func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 		"expected_end": req.ExpectedEnd,
 	})
 
+	h.state.Events.Publish(r.Context(), "maintenance.changed", nil)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"state":   req,
