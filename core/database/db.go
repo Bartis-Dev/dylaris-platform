@@ -102,6 +102,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase8Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase9Schema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
@@ -362,6 +365,42 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
+	return nil
+}
+
+// applyPhase9Schema sets up Phase 9 (RCON + API keys + Player Management):
+//   - servers: rcon_enabled, rcon_port, rcon_password columns
+//   - api_keys table for external RCON automation
+//
+// Idempotent. Wired from ensureSchema right after applyPhase8Schema.
+func applyPhase9Schema(db *sql.DB) error {
+	for _, q := range []string{
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_enabled  BOOLEAN     NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_port     INTEGER     NOT NULL DEFAULT 0`,
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_password TEXT        NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("phase 9: alter servers: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS api_keys (
+		id             SERIAL PRIMARY KEY,
+		user_id        INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name           VARCHAR(128) NOT NULL,
+		key_hash       VARCHAR(64) NOT NULL UNIQUE,
+		scope          JSONB        NOT NULL DEFAULT '{}'::jsonb,
+		last_used_at   TIMESTAMPTZ,
+		expires_at     TIMESTAMPTZ,
+		revoked_at     TIMESTAMPTZ,
+		rate_per_min   INTEGER      NOT NULL DEFAULT 60,
+		created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("phase 9: create api_keys: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_user
+		ON api_keys(user_id, created_at DESC)`); err != nil {
+		return fmt.Errorf("phase 9: create api_keys user index: %w", err)
+	}
 	return nil
 }
 

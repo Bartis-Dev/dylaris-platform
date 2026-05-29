@@ -1,0 +1,95 @@
+// Phase 9 — panel client for RCON exec + config + the Players-tab actions
+// (ban/kick/op/whitelist/list) which all funnel into the same RCON pipeline.
+
+import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
+
+export interface RconResponse {
+    success: boolean;
+    output?: string;
+    error?: string;
+    durationMs?: number;
+}
+
+export interface RconConfig {
+    success: boolean;
+    enabled: boolean;
+    port: number;
+    hasSecret: boolean;
+    password?: string;
+    message?: string;
+}
+
+export async function execRcon(serverId: number, command: string, timeoutMs?: number): Promise<RconResponse> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/rcon`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command, timeoutMs }),
+        });
+        const data = await res.json();
+        if (!res.ok) return { success: false, error: data.message || 'Request failed' };
+        return data;
+    } catch (err: any) {
+        return { success: false, error: err?.message || 'Network error' };
+    }
+}
+
+export async function getRconConfig(serverId: number): Promise<RconConfig> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/rcon/config`, { headers: getAuthHeader() });
+        return handleResponse(res) as any;
+    } catch (err) {
+        return { ...(handleError(err) as any), enabled: false, port: 0, hasSecret: false };
+    }
+}
+
+export async function setRconConfig(
+    serverId: number,
+    payload: { enabled: boolean; port: number; password?: string; regenerate?: boolean },
+): Promise<RconConfig> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/rcon/config`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res) as any;
+    } catch (err) {
+        return { ...(handleError(err) as any), enabled: false, port: 0, hasSecret: false };
+    }
+}
+
+// --- Player Management helpers (shorthand wrappers over execRcon) ---
+
+export interface OnlinePlayer {
+    name: string;
+}
+
+// parsePlayerList extracts usernames from vanilla /list output. Format varies
+// slightly between server flavours but the common shape is:
+//   "There are N of M players online: alice, bob, charlie"
+// We split the segment after the colon by commas; whitespace tolerant.
+export function parsePlayerList(out: string): OnlinePlayer[] {
+    if (!out) return [];
+    const idx = out.indexOf(':');
+    if (idx === -1) return [];
+    const tail = out.slice(idx + 1).trim();
+    if (!tail) return [];
+    return tail.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name }));
+}
+
+export const rconList = (serverId: number) => execRcon(serverId, 'list');
+export const rconKick = (serverId: number, name: string, reason?: string) =>
+    execRcon(serverId, `kick ${name}${reason ? ` ${reason}` : ''}`);
+export const rconBan = (serverId: number, name: string, reason?: string) =>
+    execRcon(serverId, `ban ${name}${reason ? ` ${reason}` : ''}`);
+export const rconUnban = (serverId: number, name: string) =>
+    execRcon(serverId, `pardon ${name}`);
+export const rconOp = (serverId: number, name: string) => execRcon(serverId, `op ${name}`);
+export const rconDeop = (serverId: number, name: string) => execRcon(serverId, `deop ${name}`);
+export const rconWhitelistAdd = (serverId: number, name: string) =>
+    execRcon(serverId, `whitelist add ${name}`);
+export const rconWhitelistRemove = (serverId: number, name: string) =>
+    execRcon(serverId, `whitelist remove ${name}`);
+export const rconTell = (serverId: number, name: string, msg: string) =>
+    execRcon(serverId, `tell ${name} ${msg}`);

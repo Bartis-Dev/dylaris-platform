@@ -59,6 +59,14 @@ message NodeMessage {
     BackupUsageReq    backup_usage_req    = 104;
     BackupUsageResp   backup_usage_resp   = 105;
 
+    // RCON exec (Phase 9): Core→Node request, Node→Core response.
+    // server_uuid in NodeMessage.server_uuid identifies which container.
+    // Node opens TCP to the container's mapped RCON port, auths with the
+    // stored password, sends the command, returns whatever the server
+    // wrote back. One request per command — no streaming.
+    RconExecReq       rcon_exec_req       = 110;
+    RconExecResp      rcon_exec_resp      = 111;
+
     // Generic result / error
     OpResult          result        = 90;
     OpError           error         = 91;
@@ -206,4 +214,22 @@ message OpResult {
 message OpError {
   int32 code = 1;
   string message = 2;
+}
+
+// ─── RCON (Phase 9) ──────────────────────────────────────────────────
+// Node owns the container, knows its mapped RCON host:port (or container
+// name on the dylaris_net overlay) and the rcon_password the Core passes
+// here. Stateless per call — no connection pooling V1.
+message RconExecReq {
+  string command          = 1;
+  string rcon_password    = 2;
+  int32  rcon_port        = 3;   // 0 → use container's mapped 25575
+  int32  timeout_ms       = 4;   // 0 → defaults to 3000
+}
+
+message RconExecResp {
+  bool   ok               = 1;
+  string output           = 2;
+  string error            = 3;
+  int64  duration_ms      = 4;
 }

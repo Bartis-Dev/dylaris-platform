@@ -50,6 +50,8 @@ type NodeMessage struct {
 	//	*NodeMessage_BackupDeleteReq
 	//	*NodeMessage_BackupUsageReq
 	//	*NodeMessage_BackupUsageResp
+	//	*NodeMessage_RconExecReq
+	//	*NodeMessage_RconExecResp
 	//	*NodeMessage_Result
 	//	*NodeMessage_Error
 	Payload       isNodeMessage_Payload `protobuf_oneof:"payload"`
@@ -306,6 +308,24 @@ func (x *NodeMessage) GetBackupUsageResp() *BackupUsageResp {
 	return nil
 }
 
+func (x *NodeMessage) GetRconExecReq() *RconExecReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_RconExecReq); ok {
+			return x.RconExecReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetRconExecResp() *RconExecResp {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_RconExecResp); ok {
+			return x.RconExecResp
+		}
+	}
+	return nil
+}
+
 func (x *NodeMessage) GetResult() *OpResult {
 	if x != nil {
 		if x, ok := x.Payload.(*NodeMessage_Result); ok {
@@ -428,6 +448,19 @@ type NodeMessage_BackupUsageResp struct {
 	BackupUsageResp *BackupUsageResp `protobuf:"bytes,105,opt,name=backup_usage_resp,json=backupUsageResp,proto3,oneof"`
 }
 
+type NodeMessage_RconExecReq struct {
+	// RCON exec (Phase 9): Core→Node request, Node→Core response.
+	// server_uuid in NodeMessage.server_uuid identifies which container.
+	// Node opens TCP to the container's mapped RCON port, auths with the
+	// stored password, sends the command, returns whatever the server
+	// wrote back. One request per command — no streaming.
+	RconExecReq *RconExecReq `protobuf:"bytes,110,opt,name=rcon_exec_req,json=rconExecReq,proto3,oneof"`
+}
+
+type NodeMessage_RconExecResp struct {
+	RconExecResp *RconExecResp `protobuf:"bytes,111,opt,name=rcon_exec_resp,json=rconExecResp,proto3,oneof"`
+}
+
 type NodeMessage_Result struct {
 	// Generic result / error
 	Result *OpResult `protobuf:"bytes,90,opt,name=result,proto3,oneof"`
@@ -480,6 +513,10 @@ func (*NodeMessage_BackupDeleteReq) isNodeMessage_Payload() {}
 func (*NodeMessage_BackupUsageReq) isNodeMessage_Payload() {}
 
 func (*NodeMessage_BackupUsageResp) isNodeMessage_Payload() {}
+
+func (*NodeMessage_RconExecReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_RconExecResp) isNodeMessage_Payload() {}
 
 func (*NodeMessage_Result) isNodeMessage_Payload() {}
 
@@ -1919,11 +1956,151 @@ func (x *OpError) GetMessage() string {
 	return ""
 }
 
+// ─── RCON (Phase 9) ──────────────────────────────────────────────────
+// Node owns the container, knows its mapped RCON host:port (or container
+// name on the dylaris_net overlay) and the rcon_password the Core passes
+// here. Stateless per call — no connection pooling V1.
+type RconExecReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Command       string                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"`
+	RconPassword  string                 `protobuf:"bytes,2,opt,name=rcon_password,json=rconPassword,proto3" json:"rcon_password,omitempty"`
+	RconPort      int32                  `protobuf:"varint,3,opt,name=rcon_port,json=rconPort,proto3" json:"rcon_port,omitempty"`    // 0 → use container's mapped 25575
+	TimeoutMs     int32                  `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // 0 → defaults to 3000
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RconExecReq) Reset() {
+	*x = RconExecReq{}
+	mi := &file_proto_node_node_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RconExecReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RconExecReq) ProtoMessage() {}
+
+func (x *RconExecReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RconExecReq.ProtoReflect.Descriptor instead.
+func (*RconExecReq) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *RconExecReq) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+func (x *RconExecReq) GetRconPassword() string {
+	if x != nil {
+		return x.RconPassword
+	}
+	return ""
+}
+
+func (x *RconExecReq) GetRconPort() int32 {
+	if x != nil {
+		return x.RconPort
+	}
+	return 0
+}
+
+func (x *RconExecReq) GetTimeoutMs() int32 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+type RconExecResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Output        string                 `protobuf:"bytes,2,opt,name=output,proto3" json:"output,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	DurationMs    int64                  `protobuf:"varint,4,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RconExecResp) Reset() {
+	*x = RconExecResp{}
+	mi := &file_proto_node_node_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RconExecResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RconExecResp) ProtoMessage() {}
+
+func (x *RconExecResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_node_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RconExecResp.ProtoReflect.Descriptor instead.
+func (*RconExecResp) Descriptor() ([]byte, []int) {
+	return file_proto_node_node_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *RconExecResp) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *RconExecResp) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
+func (x *RconExecResp) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *RconExecResp) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
 var File_proto_node_node_proto protoreflect.FileDescriptor
 
 const file_proto_node_node_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/node/node.proto\x12\fdylaris.node\"\xdf\f\n" +
+	"\x15proto/node/node.proto\x12\fdylaris.node\"\xe4\r\n" +
 	"\vNodeMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n" +
@@ -1956,7 +2133,9 @@ const file_proto_node_node_proto_rawDesc = "" +
 	"\x0fbackup_open_req\x18f \x01(\v2\x1b.dylaris.node.BackupOpenReqH\x00R\rbackupOpenReq\x12K\n" +
 	"\x11backup_delete_req\x18g \x01(\v2\x1d.dylaris.node.BackupDeleteReqH\x00R\x0fbackupDeleteReq\x12H\n" +
 	"\x10backup_usage_req\x18h \x01(\v2\x1c.dylaris.node.BackupUsageReqH\x00R\x0ebackupUsageReq\x12K\n" +
-	"\x11backup_usage_resp\x18i \x01(\v2\x1d.dylaris.node.BackupUsageRespH\x00R\x0fbackupUsageResp\x120\n" +
+	"\x11backup_usage_resp\x18i \x01(\v2\x1d.dylaris.node.BackupUsageRespH\x00R\x0fbackupUsageResp\x12?\n" +
+	"\rrcon_exec_req\x18n \x01(\v2\x19.dylaris.node.RconExecReqH\x00R\vrconExecReq\x12B\n" +
+	"\x0ercon_exec_resp\x18o \x01(\v2\x1a.dylaris.node.RconExecRespH\x00R\frconExecResp\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
 	"\apayload\"R\n" +
@@ -2048,7 +2227,19 @@ const file_proto_node_node_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"7\n" +
 	"\aOpError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2V\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x88\x01\n" +
+	"\vRconExecReq\x12\x18\n" +
+	"\acommand\x18\x01 \x01(\tR\acommand\x12#\n" +
+	"\rrcon_password\x18\x02 \x01(\tR\frconPassword\x12\x1b\n" +
+	"\trcon_port\x18\x03 \x01(\x05R\brconPort\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\"m\n" +
+	"\fRconExecResp\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
+	"\x06output\x18\x02 \x01(\tR\x06output\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\x12\x1f\n" +
+	"\vduration_ms\x18\x04 \x01(\x03R\n" +
+	"durationMs2V\n" +
 	"\vNodeService\x12G\n" +
 	"\vNodeConnect\x12\x19.dylaris.node.NodeMessage\x1a\x19.dylaris.node.NodeMessage(\x010\x01B\x14Z\x12dylaris-proto/nodeb\x06proto3"
 
@@ -2064,7 +2255,7 @@ func file_proto_node_node_proto_rawDescGZIP() []byte {
 	return file_proto_node_node_proto_rawDescData
 }
 
-var file_proto_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_proto_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_proto_node_node_proto_goTypes = []any{
 	(*NodeMessage)(nil),       // 0: dylaris.node.NodeMessage
 	(*NodeAuth)(nil),          // 1: dylaris.node.NodeAuth
@@ -2095,6 +2286,8 @@ var file_proto_node_node_proto_goTypes = []any{
 	(*BackupUsageResp)(nil),   // 26: dylaris.node.BackupUsageResp
 	(*OpResult)(nil),          // 27: dylaris.node.OpResult
 	(*OpError)(nil),           // 28: dylaris.node.OpError
+	(*RconExecReq)(nil),       // 29: dylaris.node.RconExecReq
+	(*RconExecResp)(nil),      // 30: dylaris.node.RconExecResp
 }
 var file_proto_node_node_proto_depIdxs = []int32{
 	1,  // 0: dylaris.node.NodeMessage.auth:type_name -> dylaris.node.NodeAuth
@@ -2119,19 +2312,21 @@ var file_proto_node_node_proto_depIdxs = []int32{
 	24, // 19: dylaris.node.NodeMessage.backup_delete_req:type_name -> dylaris.node.BackupDeleteReq
 	25, // 20: dylaris.node.NodeMessage.backup_usage_req:type_name -> dylaris.node.BackupUsageReq
 	26, // 21: dylaris.node.NodeMessage.backup_usage_resp:type_name -> dylaris.node.BackupUsageResp
-	27, // 22: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
-	28, // 23: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
-	3,  // 24: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
-	6,  // 25: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
-	18, // 26: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
-	21, // 27: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
-	0,  // 28: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
-	0,  // 29: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
-	29, // [29:30] is the sub-list for method output_type
-	28, // [28:29] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	29, // 22: dylaris.node.NodeMessage.rcon_exec_req:type_name -> dylaris.node.RconExecReq
+	30, // 23: dylaris.node.NodeMessage.rcon_exec_resp:type_name -> dylaris.node.RconExecResp
+	27, // 24: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
+	28, // 25: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
+	3,  // 26: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
+	6,  // 27: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
+	18, // 28: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
+	21, // 29: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
+	0,  // 30: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
+	0,  // 31: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
+	31, // [31:32] is the sub-list for method output_type
+	30, // [30:31] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_node_proto_init() }
@@ -2162,6 +2357,8 @@ func file_proto_node_node_proto_init() {
 		(*NodeMessage_BackupDeleteReq)(nil),
 		(*NodeMessage_BackupUsageReq)(nil),
 		(*NodeMessage_BackupUsageResp)(nil),
+		(*NodeMessage_RconExecReq)(nil),
+		(*NodeMessage_RconExecResp)(nil),
 		(*NodeMessage_Result)(nil),
 		(*NodeMessage_Error)(nil),
 	}
@@ -2171,7 +2368,7 @@ func file_proto_node_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_node_proto_rawDesc), len(file_proto_node_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

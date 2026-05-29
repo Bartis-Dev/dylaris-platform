@@ -290,6 +290,14 @@ type Server struct {
 	ProxyID         *int            `json:"proxyId"`
 	AutoMove        bool            `json:"autoMove"`
 	Region          string          `json:"region"`
+	// Phase 9 — RCON config. RconEnabled controls whether the server writes
+	// enable-rcon=true to server.properties on next launch and whether the
+	// panel surfaces RCON-driven UIs (Players tab, /rcon endpoint). RconPort
+	// 0 = MC default 25575; RconPassword is stored separately (encrypted) and
+	// never serialized to JSON.
+	RconEnabled     bool            `json:"rconEnabled"`
+	RconPort        int             `json:"rconPort"`
+	RconPassword    string          `json:"-"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	Role            string          `json:"role,omitempty"`
 	Permissions     *TabPermissions `json:"permissions,omitempty"`

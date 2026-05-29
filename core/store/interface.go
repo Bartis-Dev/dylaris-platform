@@ -312,6 +312,23 @@ type Store interface {
 	SetScheduledTaskEnabled(id int, enabled bool, nextRun *time.Time) error
 	ListDueScheduledTasks(now time.Time, limit int) ([]models.ScheduledTask, error)
 	RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error
+
+	// --- RCON config (Phase 9) ---
+	// Lazy accessors so RCON fields don't bloat every server-list scan.
+	// Password is stored in plaintext for V1 — the column is excluded from
+	// any list query and only fetched by the RCON-exec path.
+	GetServerRconConfig(serverID int) (enabled bool, port int, password string, err error)
+	SetServerRconConfig(serverID int, enabled bool, port int, password string) error
+
+	// --- API Keys (Phase 9) ---
+	// Public RCON surface backing. Plaintext key is shown to the user once
+	// on creation; the DB only ever sees sha256 hash. Scope JSON shape:
+	//   { "servers": ["uuid-1", ...], "permissions": ["rcon.exec"] }
+	CreateAPIKey(k *models.APIKey) (int, error)
+	ListAPIKeysByUser(userID int) ([]models.APIKey, error)
+	GetAPIKeyByHash(hash string) (*models.APIKey, error)
+	RevokeAPIKey(id, userID int) error
+	TouchAPIKey(id int) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job

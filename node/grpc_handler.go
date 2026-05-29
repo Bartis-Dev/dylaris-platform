@@ -52,6 +52,8 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 		return []*pb.NodeMessage{h.handleBackupDelete(msg.RequestId, msg.ServerUuid, p.BackupDeleteReq)}
 	case *pb.NodeMessage_BackupUsageReq:
 		return []*pb.NodeMessage{h.handleBackupUsage(msg.RequestId, msg.ServerUuid)}
+	case *pb.NodeMessage_RconExecReq:
+		return []*pb.NodeMessage{h.handleRconExec(msg.RequestId, msg.ServerUuid, p.RconExecReq)}
 	default:
 		return []*pb.NodeMessage{errorMsg(msg.RequestId, 400, "unknown request type")}
 	}

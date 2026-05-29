@@ -13,7 +13,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key } from 'lucide-react';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
     const { user, ready } = useAppData();
@@ -109,6 +109,12 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 <button onClick={() => { setIsProfileDropdownOpen(false); setShowProfilePopup(true); }} className="dropdown-item">
                                     <UserCog size={20} className="mr-3" /> Edit Profile
                                 </button>
+                                <GuardedLink
+                                    href="/account/api-keys"
+                                    className="dropdown-item"
+                                >
+                                    <Key size={20} className="mr-3" /> API Keys
+                                </GuardedLink>
                                 <button onClick={() => { setIsProfileDropdownOpen(false); logout(); router.push('/login'); }} className="dropdown-item text-(--error) hover:bg-(--error-ghost) mt-1">
                                     <LogOut size={20} className="mr-3" /> Logout
                                 </button>

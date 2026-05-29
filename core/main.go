@@ -202,6 +202,8 @@ func main() {
 	ticketMigrationHandler := handlers.NewTicketMigrationHandler(appState)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
+	rconHandler := handlers.NewRconHandler(appState)
+	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -279,6 +281,19 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(scheduledTasksHandler.Create)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Update)).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Delete)).Methods("DELETE")
+
+	// --- RCON + API keys (Phase 9) ---
+	// Panel-internal RCON. Power-class permission enforced inside the handler.
+	api.HandleFunc("/servers/{id:[0-9]+}/rcon", authHandler.AuthMiddleware(rconHandler.ExecForUser)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(rconHandler.GetConfig)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(rconHandler.SetConfig)).Methods("PUT")
+	// Per-user API key CRUD (panel surface).
+	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(apiKeysHandler.List)).Methods("GET")
+	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(apiKeysHandler.Create)).Methods("POST")
+	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(apiKeysHandler.Revoke)).Methods("DELETE")
+	// External RCON: Authorization: Bearer dyl_<key>. Scope check on the
+	// path-uuid happens in the middleware itself.
+	api.HandleFunc("/external/rcon/{uuid}/exec", apiKeysHandler.APIKeyMiddleware("rcon.exec")(rconHandler.ExecExternal)).Methods("POST")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---

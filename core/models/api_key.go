@@ -1,0 +1,54 @@
+package models
+
+import "time"
+
+// APIKey is an external automation credential (Phase 9). Plaintext key is
+// shown once on creation; storage only ever holds sha256(plaintext).
+//
+// Scope shape (JSONB column):
+//
+//	{
+//	  "servers":     ["uuid-1", "uuid-2"],   // empty = no servers
+//	  "permissions": ["rcon.exec"]            // capabilities
+//	}
+//
+// V1 ships one capability: rcon.exec. Later phases can add modpack.publish,
+// server.power, etc. without a schema migration.
+type APIKey struct {
+	ID         int        `json:"id"`
+	UserID     int        `json:"userId"`
+	Name       string     `json:"name"`
+	KeyHash    string     `json:"-"`
+	Scope      APIKeyScope `json:"scope"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	RatePerMin int        `json:"ratePerMin"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}
+
+type APIKeyScope struct {
+	Servers     []string `json:"servers"`
+	Permissions []string `json:"permissions"`
+}
+
+// AllowsServer returns true when the key's scope covers a given server UUID.
+// Empty Servers list = no servers (deny by default).
+func (s APIKeyScope) AllowsServer(serverUUID string) bool {
+	for _, u := range s.Servers {
+		if u == serverUUID {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPermission returns true when perm is in the key's permission list.
+func (s APIKeyScope) HasPermission(perm string) bool {
+	for _, p := range s.Permissions {
+		if p == perm {
+			return true
+		}
+	}
+	return false
+}
