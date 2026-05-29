@@ -9,6 +9,7 @@ import (
 
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
+	"dylaris-core/pkg/leader"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
@@ -24,6 +25,7 @@ type BackupScheduler struct {
 	store    store.Store
 	redis    *redis.Client
 	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
+	leader   leader.Election
 }
 
 func NewBackupScheduler(s store.Store, r *redis.Client) *BackupScheduler {
@@ -38,6 +40,14 @@ func (b *BackupScheduler) SetRegistry(reg *nodegrpc.Registry) {
 	b.registry = reg
 }
 
+// SetLeader wires the leader-election gate. Without it the scheduler ticks
+// + processes Pub/Sub messages on every Core (single-instance dev mode).
+// With it, only the elected Core does the work — followers still subscribe
+// to Pub/Sub but ignore the messages, which keeps the message shape on the
+// node side unchanged. Conversion to XReadGroup for true competing-consumer
+// semantics is a follow-up.
+func (b *BackupScheduler) SetLeader(l leader.Election) { b.leader = l }
+
 // Start runs the scheduler tick loop until ctx is cancelled. Polls every
 // 60s — backup work isn't latency-sensitive and frequent polling would just
 // hammer the DB. Also subscribes to backup result messages from nodes.
@@ -45,12 +55,17 @@ func (b *BackupScheduler) Start(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
-		b.tick(ctx) // immediate first run
+		if b.leader == nil || b.leader.IsLeader() {
+			b.tick(ctx) // immediate first run only on the leader
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if b.leader != nil && !b.leader.IsLeader() {
+					continue
+				}
 				b.tick(ctx)
 			}
 		}
@@ -72,6 +87,12 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 		case msg, ok := <-ch:
 			if !ok {
 				return
+			}
+			// Leader-gate (Phase 0b): Pub/Sub broadcasts to every
+			// subscriber, so without this guard each Core writes the
+			// same backup_restores row N times. Only the leader updates.
+			if b.leader != nil && !b.leader.IsLeader() {
+				continue
 			}
 			var result struct {
 				RestoreID int    `json:"restoreId"`
@@ -110,6 +131,11 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 		case msg, ok := <-ch:
 			if !ok {
 				return
+			}
+			// Leader-gate (Phase 0b): same Pub/Sub broadcast issue as in
+			// consumeRestoreResults — only the leader processes results.
+			if b.leader != nil && !b.leader.IsLeader() {
+				continue
 			}
 			var result struct {
 				RunID     int    `json:"runId"`

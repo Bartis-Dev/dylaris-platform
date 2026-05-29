@@ -194,6 +194,14 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase 4 — first member invite flips audit_enabled on. Cheap no-op
+	// when already on. The audit row for the invite is written right after.
+	EnableServerAuditIfNeeded(h.state, serverID)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
+		"username":    targetUser.Username,
+		"permissions": req.Permissions,
+	})
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -236,6 +244,11 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	actorID, _ := r.Context().Value("userID").(int)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
+		"permissions": req.Permissions,
+	})
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -266,6 +279,9 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
 		return
 	}
+
+	actorID, _ := r.Context().Value("userID").(int)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

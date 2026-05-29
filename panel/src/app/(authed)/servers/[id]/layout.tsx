@@ -16,6 +16,7 @@ import {
 } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
+import RegionBadge from '@/components/RegionBadge';
 import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
 
@@ -309,6 +310,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
         { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
         { slug: 'members', icon: 'users',           label: 'Members',       disabled: !isOwner && (!perms || !perms.members) },
+        // Phase 4 — Audit tab. Owner + admin only; non-owners (even with
+        // permission bundles) can't see who changed what on someone else's
+        // server. The view itself self-hides empty audit gracefully.
+        { slug: 'audit',   icon: 'file-text',       label: 'Audit',         disabled: !isOwner && !user?.isAdmin },
     ];
 
     return (
@@ -358,6 +363,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 </Link>
                             ) : null;
                         })()}
+                        <RegionBadge region={selectedServer.region} size="sm" displayName />
                         <span className="text-xs text-(--base-07)">
                             Owner: <span className="font-medium text-(--base-09)">{selectedServer.ownerName === user?.username ? 'You' : (selectedServer.ownerName || `ID: ${selectedServer.ownerId}`)}</span>
                         </span>

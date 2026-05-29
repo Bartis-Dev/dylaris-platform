@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2 } from 'lucide-react';
+import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { setupTOTP, verifyTOTP, disableTOTP } from '@/lib/api/auth';
+import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes } from '@/lib/api/auth';
+import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 
 interface UserProfile {
@@ -46,6 +47,22 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [twoFactorOpen, setTwoFactorOpen] = useState(false);
   const [twoFactorMode, setTwoFactorMode] = useState<'enable' | 'disable'>('enable');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(currentUser.is2FAEnabled || false);
+  const [backupCodesRemaining, setBackupCodesRemaining] = useState<number | null>(null);
+  const [regenerateOpen, setRegenerateOpen] = useState(false);
+
+  // Reload backup-code count whenever 2FA state changes (enable/disable/regen)
+  // OR the user opens the Security tab. Cheap fetch — single GET.
+  useEffect(() => {
+    if (!twoFactorEnabled) {
+      setBackupCodesRemaining(null);
+      return;
+    }
+    get2FAStatus().then(res => {
+      if (res.success && typeof res.remainingBackupCodes === 'number') {
+        setBackupCodesRemaining(res.remainingBackupCodes);
+      }
+    });
+  }, [twoFactorEnabled, currentView]);
 
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -149,6 +166,39 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                       {twoFactorEnabled ? 'Disable' : 'Enable'}
                     </button>
                   </div>
+
+                  <SecurityQuestionsSection />
+
+                  {/* Backup-code health row — only shown when 2FA is on. The
+                      remaining count comes from /auth/2fa/status; we never
+                      surface the codes themselves, just how many are left. */}
+                  {twoFactorEnabled && backupCodesRemaining !== null && (
+                    <div className="mt-2 flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <KeyRound size={16} className={`shrink-0 mt-0.5 ${
+                          backupCodesRemaining <= 2 ? 'text-(--error-light)'
+                          : backupCodesRemaining <= 4 ? 'text-(--warning-light)'
+                          : 'text-(--base-07)'
+                        }`} />
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm text-(--base-09)">Recovery codes</div>
+                          <div className="text-xs text-(--base-06)">
+                            {backupCodesRemaining > 0
+                              ? <>You have <span className="font-mono">{backupCodesRemaining}</span> unused code{backupCodesRemaining === 1 ? '' : 's'} left.{backupCodesRemaining <= 3 && ' Generate a new set.'}</>
+                              : 'No codes left — regenerate before you lose access to your authenticator.'}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRegenerateOpen(true)}
+                        className="shrink-0 px-3 py-1.5 rounded-md text-xs font-medium bg-(--accent-ghost) text-(--accent-light) hover:bg-(--accent)/15 border border-(--accent-border) inline-flex items-center gap-1.5"
+                      >
+                        <RefreshCw size={12} />
+                        Regenerate
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -183,6 +233,16 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
           setTwoFactorOpen(false);
           setTwoFactorEnabled(twoFactorMode === 'enable');
           onTwoFactorChange?.();
+        }}
+      />
+    )}
+
+    {regenerateOpen && (
+      <RegenerateBackupCodesWizard
+        onClose={() => setRegenerateOpen(false)}
+        onComplete={(newRemaining) => {
+          setRegenerateOpen(false);
+          setBackupCodesRemaining(newRemaining);
         }}
       />
     )}
@@ -478,6 +538,300 @@ function DeveloperPanel() {
       >
         <Trash2 size={12} /> Clear debug log buffer
       </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Regenerate Backup Codes Wizard (Phase 0a.3)
+// ─────────────────────────────────────────────
+// Two-stage: password+TOTP gate → show fresh codes once → done.
+// The gate is identical to DisableWizard; we reuse the same defense-in-depth
+// pattern but the destructive action is "rotate codes" not "kill 2FA".
+function RegenerateBackupCodesWizard({ onClose, onComplete }: {
+  onClose: () => void;
+  onComplete: (newRemaining: number) => void;
+}) {
+  const [stage, setStage] = useState<'gate' | 'codes'>('gate');
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [newCodes, setNewCodes] = useState<string[]>([]);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const res = await regenerateBackupCodes(password, code.replace(/\s/g, ''));
+      if (res?.success && Array.isArray(res.backupCodes)) {
+        setNewCodes(res.backupCodes);
+        setStage('codes');
+      } else {
+        setError(res?.message || 'Failed to regenerate codes');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyAll = async () => {
+    try {
+      await navigator.clipboard.writeText(newCodes.join('\n'));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard may be blocked */ }
+  };
+
+  return (
+    <div className="modal-overlay animate-fade-in z-50">
+      <div className="modal-panel w-full max-w-md">
+        <div className="modal-header flex items-center justify-between">
+          <h2 className="modal-title flex items-center gap-2">
+            <RefreshCw size={18} className="text-(--accent-light)" />
+            Regenerate Backup Codes
+          </h2>
+          <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light)"><X size={18} /></button>
+        </div>
+
+        <div className="modal-body space-y-4">
+          {error && <div className="alert alert-error">{error}</div>}
+
+          {stage === 'gate' && (
+            <>
+              <div className="alert alert-warning text-xs">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>
+                  Any previously generated backup codes will be <strong>invalidated</strong>. You will receive a fresh set of 10 single-use codes — save them immediately.
+                </span>
+              </div>
+              <p className="text-sm text-(--base-07)">
+                Confirm your password and a current authenticator code (or one of your existing backup codes) to continue.
+              </p>
+              <form onSubmit={handleSubmit} className="space-y-3">
+                <div className="flex flex-col gap-[5px]">
+                  <label className="input-label">Password</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="input-field w-full" required />
+                </div>
+                <div className="flex flex-col gap-[5px]">
+                  <label className="input-label">Authenticator code or backup code</label>
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={e => setCode(e.target.value)}
+                    inputMode="text"
+                    placeholder="123 456"
+                    className="input-field input-mono w-full text-center tracking-widest"
+                    required
+                  />
+                </div>
+                <button type="submit" disabled={busy} className="btn btn-primary w-full">
+                  {busy ? 'Regenerating…' : 'Regenerate codes'}
+                </button>
+              </form>
+            </>
+          )}
+
+          {stage === 'codes' && (
+            <>
+              <div className="alert alert-warning text-(--warning) text-xs">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>
+                  Save these new codes somewhere safe. Each works exactly once and lets you log in if you lose your authenticator. They will <strong>never be shown again</strong>.
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {newCodes.map(c => (
+                  <code key={c} className="bg-(--base-02) border border-(--base-03) rounded-md px-2.5 py-1.5 text-xs font-mono text-(--base-09) text-center select-all">
+                    {c}
+                  </code>
+                ))}
+              </div>
+              <button type="button" onClick={copyAll} className="btn btn-secondary btn-sm w-full">
+                {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
+              </button>
+              <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
+                <input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} className="mt-0.5" />
+                <span>I have saved these codes in a secure location.</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => onComplete(newCodes.length)}
+                disabled={!acknowledged}
+                className="btn btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Done
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Security Questions Section (Phase 0a.5)
+// ─────────────────────────────────────────────
+// Self-contained: probes the pool endpoint on mount; if security questions
+// are disabled by policy, the section renders nothing at all (zero footprint
+// in the security tab). Otherwise the user sees their current status and
+// can pick/refresh questions inline — no separate modal.
+function SecurityQuestionsSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [required, setRequired] = useState(3);
+  const [pool, setPool] = useState<string[]>([]);
+  const [currentCount, setCurrentCount] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [items, setItems] = useState<SecurityQAItem[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [savedToast, setSavedToast] = useState(false);
+
+  useEffect(() => {
+    getSecurityQuestionPool().then(res => {
+      if (!res.success || !res.enabled) {
+        setEnabled(false);
+        return;
+      }
+      setEnabled(true);
+      setRequired(res.required || 3);
+      setPool(res.pool || []);
+    });
+    getMySecurityQuestions().then(res => {
+      if (res.success && Array.isArray(res.questions)) {
+        setCurrentCount(res.questions.length);
+      }
+    });
+  }, []);
+
+  if (enabled !== true) return null;
+
+  const startEdit = () => {
+    setItems(Array.from({ length: required }, () => ({ question: '', answer: '' })));
+    setError('');
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    setError('');
+    if (items.some(qa => !qa.question || !qa.answer.trim())) {
+      setError('Pick a question and provide an answer for every row.');
+      return;
+    }
+    const picked = items.map(qa => qa.question);
+    if (new Set(picked).size !== picked.length) {
+      setError('Each question may be chosen at most once.');
+      return;
+    }
+    setSaving(true);
+    const res = await setMySecurityQuestions(items);
+    setSaving(false);
+    if (res.success) {
+      setCurrentCount(items.length);
+      setEditing(false);
+      setSavedToast(true);
+      setTimeout(() => setSavedToast(false), 2500);
+    } else {
+      setError(res.message || 'Failed to save.');
+    }
+  };
+
+  return (
+    <div className="mt-2 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <HelpCircle size={16} className={`shrink-0 mt-0.5 ${currentCount === 0 ? 'text-(--warning-light)' : 'text-(--base-07)'}`} />
+          <div className="min-w-0">
+            <div className="font-medium text-sm text-(--base-09)">Security questions</div>
+            <div className="text-xs text-(--base-06)">
+              {currentCount === 0
+                ? 'Not set up — these help recover your account if you lose your password.'
+                : <>You have <span className="font-mono">{currentCount}</span> question{currentCount === 1 ? '' : 's'} set up. The policy requires <span className="font-mono">{required}</span>.</>}
+            </div>
+          </div>
+        </div>
+        {!editing && (
+          <button
+            type="button"
+            onClick={startEdit}
+            className="shrink-0 px-3 py-1.5 rounded-md text-xs font-medium bg-(--accent-ghost) text-(--accent-light) hover:bg-(--accent)/15 border border-(--accent-border) inline-flex items-center gap-1.5"
+          >
+            <Pencil size={12} />
+            {currentCount === 0 ? 'Set up' : 'Update'}
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <div className="mt-3 space-y-3 pt-3 border-t border-(--base-03)">
+          <p className="text-xs text-(--base-06)">
+            Pick {required} question{required === 1 ? '' : 's'} and give a memorable answer for each. Answers are case-insensitive.
+          </p>
+          {items.map((qa, idx) => {
+            const otherPicks = items.filter((_, i) => i !== idx).map(o => o.question);
+            const options = pool.filter(p => !otherPicks.includes(p));
+            return (
+              <div key={idx} className="space-y-1.5">
+                <select
+                  value={qa.question}
+                  onChange={e => {
+                    const next = [...items];
+                    next[idx] = { ...next[idx], question: e.target.value };
+                    setItems(next);
+                  }}
+                  className="input-field w-full text-sm"
+                  disabled={saving}
+                >
+                  <option value="">— Pick question #{idx + 1} —</option>
+                  {options.map(q => <option key={q} value={q}>{q}</option>)}
+                </select>
+                <input
+                  type="text"
+                  value={qa.answer}
+                  onChange={e => {
+                    const next = [...items];
+                    next[idx] = { ...next[idx], answer: e.target.value };
+                    setItems(next);
+                  }}
+                  placeholder="Your answer"
+                  maxLength={200}
+                  className="input-field w-full text-sm"
+                  disabled={saving || !qa.question}
+                />
+              </div>
+            );
+          })}
+          {error && <p className="text-xs text-(--error-light)">{error}</p>}
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="btn btn-secondary btn-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="btn btn-primary btn-sm inline-flex items-center gap-1.5"
+            >
+              {saving && <RefreshCw size={12} className="animate-spin" />}
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+      {savedToast && (
+        <p className="mt-2 text-xs text-(--success-light) flex items-center gap-1">
+          <Check size={12} /> Security questions saved.
+        </p>
+      )}
     </div>
   );
 }

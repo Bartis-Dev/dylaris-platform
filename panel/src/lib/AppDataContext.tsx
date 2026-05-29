@@ -5,6 +5,13 @@ import {
     getProfile, getModules, getServers, getFeatureSettings, getRoutingMode, getBeamSettings,
     AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings,
 } from '@/lib/api';
+import { listRegions, Region } from '@/lib/api/regions';
+import { API_URL, getAuthHeader } from '@/lib/api/core';
+
+interface CoreInfo {
+    region: string;
+    coreId: string;
+}
 
 interface AppData {
     user: User | null;
@@ -21,6 +28,13 @@ interface AppData {
     refreshSettings: () => Promise<void>;
     gatewayEnabled: boolean;
     libraryEnabled: boolean;
+    // Phase 6 — regions + connected-Core. Loaded once at boot and cached so
+    // child components can call useAppData() without each issuing their own
+    // fetch. Refreshes happen lazily on visible state changes (Settings →
+    // Regions tab triggers refresh after save).
+    regions: Region[];
+    coreInfo: CoreInfo | null;
+    refreshRegions: () => Promise<void>;
 }
 
 const AppDataContext = createContext<AppData | null>(null);
@@ -45,6 +59,8 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>('sftp');
     const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
+    const [regions, setRegions] = useState<Region[]>([]);
+    const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
     const [ready, setReady] = useState(false);
 
     const refreshUser = useCallback(async () => {
@@ -61,6 +77,23 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const refreshServers = useCallback(async () => {
         const res = await getServers();
         if (res.success && res.servers) setServers(res.servers);
+    }, []);
+
+    const refreshRegions = useCallback(async () => {
+        const res = await listRegions();
+        if (res.success && Array.isArray(res.regions)) setRegions(res.regions);
+    }, []);
+
+    // /api/system/core-info — public on the auth surface, returns the region
+    // and ID of whichever Core this request landed on. Used by the topbar
+    // chip and any region-aware UX that wants to mark "you're talking to X".
+    const refreshCoreInfo = useCallback(async () => {
+        try {
+            const res = await fetch(`${API_URL}/system/core-info`, { headers: getAuthHeader() });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.success) setCoreInfo({ region: data.region, coreId: data.coreId });
+        } catch { /* network blip — keep last known state */ }
     }, []);
 
     const refreshSettings = useCallback(async () => {
@@ -86,7 +119,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             const profile = await getProfile();
             if (!profile) { onUnauthenticated(); return; }
             setUser(profile);
-            await Promise.all([refreshModules(), refreshServers(), refreshSettings()]);
+            await Promise.all([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo()]);
             setReady(true);
         };
         init();
@@ -111,6 +144,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         ready,
         refreshUser, refreshModules, refreshServers, refreshSettings,
         gatewayEnabled, libraryEnabled,
+        regions, coreInfo, refreshRegions,
     };
 
     return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

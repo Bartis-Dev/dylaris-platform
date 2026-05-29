@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
 	"fmt"
 	"log"
@@ -13,19 +14,27 @@ import (
 )
 
 type StatusWatcherService struct {
-	store store.Store
-	redis *redis.Client
+	store  store.Store
+	redis  *redis.Client
+	leader leader.Election
 }
 
 func NewStatusWatcherService(s store.Store, r *redis.Client) *StatusWatcherService {
 	return &StatusWatcherService{store: s, redis: r}
 }
 
+// SetLeader wires the leader-election gate. Status scan + DB writes only
+// run on the elected Core; followers idle through each tick.
+func (s *StatusWatcherService) SetLeader(l leader.Election) { s.leader = l }
+
 func (s *StatusWatcherService) Start() {
 	log.Println("Status Watcher Service started")
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
 		for range ticker.C {
+			if s.leader != nil && !s.leader.IsLeader() {
+				continue
+			}
 			s.scan()
 		}
 	}()

@@ -14,7 +14,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const routingMigrationKey = "dylaris:routing_migration"
+const (
+	routingMigrationKey = "dylaris:routing_migration"
+	// routingMigrationLockKey is a Redis SETNX gate (Phase 0b) preventing
+	// two Cores from kicking off the same migration simultaneously. The
+	// existing in-process sync.Mutex only covered single-instance Core —
+	// multi-instance would otherwise race past the local mutex and both
+	// dispatch the batch. TTL is generous: a migration of 10k servers
+	// could realistically run for ~1h with the 15s inter-batch sleep.
+	routingMigrationLockKey = "dylaris:routing_migration:lock"
+	routingMigrationLockTTL = 2 * time.Hour
+)
 
 type MigrationStatus struct {
 	Running bool `json:"running"`
@@ -36,26 +46,59 @@ func NewRoutingMigrationService(s store.Store, q *QueueService, r *redis.Client)
 
 // Run kicks off a background batch redeploy of all active servers.
 // Returns the number of servers queued.
+//
+// Concurrency: in addition to the local sync.Mutex (single-process safety),
+// a Redis SETNX lock guards against two Cores both kicking off the same
+// migration. The lock is released after runBatches finishes. On a leader
+// handoff mid-migration the TTL acts as a backstop so the cluster eventually
+// recovers without manual intervention.
 func (m *RoutingMigrationService) Run(ctx context.Context, newMode string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Cluster-wide lock: SETNX with TTL. Released when the goroutine returns.
+	if m.redis != nil {
+		acquired, err := m.redis.SetNX(ctx, routingMigrationLockKey, "1", routingMigrationLockTTL).Result()
+		if err != nil {
+			return 0, fmt.Errorf("acquire migration lock: %w", err)
+		}
+		if !acquired {
+			return 0, fmt.Errorf("migration already in progress on another Core")
+		}
+	}
+
 	existing := m.readStatus(ctx)
 	if existing.Running {
+		// Local status says running — release the lock we just took (we
+		// can't be running ourselves, must be a stale flag from a crash).
+		// Actually: clear it and move on.
+		_ = m.releaseLock(ctx)
 		return 0, fmt.Errorf("migration already in progress")
 	}
 
 	servers, err := m.store.GetAllActiveServers()
 	if err != nil {
+		_ = m.releaseLock(ctx)
 		return 0, fmt.Errorf("failed to load servers: %w", err)
 	}
 	if len(servers) == 0 {
+		_ = m.releaseLock(ctx)
 		return 0, nil
 	}
 
 	m.writeStatus(ctx, MigrationStatus{Running: true, Total: len(servers)})
-	go m.runBatches(context.Background(), servers, newMode)
+	go func() {
+		m.runBatches(context.Background(), servers, newMode)
+		_ = m.releaseLock(context.Background())
+	}()
 	return len(servers), nil
+}
+
+func (m *RoutingMigrationService) releaseLock(ctx context.Context) error {
+	if m.redis == nil {
+		return nil
+	}
+	return m.redis.Del(ctx, routingMigrationLockKey).Err()
 }
 
 func (m *RoutingMigrationService) runBatches(ctx context.Context, servers []models.Server, newMode string) {

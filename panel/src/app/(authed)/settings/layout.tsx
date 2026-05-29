@@ -13,6 +13,8 @@ import {
 const ALL_TABS = [
     { slug: 'modules', label: 'Modules', always: true },
     { slug: 'users', label: 'Users', always: true },
+    { slug: 'user-management', label: 'User Management', always: true },
+    { slug: 'regions', label: 'Regions', always: true },
     { slug: 'nodes', label: 'Nodes', always: true },
     { slug: 'library', label: 'Library', always: true },
     { slug: 'filemanager', label: 'File Manager', always: true },
@@ -24,6 +26,11 @@ const ALL_TABS = [
     // toggling it on from the Features tab.
     { slug: 'gateway', label: 'Gateway', always: true },
     { slug: 'backups', label: 'Backups', always: true },
+    { slug: 'maintenance', label: 'Maintenance', always: true },
+    { slug: 'ticket-categories', label: 'Ticket Categories', always: true },
+    { slug: 'canned-responses', label: 'Canned Responses', always: true },
+    { slug: 'tickets', label: 'Ticket Settings', always: true },
+    { slug: 'ticket-db', label: 'Ticket DB', always: true },
 ] as const;
 
 // ---------------------------------------------------------------------------

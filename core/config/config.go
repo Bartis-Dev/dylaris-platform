@@ -17,6 +17,11 @@ type Config struct {
 	ClusterSecret string
 	CoreID        string
 	GRPCPort      int
+	// Region (Phase 6) — which logical region this Core lives in. Stamped
+	// into heartbeat + the system info endpoint so the panel can show a
+	// "Connected to <region> Core" chip and downstream consumers can attribute
+	// telemetry to a region. 'default' for single-region setups.
+	Region string
 
 	// Database
 	DBHost     string
@@ -30,6 +35,12 @@ type Config struct {
 	RedisUser string
 	RedisPass string
 	RedisDB   int
+
+	// Optional external ticket DB (Phase 5). When set, the migration UI
+	// surfaces this as the target. Today queries still route to the main
+	// DB — a future polish phase wires the live read/write switch once
+	// the cross-DB-user-JOIN story is settled.
+	ExternalTicketDBURL string
 }
 
 func LoadConfig() (Config, error) {
@@ -54,6 +65,7 @@ func LoadConfig() (Config, error) {
 		ClusterSecret: getEnv("CLUSTER_SECRET", "dylaris-cluster-secret"),
 		CoreID:        coreID,
 		GRPCPort:      grpcPort,
+		Region:        getEnv("DYLARIS_REGION", "default"),
 
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnv("DB_PORT", "5432"),
@@ -65,6 +77,8 @@ func LoadConfig() (Config, error) {
 		RedisUser: getEnv("REDIS_USER", ""),
 		RedisPass: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:   redisDB,
+
+		ExternalTicketDBURL: getEnv("EXTERNAL_TICKET_DB_URL", ""),
 	}
 
 	return cfg, nil

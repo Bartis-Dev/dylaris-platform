@@ -22,10 +22,26 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 }
 
 // ... Structs LoginRequest, Claims, UpdateRequest etc. kept as-is ...
+// Claims.Purpose distinguishes normal sessions ("" / "session") from
+// short-lived special-purpose tokens. Phase 0a.3 introduces "2fa_setup":
+// a token issued at login when the policy demands 2FA and the user
+// hasn't configured it yet — accepted only by /auth/2fa/setup and
+// /auth/2fa/verify so the user can finish enrollment, nothing else.
 type Claims struct {
 	Username string `json:"username"`
 	IsAdmin  bool   `json:"isAdmin"`
+	Purpose  string `json:"purpose,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// purposes whitelisted for setup-token JWTs. Anything else gets 403'd
+// by AuthMiddleware so the bearer of a setup token can't access regular
+// endpoints just because they have a valid signature.
+var setupTokenAllowedPaths = map[string]bool{
+	"/api/auth/2fa/setup":  true,
+	"/api/auth/2fa/verify": true,
+	// Used by the forced-setup page to load the user's username.
+	"/api/auth/profile": true,
 }
 type LoginRequest struct {
 	Username string `json:"username"`
@@ -64,6 +80,16 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			sendJSONError(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
+
+		// Setup tokens are scoped to a tiny allowlist. Any other endpoint
+		// must reject them with 403 — bearer doesn't have a full session yet.
+		if claims.Purpose == "2fa_setup" {
+			if !setupTokenAllowedPaths[r.URL.Path] {
+				sendJSONError(w, "Token is restricted to 2FA setup — finish enrollment first", http.StatusForbidden)
+				return
+			}
+		}
+
 		ctx := context.WithValue(r.Context(), "username", claims.Username)
 		ctx = context.WithValue(ctx, "isAdmin", claims.IsAdmin)
 
@@ -107,6 +133,53 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Email-verify gate (Phase 0a.2): if the server requires verification and
+	// this user hasn't verified yet, block login with a distinctive flag so
+	// the UI can offer a "resend verification email" button instead of a
+	// generic auth error. Admins still get to log in even when unverified —
+	// otherwise a misconfigured SMTP would lock everyone out.
+	policy := LoadAuthPolicy(h.state)
+	if policy.EmailVerifyRequired && !user.IsAdmin && user.EmailVerifiedAt == nil {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":              false,
+			"requiresVerification": true,
+			"email":                user.Email,
+			"message":              "Please verify your email address before signing in.",
+		})
+		return
+	}
+
+	// 2FA enforcement gate (Phase 0a.3): if the policy requires 2FA for this
+	// user (admin or everyone) and they haven't enrolled, issue a *setup token*
+	// — a short-lived JWT scoped exclusively to the 2FA setup endpoints —
+	// instead of a normal session. Forces enrollment before they can use the
+	// panel. Admins enforcing 2FA on themselves still works: they get the
+	// setup token like anyone else.
+	if !user.Is2FAEnabled {
+		needs2FA := (user.IsAdmin && policy.Require2FAForAdmins) || policy.Require2FAForAllUsers
+		if needs2FA {
+			setupExp := time.Now().Add(15 * time.Minute)
+			setupClaims := &Claims{
+				Username:         user.Username,
+				IsAdmin:          user.IsAdmin,
+				Purpose:          "2fa_setup",
+				RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(setupExp)},
+			}
+			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, setupClaims)
+			setupTokenString, _ := tok.SignedString(h.jwtKey)
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":           false,
+				"requires2FASetup":  true,
+				"setupToken":        setupTokenString,
+				"setupTokenExpires": setupExp.Unix(),
+				"message":           "Two-factor authentication is required for this account. Finish enrollment to continue.",
+			})
+			return
+		}
+	}
+
 	// 2FA gate: if the user has 2FA enabled, require a valid TOTP or backup code.
 	if user.Is2FAEnabled {
 		if req.TOTPCode == "" {
@@ -141,6 +214,22 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, _ := token.SignedString(h.jwtKey)
+
+	// Best-effort last-login stamp. Auto-delete reads this to distinguish
+	// active vs dormant users — a stale value here is harmless.
+	if err := h.state.Store.UpdateLastLoginAt(user.ID); err != nil {
+		// Non-fatal — log and continue so a slow DB write never blocks login.
+		_ = err
+	}
+
+	// Auto-rescue (Phase 0a.6): if the user was already in pending_deletion
+	// state, cancel the scheduled deletion silently. The fact that they
+	// logged in is the strongest possible signal that the account is alive.
+	if user.DeletionStatus == "pending_deletion" {
+		if err := h.state.Store.CancelUserDeletion(user.ID); err == nil {
+			LogIdentityAudit(h.state, r, AuditEventDeletionCancelledAtLogin, user.ID, user.ID, nil)
+		}
+	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

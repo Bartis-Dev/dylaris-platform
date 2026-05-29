@@ -51,6 +51,19 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// createUserRequest is the wire-level payload — superset of models.User with
+// optional region-access fields. Kept separate from models.User so we can
+// add registration-specific fields in 0a.2+ without polluting the model.
+type createUserRequest struct {
+	models.User
+	// Region access (Phase 0a.1). If the caller omits both fields, the new
+	// user defaults to all-regions access — matches the grandfather behavior
+	// applied to existing users at migration time, and avoids creating users
+	// who can see nothing.
+	AllRegions    *bool    `json:"allRegions,omitempty"`
+	RegionsExplicit []string `json:"regionsExplicit,omitempty"`
+}
+
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -61,7 +74,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req models.User
+	var req createUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
 		return
@@ -70,13 +83,61 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	hashed, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	req.Password = string(hashed)
 
-	if err := h.state.Store.CreateUser(&req); err != nil {
+	if err := h.state.Store.CreateUser(&req.User); err != nil {
 		log.Printf("CreateUser failed for username=%q: %v", req.Username, err)
 		sendJSONError(w, "Could not create user", 409)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "User created"})
+	// Default to all-regions when caller hasn't specified — preserves
+	// previous behavior where every user had implicit global access.
+	allRegions := true
+	regionsExplicit := []string{}
+	if req.AllRegions != nil {
+		allRegions = *req.AllRegions
+	}
+	if req.RegionsExplicit != nil {
+		regionsExplicit = req.RegionsExplicit
+	}
+	if err := h.state.Store.SetUserRegions(req.User.ID, allRegions, regionsExplicit); err != nil {
+		// Region setup failed but the user already exists — log but don't
+		// roll back; admin can fix the assignment from the user settings panel.
+		log.Printf("CreateUser: SetUserRegions failed for userID=%d: %v", req.User.ID, err)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "User created",
+		"userId":  req.User.ID,
+	})
+}
+
+// CancelUserDeletion POST /api/admin/users/{id}/cancel-deletion
+// Admin override: clears the pending_deletion stamps and returns the user
+// to active state. Useful when an admin wants to save an account before
+// the user logs in themselves. Idempotent on already-active users.
+func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	if !IsAdmin(r) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	idStr := mux.Vars(r)["id"]
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id <= 0 {
+		sendJSONError(w, "Invalid user id", 400)
+		return
+	}
+	if err := h.state.Store.CancelUserDeletion(id); err != nil {
+		sendJSONError(w, "Failed to cancel deletion", 500)
+		return
+	}
+	actorID, _ := r.Context().Value("userID").(int)
+	LogIdentityAudit(h.state, r, AuditEventDeletionCancelledByAdmin, actorID, id, nil)
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {

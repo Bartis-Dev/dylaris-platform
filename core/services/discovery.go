@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"dylaris-core/models"
+	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
 	"encoding/json"
 	"log"
@@ -15,7 +16,14 @@ type DiscoveryService struct {
 	store         store.Store
 	redis         *redis.Client
 	clusterSecret string
+	// leader is set by main.go after construction. nil = run unconditionally
+	// (single-Core dev mode); non-nil = only run when this Core holds the
+	// global lease. See pkg/leader.
+	leader leader.Election
 }
+
+// SetLeader wires the leader-election gate. Call once at boot.
+func (s *DiscoveryService) SetLeader(l leader.Election) { s.leader = l }
 
 // Payload that the Node writes to Redis
 type NodeHeartbeat struct {
@@ -88,6 +96,12 @@ func (s *DiscoveryService) Start() {
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
 		for range ticker.C {
+			// Leader-gate: only the elected Core scans + writes node rows.
+			// Followers idle through each tick. nil leader = run anyway
+			// (covers tests + single-instance dev where Redis-leader isn't wired).
+			if s.leader != nil && !s.leader.IsLeader() {
+				continue
+			}
 			s.scanNodes()
 		}
 	}()

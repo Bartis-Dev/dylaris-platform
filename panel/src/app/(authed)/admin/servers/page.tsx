@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Search, RefreshCw, UserCheck, X, Loader2, Copy, Check, Network, Box } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Search, RefreshCw, UserCheck, X, Loader2, Copy, Check, Network, Box, Globe } from 'lucide-react';
 import { getAdminServers, getUsers, AdminServer, User } from '@/lib/api';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { AssignOwnerModal } from '@/components/admin/AssignOwnerModal';
+import RegionBadge from '@/components/RegionBadge';
+import { useAppData } from '@/lib/AppDataContext';
 
 function formatBytesMB(mb: number | undefined): string {
     if (!mb || mb <= 0) return '—';
@@ -65,12 +67,17 @@ function TypeBadge({ type }: { type: 'game' | 'proxy' | undefined }) {
 }
 
 export default function AdminServersPage() {
+    const { regions } = useAppData();
     const [servers, setServers] = useState<AdminServer[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
     const [assignTarget, setAssignTarget] = useState<AdminServer | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
+    // Phase 6 — region multi-select filter. Empty set = no filter (show all).
+    // Auto-hides UI when only the 'default' region exists.
+    const [regionFilter, setRegionFilter] = useState<Set<string>>(new Set());
+    const [showRegionMenu, setShowRegionMenu] = useState(false);
 
     const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
@@ -83,13 +90,30 @@ export default function AdminServersPage() {
         });
     }, [refreshKey]);
 
-    const filteredServers = search
-        ? servers.filter(s =>
-            s.name.toLowerCase().includes(search.toLowerCase()) ||
-            s.uuid.toLowerCase().includes(search.toLowerCase()) ||
-            (s.owner ?? '').toLowerCase().includes(search.toLowerCase())
-        )
-        : servers;
+    const multiRegion = regions.length > 1;
+    const toggleRegion = (id: string) => {
+        setRegionFilter(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const filteredServers = useMemo(() => {
+        let list = servers;
+        if (search) {
+            const q = search.toLowerCase();
+            list = list.filter(s =>
+                s.name.toLowerCase().includes(q) ||
+                s.uuid.toLowerCase().includes(q) ||
+                (s.owner ?? '').toLowerCase().includes(q)
+            );
+        }
+        if (regionFilter.size > 0) {
+            list = list.filter(s => regionFilter.has(s.region || 'default'));
+        }
+        return list;
+    }, [servers, search, regionFilter]);
 
     return (
         <div className="flex flex-col gap-4 h-full">
@@ -108,6 +132,56 @@ export default function AdminServersPage() {
                     <button onClick={() => setSearch('')} className="text-(--base-05) hover:text-(--base-07) transition-colors">
                         <X size={14} />
                     </button>
+                )}
+                {multiRegion && (
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowRegionMenu(o => !o)}
+                            className={`btn btn-secondary btn-sm ${regionFilter.size > 0 ? 'border-(--accent) text-(--accent-light)' : ''}`}
+                        >
+                            <Globe size={13} />
+                            Region
+                            {regionFilter.size > 0 && (
+                                <span className="ml-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono bg-(--accent-ghost) text-(--accent-light)">
+                                    {regionFilter.size}
+                                </span>
+                            )}
+                        </button>
+                        {showRegionMenu && (
+                            <div
+                                className="absolute right-0 top-full mt-1.5 z-20 min-w-[180px] rounded-md border border-(--base-04) bg-(--base-02) shadow-lg p-1"
+                                onMouseLeave={() => setShowRegionMenu(false)}
+                            >
+                                {regions.map(r => {
+                                    const selected = regionFilter.has(r.id);
+                                    return (
+                                        <button
+                                            key={r.id}
+                                            onClick={() => toggleRegion(r.id)}
+                                            className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-sm text-xs text-left transition-colors ${
+                                                selected ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-07) hover:bg-(--base-03)'
+                                            }`}
+                                        >
+                                            <span
+                                                className="inline-block w-2 h-2 rounded-full shrink-0"
+                                                style={{ background: r.color || 'var(--base-05)' }}
+                                            />
+                                            <span className="truncate flex-1">{r.displayName || r.id}</span>
+                                            {selected && <Check size={12} className="shrink-0" />}
+                                        </button>
+                                    );
+                                })}
+                                {regionFilter.size > 0 && (
+                                    <button
+                                        onClick={() => setRegionFilter(new Set())}
+                                        className="w-full mt-1 pt-1.5 border-t border-(--base-03) px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) hover:text-(--base-09) transition-colors text-left"
+                                    >
+                                        Clear filter
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 )}
                 <span className="text-xs text-(--base-06) ml-auto">{filteredServers.length} server{filteredServers.length !== 1 ? 's' : ''}</span>
                 <button onClick={refresh} className="btn btn-secondary btn-sm">
@@ -130,6 +204,7 @@ export default function AdminServersPage() {
                                 <th className="pb-2 pr-4 mono-label font-normal">Name</th>
                                 <th className="pb-2 pr-4 mono-label font-normal">Owner</th>
                                 <th className="pb-2 pr-4 mono-label font-normal hidden md:table-cell">Type</th>
+                                {multiRegion && <th className="pb-2 pr-4 mono-label font-normal hidden md:table-cell">Region</th>}
                                 <th className="pb-2 pr-4 mono-label font-normal hidden lg:table-cell">Node</th>
                                 <th className="pb-2 pr-4 mono-label font-normal hidden xl:table-cell">Created</th>
                                 <th className="pb-2 pr-4 mono-label font-normal hidden md:table-cell">Members</th>
@@ -158,6 +233,11 @@ export default function AdminServersPage() {
                                     <td className="py-2.5 pr-4 hidden md:table-cell">
                                         <TypeBadge type={s.serverType} />
                                     </td>
+                                    {multiRegion && (
+                                        <td className="py-2.5 pr-4 hidden md:table-cell">
+                                            <RegionBadge region={s.region || 'default'} displayName alwaysShow />
+                                        </td>
+                                    )}
                                     <td className="py-2.5 pr-4 hidden lg:table-cell">
                                         <span className="text-(--base-06) text-xs">{s.node}</span>
                                     </td>

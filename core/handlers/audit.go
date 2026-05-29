@@ -1,0 +1,119 @@
+package handlers
+
+import (
+	"log"
+	"net/http"
+	"strings"
+
+	"dylaris-core/models"
+)
+
+// Identity audit event types (Phase 0a.1). Used by LogIdentityAudit callers
+// to keep event_type strings consistent. New event types added in later
+// sub-phases (user_registered, login_failed, password_reset_requested, …)
+// should be appended here so there's one canonical list.
+const (
+	AuditEventRegionCreated        = "region_created"
+	AuditEventRegionUpdated        = "region_updated"
+	AuditEventRegionDeleted        = "region_deleted"
+	AuditEventUserRegionsChanged   = "user_regions_changed"
+	AuditEventUserAllRegionsToggle = "user_all_regions_toggled"
+
+	// Phase 0a.3 — 2FA / TOTP lifecycle. The "consumed" event distinguishes
+	// successful backup-code uses (rare, expected to drop ownership counts)
+	// from regular TOTP success (noisy, intentionally not audited).
+	AuditEvent2FASetupCompleted     = "2fa_setup_completed"
+	AuditEvent2FADisabled           = "2fa_disabled"
+	AuditEvent2FAAdminReset         = "2fa_admin_reset"
+	AuditEvent2FABackupRegenerated  = "2fa_backup_codes_regenerated"
+	AuditEvent2FABackupCodeConsumed = "2fa_backup_code_consumed"
+
+	// Phase 0a.4 — password reset flow.
+	AuditEventPasswordResetRequested = "password_reset_requested"
+	AuditEventPasswordResetCompleted = "password_reset_completed"
+
+	// Phase 0a.5 — security questions.
+	AuditEventSecurityQuestionsSet         = "security_questions_set"
+	AuditEventSecurityQuestionsPoolUpdated = "security_questions_pool_updated"
+	AuditEventSecurityAnswersFailedAtReset = "security_answers_failed_at_reset"
+
+	// Phase 0a.6 — auto-delete of inactive users.
+	AuditEventDeletionWarningSent       = "deletion_warning_sent"
+	AuditEventUserAnonymized            = "user_anonymized"
+	AuditEventUserHardDeleted           = "user_hard_deleted"
+	AuditEventDeletionCancelledByAdmin  = "deletion_cancelled_by_admin"
+	AuditEventDeletionCancelledAtLogin  = "deletion_cancelled_at_login"
+
+	// Phase 1 — roles + maintenance.
+	AuditEventUserRoleChanged        = "user_role_changed"
+	AuditEventUserPermissionsChanged = "user_permissions_changed"
+	AuditEventMaintenanceToggled     = "maintenance_toggled"
+
+	// Phase 2 — tickets (ticket-scoped audit, written to ticket_audit_events
+	// rather than audit_events_identity).
+	TicketEventCreated         = "ticket_created"
+	TicketEventStatusChanged   = "status_changed"
+	TicketEventPriorityChanged = "priority_changed"
+	TicketEventAssigned        = "assigned"
+	TicketEventUnassigned      = "unassigned"
+	TicketEventWatcherAdded    = "watcher_added"
+	TicketEventWatcherRemoved  = "watcher_removed"
+	TicketEventReopened        = "reopened"
+
+	// Phase 3 — attachments + auto-close.
+	TicketEventAttachmentAdded   = "attachment_added"
+	TicketEventAttachmentRemoved = "attachment_removed"
+	TicketEventAutoClosed        = "auto_closed"
+)
+
+// LogIdentityAudit writes an append-only identity-domain audit row.
+// Best-effort: errors are logged but never propagated — losing an audit row
+// must never block the originating user action. Pass actorID = 0 for system
+// events (no human actor), targetID = 0 when not applicable.
+func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorID, targetID int, metadata map[string]interface{}) {
+	if state == nil || state.Store == nil {
+		return
+	}
+
+	ev := &models.AuditEventIdentity{
+		EventType: eventType,
+		Metadata:  metadata,
+	}
+	if actorID > 0 {
+		ev.ActorUserID = &actorID
+	}
+	if targetID > 0 {
+		ev.TargetUserID = &targetID
+	}
+	if r != nil {
+		ev.IPAddress = clientIP(r)
+		ev.UserAgent = r.UserAgent()
+	}
+
+	if err := state.Store.InsertAuditIdentity(ev); err != nil {
+		log.Printf("audit: failed to insert %s event: %v", eventType, err)
+	}
+}
+
+// clientIP extracts the originating IP from common proxy headers, falling
+// back to RemoteAddr. Returns "" if nothing reasonable is available so the
+// downstream NULLIF(...,'')::inet cast keeps the DB row clean.
+func clientIP(r *http.Request) string {
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		// X-Forwarded-For is a comma-separated list; the originating client
+		// is the leftmost entry.
+		if i := strings.IndexByte(v, ','); i > 0 {
+			return strings.TrimSpace(v[:i])
+		}
+		return strings.TrimSpace(v)
+	}
+	if v := r.Header.Get("X-Real-IP"); v != "" {
+		return strings.TrimSpace(v)
+	}
+	// RemoteAddr is host:port — strip the port for INET-compatible storage.
+	addr := r.RemoteAddr
+	if i := strings.LastIndexByte(addr, ':'); i > 0 {
+		return addr[:i]
+	}
+	return addr
+}

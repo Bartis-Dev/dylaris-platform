@@ -17,30 +17,78 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
+// RawDB exposes the underlying *sql.DB so handlers that need explicit
+// transaction control (Phase 5 restore) can use it without the Store
+// interface having to grow first-class TX methods. Use sparingly — most
+// callers should stick to the interface methods.
+func (s *PostgresStore) RawDB() *sql.DB { return s.db }
+
 // ==========================================
 // USERS
 // ==========================================
 
 // userSelectCols is the canonical column list for User reads. Includes
-// totp_secret + totp_backup_codes which are needed for 2FA verification.
-// These two are scrubbed from JSON responses via the json:"-" tag on the model.
+// totp_secret + totp_backup_codes which are needed for 2FA verification —
+// scrubbed from JSON via the json:"-" tag on the model. Phase 0a.1 added
+// region-access flag, verification/reset tokens and deletion lifecycle columns;
+// the sensitive ones (tokens) are also json:"-" on the model.
 const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''),
 	is_admin, COALESCE(is_2fa_enabled, FALSE), COALESCE(totp_secret, ''), COALESCE(totp_backup_codes::text, '[]'),
-	COALESCE(permissions, ''), COALESCE(public_id, ''), created_at`
+	COALESCE(permissions, ''), COALESCE(public_id, ''), created_at,
+	COALESCE(all_regions_access, FALSE),
+	email_verified_at, COALESCE(email_verification_token, ''), email_verification_sent_at,
+	COALESCE(password_reset_token, ''), password_reset_expires_at,
+	last_login_at, COALESCE(deletion_status, 'active'),
+	deletion_warning_sent_at, deletion_scheduled_at,
+	COALESCE(role, 'user'),
+	COALESCE(can_delete_servers, FALSE),
+	COALESCE(can_change_resources, FALSE),
+	COALESCE(support_team, '')`
 
 func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 	var (
-		u         models.User
-		createdAt sql.NullTime
+		u                                                                                              models.User
+		createdAt, emailVerifiedAt, emailVerificationSentAt, passwordResetExpiresAt, lastLoginAt       sql.NullTime
+		deletionWarningSentAt, deletionScheduledAt                                                     sql.NullTime
 	)
 	err := scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.MinecraftUsername,
 		&u.IsAdmin, &u.Is2FAEnabled, &u.TOTPSecret, &u.TOTPBackupCodes,
-		&u.Permissions, &u.PublicID, &createdAt)
+		&u.Permissions, &u.PublicID, &createdAt,
+		&u.AllRegionsAccess,
+		&emailVerifiedAt, &u.EmailVerificationToken, &emailVerificationSentAt,
+		&u.PasswordResetToken, &passwordResetExpiresAt,
+		&lastLoginAt, &u.DeletionStatus,
+		&deletionWarningSentAt, &deletionScheduledAt,
+		&u.Role, &u.CanDeleteServers, &u.CanChangeResources, &u.SupportTeam)
 	if err != nil {
 		return nil, err
 	}
 	if createdAt.Valid {
 		u.CreatedAt = createdAt.Time
+	}
+	if emailVerifiedAt.Valid {
+		t := emailVerifiedAt.Time
+		u.EmailVerifiedAt = &t
+	}
+	if emailVerificationSentAt.Valid {
+		t := emailVerificationSentAt.Time
+		u.EmailVerificationSentAt = &t
+	}
+	if passwordResetExpiresAt.Valid {
+		t := passwordResetExpiresAt.Time
+		u.PasswordResetExpiresAt = &t
+	}
+	if lastLoginAt.Valid {
+		t := lastLoginAt.Time
+		u.LastLoginAt = &t
+	}
+	if deletionWarningSentAt.Valid {
+		t := deletionWarningSentAt.Time
+		u.DeletionWarningSentAt = &t
+	}
+	if deletionScheduledAt.Valid {
+		t := deletionScheduledAt.Time
+		u.DeletionScheduledAt = &t
 	}
 	return &u, nil
 }
@@ -132,6 +180,39 @@ func (s *PostgresStore) DisableUserTOTP(id int) error {
 	_, err := s.db.Exec(
 		`UPDATE users SET totp_secret = '', totp_backup_codes = '[]'::jsonb, is_2fa_enabled = FALSE WHERE id = $1`,
 		id,
+	)
+	return err
+}
+
+// ==========================================
+// ROLES + PERMISSIONS (Phase 1)
+// ==========================================
+
+// SetUserRole writes the role and keeps is_admin in sync. is_admin is the
+// canonical legacy flag still read by older handlers; keeping it derived from
+// role here means new code can rely on role without invalidating legacy code.
+func (s *PostgresStore) SetUserRole(userID int, role string) error {
+	if role != "user" && role != "support" && role != "admin" {
+		return fmt.Errorf("invalid role: %s", role)
+	}
+	_, err := s.db.Exec(
+		`UPDATE users SET role = $1, is_admin = ($1 = 'admin') WHERE id = $2`,
+		role, userID,
+	)
+	return err
+}
+
+// SetUserPermissionFlags writes the can_* flags and the support_team. Empty
+// supportTeam stores NULL so it doesn't pollute users that aren't in any team.
+func (s *PostgresStore) SetUserPermissionFlags(userID int, canDeleteServers, canChangeResources bool, supportTeam string) error {
+	team := sql.NullString{String: supportTeam, Valid: supportTeam != ""}
+	_, err := s.db.Exec(
+		`UPDATE users
+		    SET can_delete_servers = $1,
+		        can_change_resources = $2,
+		        support_team = $3
+		  WHERE id = $4`,
+		canDeleteServers, canChangeResources, team, userID,
 	)
 	return err
 }
@@ -621,7 +702,8 @@ func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.S
 		s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
 		COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''),
 		COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id,
-		COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565)`
+		COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565),
+		COALESCE(s.region, 'default')`
 
 	scanServer := func(srv *models.Server, rows *sql.Rows, role string, permsJSON []byte) {
 		if role != "" {
@@ -648,7 +730,8 @@ func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.S
 				&srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer,
 				&srv.CreatedAt, &srv.OwnerID, &srv.Memory, &srv.CPULimit, &srv.NodeID,
 				&srv.ExtraJvmFlags, &srv.StartCommand, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber,
-				&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort); err != nil {
+				&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort,
+				&srv.Region); err != nil {
 				continue
 			}
 			srv.Role = "owner"
@@ -694,7 +777,7 @@ func (s *PostgresStore) ListServersForUser(userID int, isAdmin bool) ([]models.S
 			&srv.CreatedAt, &srv.OwnerID, &srv.Memory, &srv.CPULimit, &srv.NodeID,
 			&srv.ExtraJvmFlags, &srv.StartCommand, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber,
 			&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort,
-			&role, &permsJSON); err != nil {
+			&srv.Region, &role, &permsJSON); err != nil {
 			continue
 		}
 		scanServer(&srv, nil, role, permsJSON)
@@ -962,5 +1045,479 @@ func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
 		result = append(result, a)
 	}
 	return result, nil
+}
+
+// ==========================================
+// REGIONS (Phase 0a.1)
+// ==========================================
+
+func scanRegion(scan func(dest ...interface{}) error) (*models.Region, error) {
+	var (
+		r         models.Region
+		color     sql.NullString
+		createdAt sql.NullTime
+	)
+	err := scan(&r.ID, &r.DisplayName, &r.Enabled, &color, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	if color.Valid {
+		r.Color = color.String
+	}
+	if createdAt.Valid {
+		r.CreatedAt = createdAt.Time
+	}
+	return &r, nil
+}
+
+func (s *PostgresStore) ListRegions(includeDisabled bool) ([]models.Region, error) {
+	query := `SELECT id, display_name, enabled, color, created_at FROM regions`
+	if !includeDisabled {
+		query += ` WHERE enabled = TRUE`
+	}
+	query += ` ORDER BY id ASC`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Region
+	for rows.Next() {
+		r, err := scanRegion(rows.Scan)
+		if err != nil {
+			continue
+		}
+		out = append(out, *r)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) GetRegion(id string) (*models.Region, error) {
+	query := `SELECT id, display_name, enabled, color, created_at FROM regions WHERE id = $1`
+	return scanRegion(s.db.QueryRow(query, id).Scan)
+}
+
+func (s *PostgresStore) CreateRegion(r *models.Region) error {
+	_, err := s.db.Exec(
+		`INSERT INTO regions (id, display_name, enabled, color) VALUES ($1, $2, $3, NULLIF($4, ''))`,
+		r.ID, r.DisplayName, r.Enabled, r.Color,
+	)
+	return err
+}
+
+func (s *PostgresStore) UpdateRegion(r *models.Region) error {
+	_, err := s.db.Exec(
+		`UPDATE regions SET display_name = $1, enabled = $2, color = NULLIF($3, '') WHERE id = $4`,
+		r.DisplayName, r.Enabled, r.Color, r.ID,
+	)
+	return err
+}
+
+func (s *PostgresStore) DeleteRegion(id string) error {
+	_, err := s.db.Exec(`DELETE FROM regions WHERE id = $1`, id)
+	return err
+}
+
+func (s *PostgresStore) CountServersInRegion(regionID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM servers WHERE region = $1`, regionID).Scan(&n)
+	return n, err
+}
+
+func (s *PostgresStore) CountNodesInRegion(regionID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE region = $1`, regionID).Scan(&n)
+	return n, err
+}
+
+// ==========================================
+// USER <-> REGION M:N (Phase 0a.1)
+// ==========================================
+
+func (s *PostgresStore) GetUserRegionIDs(userID int) ([]string, error) {
+	rows, err := s.db.Query(`SELECT region_id FROM user_regions WHERE user_id = $1 ORDER BY region_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var rid string
+		if err := rows.Scan(&rid); err == nil {
+			out = append(out, rid)
+		}
+	}
+	return out, nil
+}
+
+// SetUserRegions replaces the user's region set in one transaction. When
+// allAccess is true the user_regions rows are wiped — all-regions trumps
+// the explicit list. When false, regionIDs becomes the new authoritative set.
+func (s *PostgresStore) SetUserRegions(userID int, allAccess bool, regionIDs []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE users SET all_regions_access = $1 WHERE id = $2`, allAccess, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM user_regions WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+	if !allAccess {
+		for _, rid := range regionIDs {
+			if _, err := tx.Exec(`INSERT INTO user_regions (user_id, region_id) VALUES ($1, $2)`, userID, rid); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresStore) SetUserAllRegionsAccess(userID int, allAccess bool) error {
+	_, err := s.db.Exec(`UPDATE users SET all_regions_access = $1 WHERE id = $2`, allAccess, userID)
+	return err
+}
+
+func (s *PostgresStore) GetUserAllRegionsAccess(userID int) (bool, error) {
+	var b bool
+	err := s.db.QueryRow(`SELECT COALESCE(all_regions_access, FALSE) FROM users WHERE id = $1`, userID).Scan(&b)
+	return b, err
+}
+
+// ==========================================
+// IDENTITY AUDIT (Phase 0a.1, append-only)
+// ==========================================
+
+func (s *PostgresStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
+	var metaJSON []byte
+	if ev.Metadata != nil {
+		metaJSON, _ = json.Marshal(ev.Metadata)
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO audit_events_identity
+			(event_type, actor_user_id, target_user_id, metadata, ip_address, user_agent)
+		 VALUES ($1, $2, $3, NULLIF($4, '')::jsonb, NULLIF($5, '')::inet, NULLIF($6, ''))`,
+		ev.EventType, ev.ActorUserID, ev.TargetUserID,
+		string(metaJSON), ev.IPAddress, ev.UserAgent,
+	)
+	return err
+}
+
+func (s *PostgresStore) ListAuditIdentity(targetUserID *int, eventType string, limit int) ([]models.AuditEventIdentity, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	query := `SELECT id, event_type, actor_user_id, target_user_id, metadata, ip_address::text, user_agent, created_at
+		FROM audit_events_identity WHERE 1=1`
+	args := []interface{}{}
+	if targetUserID != nil {
+		args = append(args, *targetUserID)
+		query += fmt.Sprintf(" AND target_user_id = $%d", len(args))
+	}
+	if eventType != "" {
+		args = append(args, eventType)
+		query += fmt.Sprintf(" AND event_type = $%d", len(args))
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args))
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []models.AuditEventIdentity
+	for rows.Next() {
+		var ev models.AuditEventIdentity
+		var (
+			actor, target sql.NullInt64
+			metaJSON      []byte
+			ipAddr, ua    sql.NullString
+			createdAt     sql.NullTime
+		)
+		if err := rows.Scan(&ev.ID, &ev.EventType, &actor, &target, &metaJSON, &ipAddr, &ua, &createdAt); err != nil {
+			continue
+		}
+		if actor.Valid {
+			n := int(actor.Int64)
+			ev.ActorUserID = &n
+		}
+		if target.Valid {
+			n := int(target.Int64)
+			ev.TargetUserID = &n
+		}
+		if len(metaJSON) > 0 {
+			_ = json.Unmarshal(metaJSON, &ev.Metadata)
+		}
+		if ipAddr.Valid {
+			ev.IPAddress = ipAddr.String
+		}
+		if ua.Valid {
+			ev.UserAgent = ua.String
+		}
+		if createdAt.Valid {
+			ev.CreatedAt = createdAt.Time
+		}
+		out = append(out, ev)
+	}
+	return out, nil
+}
+
+// SetSettingBy mirrors SetSetting but records the user who changed the value.
+// Existing call sites use SetSetting (updated_by stays NULL); audit-aware
+// new flows call this variant. updated_at is bumped to NOW() on every write.
+func (s *PostgresStore) SetSettingBy(key, value string, updatedBy int) error {
+	_, err := s.db.Exec(`
+		INSERT INTO settings (key, value, updated_at, updated_by)
+		VALUES ($1, $2, NOW(), $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+	`, key, value, updatedBy)
+	return err
+}
+
+// ==========================================
+// EMAIL VERIFICATION + LOGIN TRACKING (Phase 0a.2)
+// ==========================================
+
+func (s *PostgresStore) GetUserByEmail(email string) (*models.User, error) {
+	// Case-insensitive lookup — emails normalized to lowercase at write
+	// time but be defensive on reads in case older rows escaped that.
+	query := `SELECT ` + userSelectCols + ` FROM users WHERE LOWER(email) = LOWER($1)`
+	return scanUser(s.db.QueryRow(query, email).Scan)
+}
+
+func (s *PostgresStore) GetUserByEmailVerificationToken(token string) (*models.User, error) {
+	query := `SELECT ` + userSelectCols + ` FROM users WHERE email_verification_token = $1 AND email_verification_token IS NOT NULL`
+	return scanUser(s.db.QueryRow(query, token).Scan)
+}
+
+// SetEmailVerificationToken stores a freshly generated token + sent timestamp.
+// Pass an empty token to clear (e.g. after a manual admin override).
+func (s *PostgresStore) SetEmailVerificationToken(userID int, token string) error {
+	if token == "" {
+		_, err := s.db.Exec(
+			`UPDATE users SET email_verification_token = NULL, email_verification_sent_at = NULL WHERE id = $1`,
+			userID,
+		)
+		return err
+	}
+	_, err := s.db.Exec(
+		`UPDATE users SET email_verification_token = $1, email_verification_sent_at = NOW() WHERE id = $2`,
+		token, userID,
+	)
+	return err
+}
+
+// MarkEmailVerified stamps the verification time and clears the token in one
+// statement so the row can't be replayed against a stale token.
+func (s *PostgresStore) MarkEmailVerified(userID int) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET email_verified_at = NOW(), email_verification_token = NULL, email_verification_sent_at = NULL WHERE id = $1`,
+		userID,
+	)
+	return err
+}
+
+func (s *PostgresStore) UpdateLastLoginAt(userID int) error {
+	_, err := s.db.Exec(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, userID)
+	return err
+}
+
+// ==========================================
+// PASSWORD RESET (Phase 0a.4)
+// ==========================================
+
+// GetUserByPasswordResetToken returns the user row whose reset token matches
+// AND hasn't expired yet. Expiry is enforced at the SQL level so a leaked
+// token can't be replayed after the configured TTL even if the handler
+// somehow forgets to check.
+func (s *PostgresStore) GetUserByPasswordResetToken(token string) (*models.User, error) {
+	query := `SELECT ` + userSelectCols + ` FROM users
+		WHERE password_reset_token = $1
+		  AND password_reset_token IS NOT NULL
+		  AND (password_reset_expires_at IS NULL OR password_reset_expires_at > NOW())`
+	return scanUser(s.db.QueryRow(query, token).Scan)
+}
+
+func (s *PostgresStore) SetPasswordResetToken(userID int, token string, expiresAt time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2 WHERE id = $3`,
+		token, expiresAt, userID,
+	)
+	return err
+}
+
+func (s *PostgresStore) ClearPasswordResetToken(userID int) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET password_reset_token = NULL, password_reset_expires_at = NULL WHERE id = $1`,
+		userID,
+	)
+	return err
+}
+
+// ==========================================
+// SECURITY QUESTIONS (Phase 0a.5)
+// ==========================================
+
+// securityQAStored mirrors the on-disk shape: one entry per question, hashed
+// answer kept here, plaintext question text kept inline so admin edits to
+// the question pool can't desync existing users from their original wording.
+type securityQAStored struct {
+	Question   string `json:"question"`
+	AnswerHash string `json:"answer_hash"`
+}
+
+func (s *PostgresStore) GetUserSecurityQuestions(userID int) ([]string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT COALESCE(security_questions::text, '[]') FROM users WHERE id = $1`, userID).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	var rows []securityQAStored
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		return []string{}, nil
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Question)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) GetUserSecurityQuestionsRaw(userID int) (string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT COALESCE(security_questions::text, '[]') FROM users WHERE id = $1`, userID).Scan(&raw)
+	return raw, err
+}
+
+func (s *PostgresStore) SetUserSecurityQuestions(userID int, qaJSON string) error {
+	if qaJSON == "" {
+		qaJSON = "[]"
+	}
+	_, err := s.db.Exec(
+		`UPDATE users SET security_questions = $1::jsonb WHERE id = $2`,
+		qaJSON, userID,
+	)
+	return err
+}
+
+// ==========================================
+// AUTO-DELETE INACTIVE USERS (Phase 0a.6)
+// ==========================================
+
+func (s *PostgresStore) ListInactiveCandidates(idleSince time.Time) ([]InactiveCandidate, error) {
+	// "history" today = owns or is invited to any server. When tickets land
+	// in Phase 2 we'll OR in EXISTS(SELECT 1 FROM tickets WHERE user_id=u.id).
+	query := `
+		SELECT u.id, u.username, COALESCE(u.email, ''), u.last_login_at,
+		       EXISTS (SELECT 1 FROM servers       WHERE owner_id = u.id)
+		    OR EXISTS (SELECT 1 FROM server_invites WHERE user_id  = u.id)
+		    AS has_history
+		FROM users u
+		WHERE u.is_admin = FALSE
+		  AND COALESCE(u.deletion_status, 'active') = 'active'
+		  AND COALESCE(u.last_login_at, u.created_at) < $1
+	`
+	rows, err := s.db.Query(query, idleSince)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []InactiveCandidate
+	for rows.Next() {
+		var c InactiveCandidate
+		var lastLogin sql.NullTime
+		if err := rows.Scan(&c.ID, &c.Username, &c.Email, &lastLogin, &c.HasHistory); err != nil {
+			continue
+		}
+		if lastLogin.Valid {
+			t := lastLogin.Time
+			c.LastLogin = &t
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) MarkUserPendingDeletion(userID int, scheduledAt time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE users
+		    SET deletion_status = 'pending_deletion',
+		        deletion_warning_sent_at = NOW(),
+		        deletion_scheduled_at = $1
+		  WHERE id = $2`,
+		scheduledAt, userID,
+	)
+	return err
+}
+
+func (s *PostgresStore) ListUsersDueForDeletion(now time.Time) ([]int, error) {
+	rows, err := s.db.Query(
+		`SELECT id FROM users
+		  WHERE deletion_status = 'pending_deletion'
+		    AND deletion_scheduled_at IS NOT NULL
+		    AND deletion_scheduled_at <= $1`,
+		now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+func (s *PostgresStore) CancelUserDeletion(userID int) error {
+	_, err := s.db.Exec(
+		`UPDATE users
+		    SET deletion_status = 'active',
+		        deletion_warning_sent_at = NULL,
+		        deletion_scheduled_at = NULL
+		  WHERE id = $1`,
+		userID,
+	)
+	return err
+}
+
+func (s *PostgresStore) AnonymizeUser(userID int) error {
+	// Wipe PII while keeping the row. The username becomes a sentinel that
+	// won't collide with anything a human would pick. Password gets a
+	// random-bytes bcrypt that nobody knows — login becomes impossible
+	// without a separate admin-reset.
+	// Note: keep is_admin as-is so anonymized accounts can't be re-elevated
+	// just by no-longer-being-an-admin; the job only ever targets non-admins
+	// in the first place.
+	tag := fmt.Sprintf("<deleted_user_%d>", userID)
+	_, err := s.db.Exec(`
+		UPDATE users
+		   SET username = $1,
+		       email = NULL,
+		       password = '!disabled!' || md5(random()::text),
+		       minecraft_username = NULL,
+		       totp_secret = '',
+		       totp_backup_codes = '[]'::jsonb,
+		       is_2fa_enabled = FALSE,
+		       security_questions = '[]'::jsonb,
+		       email_verified_at = NULL,
+		       email_verification_token = NULL,
+		       email_verification_sent_at = NULL,
+		       password_reset_token = NULL,
+		       password_reset_expires_at = NULL,
+		       deletion_status = 'anonymized',
+		       deletion_scheduled_at = NULL,
+		       deletion_warning_sent_at = NULL
+		 WHERE id = $2
+	`, tag, userID)
+	return err
 }
 

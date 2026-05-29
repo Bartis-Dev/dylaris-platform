@@ -25,6 +25,24 @@ export interface User {
     publicId?: string; // FIX: Public ID
     public_id?: string;
     createdAt?: string;
+    // Region access (Phase 0a.1). allRegionsAccess=true overrides the
+    // explicit regions list — user sees all current and future regions.
+    allRegionsAccess?: boolean;
+    regions?: string[];
+    // Lifecycle (Phase 0a.1, surfaced in later sub-phases for UI badges).
+    emailVerifiedAt?: string;
+    lastLoginAt?: string;
+    deletionStatus?: string;
+    // Phase 0a.6 — when status === 'pending_deletion', this is the date the
+    // auto-delete job will execute. Surfaced in the admin UsersTab so admins
+    // can see how urgent a rescue is.
+    deletionScheduledAt?: string;
+    deletionWarningSentAt?: string;
+    // Phase 1 — roles + granular capability flags.
+    role?: 'user' | 'support' | 'admin';
+    canDeleteServers?: boolean;
+    canChangeResources?: boolean;
+    supportTeam?: string;
 }
 
 export interface Node {
@@ -109,6 +127,7 @@ export interface Server {
     createdAt?: string;
     role?: 'owner' | 'invited' | 'admin' | 'inherited';
     permissions?: TabPermissions;
+    region?: string;
 }
 
 export interface SftpCredentials {
@@ -170,8 +189,27 @@ export const updateModulePosition = (id: number, position: number) => fetchAPI(`
 
 // --- USERS ---
 export const getUsers = () => fetchAPI('/users');
-export const createUser = (data: Partial<User>) => fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) });
+export const createUser = (data: Partial<User> & { allRegions?: boolean; regionsExplicit?: string[] }) => fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) });
 export const deleteUser = (id: number) => fetchAPI(`/users/${id}`, { method: 'DELETE' });
+export const cancelUserDeletion = (id: number) => fetchAPI(`/admin/users/${id}/cancel-deletion`, { method: 'POST' });
+export const setUserRole = (id: number, role: 'user' | 'support' | 'admin') =>
+    fetchAPI(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
+export const setUserPermissions = (
+    id: number,
+    data: { canDeleteServers: boolean; canChangeResources: boolean; supportTeam?: string },
+) => fetchAPI(`/admin/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(data) });
+
+// Maintenance API (Phase 1)
+export interface MaintenanceState {
+    active: boolean;
+    title: string;
+    message: string;
+    expectedEnd: string;
+    blockLevel: 'off' | 'banner_only' | 'block_writes' | 'block_all';
+}
+export const getMaintenance = () => fetchAPI('/maintenance');
+export const saveMaintenance = (state: MaintenanceState) =>
+    fetchAPI('/admin/maintenance', { method: 'PUT', body: JSON.stringify(state) });
 export const resetUserPassword = (id: number, password: string) => fetchAPI(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ password }) });
 export const getUserRouteLimit = (id: number) => fetchAPI(`/users/${id}/route-limit`);
 export const setUserRouteLimit = (id: number, data: { mode: string; maxRoutes: number }) => fetchAPI(`/users/${id}/route-limit`, { method: 'PUT', body: JSON.stringify(data) });
@@ -713,6 +751,7 @@ export interface AdminServer {
     cpuLimit?: number;
     memberCount?: number;
     proxyId?: number | null;
+    region?: string;
 }
 export interface DiskAnalysis {
     nodeOnline?: boolean;

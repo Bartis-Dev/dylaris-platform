@@ -10,6 +10,7 @@ services:
       FRONTEND_URL: "http://panel:3000"
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      DYLARIS_REGION: "${DYLARIS_REGION:-default}"
       DB_HOST: timescaledb
       DB_PORT: "5432"
       DB_USER: "${DB_USER}"

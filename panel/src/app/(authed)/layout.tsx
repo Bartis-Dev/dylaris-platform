@@ -7,6 +7,8 @@ import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import Navbar from '@/components/Navbar';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import ProfilePopup from '@/components/ProfilePopup';
+import MaintenanceBanner from '@/components/MaintenanceBanner';
+import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
@@ -57,11 +59,16 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
 
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+            {/* Phase 1 — global maintenance banner. Renders nothing when off. */}
+            <MaintenanceBanner />
             {/* Top Navbar */}
             <div className="relative z-30 shrink-0">
                 <Navbar>
+                    <CoreRegionChip />
                     <UploadManagerWidget />
-                    {user.isAdmin && <NotificationsDropdown />}
+                    <NotificationsDropdown />
+                    {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
+                        regular users see only their inbox. */}
                     {user.isAdmin && (
                         <GuardedLink
                             href="/settings"

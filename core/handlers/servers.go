@@ -169,6 +169,11 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 		servers = []models.Server{}
 	}
 
+	// Phase 1 — region filter. Admins + all-regions users pass through;
+	// explicit-regions users only see servers in their allowed set.
+	perms := LoadEffectivePermissions(h.state, userID)
+	servers = FilterServersByRegion(servers, perms)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,
@@ -813,6 +818,10 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	LogServerAudit(h.state, r, serverID, ServerAuditEventPowerAction, userID, 0, map[string]interface{}{
+		"action": req.Action,
+	})
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Action " + req.Action + " queued successfully",
@@ -862,10 +871,17 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	previousName := srv.Name
 	if err := h.state.Store.UpdateServerName(serverID, name); err != nil {
 		sendJSONError(w, "Failed to update name", 500)
 		return
 	}
+
+	actorID, _ := r.Context().Value("userID").(int)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventNameChanged, actorID, 0, map[string]interface{}{
+		"from": previousName,
+		"to":   name,
+	})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -874,6 +890,15 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	// Phase 1 — capability gate. Admins always pass; non-admins need the
+	// can_change_resources flag set by an admin in the user-settings UI.
+	userID, _ := r.Context().Value("userID").(int)
+	perms := LoadEffectivePermissions(h.state, userID)
+	if !perms.IsAdmin && !perms.CanChangeResources {
+		sendJSONError(w, "Changing server resources requires elevated permissions — contact an administrator", 403)
 		return
 	}
 
@@ -987,6 +1012,13 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	actorID, _ := r.Context().Value("userID").(int)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, 0, map[string]interface{}{
+		"ram":        req.RAM,
+		"cpuLimit":   req.CPULimit,
+		"diskLimit":  req.DiskLimit,
+	})
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -1088,6 +1120,16 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	// Phase 1 — capability gate. Admins always pass; non-admins need the
+	// can_delete_servers flag. This is in addition to the ownership check
+	// that already exists further down — both gates must be open.
+	userID, _ := r.Context().Value("userID").(int)
+	perms := LoadEffectivePermissions(h.state, userID)
+	if !perms.IsAdmin && !perms.CanDeleteServers {
+		sendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
 		return
 	}
 

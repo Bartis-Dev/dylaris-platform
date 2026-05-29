@@ -90,12 +90,275 @@ func ensureSchema(db *sql.DB) error {
 	if err := createBackupTables(db); err != nil {
 		return err
 	}
+	if err := createTicketTables(db); err != nil {
+		return err
+	}
 	if err := migrateSchema(db); err != nil {
+		return err
+	}
+	if err := applyPhase0a1Schema(db); err != nil {
 		return err
 	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
+	return nil
+}
+
+// createTicketTables (Phase 2) sets up the ticket-system schema: categories,
+// tickets themselves, messages on those tickets, watchers (CC), and per-ticket
+// audit events. The region column is on tickets from day one so a future
+// cross-region migration doesn't have to rewrite history.
+func createTicketTables(db *sql.DB) error {
+	tables := []string{
+		// Categories: admin-curated, users pick one when creating a ticket.
+		// requires_server gates the server picker on the create form.
+		// default_priority pre-seeds the priority dropdown.
+		// default_assignee_team is the team string used as fallback assignee.
+		`CREATE TABLE IF NOT EXISTS ticket_categories (
+			id                    SERIAL PRIMARY KEY,
+			name                  VARCHAR(128) NOT NULL,
+			description           TEXT NOT NULL DEFAULT '',
+			requires_server       BOOLEAN NOT NULL DEFAULT FALSE,
+			default_priority      VARCHAR(16) NOT NULL DEFAULT 'normal',
+			default_assignee_team VARCHAR(64),
+			color                 VARCHAR(16),
+			enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+			position              INTEGER NOT NULL DEFAULT 0,
+			created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(name)
+		)`,
+		// Tickets. server_uuid + server_region are nullable — only set when
+		// the category required a server. assigned_user_id is the supporter
+		// owning the ticket; assigned_team scopes visibility per Phase 1
+		// support_team semantics.
+		`CREATE TABLE IF NOT EXISTS tickets (
+			id               SERIAL PRIMARY KEY,
+			region           VARCHAR(32) NOT NULL DEFAULT 'default',
+			category_id      INTEGER NOT NULL REFERENCES ticket_categories(id) ON DELETE RESTRICT,
+			user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			server_uuid      VARCHAR(64),
+			server_region    VARCHAR(32),
+			title            VARCHAR(200) NOT NULL,
+			status           VARCHAR(32) NOT NULL DEFAULT 'open',
+			priority         VARCHAR(16) NOT NULL DEFAULT 'normal',
+			assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			assigned_team    VARCHAR(64),
+			created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			closed_at        TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tickets_user        ON tickets(user_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_tickets_status      ON tickets(status, priority, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_tickets_assignee    ON tickets(assigned_user_id) WHERE assigned_user_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_tickets_team        ON tickets(assigned_team) WHERE assigned_team IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_tickets_server      ON tickets(server_uuid) WHERE server_uuid IS NOT NULL`,
+
+		// Messages on a ticket. is_internal hides the message from the
+		// ticket creator + watchers — only visible to support+admin.
+		`CREATE TABLE IF NOT EXISTS ticket_messages (
+			id          SERIAL PRIMARY KEY,
+			ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+			user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+			body        TEXT NOT NULL,
+			is_internal BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, created_at ASC)`,
+
+		// Watchers / CC. can_reply distinguishes "read-only" from
+		// "co-resolves with me" — admin sets the policy default.
+		`CREATE TABLE IF NOT EXISTS ticket_watchers (
+			ticket_id  INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+			user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			can_reply  BOOLEAN NOT NULL DEFAULT FALSE,
+			added_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			PRIMARY KEY (ticket_id, user_id)
+		)`,
+
+		// Per-ticket audit. Separate from audit_events_identity since the
+		// audience and retention concerns differ (ticket audit is shown in
+		// the UI to support+admin; identity audit is admin-only ops history).
+		`CREATE TABLE IF NOT EXISTS ticket_audit_events (
+			id            BIGSERIAL PRIMARY KEY,
+			ticket_id     INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+			event_type    VARCHAR(64) NOT NULL,
+			actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			metadata      JSONB,
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ticket_audit_ticket ON ticket_audit_events(ticket_id, created_at DESC)`,
+
+		// Phase 3 — attachments. Storage layer holds the actual bytes;
+		// this table is just metadata + the storage key the provider uses
+		// to retrieve. message_id is nullable so attachments can be
+		// uploaded into the create-ticket form before any messages exist.
+		`CREATE TABLE IF NOT EXISTS ticket_attachments (
+			id          SERIAL PRIMARY KEY,
+			ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+			message_id  INTEGER REFERENCES ticket_messages(id) ON DELETE SET NULL,
+			filename    VARCHAR(255) NOT NULL,
+			mime        VARCHAR(128) NOT NULL DEFAULT 'application/octet-stream',
+			size_bytes  BIGINT NOT NULL DEFAULT 0,
+			storage_key VARCHAR(512) NOT NULL,
+			uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ticket_attachments_ticket ON ticket_attachments(ticket_id, created_at ASC)`,
+
+		// Phase 3 — canned responses. Admin-managed snippets that support
+		// staff insert into replies. category_id ties a snippet to a
+		// specific category for discoverability (NULL = global).
+		// body supports variable expansion at insert-time on the client:
+		// {{user_name}}, {{ticket_id}}, {{server_name}}, {{actor_name}}.
+		`CREATE TABLE IF NOT EXISTS ticket_canned_responses (
+			id          SERIAL PRIMARY KEY,
+			name        VARCHAR(128) NOT NULL,
+			body        TEXT NOT NULL,
+			category_id INTEGER REFERENCES ticket_categories(id) ON DELETE SET NULL,
+			created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(name)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_canned_category ON ticket_canned_responses(category_id) WHERE category_id IS NOT NULL`,
+
+		// Phase 3 — notifications. Generic in-app inbox; ticket events are
+		// the first producer but the schema is intentionally open-ended
+		// so other systems (backups, maintenance, security questions)
+		// can write here later.
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id         BIGSERIAL PRIMARY KEY,
+			user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			type       VARCHAR(64) NOT NULL,
+			title      VARCHAR(200) NOT NULL,
+			body       TEXT NOT NULL DEFAULT '',
+			link       VARCHAR(500),
+			read_at    TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, created_at DESC) WHERE read_at IS NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user        ON notifications(user_id, created_at DESC)`,
+
+		// Phase 4 — per-server audit. Indexed by (server_id, created_at)
+		// since the dominant query is "events for one server, newest first".
+		// Index on event_type lets the future filter dropdown stay fast.
+		// metadata stays JSONB so producers can shape it freely.
+		`CREATE TABLE IF NOT EXISTS server_audit_events (
+			id             BIGSERIAL PRIMARY KEY,
+			server_id      INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+			region         VARCHAR(32) NOT NULL DEFAULT 'default',
+			event_type     VARCHAR(64) NOT NULL,
+			actor_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			metadata       JSONB,
+			ip_address     INET,
+			user_agent     TEXT,
+			created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_server_audit_server ON server_audit_events(server_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_server_audit_type   ON server_audit_events(event_type, created_at DESC)`,
+	}
+	for _, q := range tables {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("create ticket tables: %w", err)
+		}
+	}
+	return nil
+}
+
+// applyPhase0a1Schema sets up the Phase 0a.1 (Auth Foundation) schema:
+//   - new tables: regions, user_regions, audit_events_identity
+//   - new columns on users (verification, reset, deletion tracking, all-regions flag)
+//   - new column on servers (region)
+//   - new columns on settings (updated_at, updated_by) for audit trail
+//   - seeds the 'default' region
+//   - backfills existing users with grandfathered email-verified + all-regions access
+//   - normalizes empty nodes.region values to 'default'
+//
+// All operations are idempotent — safe at every boot and after schema-heal.
+func applyPhase0a1Schema(db *sql.DB) error {
+	// ---- New tables ----
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS regions (
+		id           VARCHAR(32)  PRIMARY KEY,
+		display_name VARCHAR(128) NOT NULL,
+		enabled      BOOLEAN      NOT NULL DEFAULT TRUE,
+		color        VARCHAR(16),
+		created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("phase 0a.1: create regions: %w", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_regions (
+		user_id   INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		region_id VARCHAR(32) NOT NULL REFERENCES regions(id) ON DELETE CASCADE,
+		PRIMARY KEY (user_id, region_id)
+	)`); err != nil {
+		return fmt.Errorf("phase 0a.1: create user_regions: %w", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS audit_events_identity (
+		id              BIGSERIAL PRIMARY KEY,
+		event_type      VARCHAR(64) NOT NULL,
+		actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		target_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		metadata        JSONB,
+		ip_address      INET,
+		user_agent      TEXT,
+		created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("phase 0a.1: create audit_events_identity: %w", err)
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_identity_target ON audit_events_identity(target_user_id, created_at DESC)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_identity_type   ON audit_events_identity(event_type, created_at DESC)`)
+
+	// ---- Column extensions ----
+	addCols := []struct{ table, col, def string }{
+		{"users", "all_regions_access", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"users", "email_verified_at", "TIMESTAMPTZ"},
+		{"users", "email_verification_token", "VARCHAR(64)"},
+		{"users", "email_verification_sent_at", "TIMESTAMPTZ"},
+		{"users", "password_reset_token", "VARCHAR(64)"},
+		{"users", "password_reset_expires_at", "TIMESTAMPTZ"},
+		{"users", "last_login_at", "TIMESTAMPTZ"},
+		{"users", "deletion_status", "VARCHAR(32) NOT NULL DEFAULT 'active'"},
+		{"users", "deletion_warning_sent_at", "TIMESTAMPTZ"},
+		{"users", "deletion_scheduled_at", "TIMESTAMPTZ"},
+		{"servers", "region", "VARCHAR(32) NOT NULL DEFAULT 'default'"},
+		{"settings", "updated_at", "TIMESTAMPTZ DEFAULT NOW()"},
+		{"settings", "updated_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"},
+	}
+	for _, c := range addCols {
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)); err != nil {
+			log.Printf("phase 0a.1: alter %s.%s: %v", c.table, c.col, err)
+		}
+	}
+
+	// ---- Indexes ----
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_users_email_verify_token   ON users(email_verification_token) WHERE email_verification_token IS NOT NULL`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token)     WHERE password_reset_token IS NOT NULL`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_users_deletion_status      ON users(deletion_status)          WHERE deletion_status != 'active'`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_servers_region             ON servers(region)`)
+
+	// ---- Seed default region (only if regions table is empty) ----
+	db.Exec(`INSERT INTO regions (id, display_name, enabled)
+		SELECT 'default', 'Default Region', TRUE
+		WHERE NOT EXISTS (SELECT 1 FROM regions)`)
+
+	// ---- Backfill existing data ----
+	// Grandfather existing users as email-verified — there was no verification
+	// system before this migration, so requiring it now would lock everyone out.
+	db.Exec(`UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL`)
+	// Preserve implicit access: any user that has no explicit region rows yet
+	// gets all-regions access. New users created post-migration will get
+	// explicit rows via the user-create flow.
+	db.Exec(`UPDATE users SET all_regions_access = TRUE
+		WHERE all_regions_access = FALSE
+		  AND id NOT IN (SELECT user_id FROM user_regions)`)
+	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
+	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
+
 	return nil
 }
 
@@ -272,6 +535,24 @@ func migrateSchema(db *sql.DB) error {
 		// orthogonal to tags — tags describe capability/tier, region the
 		// physical location for latency-based placement.
 		{"nodes", "region", "TEXT DEFAULT ''"},
+		// Phase 0a.5 — security questions. JSON array of
+		// {question, answer_hash} pairs; answer_hash is bcrypt.
+		{"users", "security_questions", "JSONB DEFAULT '[]'"},
+		// Phase 4 — server audit. audit_enabled flips on automatically the
+		// first time a non-owner is invited (saves space for solo-owner servers).
+		// audit_force_on is the admin override for unconditional audit
+		// (compliance setups). Effective gate is OR of the two.
+		{"servers", "audit_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"servers", "audit_force_on", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		// Phase 1 — roles + granular capability flags.
+		// role values: 'user' | 'support' | 'admin'. is_admin is kept as a
+		// derived view for backward compat with handlers that read it
+		// directly. support_team is used in Phase 2 (Tickets) to scope
+		// ticket visibility — nullable for everyone else.
+		{"users", "role", "VARCHAR(16) NOT NULL DEFAULT 'user'"},
+		{"users", "can_delete_servers", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"users", "can_change_resources", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"users", "support_team", "VARCHAR(64)"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)
@@ -280,6 +561,11 @@ func migrateSchema(db *sql.DB) error {
 
 	// Unique constraints (idempotent)
 	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_unique ON nodes (name)`)
+
+	// Phase 1 backfill: existing admins (is_admin=TRUE) get role='admin'
+	// so the new role column matches their legacy capability. Idempotent —
+	// users that already have a non-default role stay as-is.
+	db.Exec(`UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND role = 'user'`)
 
 	return nil
 }
@@ -295,6 +581,10 @@ func seedSystemModules(db *sql.DB) {
 		{"Admin", "internal", "shield-check", "/admin", "admin", 2, true, true},
 		{"Infrastructure", "internal", "cpu", "/infrastructure", "admin", 3, true, true},
 		{"Library", "internal", "folder-open", "/library", "admin", 4, false, false},
+		// Phase 2 — Tickets module, default disabled. Admin opts in from
+		// Settings → Modules. Once enabled it appears in the user-facing
+		// sidebar via the standard module loader.
+		{"Tickets", "internal", "life-buoy", "/tickets", "all", 5, false, false},
 	}
 	for _, m := range modules {
 		db.Exec(`
@@ -315,7 +605,13 @@ func seedSystemModules(db *sql.DB) {
 	// Gateway was retired as a standalone module — its UI moved into the
 	// Infrastructure module's Routes tab. Drop the row from existing installs.
 	db.Exec(`DELETE FROM modules WHERE name = 'Gateway'`)
-	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files', 'Tickets') AND is_system = TRUE`)
+	// 'Tickets' was previously deleted as a system module — Phase 2 reintroduces
+	// it as a non-system, opt-in module. Drop only the legacy system row.
+	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files') AND is_system = TRUE`)
+	db.Exec(`DELETE FROM modules WHERE name = 'Tickets' AND is_system = TRUE`)
+	// Migrate existing Tickets row if present from prior phase: ensure it
+	// keeps the correct icon + non-system flag + position.
+	db.Exec(`UPDATE modules SET icon = 'life-buoy', url = '/tickets', is_system = FALSE, access_role = 'all', position = 5 WHERE name = 'Tickets'`)
 
 	// Migrate route limits: old semantics had 0 = unlimited, new semantics use -1 = unlimited
 	db.Exec(`UPDATE gateway_route_limits SET max_routes = -1 WHERE max_routes = 0`)
@@ -334,8 +630,11 @@ func seedDefaultAdmin(db *sql.DB) {
 		log.Printf("Failed to hash default admin password: %v", err)
 		return
 	}
+	// First-deploy admin: pre-verified, all-region access (current & future regions).
+	// These columns are guaranteed to exist by applyPhase0a1Schema, which runs first.
 	_, err = db.Exec(
-		`INSERT INTO users (username, password, is_admin, public_id) VALUES ($1, $2, TRUE, 'admin-default')`,
+		`INSERT INTO users (username, password, is_admin, public_id, all_regions_access, email_verified_at)
+		 VALUES ($1, $2, TRUE, 'admin-default', TRUE, NOW())`,
 		"dylaris", string(hashed),
 	)
 	if err != nil {

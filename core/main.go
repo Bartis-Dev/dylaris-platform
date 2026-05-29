@@ -13,6 +13,7 @@ import (
 	"dylaris-core/database"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/pkg/leader"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -63,8 +64,10 @@ func main() {
 	grpcRegistry := nodegrpc.NewRegistry()
 
 	appState := &handlers.AppState{
-		Store:        pgStore,
-		GRPCRegistry: grpcRegistry,
+		Store:               pgStore,
+		GRPCRegistry:        grpcRegistry,
+		FrontendURL:         cfg.FrontendURL,
+		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
 	}
 
 	redisClient, err := database.InitRedis(cfg)
@@ -75,13 +78,25 @@ func main() {
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
 
+	// Leader election (Phase 0b): a single Redis lease named for the
+	// "core-leader" role, identified by this instance's CoreID. Every
+	// scheduled background loop consults the leader's IsLeader() to
+	// decide whether to perform its work or idle. Single-instance Core
+	// always wins the election so behavior is unchanged for dev. Multi-
+	// instance Core safely converges on exactly one active leader.
+	coreLeader := leader.New(redisClient, "dylaris:core:leader", cfg.CoreID)
+	coreLeader.Start(context.Background())
+
 	discovery := services.NewDiscoveryService(pgStore, redisClient, cfg.ClusterSecret)
+	discovery.SetLeader(coreLeader)
 	discovery.Start()
 
 	nodeCleanup := services.NewNodeCleanupService(pgStore, 24*time.Hour)
+	nodeCleanup.SetLeader(coreLeader)
 	nodeCleanup.Start()
 
 	statusWatcher := services.NewStatusWatcherService(pgStore, redisClient)
+	statusWatcher.SetLeader(coreLeader)
 	statusWatcher.Start()
 
 	statsConsumer := services.NewStatsConsumerService(pgStore, redisClient, cfg.CoreID)
@@ -90,9 +105,34 @@ func main() {
 	sftpSync := services.NewSFTPSyncService(pgStore, redisClient)
 	sftpSync.Start()
 
-	// Fallback cleanup if TimescaleDB retention policy is not active
+	// Auto-delete service (Phase 0a.6) — daily ticker scans inactive users,
+	// emails warnings, executes deletions per the auth.* settings. No-op
+	// unless the operator turns it on. Leader-gated so only one Core runs
+	// it under multi-instance.
+	autoDelete := services.NewAutoDeleteService(pgStore, cfg.FrontendURL)
+	autoDelete.SetLeader(coreLeader)
+	autoDelete.Start(context.Background())
+
+	// Ticket auto-close (Phase 3) — daily ticker, leader-gated. No-op until
+	// the operator turns it on via Settings → Ticket Settings.
+	ticketAutoClose := services.NewTicketAutoCloseService(pgStore)
+	ticketAutoClose.SetLeader(coreLeader)
+	ticketAutoClose.Start(context.Background())
+
+	// Server-audit retention sweep (Phase 4) — daily, leader-gated. No-op
+	// when audit.server_retention_days is 0 (keep forever).
+	serverAuditRetention := services.NewServerAuditRetentionService(pgStore)
+	serverAuditRetention.SetLeader(coreLeader)
+	serverAuditRetention.Start(context.Background())
+
+	// Fallback cleanup if TimescaleDB retention policy is not active.
+	// Leader-gated (Phase 0b) so under multi-Core only one instance
+	// fires the hourly DELETE — the followers idle on the tick.
 	go func() {
 		for range time.NewTicker(1 * time.Hour).C {
+			if !coreLeader.IsLeader() {
+				continue
+			}
 			db.Exec("DELETE FROM server_stats WHERE time < NOW() - INTERVAL '24 hours'")
 		}
 	}()
@@ -125,7 +165,7 @@ func main() {
 	nodeHandler := handlers.NewNodeHandler(appState)
 	userHandler := handlers.NewUserHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
-	systemHandler := handlers.NewSystemHandler()
+	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID)
 	fileHandler := handlers.NewFileHandler(appState)
 	nodeGRPCHandler := handlers.NewNodeGRPCHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
@@ -137,6 +177,22 @@ func main() {
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret)
 	backupHandler := handlers.NewBackupHandler(appState)
+	regionsHandler := handlers.NewRegionsHandler(appState)
+	userRegionsHandler := handlers.NewUserRegionsHandler(appState)
+	authSettingsHandler := handlers.NewAuthSettingsHandler(appState)
+	registrationHandler := handlers.NewRegistrationHandler(appState)
+	passwordResetHandler := handlers.NewPasswordResetHandler(appState)
+	securityQuestionsHandler := handlers.NewSecurityQuestionsHandler(appState)
+	maintenanceHandler := handlers.NewMaintenanceHandler(appState)
+	ticketCategoriesHandler := handlers.NewTicketCategoriesHandler(appState)
+	ticketsHandler := handlers.NewTicketsHandler(appState)
+	ticketSettingsHandler := handlers.NewTicketSettingsHandler(appState)
+	ticketAttachmentsHandler := handlers.NewTicketAttachmentsHandler(appState)
+	cannedResponsesHandler := handlers.NewCannedResponsesHandler(appState)
+	notificationsHandler := handlers.NewNotificationsHandler(appState)
+	serverAuditHandler := handlers.NewServerAuditHandler(appState)
+	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
+	ticketMigrationHandler := handlers.NewTicketMigrationHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -155,13 +211,16 @@ func main() {
 	}()
 
 	// Core Heartbeat in Redis (so Nodes can discover this Core)
-	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.GRPCPort)
+	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.Region, cfg.GRPCPort)
 	coreHeartbeat.Start()
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
+	// Leader-gated (Phase 0b): tick + Pub/Sub result processing run only on
+	// the elected Core to avoid double-dispatch and double-result-write.
 	backupScheduler := services.NewBackupScheduler(pgStore, redisClient)
 	backupScheduler.SetRegistry(grpcRegistry)
+	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(context.Background())
 
 	// Router & API Endpunkte einrichten
@@ -189,6 +248,8 @@ func main() {
 	api.HandleFunc("/auth/login", authHandler.LoginHandler).Methods("POST")
 	api.HandleFunc("/status", authHandler.StatusHandler).Methods("GET")
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
+	// Public — used by the topbar to display "Connected to <region> Core".
+	api.HandleFunc("/system/core-info", systemHandler.GetCoreInfo).Methods("GET")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---
@@ -197,12 +258,93 @@ func main() {
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
 	api.HandleFunc("/auth/2fa/verify", authHandler.AuthMiddleware(authHandler.VerifyTOTPHandler)).Methods("POST")
 	api.HandleFunc("/auth/2fa/disable", authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)).Methods("POST")
+	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)).Methods("POST")
+	api.HandleFunc("/auth/2fa/status", authHandler.AuthMiddleware(authHandler.Get2FAStatusHandler)).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9]+}/2fa", authHandler.AuthMiddleware(authHandler.AdminResetTOTPHandler)).Methods("DELETE")
 
 	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.GetAllUsers)).Methods("GET")
 	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.CreateUser)).Methods("POST")
 	api.HandleFunc("/users/{id:[0-9]+}", authHandler.AuthMiddleware(userHandler.DeleteUser)).Methods("DELETE")
 	api.HandleFunc("/users/{id:[0-9]+}/password", authHandler.AuthMiddleware(userHandler.ResetUserPassword)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9]+}/cancel-deletion", authHandler.AuthMiddleware(userHandler.CancelUserDeletion)).Methods("POST")
+
+	// --- Roles + capability flags (Phase 1) ---
+	api.HandleFunc("/admin/users/{id:[0-9]+}/role", authHandler.AuthMiddleware(userHandler.SetUserRoleHandler)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9]+}/permissions", authHandler.AuthMiddleware(userHandler.SetUserPermissionsHandler)).Methods("PUT")
+
+	// --- Maintenance mode (Phase 1) ---
+	// Public state — drives the banner; never blocked by the maintenance middleware.
+	api.HandleFunc("/maintenance", maintenanceHandler.GetState).Methods("GET")
+	api.HandleFunc("/admin/maintenance", authHandler.AuthMiddleware(maintenanceHandler.SaveState)).Methods("PUT")
+
+	// --- Tickets (Phase 2) ---
+	// Categories: public list (enabled only) for create form, admin CRUD for management.
+	api.HandleFunc("/ticket-categories", authHandler.AuthMiddleware(ticketCategoriesHandler.ListCategories)).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(ticketCategoriesHandler.AdminListCategories)).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(ticketCategoriesHandler.CreateCategory)).Methods("POST")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(ticketCategoriesHandler.UpdateCategory)).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(ticketCategoriesHandler.DeleteCategory)).Methods("DELETE")
+
+	// Tickets: user CRUD + support inbox.
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(ticketsHandler.ListMyTickets)).Methods("GET")
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(ticketsHandler.CreateTicket)).Methods("POST")
+	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(ticketsHandler.ListInboxTickets)).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(ticketsHandler.GetTicket)).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/messages", authHandler.AuthMiddleware(ticketsHandler.AddReply)).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/status", authHandler.AuthMiddleware(ticketsHandler.UpdateStatus)).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(ticketsHandler.UpdatePriority)).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(ticketsHandler.UpdateAssignment)).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(ticketsHandler.AddWatcher)).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9]+}", authHandler.AuthMiddleware(ticketsHandler.RemoveWatcher)).Methods("DELETE")
+
+	// Sidebar source for support's "Via tickets" tab.
+	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(ticketsHandler.ListMyServersViaTickets)).Methods("GET")
+
+	// Settings.
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(ticketSettingsHandler.GetSettings)).Methods("GET")
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(ticketSettingsHandler.SaveSettings)).Methods("PUT")
+
+	// --- Tickets Phase 3: attachments, canned responses, notifications ---
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(ticketAttachmentsHandler.UploadAttachment)).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(ticketAttachmentsHandler.ListAttachments)).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(ticketAttachmentsHandler.DownloadAttachment)).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(ticketAttachmentsHandler.DeleteAttachment)).Methods("DELETE")
+
+	// Canned responses: support sees the read list, admin manages.
+	api.HandleFunc("/ticket-canned-responses", authHandler.AuthMiddleware(cannedResponsesHandler.ListForSupport)).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(cannedResponsesHandler.AdminList)).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(cannedResponsesHandler.Create)).Methods("POST")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(cannedResponsesHandler.Update)).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(cannedResponsesHandler.Delete)).Methods("DELETE")
+
+	// Notifications: in-app inbox.
+	api.HandleFunc("/notifications", authHandler.AuthMiddleware(notificationsHandler.List)).Methods("GET")
+	api.HandleFunc("/notifications/unread-count", authHandler.AuthMiddleware(notificationsHandler.UnreadCount)).Methods("GET")
+	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(notificationsHandler.MarkRead)).Methods("POST")
+	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(notificationsHandler.MarkAllRead)).Methods("POST")
+
+	// --- Server audit (Phase 4) ---
+	// Owner + admin can view. Force-on flag is admin-only.
+	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(serverAuditHandler.ListAudit)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(serverAuditHandler.GetStatus)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/audit/force", authHandler.AuthMiddleware(serverAuditHandler.SetForce)).Methods("PUT")
+	// Platform-wide audit retention policy.
+	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.GetPolicy)).Methods("GET")
+	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.SavePolicy)).Methods("PUT")
+
+	// --- Ticket DB migration + backups (Phase 5, admin-only) ---
+	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(ticketMigrationHandler.GetStatus)).Methods("GET")
+	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(ticketMigrationHandler.TestExternalConnection)).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(ticketMigrationHandler.DryRunMigration)).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(ticketMigrationHandler.ExecuteMigration)).Methods("POST")
+	// Backups: create, list, download, delete.
+	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(ticketMigrationHandler.CreateBackup)).Methods("POST")
+	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(ticketMigrationHandler.ListBackups)).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(ticketMigrationHandler.DownloadBackup)).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(ticketMigrationHandler.DeleteBackup)).Methods("DELETE")
+	// Restore: two-step Danger Zone (init + execute) — 2FA + 15s timer + typed phrase.
+	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(ticketMigrationHandler.InitRestore)).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(ticketMigrationHandler.ExecuteRestore)).Methods("POST")
 	api.HandleFunc("/users/{id:[0-9]+}/route-limit", authHandler.AuthMiddleware(userHandler.GetUserRouteLimit)).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9]+}/route-limit", authHandler.AuthMiddleware(userHandler.SetUserRouteLimit)).Methods("PUT")
 
@@ -347,6 +489,48 @@ func main() {
 	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.SaveRoutingMode)).Methods("POST")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.GetBackupConfig)).Methods("GET")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.SaveBackupConfig)).Methods("POST")
+
+	// --- Regions (Phase 0a.1) ---
+	// User-facing: list of enabled regions (drives region pickers).
+	api.HandleFunc("/regions", authHandler.AuthMiddleware(regionsHandler.ListRegions)).Methods("GET")
+	api.HandleFunc("/me/regions", authHandler.AuthMiddleware(userRegionsHandler.GetMyRegions)).Methods("GET")
+	// Admin: full CRUD incl. disabled regions.
+	api.HandleFunc("/admin/regions", authHandler.AuthMiddleware(regionsHandler.AdminListRegions)).Methods("GET")
+	api.HandleFunc("/admin/regions", authHandler.AuthMiddleware(regionsHandler.CreateRegion)).Methods("POST")
+	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(regionsHandler.UpdateRegion)).Methods("PATCH")
+	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(regionsHandler.DeleteRegion)).Methods("DELETE")
+	// Admin: per-user region assignment.
+	api.HandleFunc("/admin/users/{id:[0-9]+}/regions", authHandler.AuthMiddleware(userRegionsHandler.GetUserRegions)).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9]+}/regions", authHandler.AuthMiddleware(userRegionsHandler.SetUserRegions)).Methods("PUT")
+
+	// --- Registration + Email Verify (Phase 0a.2) ---
+	// Public — login page polls registration-status to decide whether to show the register link.
+	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
+	api.HandleFunc("/auth/register", registrationHandler.Register).Methods("POST")
+	api.HandleFunc("/auth/verify-email", registrationHandler.VerifyEmail).Methods("POST")
+	api.HandleFunc("/auth/resend-verification", registrationHandler.ResendVerification).Methods("POST")
+
+	// --- Password reset (Phase 0a.4) — all public, all enumeration-safe ---
+	api.HandleFunc("/auth/forgot-password", passwordResetHandler.ForgotPassword).Methods("POST")
+	api.HandleFunc("/auth/validate-reset-token", passwordResetHandler.ValidateResetToken).Methods("POST")
+	api.HandleFunc("/auth/reset-password", passwordResetHandler.ResetPassword).Methods("POST")
+
+	// --- Security questions (Phase 0a.5) ---
+	// Public: pool query used by /register and /reset-password to render pickers.
+	api.HandleFunc("/auth/security-questions/pool", securityQuestionsHandler.GetPool).Methods("GET")
+	// Authenticated: user manages their own questions in profile.
+	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.GetMyQuestions)).Methods("GET")
+	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.SetMyQuestions)).Methods("PUT")
+	// Admin: pool management.
+	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(securityQuestionsHandler.GetAdminPool)).Methods("GET")
+	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(securityQuestionsHandler.SetAdminPool)).Methods("PUT")
+
+	// --- Auth policy + SMTP config (Phase 0a.2, admin) ---
+	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(authSettingsHandler.GetAuthPolicy)).Methods("GET")
+	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(authSettingsHandler.SaveAuthPolicy)).Methods("PUT")
+	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(authSettingsHandler.GetSMTPConfig)).Methods("GET")
+	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(authSettingsHandler.SaveSMTPConfig)).Methods("PUT")
+	api.HandleFunc("/admin/settings/smtp/test", authHandler.AuthMiddleware(authSettingsHandler.TestSendSMTP)).Methods("POST")
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")

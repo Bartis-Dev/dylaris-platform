@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, User } from '@/lib/api';
+import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff } from 'lucide-react';
+import { getUserRegions, setUserRegions } from '@/lib/api/regions';
+import UserRegionPicker from '@/components/admin/UserRegionPicker';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert } from 'lucide-react';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -28,6 +30,74 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [resetting2FA, setResetting2FA] = useState(false);
 
+    // Region access — create form (defaults to all-regions for new users)
+    const [createAllRegions, setCreateAllRegions] = useState(true);
+    const [createRegions, setCreateRegions] = useState<string[]>([]);
+
+    // Region access — edit modal
+    const [editAllRegions, setEditAllRegions] = useState(true);
+    const [editRegions, setEditRegions] = useState<string[]>([]);
+    const [editRegionsSaving, setEditRegionsSaving] = useState(false);
+
+    // Deletion-rescue state (Phase 0a.6)
+    const [cancellingDeletion, setCancellingDeletion] = useState(false);
+
+    // Role + permissions (Phase 1) — edit modal
+    const [editRole, setEditRole] = useState<'user' | 'support' | 'admin'>('user');
+    const [editCanDeleteServers, setEditCanDeleteServers] = useState(false);
+    const [editCanChangeResources, setEditCanChangeResources] = useState(false);
+    const [editSupportTeam, setEditSupportTeam] = useState('');
+    const [editRolePermsSaving, setEditRolePermsSaving] = useState(false);
+
+    const handleSaveRoleAndPermissions = async () => {
+        if (!settingsUser) return;
+        setEditRolePermsSaving(true);
+        // Two-step save: role first (it also flips is_admin), then flags.
+        // Failure of either is surfaced; both completing means the modal
+        // local copy gets updated.
+        const r1 = await setUserRole(settingsUser.id, editRole);
+        if (!r1.success) {
+            setEditRolePermsSaving(false);
+            showToast(r1.message || 'Failed to set role', false);
+            return;
+        }
+        const r2 = await setUserPermissions(settingsUser.id, {
+            canDeleteServers: editCanDeleteServers,
+            canChangeResources: editCanChangeResources,
+            supportTeam: editSupportTeam,
+        });
+        setEditRolePermsSaving(false);
+        if (!r2.success) {
+            showToast(r2.message || 'Role saved, but permissions failed', false);
+            return;
+        }
+        showToast('Role and permissions updated');
+        setSettingsUser({
+            ...settingsUser,
+            role: editRole,
+            isAdmin: editRole === 'admin',
+            canDeleteServers: editCanDeleteServers,
+            canChangeResources: editCanChangeResources,
+            supportTeam: editSupportTeam,
+        });
+        loadUsers();
+    };
+
+    const handleCancelDeletion = async () => {
+        if (!settingsUser) return;
+        setCancellingDeletion(true);
+        const res = await cancelUserDeletion(settingsUser.id);
+        setCancellingDeletion(false);
+        if (res.success) {
+            showToast('Deletion cancelled');
+            // Update local user copy + refresh the list so the badge clears.
+            setSettingsUser({ ...settingsUser, deletionStatus: 'active', deletionScheduledAt: undefined });
+            loadUsers();
+        } else {
+            showToast(res.message || 'Cancel failed', false);
+        }
+    };
+
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
@@ -44,11 +114,33 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleCreateUser = async (e: React.FormEvent) => {
         e.preventDefault();
-        const res = await createUser(userForm);
+        const res = await createUser({
+            ...userForm,
+            allRegions: createAllRegions,
+            regionsExplicit: createAllRegions ? [] : createRegions,
+        });
         if (res.success) {
             setIsModalOpen(false);
+            // Reset region state for the next open.
+            setCreateAllRegions(true);
+            setCreateRegions([]);
             loadUsers();
         } else setError(res.message || "Error creating user");
+    };
+
+    const handleSaveRegions = async () => {
+        if (!settingsUser) return;
+        setEditRegionsSaving(true);
+        const res = await setUserRegions(settingsUser.id, {
+            allRegions: editAllRegions,
+            regions: editAllRegions ? [] : editRegions,
+        });
+        if (res.success) {
+            showToast('Region access updated');
+        } else {
+            showToast(res.message || 'Failed to update regions', false);
+        }
+        setEditRegionsSaving(false);
     };
 
     const handleDeleteUser = async (id: number) => {
@@ -73,6 +165,26 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             setRouteMode('default');
             setRouteMax(5);
         }
+
+        // Load region access — keep optimistic defaults until the call resolves.
+        setEditAllRegions(true);
+        setEditRegions([]);
+        try {
+            const res = await getUserRegions(user.id);
+            if (res.success) {
+                setEditAllRegions(!!res.allRegions);
+                setEditRegions(res.regions || []);
+            }
+        } catch {
+            /* keep optimistic defaults */
+        }
+
+        // Role + capability flags (Phase 1). User payload already carries these
+        // from the list endpoint — no extra request needed.
+        setEditRole((user.role === 'admin' || user.role === 'support') ? user.role : 'user');
+        setEditCanDeleteServers(!!user.canDeleteServers);
+        setEditCanChangeResources(!!user.canChangeResources);
+        setEditSupportTeam(user.supportTeam || '');
     };
 
     const handleResetPassword = async () => {
@@ -150,11 +262,33 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                     <tbody>
                         {users.map(u => (
                             <tr key={u.id} className="table-tr table-tr-hover">
-                                <td className="table-td font-mono font-medium text-(--base-09)">{u.username}</td>
+                                <td className="table-td font-mono font-medium text-(--base-09)">
+                                    {u.username}
+                                    {u.deletionStatus === 'pending_deletion' && (
+                                        <span
+                                            title={u.deletionScheduledAt ? `Scheduled for deletion on ${new Date(u.deletionScheduledAt).toLocaleDateString()}` : 'Scheduled for deletion'}
+                                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-[0.06em] bg-(--error-ghost) text-(--error-light) border border-(--error)/15"
+                                        >
+                                            <ShieldAlert size={10} />
+                                            Pending delete
+                                        </span>
+                                    )}
+                                    {u.deletionStatus === 'anonymized' && (
+                                        <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-[0.06em] bg-(--base-03) text-(--base-06)">
+                                            <Trash2 size={10} />
+                                            Anonymized
+                                        </span>
+                                    )}
+                                </td>
                                 <td className="table-td">
-                                    <span className={u.isAdmin ? 'badge badge-accent' : 'badge badge-neutral'}>
-                                        {u.isAdmin ? 'ADMIN' : 'USER'}
-                                    </span>
+                                    {(() => {
+                                        const role = u.role || (u.isAdmin ? 'admin' : 'user');
+                                        const cls =
+                                            role === 'admin' ? 'badge badge-accent'
+                                            : role === 'support' ? 'badge badge-warning'
+                                            : 'badge badge-neutral';
+                                        return <span className={cls}>{role.toUpperCase()}</span>;
+                                    })()}
                                 </td>
                                 <td className="table-td text-sm text-(--base-06)">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'N/A'}</td>
                                 <td className="table-td text-right">
@@ -200,6 +334,11 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     <input type="checkbox" checked={userForm.isAdmin} onChange={e => setUserForm({...userForm, isAdmin: e.target.checked})} className="w-4 h-4 accent-(--accent) rounded" />
                                     <label className="text-sm font-medium text-(--base-08)">Administrator Rights</label>
                                 </div>
+                                <UserRegionPicker
+                                    allRegions={createAllRegions}
+                                    regions={createRegions}
+                                    onChange={next => { setCreateAllRegions(next.allRegions); setCreateRegions(next.regions); }}
+                                />
                                 <div className="modal-footer">
                                     <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
                                     <button type="submit" className="btn btn-primary">Create User</button>
@@ -247,6 +386,30 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                         <div className="p-5 overflow-y-auto flex-1">
                             {settingsTab === 'general' && (
                                 <div className="space-y-5">
+                                    {settingsUser.deletionStatus === 'pending_deletion' && (
+                                        <div className="rounded-md border border-(--error)/15 bg-(--error-ghost) p-3 space-y-2">
+                                            <div className="flex items-start gap-2">
+                                                <ShieldAlert size={16} className="text-(--error-light) mt-0.5 shrink-0" />
+                                                <div className="text-sm">
+                                                    <p className="text-(--error-light) font-medium">Scheduled for deletion</p>
+                                                    <p className="text-xs text-(--base-07) mt-0.5">
+                                                        {settingsUser.deletionScheduledAt
+                                                            ? <>This account will be auto-removed on <span className="font-mono">{new Date(settingsUser.deletionScheduledAt).toLocaleString()}</span> unless rescued. The user can also rescue it themselves by signing in.</>
+                                                            : 'This account will be auto-removed soon.'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleCancelDeletion}
+                                                disabled={cancellingDeletion}
+                                                className="btn btn-secondary btn-sm w-full disabled:opacity-40"
+                                            >
+                                                {cancellingDeletion ? 'Cancelling…' : 'Cancel scheduled deletion'}
+                                            </button>
+                                        </div>
+                                    )}
+
                                     <div>
                                         <h4 className="mono-label mb-3">Reset Password</h4>
                                         <div className="flex gap-2">
@@ -288,6 +451,99 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             >
                                                 <ShieldOff size={12} />
                                                 {resetting2FA ? 'Resetting…' : 'Reset 2FA'}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Phase 1 — Role + capability flags. Role drives the badge in the
+                                        user list and is_admin sync; flags are checked at the matching
+                                        server-mutation handlers. SupportTeam ist optional and reserved
+                                        for the upcoming ticket-system. */}
+                                    <div>
+                                        <h4 className="mono-label mb-3">Role &amp; Permissions</h4>
+                                        <div className="space-y-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+                                            <div className="flex flex-col gap-[5px]">
+                                                <label className="input-label">Role</label>
+                                                <select
+                                                    value={editRole}
+                                                    onChange={e => setEditRole(e.target.value as 'user' | 'support' | 'admin')}
+                                                    className="input-field w-full"
+                                                    disabled={editRolePermsSaving}
+                                                >
+                                                    <option value="user">User — standard account</option>
+                                                    <option value="support">Support — assists with assigned tickets</option>
+                                                    <option value="admin">Admin — full access</option>
+                                                </select>
+                                                <p className="text-xs text-(--base-06)">Admins implicitly have all capability flags. The flags below only matter for non-admins.</p>
+                                            </div>
+                                            <label className="flex items-start gap-2 text-sm cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={editCanDeleteServers}
+                                                    onChange={e => setEditCanDeleteServers(e.target.checked)}
+                                                    className="mt-0.5 accent-(--accent)"
+                                                    disabled={editRolePermsSaving || editRole === 'admin'}
+                                                />
+                                                <span>
+                                                    <span className="font-medium">Can delete servers</span>
+                                                    <span className="block text-xs text-(--base-06)">Required for the user to invoke DELETE /servers on accounts they own or co-manage.</span>
+                                                </span>
+                                            </label>
+                                            <label className="flex items-start gap-2 text-sm cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={editCanChangeResources}
+                                                    onChange={e => setEditCanChangeResources(e.target.checked)}
+                                                    className="mt-0.5 accent-(--accent)"
+                                                    disabled={editRolePermsSaving || editRole === 'admin'}
+                                                />
+                                                <span>
+                                                    <span className="font-medium">Can change server resources</span>
+                                                    <span className="block text-xs text-(--base-06)">Required for the user to edit RAM, CPU, or disk limits on servers.</span>
+                                                </span>
+                                            </label>
+                                            <div className="flex flex-col gap-[5px]">
+                                                <label className="input-label">Support team (optional)</label>
+                                                <input
+                                                    type="text"
+                                                    value={editSupportTeam}
+                                                    onChange={e => setEditSupportTeam(e.target.value)}
+                                                    placeholder="e.g. nodes, billing — used for ticket scoping in Phase 2"
+                                                    maxLength={64}
+                                                    className="input-field w-full"
+                                                    disabled={editRolePermsSaving}
+                                                />
+                                            </div>
+                                            <div className="flex justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleSaveRoleAndPermissions}
+                                                    disabled={editRolePermsSaving}
+                                                    className="btn btn-primary btn-sm disabled:opacity-40"
+                                                >
+                                                    {editRolePermsSaving ? 'Saving…' : 'Save role &amp; permissions'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Region access — hidden by the picker itself in single-region setups. */}
+                                    <div>
+                                        <h4 className="mono-label mb-3">Region Access</h4>
+                                        <UserRegionPicker
+                                            allRegions={editAllRegions}
+                                            regions={editRegions}
+                                            onChange={next => { setEditAllRegions(next.allRegions); setEditRegions(next.regions); }}
+                                            disabled={editRegionsSaving}
+                                        />
+                                        <div className="flex justify-end mt-3">
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveRegions}
+                                                disabled={editRegionsSaving}
+                                                className="btn btn-primary btn-sm disabled:opacity-40"
+                                            >
+                                                {editRegionsSaving ? 'Saving…' : 'Save region access'}
                                             </button>
                                         </div>
                                     </div>

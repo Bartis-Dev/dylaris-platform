@@ -134,9 +134,115 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	LogIdentityAudit(h.state, r, AuditEvent2FASetupCompleted, user.ID, user.ID, map[string]interface{}{
+		"backup_codes_generated": backupCodeCount,
+	})
+
 	json.NewEncoder(w).Encode(VerifyTOTPResponse{
 		Success:     true,
 		BackupCodes: plainCodes,
+	})
+}
+
+// RegenerateBackupCodesHandler — POST /api/auth/2fa/regenerate-backup-codes
+// Issues a fresh set of 10 backup codes for a user who has 2FA already enabled.
+// Same defence-in-depth as DisableTOTP: requires current password + a valid
+// TOTP/backup code. Returns the new codes in cleartext exactly once.
+func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !user.Is2FAEnabled {
+		sendJSONError(w, "2FA is not enabled — set it up first", http.StatusBadRequest)
+		return
+	}
+
+	var req DisableTOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		sendJSONError(w, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+	ok, err := h.verifyTOTPOrBackup(user, req.Code)
+	if err != nil {
+		sendJSONError(w, "Verification failed", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	plainCodes := make([]string, backupCodeCount)
+	hashed := make([]string, backupCodeCount)
+	for i := 0; i < backupCodeCount; i++ {
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
+			return
+		}
+		plainCodes[i] = hex.EncodeToString(b)
+		bcryptHash, err := bcrypt.GenerateFromPassword([]byte(plainCodes[i]), 10)
+		if err != nil {
+			sendJSONError(w, "Failed to hash backup code", http.StatusInternalServerError)
+			return
+		}
+		hashed[i] = string(bcryptHash)
+	}
+	hashedJSON, _ := json.Marshal(hashed)
+	if err := h.state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(hashedJSON), true); err != nil {
+		sendJSONError(w, "Failed to persist new codes", http.StatusInternalServerError)
+		return
+	}
+
+	LogIdentityAudit(h.state, r, AuditEvent2FABackupRegenerated, user.ID, user.ID, map[string]interface{}{
+		"count": backupCodeCount,
+	})
+
+	json.NewEncoder(w).Encode(VerifyTOTPResponse{
+		Success:     true,
+		BackupCodes: plainCodes,
+	})
+}
+
+// Get2FAStatusHandler — GET /api/auth/2fa/status
+// Returns whether 2FA is enabled and the count of unconsumed backup codes.
+// Never returns the codes themselves — only the count, so users can tell
+// when they're running low (single-digit) and regenerate proactively.
+func (h *AuthHandler) Get2FAStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	remaining := 0
+	if user.TOTPBackupCodes != "" && user.TOTPBackupCodes != "[]" {
+		var hashed []string
+		if err := json.Unmarshal([]byte(user.TOTPBackupCodes), &hashed); err == nil {
+			remaining = len(hashed)
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":              true,
+		"enabled":              user.Is2FAEnabled,
+		"remainingBackupCodes": remaining,
 	})
 }
 
@@ -188,6 +294,8 @@ func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	LogIdentityAudit(h.state, r, AuditEvent2FADisabled, user.ID, user.ID, nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -215,6 +323,10 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Reset failed", http.StatusInternalServerError)
 		return
 	}
+
+	actorID, _ := r.Context().Value("userID").(int)
+	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, nil)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -251,6 +363,14 @@ func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, 
 			if err := h.state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(out), user.Is2FAEnabled); err != nil {
 				return false, err
 			}
+			// Audit the consumption so admins can spot recovery-code abuse
+			// — multiple consumptions on one account, or from unfamiliar IPs,
+			// are a strong signal that codes leaked. The handler caller
+			// owns the request so we can't grab it here; we log via the
+			// nil-request path which still captures actor/target IDs.
+			LogIdentityAudit(h.state, nil, AuditEvent2FABackupCodeConsumed, user.ID, user.ID, map[string]interface{}{
+				"remaining": len(remaining),
+			})
 			return true, nil
 		}
 	}

@@ -13,8 +13,12 @@ import (
 )
 
 // CoreHeartbeat is written to Redis so Nodes can discover this Core instance.
+// Region (Phase 6) is the operator-configured DYLARIS_REGION env. Nodes can
+// use it for region-affinity decisions later; the panel uses it for the
+// "Connected to <region> Core" chip.
 type CoreHeartbeat struct {
 	ID       string  `json:"id"`
+	Region   string  `json:"region"`
 	GRPCAddr string  `json:"grpc_addr"` // host:port for gRPC connections
 	IPs      CoreIPs `json:"ips"`
 }
@@ -27,13 +31,18 @@ type CoreIPs struct {
 type CoreHeartbeatService struct {
 	redis    *redis.Client
 	coreID   string
+	region   string
 	grpcPort int
 }
 
-func NewCoreHeartbeatService(r *redis.Client, coreID string, grpcPort int) *CoreHeartbeatService {
+func NewCoreHeartbeatService(r *redis.Client, coreID, region string, grpcPort int) *CoreHeartbeatService {
+	if region == "" {
+		region = "default"
+	}
 	return &CoreHeartbeatService{
 		redis:    r,
 		coreID:   coreID,
+		region:   region,
 		grpcPort: grpcPort,
 	}
 }
@@ -67,6 +76,7 @@ func (s *CoreHeartbeatService) writeHeartbeat() {
 
 	hb := CoreHeartbeat{
 		ID:       s.coreID,
+		Region:   s.region,
 		GRPCAddr: grpcAddr,
 		IPs: CoreIPs{
 			Public:  publicIP,
