@@ -534,7 +534,12 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 <div className="flex flex-wrap gap-x-1 gap-y-0">
                     {tabs.map(tab => {
                         const href = `/servers/${selectedServer.id}/${tab.slug}`;
-                        const isActive = pathname === href;
+                        // Phase 8 — Configuration is now a sub-tab parent (config/properties,
+                        // config/display, …); match the whole prefix so the top-level tab stays
+                        // highlighted while you click between sub-tabs.
+                        const isActive = tab.slug === 'config'
+                            ? pathname.startsWith(href)
+                            : pathname === href;
                         if (tab.disabled) {
                             return (
                                 <span

@@ -201,6 +201,7 @@ func main() {
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
 	ticketMigrationHandler := handlers.NewTicketMigrationHandler(appState)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
+	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -230,6 +231,13 @@ func main() {
 	backupScheduler.SetRegistry(grpcRegistry)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(context.Background())
+
+	// Scheduled-tasks executor (Phase 8) — per-server cron jobs (restart, say).
+	// Leader-gated, 30s tick. Publishes scheduled_tasks.changed via the SSE
+	// channel after each dispatch so the panel updates last-run/next-run.
+	scheduledTasksService := services.NewScheduledTaskService(pgStore, redisClient, appState.Queue, appState.Events)
+	scheduledTasksService.SetLeader(coreLeader)
+	scheduledTasksService.Start(context.Background())
 
 	// Router & API Endpunkte einrichten
 	r := mux.NewRouter()
@@ -262,6 +270,15 @@ func main() {
 	// subscribes once on boot and refreshes its caches reactively. Auth via
 	// ?token= query param since EventSource can't set Authorization headers.
 	api.HandleFunc("/system/events", authHandler.AuthMiddleware(systemEventsHandler.StreamEvents)).Methods("GET")
+
+	// --- Scheduled Tasks (Phase 8) ---
+	// Cron preview — pure transform, available to anyone authed.
+	api.HandleFunc("/scheduled-tasks/validate", authHandler.AuthMiddleware(scheduledTasksHandler.ValidateCron)).Methods("POST")
+	// Per-server CRUD. Access gated to power-class (owner/admin/permitted).
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(scheduledTasksHandler.List)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(scheduledTasksHandler.Create)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Update)).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Delete)).Methods("DELETE")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---

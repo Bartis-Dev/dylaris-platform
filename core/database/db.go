@@ -99,6 +99,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase0a1Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase8Schema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
@@ -359,6 +362,45 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
+	return nil
+}
+
+// applyPhase8Schema sets up Phase 8 (Configuration Sub-Tabs + Scheduled Tasks):
+//   - new table: scheduled_tasks (per-server cron jobs for restart + say)
+//
+// Idempotent. task_type is open-ended (varchar) so later phases can introduce
+// new types (e.g. rcon-command in P9) without a schema migration.
+func applyPhase8Schema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS scheduled_tasks (
+		id             SERIAL PRIMARY KEY,
+		server_id      INTEGER     NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		name           VARCHAR(128) NOT NULL DEFAULT '',
+		task_type      VARCHAR(32)  NOT NULL,
+		schedule_cron  VARCHAR(128) NOT NULL,
+		payload        TEXT         NOT NULL DEFAULT '',
+		enabled        BOOLEAN      NOT NULL DEFAULT TRUE,
+		next_run       TIMESTAMPTZ,
+		last_run       TIMESTAMPTZ,
+		last_status    VARCHAR(32)  NOT NULL DEFAULT '',
+		last_error     TEXT         NOT NULL DEFAULT '',
+		created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+		updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("phase 8: create scheduled_tasks: %w", err)
+	}
+	// Hot path is "scan due tasks": leader-gated service ticks every 30s and
+	// reads WHERE enabled AND next_run <= NOW(). Partial index keeps the
+	// scan cheap even at thousands of tasks.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due
+		ON scheduled_tasks(next_run)
+		WHERE enabled = TRUE AND next_run IS NOT NULL`); err != nil {
+		return fmt.Errorf("phase 8: create scheduled_tasks due index: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_server
+		ON scheduled_tasks(server_id, created_at DESC)`); err != nil {
+		return fmt.Errorf("phase 8: create scheduled_tasks server index: %w", err)
+	}
 	return nil
 }
 

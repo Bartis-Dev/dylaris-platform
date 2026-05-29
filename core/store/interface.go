@@ -298,6 +298,20 @@ type Store interface {
 	// AnonymizeUser wipes PII (username/email/password/2FA/security questions)
 	// but keeps the row + id so audit references stay valid.
 	AnonymizeUser(userID int) error
+
+	// --- Scheduled Tasks (Phase 8) ---
+	// Per-server cron jobs. NextRun is computed on insert/update from the cron
+	// string + now() and re-computed by the leader-gated executor after each
+	// run. ListDueScheduledTasks is the executor's hot path; the partial
+	// index in applyPhase8Schema keeps it cheap.
+	ListScheduledTasksByServer(serverID int) ([]models.ScheduledTask, error)
+	GetScheduledTask(id int) (*models.ScheduledTask, error)
+	CreateScheduledTask(t *models.ScheduledTask) (int, error)
+	UpdateScheduledTask(t *models.ScheduledTask) error
+	DeleteScheduledTask(id int) error
+	SetScheduledTaskEnabled(id int, enabled bool, nextRun *time.Time) error
+	ListDueScheduledTasks(now time.Time, limit int) ([]models.ScheduledTask, error)
+	RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job
