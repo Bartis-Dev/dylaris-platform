@@ -339,6 +339,9 @@ func main() {
 	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(modpacksHandler.ListMods)).Methods("GET")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(modpacksHandler.AddMod)).Methods("POST")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.RemoveMod)).Methods("DELETE")
+	// .mrpack export — query-token auth so it can be opened via window.open
+	// without setting custom headers.
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mrpack", authHandler.AuthMiddleware(modpacksHandler.ExportMrpack)).Methods("GET")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---
