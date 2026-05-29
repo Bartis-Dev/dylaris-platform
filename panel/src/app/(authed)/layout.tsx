@@ -13,7 +13,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package } from 'lucide-react';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
     const { user, ready } = useAppData();
@@ -114,6 +114,18 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                     className="dropdown-item"
                                 >
                                     <Key size={20} className="mr-3" /> API Keys
+                                </GuardedLink>
+                                <GuardedLink
+                                    href="/account/modrinth"
+                                    className="dropdown-item"
+                                >
+                                    <Package size={20} className="mr-3" /> Modrinth
+                                </GuardedLink>
+                                <GuardedLink
+                                    href="/modpacks"
+                                    className="dropdown-item"
+                                >
+                                    <Package size={20} className="mr-3" /> My Modpacks
                                 </GuardedLink>
                                 <button onClick={() => { setIsProfileDropdownOpen(false); logout(); router.push('/login'); }} className="dropdown-item text-(--error) hover:bg-(--error-ghost) mt-1">
                                     <LogOut size={20} className="mr-3" /> Logout

@@ -111,6 +111,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase13Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase14Schema(db); err != nil {
+		return err
+	}
 	if err := applyPhase11Schema(db); err != nil {
 		return err
 	}
@@ -374,6 +377,87 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
+	return nil
+}
+
+// applyPhase14Schema sets up Phase 14 (Modpack Builder + Modrinth Publish):
+//   - modpacks         : per-user authored modpacks
+//   - modpack_versions : version history per pack (Draft/Beta/Release channels)
+//   - modpack_mods     : Modrinth project+version refs per version
+//   - modrinth_pats    : per-user Modrinth PAT (encrypted at rest)
+//
+// Slug uniqueness is per-user (different users may pick the same slug).
+// Modrinth project/version IDs are populated only after first publish.
+func applyPhase14Schema(db *sql.DB) error {
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS modpacks (
+			id                   SERIAL PRIMARY KEY,
+			owner_id             INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name                 VARCHAR(128) NOT NULL,
+			slug                 VARCHAR(128) NOT NULL,
+			summary              VARCHAR(255) NOT NULL DEFAULT '',
+			mc_version           VARCHAR(32)  NOT NULL DEFAULT '',
+			loader               VARCHAR(32)  NOT NULL DEFAULT '',
+			modrinth_project_id  VARCHAR(64)  NOT NULL DEFAULT '',
+			modrinth_visibility  VARCHAR(16)  NOT NULL DEFAULT 'unlisted',
+			created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+			updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+			UNIQUE (owner_id, slug)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_modpacks_owner ON modpacks(owner_id, updated_at DESC)`,
+
+		// Version-per-pack with channel column. Modrinth IDs are nullable
+		// while the version is still a Draft (local).
+		`CREATE TABLE IF NOT EXISTS modpack_versions (
+			id                  SERIAL PRIMARY KEY,
+			modpack_id          INTEGER     NOT NULL REFERENCES modpacks(id) ON DELETE CASCADE,
+			version_string      VARCHAR(64) NOT NULL,
+			channel             VARCHAR(16) NOT NULL DEFAULT 'draft', -- draft|beta|release
+			changelog           TEXT        NOT NULL DEFAULT '',
+			mrpack_storage_path VARCHAR(512) NOT NULL DEFAULT '',
+			file_size           BIGINT      NOT NULL DEFAULT 0,
+			modrinth_version_id VARCHAR(64) NOT NULL DEFAULT '',
+			created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			published_at        TIMESTAMPTZ,
+			UNIQUE (modpack_id, version_string)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_modpack_versions_pack ON modpack_versions(modpack_id, created_at DESC)`,
+
+		// Mods per version. side: 'client'|'server'|'both'. required=false
+		// means the user explicitly marked it optional during build.
+		`CREATE TABLE IF NOT EXISTS modpack_mods (
+			id                       SERIAL PRIMARY KEY,
+			modpack_version_id       INTEGER NOT NULL REFERENCES modpack_versions(id) ON DELETE CASCADE,
+			modrinth_project_id      VARCHAR(64) NOT NULL,
+			modrinth_project_slug    VARCHAR(128) NOT NULL DEFAULT '',
+			modrinth_version_id      VARCHAR(64) NOT NULL,
+			title                    VARCHAR(255) NOT NULL DEFAULT '',
+			file_name                VARCHAR(255) NOT NULL DEFAULT '',
+			download_url             TEXT NOT NULL DEFAULT '',
+			sha512                   VARCHAR(128) NOT NULL DEFAULT '',
+			side                     VARCHAR(8) NOT NULL DEFAULT 'both',
+			required                 BOOLEAN NOT NULL DEFAULT TRUE,
+			UNIQUE (modpack_version_id, modrinth_project_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_modpack_mods_version ON modpack_mods(modpack_version_id, title ASC)`,
+
+		// PAT storage. ciphertext is hex(aes-gcm(plaintext)). nonce kept
+		// inline (12 bytes prefix). One row per user — replacing the PAT
+		// overwrites. Username + last_validated_at let the UI show
+		// "Connected as <username> (valid as of ...)".
+		`CREATE TABLE IF NOT EXISTS modrinth_pats (
+			user_id           INTEGER     PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			ciphertext        TEXT        NOT NULL,
+			modrinth_username VARCHAR(128) NOT NULL DEFAULT '',
+			last_validated_at TIMESTAMPTZ,
+			created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("phase 14: %w", err)
+		}
+	}
 	return nil
 }
 

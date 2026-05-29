@@ -208,6 +208,8 @@ func main() {
 	serverModsHandler := handlers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
+	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
+	modpacksHandler := handlers.NewModpacksHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -320,6 +322,23 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(serverTabsHandler.Create)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Update)).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Delete)).Methods("DELETE")
+
+	// --- Modrinth PAT (Phase 14) ---
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(modrinthPATHandler.Status)).Methods("GET")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(modrinthPATHandler.Set)).Methods("PUT")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(modrinthPATHandler.Clear)).Methods("DELETE")
+	// --- Modpacks CRUD (Phase 14.1) ---
+	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(modpacksHandler.List)).Methods("GET")
+	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(modpacksHandler.Create)).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.Get)).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.Update)).Methods("PATCH")
+	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.Delete)).Methods("DELETE")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(modpacksHandler.ListVersions)).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(modpacksHandler.CreateVersion)).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.DeleteVersion)).Methods("DELETE")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(modpacksHandler.ListMods)).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(modpacksHandler.AddMod)).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.RemoveMod)).Methods("DELETE")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---

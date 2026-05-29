@@ -336,6 +336,32 @@ type Store interface {
 	UpsertServerMod(m *models.ServerMod) (int, error)
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
 	DeleteServerMod(id, serverID int) error
+
+	// --- Modpacks (Phase 14) ---
+	// User-authored modpacks. Slug uniqueness is per-owner so two users can
+	// each have a "skyblock" pack without collision.
+	CreateModpack(m *models.Modpack) (int, error)
+	UpdateModpack(m *models.Modpack) error
+	DeleteModpack(id, ownerID int) error
+	GetModpack(id int) (*models.Modpack, error)
+	ListModpacksByOwner(ownerID int) ([]models.Modpack, error)
+
+	// Versions + mods within a pack.
+	CreateModpackVersion(v *models.ModpackVersion) (int, error)
+	UpdateModpackVersion(v *models.ModpackVersion) error
+	DeleteModpackVersion(id, modpackID int) error
+	GetModpackVersion(id int) (*models.ModpackVersion, error)
+	ListModpackVersions(modpackID int) ([]models.ModpackVersion, error)
+	UpsertModpackMod(m *models.ModpackMod) (int, error)
+	ListModpackMods(versionID int) ([]models.ModpackMod, error)
+	DeleteModpackMod(id, versionID int) error
+
+	// Modrinth PATs. One row per user; SetModrinthPAT upserts and
+	// stamps last_validated_at on success. ClearModrinthPAT removes the
+	// row entirely so a revoked PAT can't accidentally be re-used.
+	SetModrinthPAT(userID int, ciphertext, modrinthUsername string) error
+	GetModrinthPAT(userID int) (*models.ModrinthPAT, error)
+	ClearModrinthPAT(userID int) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job
