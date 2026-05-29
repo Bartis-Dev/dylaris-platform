@@ -5,13 +5,16 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
     Package, ArrowLeft, Plus, Trash2, ExternalLink, RefreshCw,
-    CircleCheck, CircleAlert, X, Edit, ChevronRight, Layers,
+    CircleCheck, CircleAlert, X, Edit, ChevronRight, Layers, Users,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     getModpack, listVersions, createVersion, deleteVersion,
     type Modpack, type ModpackVersion,
 } from '@/lib/api/modpacks';
+import {
+    listCollaborators, addCollaborator, removeCollaborator, type Collaborator,
+} from '@/lib/api/modpackPublish';
 
 // Phase 14.1 — Modpack detail. Shows pack metadata + version history with
 // channel badges (draft/beta/release). Version → mods builder UI lands in
@@ -33,6 +36,10 @@ export default function ModpackDetailPage() {
     const [creatingVersion, setCreatingVersion] = useState<{ versionString: string; channel: 'draft' | 'beta' | 'release'; changelog: string } | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ModpackVersion | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [collabs, setCollabs] = useState<Collaborator[]>([]);
+    const [collabsLoaded, setCollabsLoaded] = useState(false);
+    const [addCollabName, setAddCollabName] = useState('');
+    const [collabBusy, setCollabBusy] = useState(false);
 
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -47,6 +54,44 @@ export default function ModpackDetailPage() {
     }, [modpackId]);
 
     useEffect(() => { refresh(); }, [refresh]);
+
+    const refreshCollabs = useCallback(async () => {
+        if (!pack?.modrinthProjectId) { setCollabs([]); setCollabsLoaded(true); return; }
+        const list = await listCollaborators(modpackId);
+        setCollabs(list);
+        setCollabsLoaded(true);
+    }, [modpackId, pack?.modrinthProjectId]);
+
+    useEffect(() => { refreshCollabs(); }, [refreshCollabs]);
+
+    const handleAddCollab = async () => {
+        const name = addCollabName.trim();
+        if (!name) return;
+        setCollabBusy(true);
+        const res = await addCollaborator(modpackId, name);
+        setCollabBusy(false);
+        if (res.success) {
+            showToast(`Invited ${name}`, true);
+            setAddCollabName('');
+            refreshCollabs();
+        } else {
+            showToast(res.message || 'Invite failed', false);
+        }
+    };
+
+    const handleRemoveCollab = async (c: Collaborator) => {
+        const uid = c.user?.id;
+        if (!uid) return;
+        setCollabBusy(true);
+        const res = await removeCollaborator(modpackId, uid);
+        setCollabBusy(false);
+        if (res.success) {
+            showToast('Removed.', true);
+            refreshCollabs();
+        } else {
+            showToast(res.message || 'Remove failed', false);
+        }
+    };
 
     useEffect(() => {
         const unsubV = systemEvents.on('modpack_versions.changed', (evt) => {
@@ -191,6 +236,71 @@ export default function ModpackDetailPage() {
                     </div>
                 )}
             </section>
+
+            {/* Collaborators — only meaningful after first publish */}
+            {pack.modrinthProjectId && (
+                <section className="mt-6">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Users size={16} className="text-(--accent-light)" />
+                        <h2 className="text-sm font-medium text-(--base-09)">Testers / Collaborators</h2>
+                        <span className="text-xs text-(--base-06)">
+                            (Modrinth users who can install drafts/betas in their launcher)
+                        </span>
+                    </div>
+
+                    <div className="card p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={addCollabName}
+                                onChange={e => setAddCollabName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') handleAddCollab(); }}
+                                placeholder="Modrinth username"
+                                className="input-field flex-1"
+                                disabled={collabBusy}
+                            />
+                            <button
+                                onClick={handleAddCollab}
+                                className="btn btn-primary btn-sm"
+                                disabled={collabBusy || !addCollabName.trim()}
+                            >
+                                <Plus size={12} />
+                                Invite
+                            </button>
+                        </div>
+
+                        {!collabsLoaded ? (
+                            <p className="text-xs text-(--base-06)">Loading collaborators…</p>
+                        ) : collabs.length === 0 ? (
+                            <p className="text-xs text-(--base-06) text-center py-3">
+                                No collaborators yet.
+                            </p>
+                        ) : (
+                            <div className="space-y-1">
+                                {collabs.map((c, i) => (
+                                    <div key={c.user?.id || i} className="flex items-center gap-2 p-2 rounded-md border border-(--base-04)">
+                                        <Users size={12} className="text-(--accent-light) shrink-0" />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-sm text-(--base-09)">{c.user?.username || c.user?.id || '(unknown)'}</div>
+                                            <div className="text-[10px] font-mono text-(--base-06)">
+                                                {c.role || 'collaborator'}
+                                                {c.accepted === false && <> · invite pending</>}
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => handleRemoveCollab(c)}
+                                            className="btn btn-secondary btn-sm"
+                                            disabled={collabBusy}
+                                        >
+                                            <Trash2 size={11} className="text-(--error)" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </section>
+            )}
 
             {/* Create version */}
             {creatingVersion && (

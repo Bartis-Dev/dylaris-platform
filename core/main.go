@@ -210,6 +210,8 @@ func main() {
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	modpacksHandler := handlers.NewModpacksHandler(appState)
+	modpacksPublishHandler := handlers.NewModpacksPublishHandler(appState, modrinthPATHandler, "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
+	collaboratorsHandler := handlers.NewCollaboratorsHandler(appState, modrinthPATHandler, "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -342,6 +344,11 @@ func main() {
 	// .mrpack export — query-token auth so it can be opened via window.open
 	// without setting custom headers.
 	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mrpack", authHandler.AuthMiddleware(modpacksHandler.ExportMrpack)).Methods("GET")
+	// --- Modrinth publish + collaborators (Phase 14.3) ---
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/publish", authHandler.AuthMiddleware(modpacksPublishHandler.Publish)).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(collaboratorsHandler.List)).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(collaboratorsHandler.Add)).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(collaboratorsHandler.Remove)).Methods("DELETE")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---

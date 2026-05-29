@@ -5,17 +5,19 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
     Package, ArrowLeft, Plus, Trash2, Search, ExternalLink, RefreshCw,
-    CircleCheck, CircleAlert, X, Download, Box, AlertTriangle,
+    CircleCheck, CircleAlert, X, Download, Box, AlertTriangle, Rocket,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
-    getModpack, listMods, addMod, removeMod, type Modpack, type ModpackMod,
+    getModpack, listMods, addMod, removeMod, listVersions,
+    type Modpack, type ModpackMod, type ModpackVersion,
 } from '@/lib/api/modpacks';
 import {
     searchModrinth, getModrinthVersions, pickPrimaryFile,
     type ModrinthSearchHit, type ModrinthVersion,
 } from '@/lib/api/modrinth';
-import { API_URL, getAuthHeader } from '@/lib/api/core';
+import { publishModpackVersion } from '@/lib/api/modpackPublish';
+import { API_URL } from '@/lib/api/core';
 
 // Phase 14.2 — Modpack version builder. Two columns:
 //   left:  current mods in this version (remove inline)
@@ -30,7 +32,9 @@ export default function ModpackVersionBuilderPage() {
 
     const [pack, setPack] = useState<Modpack | null>(null);
     const [mods, setMods] = useState<ModpackMod[]>([]);
+    const [version, setVersion] = useState<ModpackVersion | null>(null);
     const [loading, setLoading] = useState(true);
+    const [publishing, setPublishing] = useState<'beta' | 'release' | null>(null);
 
     // Modrinth search panel state
     const [query, setQuery] = useState('');
@@ -47,9 +51,14 @@ export default function ModpackVersionBuilderPage() {
     }, []);
 
     const refresh = useCallback(async () => {
-        const [p, list] = await Promise.all([getModpack(modpackId), listMods(modpackId, versionId)]);
+        const [p, list, vs] = await Promise.all([
+            getModpack(modpackId),
+            listMods(modpackId, versionId),
+            listVersions(modpackId),
+        ]);
         setPack(p);
         setMods(list);
+        setVersion(vs.find(v => v.id === versionId) || null);
         setLoading(false);
     }, [modpackId, versionId]);
 
@@ -134,6 +143,19 @@ export default function ModpackVersionBuilderPage() {
         }
     };
 
+    const handlePublish = async (promoteTo: 'beta' | 'release') => {
+        if (mods.length === 0) { showToast('Add some mods before publishing', false); return; }
+        setPublishing(promoteTo);
+        const res = await publishModpackVersion(modpackId, versionId, { promoteTo });
+        setPublishing(null);
+        if (res.success) {
+            showToast(res.message || `Published as ${promoteTo}`, true);
+            refresh();
+        } else {
+            showToast(res.message || 'Publish failed', false);
+        }
+    };
+
     const handleExportMrpack = () => {
         const token = typeof window !== 'undefined'
             ? (localStorage.getItem('authToken') || localStorage.getItem('token'))
@@ -176,11 +198,47 @@ export default function ModpackVersionBuilderPage() {
                             <code className="font-mono">MC {pack.mcVersion || 'any'}</code>
                         </p>
                     </div>
-                    <button onClick={handleExportMrpack} className="btn btn-secondary btn-sm" disabled={mods.length === 0}>
-                        <Download size={12} />
-                        Export .mrpack
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button onClick={handleExportMrpack} className="btn btn-secondary btn-sm" disabled={mods.length === 0}>
+                            <Download size={12} />
+                            Export .mrpack
+                        </button>
+                        <button
+                            onClick={() => handlePublish('beta')}
+                            className="btn btn-secondary btn-sm"
+                            disabled={mods.length === 0 || publishing !== null}
+                            title="Publish to Modrinth as a beta version"
+                        >
+                            <Rocket size={12} />
+                            {publishing === 'beta' ? 'Publishing…' : 'Publish as Beta'}
+                        </button>
+                        <button
+                            onClick={() => handlePublish('release')}
+                            className="btn btn-primary btn-sm"
+                            disabled={mods.length === 0 || publishing !== null}
+                            title="Publish to Modrinth as a release version"
+                        >
+                            <Rocket size={12} />
+                            {publishing === 'release' ? 'Publishing…' : 'Publish as Release'}
+                        </button>
+                    </div>
                 </div>
+                {version?.publishedAt && version.modrinthVersionId && (
+                    <p className="text-xs text-(--success-light) mt-2 flex items-center gap-1">
+                        <CircleCheck size={11} />
+                        Published {new Date(version.publishedAt).toLocaleString()}
+                        {pack?.modrinthProjectId && (
+                            <a
+                                href={`https://modrinth.com/modpack/${pack.slug}/version/${version.modrinthVersionId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="ml-1 text-(--accent-light) inline-flex items-center gap-1"
+                            >
+                                view on Modrinth <ExternalLink size={9} />
+                            </a>
+                        )}
+                    </p>
+                )}
             </header>
 
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 px-6 pb-6 max-w-6xl w-full overflow-hidden">
