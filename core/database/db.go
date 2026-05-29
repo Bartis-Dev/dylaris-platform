@@ -108,6 +108,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase10Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase13Schema(db); err != nil {
+		return err
+	}
 	if err := applyPhase11Schema(db); err != nil {
 		return err
 	}
@@ -371,6 +374,32 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
+	return nil
+}
+
+// applyPhase13Schema sets up Phase 13 (Custom Tabs):
+//   - server_tabs: per-server user-defined tabs that render an external URL
+//     in an iframe (Minimap, BlueMap, custom plugin dashboards). V1 holds
+//     just the URL — auto-reverse-proxy via Gateway is a follow-up.
+func applyPhase13Schema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS server_tabs (
+		id             SERIAL PRIMARY KEY,
+		server_id      INTEGER     NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		name           VARCHAR(64) NOT NULL,
+		icon           VARCHAR(64) NOT NULL DEFAULT 'layout-grid',
+		url            TEXT        NOT NULL,
+		position       INTEGER     NOT NULL DEFAULT 0,
+		enabled        BOOLEAN     NOT NULL DEFAULT TRUE,
+		open_in_panel  BOOLEAN     NOT NULL DEFAULT TRUE,
+		created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+	)`); err != nil {
+		return fmt.Errorf("phase 13: create server_tabs: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_server_tabs_server
+		ON server_tabs(server_id, position ASC)`); err != nil {
+		return fmt.Errorf("phase 13: create server_tabs index: %w", err)
+	}
 	return nil
 }
 

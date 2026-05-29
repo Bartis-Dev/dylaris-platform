@@ -19,6 +19,8 @@ import RoutesModal from '@/components/RoutesModal';
 import RegionBadge from '@/components/RegionBadge';
 import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
+import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
+import { systemEvents } from '@/lib/systemEvents';
 
 export default function ServerLayout({ children }: { children: React.ReactNode }) {
     const params = useParams();
@@ -71,6 +73,23 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
 
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
+
+    // Phase 13 — user-defined extra tabs. Loaded on server change + refreshed
+    // when the SSE channel signals a CRUD change on this server.
+    const [customTabs, setCustomTabs] = useState<ServerTab[]>([]);
+    useEffect(() => {
+        if (!selectedServer?.id) { setCustomTabs([]); return; }
+        let cancelled = false;
+        listServerTabs(selectedServer.id).then(list => { if (!cancelled) setCustomTabs(list); });
+        const sid = selectedServer.id;
+        const unsub = systemEvents.on('server_tabs.changed', (evt) => {
+            const evtSid = (evt.payload as any)?.serverId;
+            if (evtSid === undefined || evtSid === sid) {
+                listServerTabs(sid).then(list => { if (!cancelled) setCustomTabs(list); });
+            }
+        });
+        return () => { cancelled = true; unsub(); };
+    }, [selectedServer?.id]);
 
     // Load gateway routes when relevant
     useEffect(() => {
@@ -537,7 +556,20 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     no tab ever ends up hidden under the right edge in
                     narrow windows (esp. the Beam Desktop App). */}
                 <div className="flex flex-wrap gap-x-1 gap-y-0">
-                    {tabs.map(tab => {
+                    {[
+                        ...tabs,
+                        // Phase 13 — append any user-defined custom tabs after the
+                        // built-ins. Disabled rows are filtered out so the nav
+                        // matches the user's intent without extra greying logic.
+                        ...customTabs
+                            .filter(t => t.enabled)
+                            .map(t => ({
+                                slug: `t/${t.id}`,
+                                icon: t.icon || 'layout-grid',
+                                label: t.name,
+                                disabled: false,
+                            })),
+                    ].map(tab => {
                         const href = `/servers/${selectedServer.id}/${tab.slug}`;
                         // Phase 8 — Configuration is now a sub-tab parent (config/properties,
                         // config/display, …); match the whole prefix so the top-level tab stays
