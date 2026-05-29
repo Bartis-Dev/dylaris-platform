@@ -329,6 +329,13 @@ type Store interface {
 	GetAPIKeyByHash(hash string) (*models.APIKey, error)
 	RevokeAPIKey(id, userID int) error
 	TouchAPIKey(id int) error
+
+	// --- Installed Mods (Phase 10) ---
+	// Per-server-per-sub-server inventory of Modrinth-sourced mods/plugins.
+	// Drives the "Installed" view + the lazy update-detection scan.
+	UpsertServerMod(m *models.ServerMod) (int, error)
+	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
+	DeleteServerMod(id, serverID int) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job

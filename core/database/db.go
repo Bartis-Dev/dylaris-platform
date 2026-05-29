@@ -105,6 +105,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase9Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase10Schema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
@@ -365,6 +368,33 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
+	return nil
+}
+
+// applyPhase10Schema sets up Phase 10 (Modrinth Mod Browser):
+//   - server_mods: tracks which Modrinth project/version is installed per
+//     server+sub-server so "Update available" can compare installed vs latest
+func applyPhase10Schema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS server_mods (
+		id                     SERIAL PRIMARY KEY,
+		server_id              INTEGER     NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		sub_server_name        VARCHAR(128) NOT NULL DEFAULT '',
+		modrinth_project_id    VARCHAR(64) NOT NULL,
+		modrinth_project_slug  VARCHAR(128) NOT NULL DEFAULT '',
+		modrinth_version_id    VARCHAR(64) NOT NULL,
+		title                  VARCHAR(255) NOT NULL DEFAULT '',
+		file_name              VARCHAR(255) NOT NULL,
+		sha512                 VARCHAR(128) NOT NULL DEFAULT '',
+		installed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		installed_by           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		UNIQUE(server_id, sub_server_name, modrinth_project_id)
+	)`); err != nil {
+		return fmt.Errorf("phase 10: create server_mods: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_server_mods_server
+		ON server_mods(server_id, sub_server_name)`); err != nil {
+		return fmt.Errorf("phase 10: create server_mods index: %w", err)
+	}
 	return nil
 }
 

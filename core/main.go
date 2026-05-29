@@ -204,6 +204,8 @@ func main() {
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	rconHandler := handlers.NewRconHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
+	modrinthHandler := handlers.NewModrinthHandler(appState, "Dylaris/0.10 (+https://github.com/Bartis-Dev/dylaris-platform)")
+	serverModsHandler := handlers.NewServerModsHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -294,6 +296,17 @@ func main() {
 	// External RCON: Authorization: Bearer dyl_<key>. Scope check on the
 	// path-uuid happens in the middleware itself.
 	api.HandleFunc("/external/rcon/{uuid}/exec", apiKeysHandler.APIKeyMiddleware("rcon.exec")(rconHandler.ExecExternal)).Methods("POST")
+
+	// --- Modrinth proxy + per-server mod install (Phase 10) ---
+	// Browse + project metadata are cached in Redis (5 min / 1 h). All authed.
+	api.HandleFunc("/modrinth/search", authHandler.AuthMiddleware(modrinthHandler.Search)).Methods("GET")
+	api.HandleFunc("/modrinth/project/{slug}", authHandler.AuthMiddleware(modrinthHandler.Project)).Methods("GET")
+	api.HandleFunc("/modrinth/project/{slug}/versions", authHandler.AuthMiddleware(modrinthHandler.ProjectVersions)).Methods("GET")
+	api.HandleFunc("/modrinth/version/{id}", authHandler.AuthMiddleware(modrinthHandler.Version)).Methods("GET")
+	// Per-server installed mods + install/uninstall dispatch.
+	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.List)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.Install)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(serverModsHandler.Uninstall)).Methods("DELETE")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---

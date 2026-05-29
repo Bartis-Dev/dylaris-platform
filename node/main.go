@@ -1025,6 +1025,11 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 					log.Printf("backup_restore: starting run=%d server=%s sub=%s", rcmd.RunID, rcmd.ServerUUID, rcmd.SubServer)
 					RunRestore(ctx, rdb, storage, dm, rcmd)
 
+				case "install_mod":
+					runInstallMod(storage, payload)
+				case "remove_mod":
+					runRemoveMod(storage, payload)
+
 				default:
 					log.Printf("Unknown action: %s", cmd.Action)
 				}

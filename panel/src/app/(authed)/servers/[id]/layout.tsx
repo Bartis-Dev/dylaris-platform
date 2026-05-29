@@ -307,6 +307,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         { slug: 'console', icon: 'square-terminal', label: 'Console',       disabled: tabDisabled('console') },
         { slug: 'files',   icon: 'folder-open',     label: 'Files',         disabled: tabDisabled('files') },
         { slug: 'config',  icon: 'settings',        label: 'Configuration', disabled: tabDisabled('config') || uploadLocked },
+        // Phase 10 — Modrinth-driven mod/plugin browser.
+        { slug: 'content', icon: 'package',         label: 'Content',       disabled: tabDisabled('config') },
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
         // Phase 9 — Players tab. RCON-driven (online list + ban/kick/op/whitelist).
         // Power-class permission since every action mutates server state.

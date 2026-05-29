@@ -1,0 +1,199 @@
+// Phase 10 — Modrinth proxy client + installed-mods CRUD. All requests go
+// through the core proxy at /api/modrinth/* so we get caching + CORS for
+// free. Types mirror Modrinth's API shape (only the fields we use).
+
+import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
+
+export interface ModrinthSearchHit {
+    project_id: string;
+    project_type: string;
+    slug: string;
+    author: string;
+    title: string;
+    description: string;
+    icon_url: string;
+    downloads: number;
+    follows: number;
+    categories: string[];
+    versions: string[];
+    latest_version?: string;
+}
+
+export interface ModrinthSearchResult {
+    hits: ModrinthSearchHit[];
+    offset: number;
+    limit: number;
+    total_hits: number;
+}
+
+export interface ModrinthProject {
+    id: string;
+    slug: string;
+    title: string;
+    description: string;
+    body: string;
+    icon_url?: string;
+    project_type: string;
+    categories: string[];
+    additional_categories: string[];
+    loaders: string[];
+    game_versions: string[];
+    versions: string[];
+    license?: { id: string; name: string; url?: string };
+    source_url?: string;
+    issues_url?: string;
+    wiki_url?: string;
+    discord_url?: string;
+    downloads: number;
+    followers: number;
+    gallery?: { url: string; title?: string; description?: string }[];
+}
+
+export interface ModrinthVersionFile {
+    hashes: { sha512?: string; sha1?: string };
+    url: string;
+    filename: string;
+    primary: boolean;
+    size: number;
+}
+
+export interface ModrinthVersion {
+    id: string;
+    project_id: string;
+    name: string;
+    version_number: string;
+    changelog?: string;
+    game_versions: string[];
+    loaders: string[];
+    version_type: 'release' | 'beta' | 'alpha';
+    featured: boolean;
+    date_published: string;
+    files: ModrinthVersionFile[];
+    dependencies?: { version_id?: string; project_id?: string; dependency_type: string }[];
+}
+
+interface SearchParams {
+    query?: string;
+    loaders?: string[];
+    versions?: string[];
+    categories?: string[];
+    projectType?: 'mod' | 'plugin' | 'modpack' | 'shader' | 'resourcepack' | 'datapack';
+    limit?: number;
+    offset?: number;
+    index?: 'relevance' | 'downloads' | 'follows' | 'newest' | 'updated';
+}
+
+function buildSearchURL(params: SearchParams): string {
+    const u = new URLSearchParams();
+    if (params.query) u.set('query', params.query);
+    if (params.loaders?.length) u.set('loaders', params.loaders.join(','));
+    if (params.versions?.length) u.set('versions', params.versions.join(','));
+    if (params.categories?.length) u.set('categories', params.categories.join(','));
+    if (params.projectType) u.set('project_type', params.projectType);
+    if (params.limit) u.set('limit', String(params.limit));
+    if (params.offset) u.set('offset', String(params.offset));
+    if (params.index) u.set('index', params.index);
+    return u.toString();
+}
+
+export async function searchModrinth(params: SearchParams): Promise<ModrinthSearchResult | null> {
+    try {
+        const res = await fetch(`${API_URL}/modrinth/search?${buildSearchURL(params)}`, {
+            headers: getAuthHeader(),
+        });
+        if (!res.ok) return null;
+        return res.json();
+    } catch { return null; }
+}
+
+export async function getModrinthProject(slug: string): Promise<ModrinthProject | null> {
+    try {
+        const res = await fetch(`${API_URL}/modrinth/project/${encodeURIComponent(slug)}`, {
+            headers: getAuthHeader(),
+        });
+        if (!res.ok) return null;
+        return res.json();
+    } catch { return null; }
+}
+
+export async function getModrinthVersions(
+    slug: string,
+    filter?: { loaders?: string[]; versions?: string[] },
+): Promise<ModrinthVersion[]> {
+    try {
+        const q = new URLSearchParams();
+        if (filter?.loaders?.length) q.set('loaders', filter.loaders.join(','));
+        if (filter?.versions?.length) q.set('versions', filter.versions.join(','));
+        const qs = q.toString();
+        const url = `${API_URL}/modrinth/project/${encodeURIComponent(slug)}/versions${qs ? `?${qs}` : ''}`;
+        const res = await fetch(url, { headers: getAuthHeader() });
+        if (!res.ok) return [];
+        return res.json();
+    } catch { return []; }
+}
+
+// --- Installed mods per server ---
+
+export interface InstalledMod {
+    id: number;
+    serverId: number;
+    subServerName: string;
+    modrinthProjectId: string;
+    modrinthProjectSlug: string;
+    modrinthVersionId: string;
+    title: string;
+    fileName: string;
+    sha512: string;
+    installedAt: string;
+    installedBy?: number;
+}
+
+export async function listInstalledMods(serverId: number): Promise<InstalledMod[]> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/mods`, { headers: getAuthHeader() });
+        const data = await handleResponse(res);
+        return (data as any).mods || [];
+    } catch (err) {
+        handleError(err);
+        return [];
+    }
+}
+
+export interface InstallModPayload {
+    projectId: string;
+    projectSlug: string;
+    versionId: string;
+    title: string;
+    fileName: string;
+    downloadUrl: string;
+    sha512?: string;
+    targetDir?: 'mods' | 'plugins';
+}
+
+export async function installMod(serverId: number, payload: InstallModPayload): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/mods`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+export async function uninstallMod(serverId: number, modId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/mods/${modId}`, {
+            method: 'DELETE',
+            headers: getAuthHeader(),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+// Helper: pick the "primary" file from a Modrinth version. If there's only
+// one file it's the obvious one; otherwise prefer the file marked primary.
+export function pickPrimaryFile(v: ModrinthVersion): ModrinthVersionFile | null {
+    if (!v.files || v.files.length === 0) return null;
+    return v.files.find(f => f.primary) || v.files[0];
+}
