@@ -7,6 +7,7 @@ import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
+import ModpackPicker from './ModpackPicker';
 
 interface SetupEditModeProps {
     subName: string;
@@ -18,8 +19,10 @@ interface SetupEditModeProps {
     onFlagsChange: (flags: string) => void;
     ramMB: number;
     // Install tab
-    installTab: 'online' | 'library' | 'upload';
-    onInstallTabChange: (tab: 'online' | 'library' | 'upload') => void;
+    installTab: 'online' | 'library' | 'upload' | 'modpack';
+    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'modpack') => void;
+    modpackSelection?: import('@/views/setup/ModpackPicker').ModpackSelection | null;
+    onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
     libraryEnabled?: boolean;
     // Server type
     serverType?: 'game' | 'proxy';
@@ -139,6 +142,10 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Upload / SFTP
                         </button>
+                        <button type="button" onClick={() => props.onInstallTabChange('modpack')}
+                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            Modpack
+                        </button>
                     </div>
 
                     {/* Tab content */}
@@ -179,6 +186,13 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                             onStatusChange={props.onUploadStatusChange}
                             serverId={props.serverId}
                             onFileTooLarge={props.onFileTooLarge}
+                        />
+                    )}
+
+                    {props.installTab === 'modpack' && (
+                        <ModpackPicker
+                            selection={props.modpackSelection ?? null}
+                            onSelect={(s) => props.onModpackSelect?.(s)}
                         />
                     )}
                 </div>

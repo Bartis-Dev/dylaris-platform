@@ -120,13 +120,19 @@ type SetupServerRequest struct {
 	JavaImage     string `json:"javaImage"`
 	ExtraJvmFlags string `json:"extraJvmFlags"`
 	Installer     struct {
-		Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip"
+		Type      string `json:"type"`      // "paper","vanilla","fabric","forge","neoforge","library","upload","upload-zip","modpack"
 		Version   string `json:"version"`   // build/version identifier (Paper build, Forge build, etc.)
 		McVersion string `json:"mcVersion"` // major MC version (e.g. "1.21.4")
 		Loader    string `json:"loader"`    // Fabric loader / Forge build / NeoForge version (optional)
-		URL       string `json:"url"`       // for import via URL
+		URL       string `json:"url"`       // for import via URL OR .mrpack url for modpack
 		Path      string `json:"path"`      // for library selection
 		Structure string `json:"structure"` // "direct" or "subfolder" (for upload-zip)
+		// Phase 12 — modpack reference; sub-server boots from a Modrinth
+		// modpack and we remember which project+version so the panel can
+		// later check Modrinth for newer versions and offer one-click update.
+		ModrinthProjectID   string `json:"modrinthProjectId,omitempty"`
+		ModrinthVersionID   string `json:"modrinthVersionId,omitempty"`
+		ModrinthProjectSlug string `json:"modrinthProjectSlug,omitempty"`
 	} `json:"installer"`
 }
 
@@ -437,6 +443,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"url":       req.Installer.URL,
 			"path":      req.Installer.Path,
 			"structure": req.Installer.Structure,
+			// Phase 12 — modpack metadata forwarded to the node installer.
+			"modrinthProjectId":   req.Installer.ModrinthProjectID,
+			"modrinthVersionId":   req.Installer.ModrinthVersionID,
+			"modrinthProjectSlug": req.Installer.ModrinthProjectSlug,
 		}
 
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {

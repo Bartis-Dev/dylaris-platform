@@ -26,12 +26,20 @@ func SetDockerManager(dm *DockerManager) {
 }
 
 type InstallerConfig struct {
-	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import"
+	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import", "modpack"
 	Version   string `json:"version"`   // MC version, e.g. "1.21.1"
 	Loader    string `json:"loader"`    // Optional loader/build version (Fabric loader, Forge build, NeoForge version)
-	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback)
+	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback / modpack .mrpack)
 	Path      string `json:"path"`      // Local library file path (for "library" type)
 	Structure string `json:"structure"` // "direct" or "subfolder" (for "upload-zip")
+	// Phase 12 — modpack metadata. Type="modpack" expects URL to be a
+	// .mrpack hosted on cdn.modrinth.com; the handler downloads, extracts
+	// overrides, fans out every listed mod, then chains into the underlying
+	// loader install (paper/fabric/forge/neoforge) using Loader+Version
+	// from the .mrpack manifest.
+	ModrinthProjectID   string `json:"modrinthProjectId,omitempty"`
+	ModrinthVersionID   string `json:"modrinthVersionId,omitempty"`
+	ModrinthProjectSlug string `json:"modrinthProjectSlug,omitempty"`
 	// JavaImage + ServerUUID flow in from the setup command so installers
 	// that need a real JVM (Forge / NeoForge) can run inside a temp
 	// container with the user's chosen Java image instead of relying on
@@ -104,6 +112,8 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 		return nil
 	case "upload-zip":
 		return installFromUploadZip(destDir, config.Structure)
+	case "modpack":
+		return installModpack(destDir, config)
 	default:
 		return fmt.Errorf("unknown installer type: %s", config.Type)
 	}

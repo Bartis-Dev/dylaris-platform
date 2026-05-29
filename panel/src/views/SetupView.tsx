@@ -49,7 +49,10 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [subNameError, setSubNameError] = useState('');
     const [javaImage, setJavaImage] = useState(JAVA_IMAGES[0].id);
     const [extraFlags, setExtraFlags] = useState('');
-    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload'>('online');
+    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'modpack'>('online');
+    // Phase 12 — selected Modrinth modpack (project + version + .mrpack URL).
+    // Cleared on tab change or on submit.
+    const [modpackSelection, setModpackSelection] = useState<import('@/views/setup/ModpackPicker').ModpackSelection | null>(null);
 
     // Software list from API
     const [softwareCatalog, setSoftwareCatalog] = useState<{ name: string; type: string }[]>([]);
@@ -316,6 +319,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         } else if (installTab === 'library') {
             installer.type = 'library';
             installer.path = selectedLibraryFile;
+        } else if (installTab === 'modpack' && modpackSelection) {
+            installer.type = 'modpack';
+            installer.url = modpackSelection.downloadUrl;
+            installer.modrinthProjectId = modpackSelection.projectId;
+            installer.modrinthVersionId = modpackSelection.versionId;
+            installer.modrinthProjectSlug = modpackSelection.projectSlug;
+            if (modpackSelection.loader) installer.loader = modpackSelection.loader;
+            if (modpackSelection.mcVersion) installer.mcVersion = modpackSelection.mcVersion;
         } else if (installTab === 'upload' && uploadFile) {
             installer.type = 'upload-zip';
             installer.structure = uploadStructure;
@@ -512,6 +523,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         uploadProgress,
         uploadStatus,
         onUploadStatusChange: setUploadStatus,
+        modpackSelection,
+        onModpackSelect: setModpackSelection,
         serverId: server.id,
         onFileTooLarge: setFileTooLarge,
     };
