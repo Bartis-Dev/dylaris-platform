@@ -63,7 +63,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [selectedRegion, setSelectedRegion] = useState<string>('');
     const [availableRegions, setAvailableRegions] = useState<string[]>([]);
 
-    const [ownerId, setOwnerId] = useState<number | null>(null);
+    const [ownerId, setOwnerId] = useState<string | null>(null);
     const [serverType, setServerType] = useState<'game' | 'proxy'>('game');
     const [ram, setRam] = useState(2048);
     const [cpuLimit, setCpuLimit] = useState(0);

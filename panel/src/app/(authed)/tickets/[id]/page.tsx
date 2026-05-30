@@ -132,7 +132,7 @@ export default function TicketDetailPage() {
         }
     };
 
-    const handleRemoveWatcher = async (userId: number) => {
+    const handleRemoveWatcher = async (userId: string) => {
         const res = await removeTicketWatcher(ticketId, userId);
         if (res.success) reload();
     };
@@ -475,7 +475,7 @@ export default function TicketDetailPage() {
     );
 }
 
-function MessageBubble({ m, currentUserId }: { m: TicketMessage; currentUserId?: number }) {
+function MessageBubble({ m, currentUserId }: { m: TicketMessage; currentUserId?: string }) {
     const isMine = m.userId === currentUserId;
     const roleClass = m.userRole === 'support' || m.userRole === 'admin' ? 'text-(--accent-light)' : 'text-(--base-09)';
     return (

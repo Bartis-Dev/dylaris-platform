@@ -72,7 +72,7 @@ export async function deleteRegion(id: string) {
 }
 
 // getUserRegions GET /api/admin/users/{id}/regions
-export async function getUserRegions(userId: number) {
+export async function getUserRegions(userId: string) {
     try {
         const res = await fetch(`${API_URL}/admin/users/${userId}/regions`, { headers: getAuthHeader() });
         return handleResponse(res);
@@ -82,7 +82,7 @@ export async function getUserRegions(userId: number) {
 }
 
 // setUserRegions PUT /api/admin/users/{id}/regions
-export async function setUserRegions(userId: number, payload: UserRegions) {
+export async function setUserRegions(userId: string, payload: UserRegions) {
     try {
         const res = await fetch(`${API_URL}/admin/users/${userId}/regions`, {
             method: 'PUT',

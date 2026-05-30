@@ -21,7 +21,7 @@ export function AssignOwnerModal({ server, users, onClose, onAssigned }: AssignO
         u.email?.toLowerCase().includes(search.toLowerCase())
     );
 
-    const assign = async (userId: number) => {
+    const assign = async (userId: string) => {
         setLoading(true);
         setError('');
         const res = await updateServerOwner(server.id, userId);

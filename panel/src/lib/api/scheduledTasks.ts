@@ -24,7 +24,7 @@ export interface ScheduledTask {
     lastRun?: string;
     lastStatus: '' | 'ok' | 'error';
     lastError?: string;
-    createdBy?: number;
+    createdBy?: string;
     createdAt: string;
     updatedAt: string;
 }

@@ -21,12 +21,12 @@ const PERMISSION_ENTRIES: { key: keyof TabPermissions; label: string; proxyOnly?
 
 export default function MembersView({ server }: MembersViewProps) {
     const [members, setMembers] = useState<ServerInvite[]>([]);
-    const [inheritedMembers, setInheritedMembers] = useState<{ userId: number; username: string; permissions: TabPermissions; proxyId: number }[]>([]);
+    const [inheritedMembers, setInheritedMembers] = useState<{ userId: string; username: string; permissions: TabPermissions; proxyId: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [inviteUsername, setInviteUsername] = useState('');
     const [inviteError, setInviteError] = useState('');
     const [inviteSuccess, setInviteSuccess] = useState('');
-    const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+    const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
     const [confirmMembersPerm, setConfirmMembersPerm] = useState<ServerInvite | null>(null);
 
     const isOwner = server.role !== 'invited' && server.role !== 'inherited';
@@ -91,7 +91,7 @@ export default function MembersView({ server }: MembersViewProps) {
         loadMembers();
     };
 
-    const handleRemove = async (userId: number) => {
+    const handleRemove = async (userId: string) => {
         setMembers(prev => prev.filter(m => m.userId !== userId));
         setConfirmRemove(null);
         await removeServerMember(server.id, userId);

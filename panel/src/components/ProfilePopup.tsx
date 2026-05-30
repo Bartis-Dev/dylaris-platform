@@ -106,6 +106,10 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                 <div className="flex flex-col gap-[5px]">
                   <label className="input-label">Username</label>
                   <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
+                  <p className="text-xs text-(--base-06) mt-1">
+                    Username changes follow the platform&apos;s cooldown policy. The admin
+                    can disable changes or set a delay between renames.
+                  </p>
                 </div>
                 <div className="flex flex-col gap-[5px]">
                   <label className="input-label">Email (Optional)</label>

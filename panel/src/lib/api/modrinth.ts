@@ -145,7 +145,7 @@ export interface InstalledMod {
     fileName: string;
     sha512: string;
     installedAt: string;
-    installedBy?: number;
+    installedBy?: string;
 }
 
 export async function listInstalledMods(serverId: number): Promise<InstalledMod[]> {

@@ -7,7 +7,7 @@ export type ModpackChannel = 'draft' | 'beta' | 'release';
 
 export interface Modpack {
     id: number;
-    ownerId: number;
+    ownerId: string;
     name: string;
     slug: string;
     summary: string;

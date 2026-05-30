@@ -11,7 +11,7 @@ export interface APIKeyScope {
 
 export interface APIKey {
     id: number;
-    userId: number;
+    userId: string;
     name: string;
     scope: APIKeyScope;
     lastUsedAt?: string;

@@ -26,7 +26,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
     const [users, setUsers] = useState<UserType[]>([]);
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersError, setUsersError] = useState(false);
-    const [selectedUserId, setSelectedUserId] = useState<number | ''>('');
+    const [selectedUserId, setSelectedUserId] = useState<string>('');
     const [newUsername, setNewUsername] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [memoryMb, setMemoryMb] = useState<number | ''>(1024);
@@ -114,7 +114,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
             memory_mb: memoryMb as number,
             cpu_limit: cpuLimit as number,
             ...(ownerMode === 'existing'
-                ? { owner_user_id: selectedUserId as number }
+                ? { owner_user_id: selectedUserId }
                 : { new_user: { username: newUsername.trim(), password: newPassword } }
             ),
         };
@@ -238,7 +238,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         <select
                                             className="input-field w-full"
                                             value={selectedUserId}
-                                            onChange={e => setSelectedUserId(e.target.value === '' ? '' : Number(e.target.value))}
+                                            onChange={e => setSelectedUserId(e.target.value)}
                                         >
                                             {users.length === 0 && (
                                                 <option value="">— Keine Benutzer gefunden —</option>

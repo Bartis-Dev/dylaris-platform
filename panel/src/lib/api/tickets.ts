@@ -21,7 +21,7 @@ export interface Ticket {
     region: string;
     categoryId: number;
     categoryName?: string;
-    userId: number;
+    userId: string;
     username?: string;
     serverUuid?: string;
     serverRegion?: string;
@@ -29,7 +29,7 @@ export interface Ticket {
     title: string;
     status: TicketStatus;
     priority: TicketPriority;
-    assignedUserId?: number | null;
+    assignedUserId?: string | null;
     assignedName?: string;
     assignedTeam?: string;
     createdAt: string;
@@ -41,7 +41,7 @@ export interface Ticket {
 export interface TicketMessage {
     id: number;
     ticketId: number;
-    userId: number;
+    userId: string;
     username?: string;
     userRole?: string;
     body: string;
@@ -51,18 +51,18 @@ export interface TicketMessage {
 
 export interface TicketWatcher {
     ticketId: number;
-    userId: number;
+    userId: string;
     username?: string;
     canReply: boolean;
     addedAt: string;
-    addedBy?: number;
+    addedBy?: string;
 }
 
 export interface TicketAuditEvent {
     id: number;
     ticketId: number;
     eventType: string;
-    actorUserId?: number;
+    actorUserId?: string;
     actorName?: string;
     metadata?: Record<string, unknown>;
     createdAt: string;
@@ -88,7 +88,7 @@ export interface TicketAttachment {
     filename: string;
     mime: string;
     sizeBytes: number;
-    uploadedBy?: number;
+    uploadedBy?: string;
     username?: string;
     createdAt: string;
 }
@@ -98,7 +98,7 @@ export interface CannedResponse {
     name: string;
     body: string;
     categoryId?: number;
-    createdBy?: number;
+    createdBy?: string;
     createdAt: string;
     updatedAt: string;
 }
@@ -248,7 +248,7 @@ export async function setTicketPriority(id: number, priority: TicketPriority) {
     } catch (err) { return handleError(err); }
 }
 
-export async function setTicketAssignment(id: number, payload: { assignedUserId?: number | null; assignedTeam?: string }) {
+export async function setTicketAssignment(id: number, payload: { assignedUserId?: string | null; assignedTeam?: string }) {
     try {
         const res = await fetch(`${API_URL}/tickets/${id}/assignment`, {
             method: 'PATCH',
@@ -259,7 +259,7 @@ export async function setTicketAssignment(id: number, payload: { assignedUserId?
     } catch (err) { return handleError(err); }
 }
 
-export async function addTicketWatcher(id: number, payload: { userId?: number; username?: string; canReply?: boolean }) {
+export async function addTicketWatcher(id: number, payload: { userId?: string; username?: string; canReply?: boolean }) {
     try {
         const res = await fetch(`${API_URL}/tickets/${id}/watchers`, {
             method: 'POST',
@@ -270,7 +270,7 @@ export async function addTicketWatcher(id: number, payload: { userId?: number; u
     } catch (err) { return handleError(err); }
 }
 
-export async function removeTicketWatcher(id: number, userId: number) {
+export async function removeTicketWatcher(id: number, userId: string) {
     try {
         const res = await fetch(`${API_URL}/tickets/${id}/watchers/${userId}`, {
             method: 'DELETE',

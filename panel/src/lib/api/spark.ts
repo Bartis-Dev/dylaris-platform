@@ -11,7 +11,7 @@ export interface SparkProfile {
     url: string;
     startedAt?: string;
     completedAt: string;
-    requestedBy?: number;
+    requestedBy?: string;
 }
 
 // SPARK_URL_RE matches a spark.lucko.me share link in the console output.

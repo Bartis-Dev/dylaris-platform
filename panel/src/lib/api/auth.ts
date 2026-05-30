@@ -80,7 +80,7 @@ export const disableTOTP = async (password: string, code: string) => {
   return handleResponse(res);
 };
 
-export const adminResetTOTP = async (userId: number) => {
+export const adminResetTOTP = async (userId: string) => {
   const res = await fetch(`${API_URL}/users/${userId}/2fa`, {
     method: 'DELETE',
     headers: getAuthHeader(),

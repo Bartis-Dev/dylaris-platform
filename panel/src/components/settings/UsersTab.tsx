@@ -4,8 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
 import { getUserRegions, setUserRegions } from '@/lib/api/regions';
+import {
+    getAccountPolicy,
+    setAccountPolicy,
+    getUsernameHistory,
+    type AccountPolicy,
+    type UsernameHistoryEntry,
+} from '@/lib/api/accountPolicy';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert } from 'lucide-react';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon } from 'lucide-react';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -41,6 +48,9 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     // Deletion-rescue state (Phase 0a.6)
     const [cancellingDeletion, setCancellingDeletion] = useState(false);
+
+    // Username-history modal (Phase 15 / Wave G)
+    const [historyUser, setHistoryUser] = useState<{ id: string; username: string } | null>(null);
 
     // Role + permissions (Phase 1) — edit modal
     const [editRole, setEditRole] = useState<'user' | 'support' | 'admin'>('user');
@@ -143,7 +153,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         setEditRegionsSaving(false);
     };
 
-    const handleDeleteUser = async (id: number) => {
+    const handleDeleteUser = async (id: string) => {
         if(!confirm("Do you really want to delete this user?")) return;
         await deleteUser(id);
         loadUsers();
@@ -242,6 +252,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     return (
         <div>
+            <AccountPolicyCard />
+
             <div className="flex justify-end mb-4">
                 <button onClick={() => {setUserForm({ username: "", password: "", isAdmin: false }); setError(""); setIsModalOpen(true);}} className="btn btn-primary">
                     <UserPlus size={14} />
@@ -293,6 +305,13 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                 <td className="table-td text-sm text-(--base-06)">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'N/A'}</td>
                                 <td className="table-td text-right">
                                     <div className="flex items-center justify-end gap-2">
+                                        <button
+                                            onClick={() => setHistoryUser({ id: u.id, username: u.username })}
+                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
+                                            title="Username history"
+                                        >
+                                            <HistoryIcon size={13} />
+                                        </button>
                                         <button
                                             onClick={() => openSettings(u)}
                                             className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
@@ -639,6 +658,124 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                     </div>
                 </div>
             )}
+
+            {/* Username history modal (Phase 15 / Wave G) */}
+            {historyUser && (
+                <UsernameHistoryModal user={historyUser} onClose={() => setHistoryUser(null)} />
+            )}
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Account Policy card — Phase 15 / Wave G
+// ─────────────────────────────────────────────
+// Loads the platform-level rename policy and lets the admin toggle whether
+// users may rename themselves and set a cooldown between renames. The
+// per-user 429/403 surface in ProfilePopup is driven by the server's reply,
+// so this card is the only place the policy is configured.
+function AccountPolicyCard() {
+    const [policy, setPolicy] = useState<AccountPolicy | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+    useEffect(() => {
+        getAccountPolicy().then(res => {
+            if (res.success && res.policy) setPolicy(res.policy);
+        });
+    }, []);
+
+    if (!policy) return null;
+
+    const save = async () => {
+        setSaving(true);
+        const res = await setAccountPolicy(policy);
+        setSaving(false);
+        setToast({ msg: res.success ? 'Saved.' : (res.message || 'Save failed'), ok: !!res.success });
+        setTimeout(() => setToast(null), 3000);
+    };
+
+    return (
+        <section className="card p-5 space-y-4 mb-4">
+            <h2 className="text-base font-display font-semibold text-(--base-09)">Account Policy</h2>
+            <div className="flex items-center justify-between">
+                <div>
+                    <div className="text-sm font-medium text-(--base-09)">Allow username changes</div>
+                    <p className="text-xs text-(--base-06)">When off, only admins can rename users.</p>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={policy.allowNameChange}
+                    onClick={() => setPolicy({ ...policy, allowNameChange: !policy.allowNameChange })}
+                    className={`toggle-track ${policy.allowNameChange ? 'toggle-track-on' : 'toggle-track-off'}`}
+                >
+                    <span className={`toggle-knob ${policy.allowNameChange ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                </button>
+            </div>
+            <div className="flex items-center gap-3">
+                <label className="input-label">Cooldown between user renames (days)</label>
+                <input
+                    type="number"
+                    min={0}
+                    max={3650}
+                    value={policy.nameChangeCooldownDays}
+                    onChange={e => setPolicy({ ...policy, nameChangeCooldownDays: parseInt(e.target.value || '0', 10) })}
+                    className="input-field input-mono w-24"
+                />
+            </div>
+            <div className="flex items-center justify-end">
+                <button type="button" onClick={save} className="btn btn-primary btn-sm disabled:opacity-40" disabled={saving}>
+                    {saving ? 'Saving…' : 'Save'}
+                </button>
+            </div>
+            {toast && (
+                <div className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{toast.msg}</div>
+            )}
+        </section>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Username history modal — Phase 15 / Wave G
+// ─────────────────────────────────────────────
+function UsernameHistoryModal({ user, onClose }: { user: { id: string; username: string }; onClose: () => void }) {
+    const [rows, setRows] = useState<UsernameHistoryEntry[]>([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        getUsernameHistory(user.id).then(r => { setRows(r); setLoading(false); });
+    }, [user.id]);
+    return (
+        <div className="modal-overlay animate-fade-in" onClick={onClose}>
+            <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                <div className="modal-header flex justify-between items-center">
+                    <h3 className="modal-title">Username history — {user.username}</h3>
+                    <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
+                        <X size={16} />
+                    </button>
+                </div>
+                <div className="modal-body max-h-[60vh] overflow-y-auto">
+                    {loading ? (
+                        <p className="text-sm text-(--base-06)">Loading…</p>
+                    ) : rows.length === 0 ? (
+                        <p className="text-sm text-(--base-06)">No renames recorded.</p>
+                    ) : (
+                        <div className="space-y-1">
+                            {rows.map(r => (
+                                <div key={r.id} className="p-2 rounded-md border border-(--base-04) text-xs">
+                                    <div className="font-mono text-(--base-09)">{r.oldUsername} → {r.newUsername}</div>
+                                    <div className="text-(--base-06) mt-0.5">
+                                        {new Date(r.changedAt).toLocaleString()} · {r.byAdmin ? 'by admin' : 'self'}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <div className="modal-footer">
+                    <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
+                </div>
+            </div>
         </div>
     );
 }

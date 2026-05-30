@@ -15,16 +15,15 @@ export const setModuleAccessRole = (id: number, role: 'all' | 'admin') =>
     fetchAPI(`/modules/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
 
 export interface User {
-    id: number;
+    id: string;
     username: string;
     password?: string; // FIX: Allows setting passwords in the form
     email?: string;
     minecraftUsername?: string;
     isAdmin: boolean;
     is2FAEnabled?: boolean;
-    publicId?: string; // FIX: Public ID
-    public_id?: string;
     createdAt?: string;
+    lastUsernameChange?: string;
     // Region access (Phase 0a.1). allRegionsAccess=true overrides the
     // explicit regions list — user sees all current and future regions.
     allRegionsAccess?: boolean;
@@ -87,11 +86,11 @@ export interface TabPermissions {
 export interface ServerInvite {
     id: number;
     serverId: number;
-    userId: number;
+    userId: string;
     username: string;
     email: string;
     permissions: TabPermissions;
-    invitedBy: number;
+    invitedBy: string;
     inviterName: string;
     createdAt: string;
 }
@@ -102,7 +101,7 @@ export interface Server {
     name: string;
     nodeId: number;
     nodeName?: string;
-    ownerId: number;
+    ownerId: string;
     ownerName?: string;
     owner?: string;
     node?: string;
@@ -190,12 +189,12 @@ export const updateModulePosition = (id: number, position: number) => fetchAPI(`
 // --- USERS ---
 export const getUsers = () => fetchAPI('/users');
 export const createUser = (data: Partial<User> & { allRegions?: boolean; regionsExplicit?: string[] }) => fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) });
-export const deleteUser = (id: number) => fetchAPI(`/users/${id}`, { method: 'DELETE' });
-export const cancelUserDeletion = (id: number) => fetchAPI(`/admin/users/${id}/cancel-deletion`, { method: 'POST' });
-export const setUserRole = (id: number, role: 'user' | 'support' | 'admin') =>
+export const deleteUser = (id: string) => fetchAPI(`/users/${id}`, { method: 'DELETE' });
+export const cancelUserDeletion = (id: string) => fetchAPI(`/admin/users/${id}/cancel-deletion`, { method: 'POST' });
+export const setUserRole = (id: string, role: 'user' | 'support' | 'admin') =>
     fetchAPI(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
 export const setUserPermissions = (
-    id: number,
+    id: string,
     data: { canDeleteServers: boolean; canChangeResources: boolean; supportTeam?: string },
 ) => fetchAPI(`/admin/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(data) });
 
@@ -210,9 +209,9 @@ export interface MaintenanceState {
 export const getMaintenance = () => fetchAPI('/maintenance');
 export const saveMaintenance = (state: MaintenanceState) =>
     fetchAPI('/admin/maintenance', { method: 'PUT', body: JSON.stringify(state) });
-export const resetUserPassword = (id: number, password: string) => fetchAPI(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ password }) });
-export const getUserRouteLimit = (id: number) => fetchAPI(`/users/${id}/route-limit`);
-export const setUserRouteLimit = (id: number, data: { mode: string; maxRoutes: number }) => fetchAPI(`/users/${id}/route-limit`, { method: 'PUT', body: JSON.stringify(data) });
+export const resetUserPassword = (id: string, password: string) => fetchAPI(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ password }) });
+export const getUserRouteLimit = (id: string) => fetchAPI(`/users/${id}/route-limit`);
+export const setUserRouteLimit = (id: string, data: { mode: string; maxRoutes: number }) => fetchAPI(`/users/${id}/route-limit`, { method: 'PUT', body: JSON.stringify(data) });
 
 // --- NODES ---
 export const getNodes = () => fetchAPI('/nodes');
@@ -372,7 +371,7 @@ export interface BackupRestore {
     id: number;
     runId: number;
     serverId: number;
-    requestedBy?: number | null;
+    requestedBy?: string | null;
     requestedAt: string;
     completedAt?: string | null;
     status: 'queued' | 'running' | 'success' | 'failed';
@@ -402,9 +401,9 @@ export const getServerMembers = (serverId: number) => fetchAPI(`/servers/${serve
 export const getInheritedMembers = (serverId: number) => fetchAPI(`/servers/${serverId}/members/inherited`);
 export const inviteServerMember = (serverId: number, username: string, permissions?: Partial<TabPermissions>) =>
     fetchAPI(`/servers/${serverId}/members`, { method: 'POST', body: JSON.stringify({ username, permissions }) });
-export const updateMemberPermissions = (serverId: number, userId: number, permissions: TabPermissions) =>
+export const updateMemberPermissions = (serverId: number, userId: string, permissions: TabPermissions) =>
     fetchAPI(`/servers/${serverId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ permissions }) });
-export const removeServerMember = (serverId: number, userId: number) =>
+export const removeServerMember = (serverId: number, userId: string) =>
     fetchAPI(`/servers/${serverId}/members/${userId}`, { method: 'DELETE' });
 
 // --- LIBRARY ---
@@ -531,7 +530,7 @@ export interface GatewayRoute {
     link?: GatewayLink;
     server_uuid?: string;
     server_id?: number;
-    owner_id?: number;
+    owner_id?: string;
     owner_name?: string;
     server_name?: string;
     link_name?: string;
@@ -766,6 +765,6 @@ export const getAdminServers = (params?: { search?: string; orphaned?: boolean }
     return fetchAPI(`/admin/servers${q.toString() ? '?' + q.toString() : ''}`);
 };
 export const getAdminDiskAnalysis = (nodeId: number): Promise<{ success: boolean } & DiskAnalysis> => fetchAPI(`/admin/nodes/${nodeId}/disk-analysis`);
-export const updateServerOwner = (serverId: number, userId: number | null) => fetchAPI(`/admin/servers/${serverId}/owner`, { method: 'PATCH', body: JSON.stringify({ userId }) });
+export const updateServerOwner = (serverId: number, userId: string | null) => fetchAPI(`/admin/servers/${serverId}/owner`, { method: 'PATCH', body: JSON.stringify({ userId }) });
 export const getAdminFiles = (nodeId: number, uuid: string, path?: string) => fetchAPI(`/admin/files?nodeId=${nodeId}&uuid=${encodeURIComponent(uuid)}${path ? `&path=${encodeURIComponent(path)}` : ''}`);
 export const deleteOrphanedFolder = (nodeId: number, uuid: string) => fetchAPI(`/admin/nodes/${nodeId}/orphan?uuid=${encodeURIComponent(uuid)}`, { method: 'DELETE' });

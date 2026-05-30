@@ -5,9 +5,9 @@ export interface ServerAuditEvent {
     serverId: number;
     region: string;
     eventType: string;
-    actorUserId?: number;
+    actorUserId?: string;
     actorName?: string;
-    targetUserId?: number;
+    targetUserId?: string;
     targetName?: string;
     metadata?: Record<string, unknown>;
     ipAddress?: string;

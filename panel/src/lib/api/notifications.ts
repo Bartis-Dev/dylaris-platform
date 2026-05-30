@@ -2,7 +2,7 @@ import { API_URL, getAuthHeader, handleResponse, handleError } from './core';
 
 export interface Notification {
     id: number;
-    userId: number;
+    userId: string;
     type: string;
     title: string;
     body: string;

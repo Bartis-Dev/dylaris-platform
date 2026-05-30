@@ -40,7 +40,7 @@ export interface AssignOrphanInput {
   node_id: number;
   uuid: string;
   name: string;
-  owner_user_id?: number;
+  owner_user_id?: string;
   new_user?: { username: string; password: string };
   memory_mb: number;
   cpu_limit: number;
