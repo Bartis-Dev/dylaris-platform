@@ -60,9 +60,6 @@ func pingWithRetry(db *sql.DB, attempts int, delay time.Duration) error {
 // NOT EXISTS, conditional inserts), so it is safe to run repeatedly —
 // both at startup and from schemaHealLoop.
 func ensureSchema(db *sql.DB) error {
-	if err := bootGuardUUIDSchema(db); err != nil {
-		return err
-	}
 	if err := createUsersTable(db); err != nil {
 		return err
 	}
@@ -1079,29 +1076,5 @@ func createServerStatsTable(db *sql.DB) error {
 		}
 	}
 
-	return nil
-}
-
-// bootGuardUUIDSchema refuses to start against a legacy INT-based users
-// schema. Phase 15 ships a UUID schema; reusing an old DB would result in
-// silent runtime breakage on the first cast in a handler. We fail loud
-// instead. Owner drops the dev DB before first deploy.
-func bootGuardUUIDSchema(db *sql.DB) error {
-	var dataType string
-	err := db.QueryRow(`SELECT data_type FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'id'`).Scan(&dataType)
-	if err == sql.ErrNoRows {
-		// Fresh DB. Nothing exists yet; downstream ensureSchema will CREATE.
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("boot-guard probe failed: %w", err)
-	}
-	if dataType == "integer" {
-		return fmt.Errorf("FATAL: users.id is integer; this build requires UUID schema — drop the database and restart Core")
-	}
-	if dataType != "uuid" {
-		return fmt.Errorf("FATAL: users.id has unexpected type %q (expected uuid)", dataType)
-	}
 	return nil
 }
