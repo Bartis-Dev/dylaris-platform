@@ -30,6 +30,11 @@ type User struct {
 	CanChangeResources bool   `json:"canChangeResources"`
 	SupportTeam        string `json:"supportTeam,omitempty"`
 
+	// Phase 16 — per-user feature gate for the Modpack Builder. Default TRUE.
+	// Admin can flip this to revoke modpack-authoring rights without disabling
+	// the feature globally.
+	CanCreateModpacks bool `json:"canCreateModpacks"`
+
 	// Verification / lifecycle (Phase 0a.1, used in later sub-phases)
 	EmailVerifiedAt          *time.Time `json:"emailVerifiedAt,omitempty"`
 	EmailVerificationToken   string     `json:"-"`

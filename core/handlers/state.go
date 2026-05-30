@@ -29,4 +29,8 @@ type AppState struct {
 	// Redis Pub/Sub so connected panels refresh without polling. Nil-safe:
 	// publishers handle a nil pointer / nil Redis gracefully.
 	Events *services.SystemEventsPublisher
+
+	// FeatureFlags (Phase 16) is the cached platform feature toggle reader.
+	// Read by the modpack route gates; flipped via /admin/settings/modpacks.
+	FeatureFlags *services.FeatureFlags
 }

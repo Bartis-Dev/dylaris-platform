@@ -68,6 +68,7 @@ func main() {
 		GRPCRegistry:        grpcRegistry,
 		FrontendURL:         cfg.FrontendURL,
 		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
+		FeatureFlags:        services.NewFeatureFlags(pgStore),
 	}
 
 	redisClient, err := database.InitRedis(cfg)
@@ -328,29 +329,29 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Delete)).Methods("DELETE")
 
 	// --- Modrinth PAT (Phase 14) ---
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(modrinthPATHandler.Status)).Methods("GET")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(modrinthPATHandler.Set)).Methods("PUT")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(modrinthPATHandler.Clear)).Methods("DELETE")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set)))).Methods("PUT")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear)))).Methods("DELETE")
 	// --- Modpacks CRUD (Phase 14.1) ---
-	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(modpacksHandler.List)).Methods("GET")
-	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(modpacksHandler.Create)).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.Get)).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.Update)).Methods("PATCH")
-	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.Delete)).Methods("DELETE")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(modpacksHandler.ListVersions)).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(modpacksHandler.CreateVersion)).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.DeleteVersion)).Methods("DELETE")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(modpacksHandler.ListMods)).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(modpacksHandler.AddMod)).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(modpacksHandler.RemoveMod)).Methods("DELETE")
+	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.List))).Methods("GET")
+	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Create)))).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.Get))).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Update)))).Methods("PATCH")
+	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Delete)))).Methods("DELETE")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ListVersions))).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.CreateVersion)))).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.DeleteVersion)))).Methods("DELETE")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ListMods))).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.AddMod)))).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.RemoveMod)))).Methods("DELETE")
 	// .mrpack export — query-token auth so it can be opened via window.open
 	// without setting custom headers.
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mrpack", authHandler.AuthMiddleware(modpacksHandler.ExportMrpack)).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mrpack", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ExportMrpack))).Methods("GET")
 	// --- Modrinth publish + collaborators (Phase 14.3) ---
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/publish", authHandler.AuthMiddleware(modpacksPublishHandler.Publish)).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(collaboratorsHandler.List)).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(collaboratorsHandler.Add)).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(collaboratorsHandler.Remove)).Methods("DELETE")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksPublishHandler.Publish)))).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(collaboratorsHandler.List))).Methods("GET")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Add)))).Methods("POST")
+	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Remove)))).Methods("DELETE")
 	// --- Phase 15 — Username history + account policy ---
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")

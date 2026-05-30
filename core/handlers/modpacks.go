@@ -266,6 +266,22 @@ func (h *ModpacksHandler) DeleteVersion(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	ver, err := h.state.Store.GetModpackVersion(versionID)
+	if err != nil || ver == nil {
+		sendJSONError(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if ver.Frozen {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   false,
+			"error":     "version_frozen",
+			"versionId": versionID,
+			"message":   "Version is frozen — create a new version to change it.",
+		})
+		return
+	}
 	if err := h.state.Store.DeleteModpackVersion(versionID, modpackID); err != nil {
 		sendJSONError(w, "Failed to delete version", http.StatusInternalServerError)
 		return
@@ -308,6 +324,22 @@ func (h *ModpacksHandler) AddMod(w http.ResponseWriter, r *http.Request) {
 	versionID, _ := strconv.Atoi(mux.Vars(r)["versionId"])
 	if _, ok := h.ownsModpack(r, modpackID); !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	ver, err := h.state.Store.GetModpackVersion(versionID)
+	if err != nil || ver == nil {
+		sendJSONError(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if ver.Frozen {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   false,
+			"error":     "version_frozen",
+			"versionId": versionID,
+			"message":   "Version is frozen — create a new version to change it.",
+		})
 		return
 	}
 	var req modAddRequest
@@ -366,6 +398,22 @@ func (h *ModpacksHandler) RemoveMod(w http.ResponseWriter, r *http.Request) {
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
 	if _, ok := h.ownsModpack(r, modpackID); !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	ver, err := h.state.Store.GetModpackVersion(versionID)
+	if err != nil || ver == nil {
+		sendJSONError(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if ver.Frozen {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   false,
+			"error":     "version_frozen",
+			"versionId": versionID,
+			"message":   "Version is frozen — create a new version to change it.",
+		})
 		return
 	}
 	if err := h.state.Store.DeleteModpackMod(modID, versionID); err != nil {

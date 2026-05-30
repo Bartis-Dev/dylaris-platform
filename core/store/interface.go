@@ -368,6 +368,9 @@ type Store interface {
 	ListUsernameHistory(userID string) ([]models.UsernameHistory, error)
 	GetUserAccountPolicy() (allowChange bool, cooldownDays int, err error)
 	SetUserAccountPolicy(allowChange bool, cooldownDays int) error
+
+	// --- Phase 16 — Per-user feature flag ---
+	SetUserCanCreateModpacks(userID string, can bool) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job

@@ -110,7 +110,7 @@ func (h *ModpacksPublishHandler) Publish(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	mrpack, err := buildMrpackBytes(pack, version, mods)
+	mrpack, err := h.state.persistMrpackIfBetaOrRelease(pack, version, mods)
 	if err != nil {
 		sendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -168,7 +168,6 @@ func (h *ModpacksPublishHandler) Publish(w http.ResponseWriter, r *http.Request)
 	version.ModrinthVersionID = created.ID
 	version.Channel = channel
 	version.PublishedAt = &now
-	version.FileSize = int64(len(mrpack))
 	if err := h.state.Store.UpdateModpackVersion(version); err != nil {
 		sendJSONError(w, "Published "+created.ID+" but local stamp failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -213,23 +212,10 @@ func (h *ModpacksPublishHandler) createProject(r *http.Request, mc *services.Mod
 // buildMrpackBytes is the in-memory counterpart to ExportMrpack's streaming
 // download. The logic mirrors that handler so a publish produces the exact
 // same bytes a user would have downloaded via the Export button.
-func buildMrpackBytes(pack *models.Modpack, version *models.ModpackVersion, mods []models.ModpackMod) ([]byte, error) {
-	idx := buildMrpackIndex(pack, version, mods)
-	indexBytes, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return nil, err
-	}
+func buildMrpackBytes(pack *models.Modpack, version *models.ModpackVersion, mods []models.ModpackMod, owner *models.User) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	zw := zip.NewWriter(buf)
-	entry, err := zw.CreateHeader(&zip.FileHeader{
-		Name:     "modrinth.index.json",
-		Method:   zip.Deflate,
-		Modified: time.Now(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if _, err := entry.Write(indexBytes); err != nil {
+	if err := writeMrpackZip(zw, pack, version, mods, owner); err != nil {
 		return nil, err
 	}
 	if err := zw.Close(); err != nil {

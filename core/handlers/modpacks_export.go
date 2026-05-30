@@ -64,37 +64,111 @@ func (h *ModpacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idx := buildMrpackIndex(pack, version, mods)
-	indexBytes, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		sendJSONError(w, "Failed to encode index", http.StatusInternalServerError)
-		return
-	}
-
-	// Set headers BEFORE writing anything to the response.
 	filename := fmt.Sprintf("%s-%s.mrpack", pack.Slug, version.VersionString)
 	w.Header().Set("Content-Type", "application/x-modrinth-modpack+zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeAttachmentName(filename)+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	zw := zip.NewWriter(w)
-	defer zw.Close()
+	// Drafts stream — they aren't persisted.
+	if version.Channel == models.ModpackChannelDraft {
+		owner, _ := h.state.Store.GetUserByID(pack.OwnerID)
+		zw := zip.NewWriter(w)
+		defer zw.Close()
+		_ = writeMrpackZip(zw, pack, version, mods, owner)
+		return
+	}
 
+	// Beta / release: canonical bytes from storage (lazy-persist first time).
+	data, err := h.state.persistMrpackIfBetaOrRelease(pack, version, mods)
+	if err != nil {
+		sendJSONError(w, "Failed to load .mrpack: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+// writeMrpackZip writes both the Modrinth modrinth.index.json AND the Dylaris
+// dylaris/dylaris-meta.json entries into zw. The meta entry is informational
+// for future Dylaris-side import (re-derive ownership / channel) and is
+// ignored by stock Modrinth tooling.
+func writeMrpackZip(zw *zip.Writer, pack *models.Modpack, version *models.ModpackVersion, mods []models.ModpackMod, owner *models.User) error {
+	idx := buildMrpackIndex(pack, version, mods)
+	indexBytes, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		return err
+	}
 	indexEntry, err := zw.CreateHeader(&zip.FileHeader{
 		Name:     "modrinth.index.json",
 		Method:   zip.Deflate,
 		Modified: time.Now(),
 	})
 	if err != nil {
-		return
+		return err
 	}
 	if _, err := indexEntry.Write(indexBytes); err != nil {
-		return
+		return err
 	}
 
-	// Per the .mrpack spec, overrides/ is optional. V1 we don't persist
-	// user-supplied config files yet so the zip contains only the index.
-	// P14.3 will add overrides storage + include them here.
+	meta := buildDylarisMeta(pack, version, owner)
+	metaBytes, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	metaEntry, err := zw.CreateHeader(&zip.FileHeader{
+		Name:     "dylaris/dylaris-meta.json",
+		Method:   zip.Deflate,
+		Modified: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := metaEntry.Write(metaBytes); err != nil {
+		return err
+	}
+	return nil
+}
+
+type dylarisMeta struct {
+	FormatVersion int                `json:"formatVersion"`
+	Dylaris       dylarisMetaPayload `json:"dylaris"`
+}
+
+type dylarisMetaPayload struct {
+	ModpackID          int    `json:"modpackId"`
+	OwnerUserID        string `json:"ownerUserId"`
+	OwnerUsername      string `json:"ownerUsername"`
+	ModpackSlug        string `json:"modpackSlug"`
+	Channel            string `json:"channel"`
+	ModrinthVisibility string `json:"modrinthVisibility"`
+	CreatedAt          string `json:"createdAt"`
+	PublishedAt        string `json:"publishedAt,omitempty"`
+	PanelOrigin        string `json:"panelOrigin"`
+}
+
+func buildDylarisMeta(pack *models.Modpack, version *models.ModpackVersion, owner *models.User) dylarisMeta {
+	username := ""
+	if owner != nil {
+		username = owner.Username
+	}
+	published := ""
+	if version.PublishedAt != nil {
+		published = version.PublishedAt.Format(time.RFC3339)
+	}
+	return dylarisMeta{
+		FormatVersion: 1,
+		Dylaris: dylarisMetaPayload{
+			ModpackID:          pack.ID,
+			OwnerUserID:        pack.OwnerID,
+			OwnerUsername:      username,
+			ModpackSlug:        pack.Slug,
+			Channel:            version.Channel,
+			ModrinthVisibility: pack.ModrinthVisibility,
+			CreatedAt:          version.CreatedAt.Format(time.RFC3339),
+			PublishedAt:        published,
+			PanelOrigin:        "dylaris",
+		},
+	}
 }
 
 func buildMrpackIndex(pack *models.Modpack, version *models.ModpackVersion, mods []models.ModpackMod) mrpackIndexOut {

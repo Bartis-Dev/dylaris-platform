@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"dylaris-core/models"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -46,7 +47,8 @@ const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(mi
 	COALESCE(can_delete_servers, FALSE),
 	COALESCE(can_change_resources, FALSE),
 	COALESCE(support_team, ''),
-	last_username_change`
+	last_username_change,
+	COALESCE(can_create_modpacks, TRUE)`
 
 func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 	var (
@@ -63,7 +65,8 @@ func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 		&lastLoginAt, &u.DeletionStatus,
 		&deletionWarningSentAt, &deletionScheduledAt,
 		&u.Role, &u.CanDeleteServers, &u.CanChangeResources, &u.SupportTeam,
-		&lastUsernameChange)
+		&lastUsernameChange,
+		&u.CanCreateModpacks)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +121,10 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 	// explicitly avoids relying on the schema default at all.
 	// Phase 15 (Wave A): users.id is UUID — let the DB DEFAULT gen_random_uuid()
 	// fire by omitting id from the column list; RETURNING id pulls the value back.
+	// can_create_modpacks is intentionally not in the column list — the
+	// DB DEFAULT TRUE from applyPhase16Schema covers new users so callers
+	// using the zero-value model still get the right default. Admin flips
+	// happen through SetUserCanCreateModpacks.
 	query := `INSERT INTO users
 		(username, password, email, minecraft_username, is_admin, is_2fa_enabled,
 		 totp_secret, totp_backup_codes, permissions)
@@ -132,8 +139,8 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 // rename flows through RenameUser instead; this method is for non-username
 // field updates.
 func (s *PostgresStore) UpdateUser(u *models.User) error {
-	query := `UPDATE users SET username = $1, password = $2, email = $3, minecraft_username = $4, is_admin = $5, is_2fa_enabled = $6, permissions = $7 WHERE id = $8`
-	_, err := s.db.Exec(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.ID)
+	query := `UPDATE users SET username = $1, password = $2, email = $3, minecraft_username = $4, is_admin = $5, is_2fa_enabled = $6, permissions = $7, can_create_modpacks = $8 WHERE id = $9`
+	_, err := s.db.Exec(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.CanCreateModpacks, u.ID)
 	return err
 }
 
@@ -230,6 +237,21 @@ func (s *PostgresStore) SetUserPermissionFlags(userID string, canDeleteServers, 
 		canDeleteServers, canChangeResources, team, userID,
 	)
 	return err
+}
+
+// SetUserCanCreateModpacks flips the per-user modpack-author gate. Admin-only
+// call site: used by the user-edit form to revoke modpack-authoring rights
+// without disabling the feature globally. Returns "user not found" when no
+// row was touched, so the handler can return a clean 404.
+func (s *PostgresStore) SetUserCanCreateModpacks(userID string, can bool) error {
+	res, err := s.db.Exec(`UPDATE users SET can_create_modpacks = $1 WHERE id = $2`, can, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
 }
 
 // ==========================================

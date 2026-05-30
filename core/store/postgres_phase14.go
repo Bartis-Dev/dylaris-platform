@@ -97,13 +97,15 @@ func (s *PostgresStore) ListModpacksByOwner(ownerID string) ([]models.Modpack, e
 // --- Modpack Versions ---
 
 const modpackVersionCols = `id, modpack_id, version_string, channel, changelog,
-		mrpack_storage_path, file_size, modrinth_version_id, created_at, published_at`
+		mrpack_storage_key, mrpack_sha256, frozen, file_size, modrinth_version_id,
+		created_at, published_at`
 
 func scanModpackVersion(row interface{ Scan(...interface{}) error }) (*models.ModpackVersion, error) {
 	var v models.ModpackVersion
 	var publishedAt sql.NullTime
 	if err := row.Scan(&v.ID, &v.ModpackID, &v.VersionString, &v.Channel,
-		&v.Changelog, &v.MrpackStoragePath, &v.FileSize, &v.ModrinthVersionID,
+		&v.Changelog, &v.MrpackStorageKey, &v.MrpackSHA256, &v.Frozen,
+		&v.FileSize, &v.ModrinthVersionID,
 		&v.CreatedAt, &publishedAt); err != nil {
 		return nil, err
 	}
@@ -125,12 +127,13 @@ func (s *PostgresStore) CreateModpackVersion(v *models.ModpackVersion) (int, err
 	}
 	var id int
 	err := s.db.QueryRow(`INSERT INTO modpack_versions
-		(modpack_id, version_string, channel, changelog, mrpack_storage_path,
-		 file_size, modrinth_version_id, published_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		(modpack_id, version_string, channel, changelog, mrpack_storage_key,
+		 mrpack_sha256, frozen, file_size, modrinth_version_id, published_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING id`,
 		v.ModpackID, v.VersionString, channel, v.Changelog,
-		v.MrpackStoragePath, v.FileSize, v.ModrinthVersionID, publishedAt,
+		v.MrpackStorageKey, v.MrpackSHA256, v.Frozen, v.FileSize,
+		v.ModrinthVersionID, publishedAt,
 	).Scan(&id)
 	return id, err
 }
@@ -141,11 +144,12 @@ func (s *PostgresStore) UpdateModpackVersion(v *models.ModpackVersion) error {
 		publishedAt = *v.PublishedAt
 	}
 	res, err := s.db.Exec(`UPDATE modpack_versions SET
-		version_string=$2, channel=$3, changelog=$4, mrpack_storage_path=$5,
-		file_size=$6, modrinth_version_id=$7, published_at=$8
+		version_string=$2, channel=$3, changelog=$4, mrpack_storage_key=$5,
+		mrpack_sha256=$6, frozen=$7, file_size=$8, modrinth_version_id=$9,
+		published_at=$10
 		WHERE id=$1`,
-		v.ID, v.VersionString, v.Channel, v.Changelog, v.MrpackStoragePath,
-		v.FileSize, v.ModrinthVersionID, publishedAt)
+		v.ID, v.VersionString, v.Channel, v.Changelog, v.MrpackStorageKey,
+		v.MrpackSHA256, v.Frozen, v.FileSize, v.ModrinthVersionID, publishedAt)
 	if err != nil {
 		return err
 	}

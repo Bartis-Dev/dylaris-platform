@@ -34,7 +34,9 @@ type ModpackVersion struct {
 	VersionString     string     `json:"versionString"`
 	Channel           string     `json:"channel"`
 	Changelog         string     `json:"changelog"`
-	MrpackStoragePath string     `json:"-"`
+	MrpackStorageKey  string     `json:"mrpackStorageKey"`
+	MrpackSHA256      string     `json:"mrpackSHA256"`
+	Frozen            bool       `json:"frozen"`
 	FileSize          int64      `json:"fileSize"`
 	ModrinthVersionID string     `json:"modrinthVersionId"`
 	CreatedAt         time.Time  `json:"createdAt"`
