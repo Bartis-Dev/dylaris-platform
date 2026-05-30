@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
     Package, ArrowLeft, Plus, Trash2, Search, ExternalLink, RefreshCw,
-    CircleCheck, CircleAlert, X, Download, Box, AlertTriangle, Rocket,
+    CircleCheck, CircleAlert, X, Download, Box, AlertTriangle, Rocket, Lock,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -18,6 +18,7 @@ import {
 } from '@/lib/api/modrinth';
 import { publishModpackVersion } from '@/lib/api/modpackPublish';
 import { API_URL } from '@/lib/api/core';
+import { useAppData } from '@/lib/AppDataContext';
 
 // Phase 14.2 — Modpack version builder. Two columns:
 //   left:  current mods in this version (remove inline)
@@ -29,6 +30,8 @@ export default function ModpackVersionBuilderPage() {
     const params = useParams();
     const modpackId = Number(params?.id);
     const versionId = Number(params?.versionId);
+    const { featureFlags } = useAppData();
+    const modpacksDisabled = !featureFlags.modpacks;
 
     const [pack, setPack] = useState<Modpack | null>(null);
     const [mods, setMods] = useState<ModpackMod[]>([]);
@@ -165,6 +168,12 @@ export default function ModpackVersionBuilderPage() {
         window.open(url, '_blank');
     };
 
+    // Combined gate for mod-list mutations + publish/export. Frozen versions
+    // are immutable by design (Wave A pins the persisted .mrpack to a content
+    // hash); platform-disabled is the admin kill-switch.
+    const isFrozen = !!version?.frozen;
+    const disabled = modpacksDisabled || isFrozen;
+
     if (loading) return <main className="flex-1 p-6 text-sm text-(--base-06)">Loading…</main>;
     if (!pack) {
         return (
@@ -185,38 +194,68 @@ export default function ModpackVersionBuilderPage() {
                     <ArrowLeft size={11} />
                     {pack.name}
                 </Link>
+                {modpacksDisabled && (
+                    <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
+                        <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
+                        <div className="text-xs text-(--base-09)">
+                            Modpack authoring is disabled by the platform admin.
+                            Existing modpacks remain readable and downloadable.
+                        </div>
+                    </div>
+                )}
                 <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
                         <Package size={18} className="text-(--accent-light)" />
                     </div>
                     <div className="min-w-0 flex-1">
-                        <h1 className="text-lg font-display font-bold text-(--base-09)">
+                        <h1 className="text-lg font-display font-bold text-(--base-09) inline-flex items-center gap-2">
                             Version Builder
+                            {version?.versionString && (
+                                <span className="font-mono text-sm text-(--base-07) font-normal">
+                                    {version.versionString}
+                                </span>
+                            )}
+                            {isFrozen && (
+                                <Lock
+                                    size={14}
+                                    className="text-(--accent-light)"
+                                    aria-label="Frozen"
+                                />
+                            )}
                         </h1>
                         <p className="text-xs text-(--base-06)">
                             Search filtered to <code className="font-mono">{pack.loader || 'any loader'}</code> ·{' '}
                             <code className="font-mono">MC {pack.mcVersion || 'any'}</code>
                         </p>
+                        {isFrozen && (
+                            <p className="text-xs text-(--base-06) italic mt-1">
+                                This version is frozen — it was persisted to storage on first publish/export.
+                                Create a new version to change its mod list.
+                            </p>
+                        )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {/* Export is a read on the persisted .mrpack — stays available even
+                            when the version is frozen. It only gets gated by modpacksDisabled
+                            so admins can still re-download in either state. */}
                         <button onClick={handleExportMrpack} className="btn btn-secondary btn-sm" disabled={mods.length === 0}>
                             <Download size={12} />
                             Export .mrpack
                         </button>
                         <button
                             onClick={() => handlePublish('beta')}
-                            className="btn btn-secondary btn-sm"
-                            disabled={mods.length === 0 || publishing !== null}
-                            title="Publish to Modrinth as a beta version"
+                            className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled={mods.length === 0 || publishing !== null || modpacksDisabled}
+                            title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Publish to Modrinth as a beta version'}
                         >
                             <Rocket size={12} />
                             {publishing === 'beta' ? 'Publishing…' : 'Publish as Beta'}
                         </button>
                         <button
                             onClick={() => handlePublish('release')}
-                            className="btn btn-primary btn-sm"
-                            disabled={mods.length === 0 || publishing !== null}
-                            title="Publish to Modrinth as a release version"
+                            className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled={mods.length === 0 || publishing !== null || modpacksDisabled}
+                            title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Publish to Modrinth as a release version'}
                         >
                             <Rocket size={12} />
                             {publishing === 'release' ? 'Publishing…' : 'Publish as Release'}
@@ -267,7 +306,12 @@ export default function ModpackVersionBuilderPage() {
                                     {!m.required && (
                                         <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-06)">optional</span>
                                     )}
-                                    <button onClick={() => handleRemove(m)} className="btn btn-secondary btn-sm shrink-0" title="Remove">
+                                    <button
+                                        onClick={() => handleRemove(m)}
+                                        className="btn btn-secondary btn-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                        title={disabled ? (isFrozen ? 'Version is frozen' : 'Modpack authoring is disabled') : 'Remove'}
+                                        disabled={disabled}
+                                    >
                                         <Trash2 size={11} className="text-(--error)" />
                                     </button>
                                 </article>
@@ -342,7 +386,9 @@ export default function ModpackVersionBuilderPage() {
                                                     <button
                                                         key={v.id}
                                                         onClick={() => handleAddMod(hit, v)}
-                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left"
+                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-(--base-04) disabled:hover:bg-transparent"
+                                                        disabled={disabled}
+                                                        title={disabled ? (isFrozen ? 'Version is frozen — create a new version to modify mods' : 'Modpack authoring is disabled') : undefined}
                                                     >
                                                         <Plus size={10} className="text-(--accent-light) shrink-0" />
                                                         <div className="min-w-0 flex-1">

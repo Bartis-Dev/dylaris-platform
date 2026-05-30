@@ -15,6 +15,7 @@ import {
 import {
     listCollaborators, addCollaborator, removeCollaborator, type Collaborator,
 } from '@/lib/api/modpackPublish';
+import { useAppData } from '@/lib/AppDataContext';
 
 // Phase 14.1 — Modpack detail. Shows pack metadata + version history with
 // channel badges (draft/beta/release). Version → mods builder UI lands in
@@ -30,6 +31,8 @@ const CHANNEL_STYLES: Record<string, string> = {
 export default function ModpackDetailPage() {
     const params = useParams();
     const modpackId = Number(params?.id);
+    const { featureFlags } = useAppData();
+    const modpacksDisabled = !featureFlags.modpacks;
     const [pack, setPack] = useState<Modpack | null>(null);
     const [versions, setVersions] = useState<ModpackVersion[]>([]);
     const [loading, setLoading] = useState(true);
@@ -149,6 +152,16 @@ export default function ModpackDetailPage() {
                 All modpacks
             </Link>
 
+            {modpacksDisabled && (
+                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
+                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
+                    <div className="text-xs text-(--base-09)">
+                        Modpack authoring is disabled by the platform admin.
+                        Existing modpacks remain readable and downloadable.
+                    </div>
+                </div>
+            )}
+
             <header className="flex items-start gap-3 mb-4">
                 <div className="w-12 h-12 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
                     <Package size={20} className="text-(--accent-light)" />
@@ -192,7 +205,9 @@ export default function ModpackDetailPage() {
                         </button>
                         <button
                             onClick={() => setCreatingVersion({ versionString: '', channel: 'draft', changelog: '' })}
-                            className="btn btn-primary btn-sm"
+                            className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled={modpacksDisabled}
+                            title={modpacksDisabled ? 'Modpack authoring is disabled' : undefined}
                         >
                             <Plus size={12} />
                             New version
@@ -228,7 +243,12 @@ export default function ModpackDetailPage() {
                                     Open
                                     <ChevronRight size={12} />
                                 </Link>
-                                <button onClick={() => setDeletePrompt(v)} className="btn btn-secondary btn-sm">
+                                <button
+                                    onClick={() => setDeletePrompt(v)}
+                                    className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                    disabled={modpacksDisabled}
+                                    title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Delete version'}
+                                >
                                     <Trash2 size={12} className="text-(--error)" />
                                 </button>
                             </article>
@@ -261,8 +281,9 @@ export default function ModpackDetailPage() {
                             />
                             <button
                                 onClick={handleAddCollab}
-                                className="btn btn-primary btn-sm"
-                                disabled={collabBusy || !addCollabName.trim()}
+                                className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                disabled={collabBusy || !addCollabName.trim() || modpacksDisabled}
+                                title={modpacksDisabled ? 'Modpack authoring is disabled' : undefined}
                             >
                                 <Plus size={12} />
                                 Invite
@@ -289,8 +310,9 @@ export default function ModpackDetailPage() {
                                         </div>
                                         <button
                                             onClick={() => handleRemoveCollab(c)}
-                                            className="btn btn-secondary btn-sm"
-                                            disabled={collabBusy}
+                                            className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                            disabled={collabBusy || modpacksDisabled}
+                                            title={modpacksDisabled ? 'Modpack authoring is disabled' : undefined}
                                         >
                                             <Trash2 size={11} className="text-(--error)" />
                                         </button>

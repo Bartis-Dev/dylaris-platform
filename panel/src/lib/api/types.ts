@@ -42,6 +42,9 @@ export interface User {
     canDeleteServers?: boolean;
     canChangeResources?: boolean;
     supportTeam?: string;
+    // Phase 16 — per-user modpack authoring gate. Optional for forward-compat
+    // with older API responses; the Wave A backend always populates it.
+    canCreateModpacks?: boolean;
 }
 
 export interface Node {

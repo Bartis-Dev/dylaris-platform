@@ -29,6 +29,15 @@ export interface ModpackVersion {
     modrinthVersionId: string;
     createdAt: string;
     publishedAt?: string;
+    // Phase 16 / Wave A — version becomes frozen after the first publish or
+    // export. Once frozen, the mods list is immutable; the only way to "edit"
+    // is to create a new version.
+    frozen?: boolean;
+    // Storage key under the configured provider root. Empty until the version
+    // is first persisted (publish or .mrpack export).
+    mrpackStorageKey?: string;
+    // SHA-256 of the persisted .mrpack — set at the same moment frozen flips.
+    mrpackSHA256?: string;
 }
 
 export interface ModpackMod {

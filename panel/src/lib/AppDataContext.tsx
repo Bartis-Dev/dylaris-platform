@@ -8,6 +8,7 @@ import {
 import { listRegions, Region } from '@/lib/api/regions';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { systemEvents } from '@/lib/systemEvents';
+import { getSystemFeatures, FeatureFlags } from '@/lib/api/featureFlags';
 
 interface CoreInfo {
     region: string;
@@ -29,6 +30,12 @@ interface AppData {
     refreshSettings: () => Promise<void>;
     gatewayEnabled: boolean;
     libraryEnabled: boolean;
+    // Phase 16 — platform-wide feature toggles. Loaded on boot from
+    // /api/system/features; refreshed when features.changed SSE fires.
+    // `modpacks` defaults to true on transport failure so the UI doesn't go
+    // dark when the network blips.
+    featureFlags: FeatureFlags;
+    refreshFeatureFlags: () => Promise<void>;
     // Phase 6 — regions + connected-Core. Loaded once at boot and cached so
     // child components can call useAppData() without each issuing their own
     // fetch. Refreshes happen lazily on visible state changes (Settings →
@@ -62,6 +69,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
     const [regions, setRegions] = useState<Region[]>([]);
     const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
+    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true });
     const [ready, setReady] = useState(false);
 
     const refreshUser = useCallback(async () => {
@@ -83,6 +91,11 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const refreshRegions = useCallback(async () => {
         const res = await listRegions();
         if (res.success && Array.isArray(res.regions)) setRegions(res.regions);
+    }, []);
+
+    const refreshFeatureFlags = useCallback(async () => {
+        const res = await getSystemFeatures();
+        if (res.success && res.features) setFeatureFlags(res.features);
     }, []);
 
     // /api/system/core-info — public on the auth surface, returns the region
@@ -120,7 +133,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             const profile = await getProfile();
             if (!profile) { onUnauthenticated(); return; }
             setUser(profile);
-            await Promise.all([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo()]);
+            await Promise.all([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo(), refreshFeatureFlags()]);
             setReady(true);
         };
         init();
@@ -139,7 +152,8 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             systemEvents.on('servers.changed', () => { refreshServers(); }),
             systemEvents.on('regions.changed', () => { refreshRegions(); }),
             systemEvents.on('modules.changed', () => { refreshModules(); }),
-            systemEvents.on('features.changed', () => { refreshSettings(); }),
+            systemEvents.on('features.changed', () => { refreshSettings(); refreshFeatureFlags(); }),
+            systemEvents.on('modpack_settings.changed', () => { refreshFeatureFlags(); }),
             // maintenance state is consumed by MaintenanceBanner via its own
             // fetcher; we re-broadcast through window event so it (and any
             // other isolated subscriber) can react without threading a
@@ -154,7 +168,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             unsubs.forEach(u => u());
             systemEvents.stop();
         };
-    }, [ready, refreshServers, refreshRegions, refreshModules, refreshSettings]);
+    }, [ready, refreshServers, refreshRegions, refreshModules, refreshSettings, refreshFeatureFlags]);
 
     // Gateway is no longer a standalone module — its on/off lives in the
     // Features tab as a dedicated `gatewayEnabled` flag (separate from the
@@ -168,6 +182,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         ready,
         refreshUser, refreshModules, refreshServers, refreshSettings,
         gatewayEnabled, libraryEnabled,
+        featureFlags, refreshFeatureFlags,
         regions, coreInfo, refreshRegions,
     };
 

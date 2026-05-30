@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
 import { getUserRegions, setUserRegions } from '@/lib/api/regions';
+import { setUserModpackFlag } from '@/lib/api/modpackSettings';
 import {
     getAccountPolicy,
     setAccountPolicy,
@@ -12,7 +13,7 @@ import {
     type UsernameHistoryEntry,
 } from '@/lib/api/accountPolicy';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon } from 'lucide-react';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package } from 'lucide-react';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -59,6 +60,12 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [editSupportTeam, setEditSupportTeam] = useState('');
     const [editRolePermsSaving, setEditRolePermsSaving] = useState(false);
 
+    // Phase 16 / Wave G — per-user modpack-authoring flag. Drives the
+    // Modpacks UI gate + 503 from /api/me/modpacks for non-admins. Default
+    // true so accounts older than the column flip aren't surprised off.
+    const [editCanCreateModpacks, setEditCanCreateModpacks] = useState(true);
+    const [modpackFlagSaving, setModpackFlagSaving] = useState(false);
+
     const handleSaveRoleAndPermissions = async () => {
         if (!settingsUser) return;
         setEditRolePermsSaving(true);
@@ -90,6 +97,20 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             canChangeResources: editCanChangeResources,
             supportTeam: editSupportTeam,
         });
+        loadUsers();
+    };
+
+    const handleSaveModpackFlag = async () => {
+        if (!settingsUser) return;
+        setModpackFlagSaving(true);
+        const res = await setUserModpackFlag(settingsUser.id, editCanCreateModpacks);
+        setModpackFlagSaving(false);
+        if (!res.success) {
+            showToast(res.message || 'Save failed', false);
+            return;
+        }
+        showToast('Modpack flag updated');
+        setSettingsUser({ ...settingsUser, canCreateModpacks: editCanCreateModpacks });
         loadUsers();
     };
 
@@ -195,6 +216,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         setEditCanDeleteServers(!!user.canDeleteServers);
         setEditCanChangeResources(!!user.canChangeResources);
         setEditSupportTeam(user.supportTeam || '');
+        setEditCanCreateModpacks(user.canCreateModpacks ?? true);
     };
 
     const handleResetPassword = async () => {
@@ -543,6 +565,48 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     {editRolePermsSaving ? 'Saving…' : 'Save role &amp; permissions'}
                                                 </button>
                                             </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Phase 16 — modpack-authoring flag. Admins always pass the
+                                        backend check regardless of this toggle (handlers short-circuit
+                                        on isAdmin), so the help-text says so explicitly. */}
+                                    <div>
+                                        <h4 className="mono-label mb-3">Modpack Authoring</h4>
+                                        <div className="rounded-md bg-(--base-02) border border-(--base-03) p-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="flex items-start gap-3 min-w-0">
+                                                    <Package size={16} className="text-(--accent-light) mt-0.5 shrink-0" />
+                                                    <div className="min-w-0">
+                                                        <div className="font-medium text-sm text-(--base-09)">Can create modpacks</div>
+                                                        <div className="text-xs text-(--base-06) mt-0.5">
+                                                            When off, this user cannot create or edit modpacks. Admin bypass applies.
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    role="switch"
+                                                    aria-checked={editCanCreateModpacks}
+                                                    onClick={() => setEditCanCreateModpacks(v => !v)}
+                                                    className={`toggle-track ${editCanCreateModpacks ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                                    disabled={modpackFlagSaving}
+                                                >
+                                                    <span className={`toggle-knob ${editCanCreateModpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                                </button>
+                                            </div>
+                                            {editCanCreateModpacks !== (settingsUser?.canCreateModpacks ?? true) && (
+                                                <div className="mt-3 flex justify-end">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSaveModpackFlag}
+                                                        disabled={modpackFlagSaving}
+                                                        className="btn btn-primary btn-sm disabled:opacity-40"
+                                                    >
+                                                        {modpackFlagSaving ? 'Saving…' : 'Save modpack flag'}
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 

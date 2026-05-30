@@ -16,7 +16,7 @@ import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager'
 import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon } from 'lucide-react';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready } = useAppData();
+    const { user, ready, featureFlags } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -121,12 +121,17 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 >
                                     <Package size={20} className="mr-3" /> Modrinth
                                 </GuardedLink>
-                                <GuardedLink
-                                    href="/modpacks"
-                                    className="dropdown-item"
-                                >
-                                    <Package size={20} className="mr-3" /> My Modpacks
-                                </GuardedLink>
+                                {/* Phase 16 — hide the Modpacks entry for non-admins when the
+                                    feature is killed platform-wide. Admins keep the link so they
+                                    can still inspect / clean up while the toggle is off. */}
+                                {(featureFlags.modpacks || user.isAdmin) && (
+                                    <GuardedLink
+                                        href="/modpacks"
+                                        className="dropdown-item"
+                                    >
+                                        <Package size={20} className="mr-3" /> My Modpacks
+                                    </GuardedLink>
+                                )}
                                 <GuardedLink
                                     href="/account/username-history"
                                     className="dropdown-item"

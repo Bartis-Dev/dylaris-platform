@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import { listModpacks, createModpack, deleteModpack, type Modpack } from '@/lib/api/modpacks';
+import { useAppData } from '@/lib/AppDataContext';
 
 // Phase 14 — top-level Modpacks list. Per-user authored modpacks. The
 // builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -16,6 +17,8 @@ import { listModpacks, createModpack, deleteModpack, type Modpack } from '@/lib/
 const LOADER_OPTIONS = ['fabric', 'forge', 'quilt', 'neoforge', 'paper', 'spigot'];
 
 export default function ModpacksListPage() {
+    const { featureFlags } = useAppData();
+    const modpacksDisabled = !featureFlags.modpacks;
     const [packs, setPacks] = useState<Modpack[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState<{
@@ -84,13 +87,25 @@ export default function ModpacksListPage() {
                     </button>
                     <button
                         onClick={() => setCreating({ name: '', slug: '', loader: 'fabric', mcVersion: '', summary: '' })}
-                        className="btn btn-primary btn-sm"
+                        className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={modpacksDisabled}
+                        title={modpacksDisabled ? 'Modpack authoring is disabled' : undefined}
                     >
                         <Plus size={13} />
                         New Modpack
                     </button>
                 </div>
             </header>
+
+            {modpacksDisabled && (
+                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
+                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
+                    <div className="text-xs text-(--base-09)">
+                        Modpack authoring is disabled by the platform admin.
+                        Existing modpacks remain readable and downloadable.
+                    </div>
+                </div>
+            )}
 
             <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
                 <Package size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
@@ -126,8 +141,9 @@ export default function ModpacksListPage() {
                                 </div>
                                 <button
                                     onClick={(e) => { e.preventDefault(); setDeletePrompt(p); }}
-                                    className="text-(--base-06) hover:text-(--error-light) shrink-0"
-                                    title="Delete"
+                                    className="text-(--base-06) hover:text-(--error-light) shrink-0 disabled:opacity-30 disabled:hover:text-(--base-06) disabled:cursor-not-allowed"
+                                    title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Delete'}
+                                    disabled={modpacksDisabled}
                                 >
                                     <Trash2 size={12} />
                                 </button>
