@@ -1,0 +1,178 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"strings"
+)
+
+type ModpackSettingsHandler struct {
+	state *AppState
+}
+
+func NewModpackSettingsHandler(state *AppState) *ModpackSettingsHandler {
+	return &ModpackSettingsHandler{state: state}
+}
+
+// modpackSettings is the wire shape used by GET + PUT. The s3 secret is
+// write-only from the panel's perspective: GET omits it (returns the empty
+// string) so it never lands in the panel state or browser devtools.
+type modpackSettings struct {
+	FeatureEnabled bool     `json:"featureEnabled"`
+	Provider       string   `json:"provider"` // "local" | "s3"
+	Paths          []string `json:"paths"`    // local: absolute paths
+	S3Endpoint     string   `json:"s3Endpoint"`
+	S3Bucket       string   `json:"s3Bucket"`
+	S3Region       string   `json:"s3Region"`
+	S3AccessKey    string   `json:"s3AccessKey"`
+	S3SecretKey    string   `json:"s3SecretKey,omitempty"` // write-only
+}
+
+// Get GET /api/admin/settings/modpacks
+func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	get := func(k string) string {
+		v, _ := h.state.Store.GetSetting(k)
+		return v
+	}
+	out := modpackSettings{
+		FeatureEnabled: get("feature_modpacks_enabled") != "false",
+		Provider:       get("modpack_storage_provider"),
+		S3Endpoint:     get("modpack_storage_s3_endpoint"),
+		S3Bucket:       get("modpack_storage_s3_bucket"),
+		S3Region:       get("modpack_storage_s3_region"),
+		S3AccessKey:    get("modpack_storage_s3_access_key"),
+		// Secret intentionally omitted on GET.
+	}
+	if out.Provider == "" {
+		out.Provider = "local"
+	}
+	rawPaths := get("modpack_storage_paths")
+	if rawPaths != "" {
+		_ = json.Unmarshal([]byte(rawPaths), &out.Paths)
+	}
+	if out.Paths == nil {
+		out.Paths = []string{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"settings": out,
+		// secretSet tells the panel whether to render "(unchanged — leave
+		// empty)" vs "(not set yet)" without ever exposing the value.
+		"secretSet": get("modpack_storage_s3_secret_key") != "",
+	})
+}
+
+// Set PUT /api/admin/settings/modpacks
+//
+// Body: full modpackSettings. Empty S3SecretKey means "don't change", so the
+// admin can update other fields without re-entering the secret. To clear the
+// secret, send "" with a special sentinel? No — YAGNI; admin can rotate or
+// delete via DB if needed.
+func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req modpackSettings
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "local"
+	}
+	if req.Provider != "local" && req.Provider != "s3" {
+		sendJSONError(w, "provider must be local or s3", http.StatusBadRequest)
+		return
+	}
+
+	// Normalize paths: strip empties + dedupe + MkdirAll so the provider
+	// doesn't fail on first Put. We deliberately do NOT validate writability
+	// (no Test-write here) — admin can verify out-of-band.
+	cleaned := make([]string, 0, len(req.Paths))
+	seen := map[string]bool{}
+	for _, p := range req.Paths {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		_ = os.MkdirAll(p, 0o755) // best-effort; surface failure on first Put
+		cleaned = append(cleaned, p)
+	}
+	pathsJSON, _ := json.Marshal(cleaned)
+
+	writes := []struct{ k, v string }{
+		{"feature_modpacks_enabled", boolStr(req.FeatureEnabled)},
+		{"modpack_storage_provider", req.Provider},
+		{"modpack_storage_paths", string(pathsJSON)},
+		{"modpack_storage_s3_endpoint", req.S3Endpoint},
+		{"modpack_storage_s3_bucket", req.S3Bucket},
+		{"modpack_storage_s3_region", req.S3Region},
+		{"modpack_storage_s3_access_key", req.S3AccessKey},
+	}
+	for _, kv := range writes {
+		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.S3SecretKey != "" {
+		if err := h.state.Store.SetSetting("modpack_storage_s3_secret_key", req.S3SecretKey); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Invalidate the cached feature flag so subsequent reads in this Core
+	// pick up the new value instantly; cross-Core staleness is bounded by
+	// the 60s cache TTL.
+	h.state.FeatureFlags.Invalidate("feature_modpacks_enabled")
+
+	// Publish events: features.changed re-renders the panel banner/gating;
+	// modpack_settings.changed wakes the Settings → Modpacks tab.
+	h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{"feature": "modpacks", "enabled": req.FeatureEnabled})
+	h.state.Events.Publish(r.Context(), "modpack_settings.changed", nil)
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// --- Per-user modpack flag ---
+
+type modpackUserFlagRequest struct {
+	CanCreate bool `json:"canCreate"`
+}
+
+// SetUserFlag PATCH /api/admin/users/{id}/modpack-flag
+func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	userID, ok := parseUserID(w, r)
+	if !ok {
+		return
+	}
+	var req modpackUserFlagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetUserCanCreateModpacks(userID, req.CanCreate); err != nil {
+		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
