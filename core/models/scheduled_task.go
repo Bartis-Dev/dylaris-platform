@@ -25,7 +25,7 @@ type ScheduledTask struct {
 	LastRun      *time.Time `json:"lastRun,omitempty"`
 	LastStatus   string     `json:"lastStatus"`
 	LastError    string     `json:"lastError,omitempty"`
-	CreatedBy    *int       `json:"createdBy,omitempty"`
+	CreatedBy    *string    `json:"createdBy,omitempty"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }

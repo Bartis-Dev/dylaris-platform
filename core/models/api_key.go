@@ -16,7 +16,7 @@ import "time"
 // server.power, etc. without a schema migration.
 type APIKey struct {
 	ID         int        `json:"id"`
-	UserID     int        `json:"userId"`
+	UserID     string     `json:"userId"`
 	Name       string     `json:"name"`
 	KeyHash    string     `json:"-"`
 	Scope      APIKeyScope `json:"scope"`

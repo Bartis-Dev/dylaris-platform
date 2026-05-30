@@ -55,7 +55,7 @@ func createBackupTables(db *sql.DB) error {
 			id SERIAL PRIMARY KEY,
 			run_id INTEGER NOT NULL REFERENCES backup_runs(id) ON DELETE CASCADE,
 			server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-			requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
 			requested_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			completed_at TIMESTAMPTZ,
 			status TEXT NOT NULL DEFAULT 'queued',

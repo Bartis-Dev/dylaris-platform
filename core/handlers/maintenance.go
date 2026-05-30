@@ -96,7 +96,7 @@ func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 	req.Message = strings.TrimSpace(req.Message)
 	req.ExpectedEnd = strings.TrimSpace(req.ExpectedEnd)
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	pairs := []struct{ k, v string }{
 		{"maintenance.active", fmt.Sprintf("%t", req.Active)},
 		{"maintenance.title", req.Title},
@@ -111,7 +111,7 @@ func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, 0, map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
 		"active":       req.Active,
 		"block_level":  req.BlockLevel,
 		"expected_end": req.ExpectedEnd,

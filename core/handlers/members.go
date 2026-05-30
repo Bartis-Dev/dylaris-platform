@@ -32,8 +32,8 @@ func (h *MemberHandler) checkMembersAccess(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Check if invited user has members permission
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return false
 	}
@@ -60,7 +60,7 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 	}
 
 	// Get inviter's own permissions
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	invite, err := h.state.Store.GetInvite(serverID, userID)
 	if err != nil {
 		return perms
@@ -172,8 +172,8 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get inviter's user ID
-	inviterID := 0
-	if id, ok := r.Context().Value("userID").(int); ok {
+	inviterID := ""
+	if id, ok := r.Context().Value("userID").(string); ok {
 		inviterID = id
 	}
 
@@ -218,9 +218,8 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
-	targetUserID, err := strconv.Atoi(vars["userId"])
-	if err != nil {
-		sendJSONError(w, "Invalid user ID", http.StatusBadRequest)
+	targetUserID, ok := parseUserID(w, r, "userId")
+	if !ok {
 		return
 	}
 
@@ -244,7 +243,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
 		"permissions": req.Permissions,
 	})
@@ -265,9 +264,8 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
-	targetUserID, err := strconv.Atoi(vars["userId"])
-	if err != nil {
-		sendJSONError(w, "Invalid user ID", http.StatusBadRequest)
+	targetUserID, ok := parseUserID(w, r, "userId")
+	if !ok {
 		return
 	}
 
@@ -280,7 +278,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

@@ -217,7 +217,7 @@ func (h *AuthSettingsHandler) SaveAuthPolicy(w http.ResponseWriter, r *http.Requ
 		p.DeletionMode = "anonymize"
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	pairs := []struct{ k, v string }{
 		{"auth.registration_enabled", fmt.Sprintf("%t", p.RegistrationEnabled)},
 		{"auth.email_verify_required", fmt.Sprintf("%t", p.EmailVerifyRequired)},
@@ -312,7 +312,7 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 		enc = "starttls"
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	purpose := "default"
 	pairs := []struct{ k, v string }{
 		{"smtp." + purpose + ".host", strings.TrimSpace(dto.Host)},
@@ -363,7 +363,7 @@ func (h *AuthSettingsHandler) TestSendSMTP(w http.ResponseWriter, r *http.Reques
 	if to == "" {
 		// Default to the admin's own email so a misclick on Test Send doesn't
 		// reach a real user mailbox.
-		actorID, _ := r.Context().Value("userID").(int)
+		actorID, _ := r.Context().Value("userID").(string)
 		if u, err := h.state.Store.GetUserByID(actorID); err == nil {
 			to = u.Email
 		}

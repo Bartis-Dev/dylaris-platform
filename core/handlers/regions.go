@@ -107,8 +107,8 @@ func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
-	LogIdentityAudit(h.state, r, AuditEventRegionCreated, actorID, 0, map[string]interface{}{
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventRegionCreated, actorID, "", map[string]interface{}{
 		"region_id":   region.ID,
 		"display_name": region.DisplayName,
 	})
@@ -159,8 +159,8 @@ func (h *RegionsHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
-	LogIdentityAudit(h.state, r, AuditEventRegionUpdated, actorID, 0, map[string]interface{}{
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventRegionUpdated, actorID, "", map[string]interface{}{
 		"region_id": existing.ID,
 		"enabled":   existing.Enabled,
 	})
@@ -201,8 +201,8 @@ func (h *RegionsHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
-	LogIdentityAudit(h.state, r, AuditEventRegionDeleted, actorID, 0, map[string]interface{}{
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventRegionDeleted, actorID, "", map[string]interface{}{
 		"region_id": id,
 	})
 

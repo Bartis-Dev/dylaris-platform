@@ -17,5 +17,5 @@ type ServerMod struct {
 	FileName            string    `json:"fileName"`
 	SHA512              string    `json:"sha512"`
 	InstalledAt         time.Time `json:"installedAt"`
-	InstalledBy         *int      `json:"installedBy,omitempty"`
+	InstalledBy         *string   `json:"installedBy,omitempty"`
 }

@@ -42,7 +42,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -143,7 +143,7 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -217,7 +217,7 @@ func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return

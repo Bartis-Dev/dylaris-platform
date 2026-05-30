@@ -153,7 +153,7 @@ func (s *AutoDeleteService) processWarnings(_ context.Context, p policySnapshot)
 
 		scheduledAt := now.Add(time.Duration(p.WarningDays) * 24 * time.Hour)
 		if err := s.store.MarkUserPendingDeletion(c.ID, scheduledAt); err != nil {
-			log.Printf("auto-delete: mark pending for userID=%d: %v", c.ID, err)
+			log.Printf("auto-delete: mark pending for userID=%s: %v", c.ID, err)
 			continue
 		}
 
@@ -184,7 +184,7 @@ func (s *AutoDeleteService) processExecutions(_ context.Context, p policySnapsho
 		switch p.Mode {
 		case "hard_delete":
 			if err := s.store.DeleteUser(userID); err != nil {
-				log.Printf("auto-delete: hard-delete userID=%d: %v", userID, err)
+				log.Printf("auto-delete: hard-delete userID=%s: %v", userID, err)
 				continue
 			}
 			// We're about to lose the user row — audit event references
@@ -193,7 +193,7 @@ func (s *AutoDeleteService) processExecutions(_ context.Context, p policySnapsho
 			insertAuditEvent(s.store, "user_hard_deleted", userID, nil)
 		default: // "anonymize"
 			if err := s.store.AnonymizeUser(userID); err != nil {
-				log.Printf("auto-delete: anonymize userID=%d: %v", userID, err)
+				log.Printf("auto-delete: anonymize userID=%s: %v", userID, err)
 				continue
 			}
 			insertAuditEvent(s.store, "user_anonymized", userID, nil)
@@ -204,12 +204,14 @@ func (s *AutoDeleteService) processExecutions(_ context.Context, p policySnapsho
 // insertAuditEvent is a tiny wrapper so the service doesn't have to depend
 // on the handlers package just for one helper. Errors are swallowed: an
 // audit insert failure is logged but never blocks the underlying action.
-func insertAuditEvent(s store.Store, eventType string, targetUserID int, metadata map[string]interface{}) {
-	tid := targetUserID
+func insertAuditEvent(s store.Store, eventType string, targetUserID string, metadata map[string]interface{}) {
 	ev := &models.AuditEventIdentity{
-		EventType:    eventType,
-		TargetUserID: &tid,
-		Metadata:     metadata,
+		EventType: eventType,
+		Metadata:  metadata,
+	}
+	if targetUserID != "" {
+		tid := targetUserID
+		ev.TargetUserID = &tid
 	}
 	if err := s.InsertAuditIdentity(ev); err != nil {
 		log.Printf("auto-delete: audit insert %s: %v", eventType, err)

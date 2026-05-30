@@ -69,7 +69,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	}
 	expires := time.Now().Add(time.Duration(policy.PasswordResetLinkTTLMinutes) * time.Minute)
 	if err := h.state.Store.SetPasswordResetToken(user.ID, token, expires); err != nil {
-		log.Printf("forgot-password: SetPasswordResetToken for userID=%d: %v", user.ID, err)
+		log.Printf("forgot-password: SetPasswordResetToken for userID=%s: %v", user.ID, err)
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		return
 	}
@@ -80,7 +80,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		log.Printf("forgot-password: send to %s failed: %v", user.Email, err)
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventPasswordResetRequested, 0, user.ID, map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
 		"email":      user.Email,
 		"ttl_minutes": policy.PasswordResetLinkTTLMinutes,
 	})
@@ -182,7 +182,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		stored, _ := h.state.Store.GetUserSecurityQuestionsRaw(user.ID)
 		if stored != "" && stored != "[]" {
 			if !verifySecurityAnswersAgainstStored(stored, req.SecurityAnswers) {
-				LogIdentityAudit(h.state, r, AuditEventSecurityAnswersFailedAtReset, 0, user.ID, nil)
+				LogIdentityAudit(h.state, r, AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
 				sendJSONError(w, "Security answers did not match", http.StatusUnauthorized)
 				return
 			}
@@ -204,10 +204,10 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	}
 	if err := h.state.Store.ClearPasswordResetToken(user.ID); err != nil {
 		// Token left dangling — won't authenticate (no matching row), but log it.
-		log.Printf("reset-password: ClearPasswordResetToken for userID=%d: %v", user.ID, err)
+		log.Printf("reset-password: ClearPasswordResetToken for userID=%s: %v", user.ID, err)
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventPasswordResetCompleted, 0, user.ID, nil)
+	LogIdentityAudit(h.state, r, AuditEventPasswordResetCompleted, "", user.ID, nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

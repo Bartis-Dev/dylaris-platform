@@ -16,17 +16,17 @@ type SFTPAccess struct {
 type Store interface {
 	// --- Users ---
 	GetUserByUsername(username string) (*models.User, error)
-	GetUserByID(id int) (*models.User, error)
+	GetUserByID(id string) (*models.User, error)
 	CreateUser(user *models.User) error
 	UpdateUser(user *models.User) error
-	UpdateUserPassword(id int, hashedPassword string) error
-	DeleteUser(id int) error
+	UpdateUserPassword(id string, hashedPassword string) error
+	DeleteUser(id string) error
 	ListUsers() ([]models.User, error)
 	CountUsers() (int, error)
 
 	// --- 2FA (TOTP + Backup Codes) ---
-	SetUserTOTP(id int, secret string, backupCodesJSON string, enabled bool) error
-	DisableUserTOTP(id int) error
+	SetUserTOTP(id string, secret string, backupCodesJSON string, enabled bool) error
+	DisableUserTOTP(id string) error
 
 	// --- Nodes ---
 	GetNodeByID(id int) (*models.Node, error)
@@ -66,19 +66,19 @@ type Store interface {
 	UpdateServerPorts(id int, hostPort, containerPort int) error
 	GetUsedHostPortsOnNode(nodeID int) ([]int, error)
 	GetAllActiveServers() ([]models.Server, error)
-	CountServersByOwner(ownerID int) (int, error)
+	CountServersByOwner(ownerID string) (int, error)
 	UpdateServerProxyID(id int, proxyID *int) error
-	UpdateServerOwner(id int, ownerID *int) error
+	UpdateServerOwner(id int, ownerID *string) error
 	SetServerAutoMove(id int, enabled bool) error
 
 	// --- Server Invites ---
-	CreateInvite(serverID, userID, invitedBy int, permissions map[string]bool) error
-	DeleteInvite(serverID, userID int) error
-	UpdateInvitePermissions(serverID, userID int, permissions map[string]bool) error
-	GetInvite(serverID, userID int) (*models.ServerInvite, error)
+	CreateInvite(serverID int, userID, invitedBy string, permissions map[string]bool) error
+	DeleteInvite(serverID int, userID string) error
+	UpdateInvitePermissions(serverID int, userID string, permissions map[string]bool) error
+	GetInvite(serverID int, userID string) (*models.ServerInvite, error)
 	ListInvitesByServer(serverID int) ([]models.ServerInvite, error)
 	CountInvitesPerServer() (map[int]int, error)
-	ListServersForUser(userID int, isAdmin bool) ([]models.Server, error)
+	ListServersForUser(userID string, isAdmin bool) ([]models.Server, error)
 
 	// --- Backups ---
 	ListBackupStorages() ([]models.BackupStorage, error)
@@ -148,52 +148,52 @@ type Store interface {
 	CountNodesInRegion(regionID string) (int, error)
 
 	// --- User <-> Region M:N (Phase 0a.1) ---
-	GetUserRegionIDs(userID int) ([]string, error)
-	SetUserRegions(userID int, allAccess bool, regionIDs []string) error
-	SetUserAllRegionsAccess(userID int, allAccess bool) error
-	GetUserAllRegionsAccess(userID int) (bool, error)
+	GetUserRegionIDs(userID string) ([]string, error)
+	SetUserRegions(userID string, allAccess bool, regionIDs []string) error
+	SetUserAllRegionsAccess(userID string, allAccess bool) error
+	GetUserAllRegionsAccess(userID string) (bool, error)
 
 	// --- Identity Audit Log (Phase 0a.1, append-only) ---
 	InsertAuditIdentity(ev *models.AuditEventIdentity) error
-	ListAuditIdentity(targetUserID *int, eventType string, limit int) ([]models.AuditEventIdentity, error)
+	ListAuditIdentity(targetUserID *string, eventType string, limit int) ([]models.AuditEventIdentity, error)
 
 	// --- Settings audit trail (Phase 0a.1) ---
 	// SetSettingBy stores a setting value plus the user who changed it. Existing
 	// callers can keep using SetSetting (updated_by = NULL) — only new flows
 	// that care about audit need this variant.
-	SetSettingBy(key, value string, updatedBy int) error
+	SetSettingBy(key, value string, updatedBy string) error
 
 	// --- Email verification + login tracking (Phase 0a.2) ---
 	GetUserByEmail(email string) (*models.User, error)
 	GetUserByEmailVerificationToken(token string) (*models.User, error)
-	SetEmailVerificationToken(userID int, token string) error
-	MarkEmailVerified(userID int) error
-	UpdateLastLoginAt(userID int) error
+	SetEmailVerificationToken(userID string, token string) error
+	MarkEmailVerified(userID string) error
+	UpdateLastLoginAt(userID string) error
 
 	// --- Password reset (Phase 0a.4) ---
 	GetUserByPasswordResetToken(token string) (*models.User, error)
-	SetPasswordResetToken(userID int, token string, expiresAt time.Time) error
-	ClearPasswordResetToken(userID int) error
+	SetPasswordResetToken(userID string, token string, expiresAt time.Time) error
+	ClearPasswordResetToken(userID string) error
 
 	// --- Security questions (Phase 0a.5) ---
 	// GetUserSecurityQuestions returns the question texts only (no hashes),
 	// in the same order they were stored — the verify path matches answers
 	// positionally so order is part of the contract.
-	GetUserSecurityQuestions(userID int) ([]string, error)
+	GetUserSecurityQuestions(userID string) ([]string, error)
 	// SetUserSecurityQuestions replaces the user's whole list. Pass an empty
 	// slice to clear (allowed when the policy lets users opt out).
-	SetUserSecurityQuestions(userID int, qaJSON string) error
+	SetUserSecurityQuestions(userID string, qaJSON string) error
 	// GetUserSecurityQuestionsRaw returns the stored JSON for verification
 	// — caller bcrypt-compares answer-by-answer.
-	GetUserSecurityQuestionsRaw(userID int) (string, error)
+	GetUserSecurityQuestionsRaw(userID string) (string, error)
 
 	// --- Roles + granular permissions (Phase 1) ---
 	// SetUserRole writes both role and the legacy is_admin flag so handlers
 	// that still read is_admin stay in sync. Valid roles: 'user', 'support', 'admin'.
-	SetUserRole(userID int, role string) error
+	SetUserRole(userID string, role string) error
 	// SetUserPermissionFlags sets the can_* booleans. SupportTeam is optional;
 	// pass "" to clear.
-	SetUserPermissionFlags(userID int, canDeleteServers, canChangeResources bool, supportTeam string) error
+	SetUserPermissionFlags(userID string, canDeleteServers, canChangeResources bool, supportTeam string) error
 
 	// --- Tickets (Phase 2) ---
 	// Categories
@@ -212,7 +212,7 @@ type Store interface {
 	ListTickets(filter TicketFilter) ([]models.Ticket, error)
 	UpdateTicketStatus(id int, status string) error
 	UpdateTicketPriority(id int, priority string) error
-	UpdateTicketAssignment(id int, assignedUserID *int, assignedTeam string) error
+	UpdateTicketAssignment(id int, assignedUserID *string, assignedTeam string) error
 	TouchTicketUpdated(id int) error // bump updated_at — call after any mutation
 
 	// Messages
@@ -222,15 +222,15 @@ type Store interface {
 	// Watchers
 	ListTicketWatchers(ticketID int) ([]models.TicketWatcher, error)
 	AddTicketWatcher(w *models.TicketWatcher) error
-	RemoveTicketWatcher(ticketID, userID int) error
-	IsTicketWatcher(ticketID, userID int) (bool, error)
+	RemoveTicketWatcher(ticketID int, userID string) error
+	IsTicketWatcher(ticketID int, userID string) (bool, error)
 
 	// Audit
 	InsertTicketAudit(ev *models.TicketAuditEvent) error
 	ListTicketAudit(ticketID int) ([]models.TicketAuditEvent, error)
 
 	// Sidebar: servers attached to active tickets assigned to a support user.
-	ListServersViaActiveTickets(supportUserID int) ([]models.Server, error)
+	ListServersViaActiveTickets(supportUserID string) ([]models.Server, error)
 
 	// --- Tickets Phase 3 ---
 	// Attachments
@@ -239,7 +239,7 @@ type Store interface {
 	ListTicketAttachments(ticketID int) ([]models.TicketAttachment, error)
 	DeleteTicketAttachment(id int) error
 	SumAttachmentBytesByTicket(ticketID int) (int64, error)
-	SumAttachmentBytesByUser(userID int) (int64, error)
+	SumAttachmentBytesByUser(userID string) (int64, error)
 
 	// Canned responses
 	ListCannedResponses(categoryID *int) ([]models.CannedResponse, error)
@@ -250,15 +250,15 @@ type Store interface {
 
 	// Notifications
 	InsertNotification(n *models.Notification) (int64, error)
-	ListNotifications(userID int, includeRead bool, limit int) ([]models.Notification, error)
-	CountUnreadNotifications(userID int) (int, error)
-	MarkNotificationRead(id int64, userID int) error
-	MarkAllNotificationsRead(userID int) error
+	ListNotifications(userID string, includeRead bool, limit int) ([]models.Notification, error)
+	CountUnreadNotifications(userID string) (int, error)
+	MarkNotificationRead(id int64, userID string) error
+	MarkAllNotificationsRead(userID string) error
 
 	// Auto-close support
 	ListResolvedTicketsOlderThan(cutoff time.Time) ([]int, error)
 	// Watchers + assignee lookup for notification fan-out
-	ListTicketParticipantsForNotify(ticketID int, excludeUserID int) ([]int, error)
+	ListTicketParticipantsForNotify(ticketID int, excludeUserID string) ([]string, error)
 
 	// --- Phase 5 — migration + backup raw access ---
 	// CountTicketRows returns the row count for a single ticket-related
@@ -288,16 +288,16 @@ type Store interface {
 	ListInactiveCandidates(idleSince time.Time) ([]InactiveCandidate, error)
 	// MarkUserPendingDeletion stages the user; the warning mail is sent
 	// separately by the job so a mail failure doesn't roll back the stamp.
-	MarkUserPendingDeletion(userID int, scheduledAt time.Time) error
+	MarkUserPendingDeletion(userID string, scheduledAt time.Time) error
 	// ListUsersDueForDeletion returns user IDs whose scheduled_at is <= now
 	// AND who are still in pending_deletion state.
-	ListUsersDueForDeletion(now time.Time) ([]int, error)
+	ListUsersDueForDeletion(now time.Time) ([]string, error)
 	// CancelUserDeletion clears warning/scheduled stamps and resets status.
 	// Idempotent: safe to call on already-active users.
-	CancelUserDeletion(userID int) error
+	CancelUserDeletion(userID string) error
 	// AnonymizeUser wipes PII (username/email/password/2FA/security questions)
 	// but keeps the row + id so audit references stay valid.
-	AnonymizeUser(userID int) error
+	AnonymizeUser(userID string) error
 
 	// --- Scheduled Tasks (Phase 8) ---
 	// Per-server cron jobs. NextRun is computed on insert/update from the cron
@@ -325,9 +325,9 @@ type Store interface {
 	// on creation; the DB only ever sees sha256 hash. Scope JSON shape:
 	//   { "servers": ["uuid-1", ...], "permissions": ["rcon.exec"] }
 	CreateAPIKey(k *models.APIKey) (int, error)
-	ListAPIKeysByUser(userID int) ([]models.APIKey, error)
+	ListAPIKeysByUser(userID string) ([]models.APIKey, error)
 	GetAPIKeyByHash(hash string) (*models.APIKey, error)
-	RevokeAPIKey(id, userID int) error
+	RevokeAPIKey(id int, userID string) error
 	TouchAPIKey(id int) error
 
 	// --- Installed Mods (Phase 10) ---
@@ -342,9 +342,9 @@ type Store interface {
 	// each have a "skyblock" pack without collision.
 	CreateModpack(m *models.Modpack) (int, error)
 	UpdateModpack(m *models.Modpack) error
-	DeleteModpack(id, ownerID int) error
+	DeleteModpack(id int, ownerID string) error
 	GetModpack(id int) (*models.Modpack, error)
-	ListModpacksByOwner(ownerID int) ([]models.Modpack, error)
+	ListModpacksByOwner(ownerID string) ([]models.Modpack, error)
 
 	// Versions + mods within a pack.
 	CreateModpackVersion(v *models.ModpackVersion) (int, error)
@@ -359,15 +359,21 @@ type Store interface {
 	// Modrinth PATs. One row per user; SetModrinthPAT upserts and
 	// stamps last_validated_at on success. ClearModrinthPAT removes the
 	// row entirely so a revoked PAT can't accidentally be re-used.
-	SetModrinthPAT(userID int, ciphertext, modrinthUsername string) error
-	GetModrinthPAT(userID int) (*models.ModrinthPAT, error)
-	ClearModrinthPAT(userID int) error
+	SetModrinthPAT(userID string, ciphertext, modrinthUsername string) error
+	GetModrinthPAT(userID string) (*models.ModrinthPAT, error)
+	ClearModrinthPAT(userID string) error
+
+	// --- Phase 15 — Username history + admin rename ---
+	RenameUser(userID string, newUsername string, changedBy string) error
+	ListUsernameHistory(userID string) ([]models.UsernameHistory, error)
+	GetUserAccountPolicy() (allowChange bool, cooldownDays int, err error)
+	SetUserAccountPolicy(allowChange bool, cooldownDays int) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job
 // needs to make a decision without fetching the whole row.
 type InactiveCandidate struct {
-	ID         int
+	ID         string
 	Username   string
 	Email      string
 	LastLogin  *time.Time
@@ -379,10 +385,10 @@ type InactiveCandidate struct {
 // ignored. Limit is clamped to [1, 200] by the store; 0 falls back to 50.
 type TicketFilter struct {
 	// Visibility scope — exactly one of these is typically set per request.
-	UserID         *int     // user's own tickets
-	AssignedUserID *int     // tickets assigned to a supporter
+	UserID         *string  // user's own tickets
+	AssignedUserID *string  // tickets assigned to a supporter
 	AssignedTeam   string   // tickets owned by a team (cross-team visibility scope)
-	WatcherUserID  *int     // tickets the user is CC'd on
+	WatcherUserID  *string  // tickets the user is CC'd on
 
 	// Refinements layered on top of the scope.
 	Status      []string // include only these statuses

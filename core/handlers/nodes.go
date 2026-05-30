@@ -558,7 +558,7 @@ type AssignOrphanRequest struct {
 	NodeID      int     `json:"node_id"`
 	UUID        string  `json:"uuid"`
 	Name        string  `json:"name"`
-	OwnerUserID *int    `json:"owner_user_id"` // existing user, or nil
+	OwnerUserID *string `json:"owner_user_id"` // existing user, or nil
 	NewUser     *struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -739,11 +739,11 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Resolve owner ---
-	ownerID := 0
+	ownerID := ""
 	if req.OwnerUserID != nil {
 		user, err := h.state.Store.GetUserByID(*req.OwnerUserID)
 		if err != nil || user == nil {
-			sendJSONError(w, fmt.Sprintf("User with id %d not found", *req.OwnerUserID), 400)
+			sendJSONError(w, fmt.Sprintf("User with id %s not found", *req.OwnerUserID), 400)
 			return
 		}
 		ownerID = user.ID
@@ -755,10 +755,9 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newUser := &models.User{
-			Username:  req.NewUser.Username,
-			Password:  string(hashed),
-			IsAdmin:   false,
-			PublicID:  uuid.NewString(),
+			Username: req.NewUser.Username,
+			Password: string(hashed),
+			IsAdmin:  false,
 		}
 		if err := h.state.Store.CreateUser(newUser); err != nil {
 			log.Printf("AssignOrphan: CreateUser failed for username=%q: %v", req.NewUser.Username, err)
@@ -820,9 +819,9 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 
 	newID, err := h.state.Store.CreateServer(srv)
 	if err != nil {
-		log.Printf("AssignOrphan: CreateServer failed (uuid=%s, owner=%d): %v", req.UUID, ownerID, err)
+		log.Printf("AssignOrphan: CreateServer failed (uuid=%s, owner=%s): %v", req.UUID, ownerID, err)
 		if req.NewUser != nil {
-			log.Printf("AssignOrphan: WARNING — new user (id=%d username=%q) was created but server insert failed; manual cleanup may be required", ownerID, req.NewUser.Username)
+			log.Printf("AssignOrphan: WARNING — new user (id=%s username=%q) was created but server insert failed; manual cleanup may be required", ownerID, req.NewUser.Username)
 		}
 		sendJSONError(w, "Failed to create server record", 500)
 		return

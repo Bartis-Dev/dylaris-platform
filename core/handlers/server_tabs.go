@@ -53,7 +53,7 @@ func (h *ServerTabsHandler) canAccess(r *http.Request, serverID int, mutating bo
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if mutating {
 		// CRUD is owner/admin only (treated as config-class, same as
 		// server.properties + Scheduled Tasks).
@@ -143,9 +143,9 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.OpenInPanel != nil {
 		openInPanel = *req.OpenInPanel
 	}
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	var createdBy interface{}
-	if userID > 0 {
+	if userID != "" {
 		createdBy = userID
 	}
 	var id int

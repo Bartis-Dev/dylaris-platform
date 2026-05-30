@@ -65,8 +65,8 @@ func NewModpacksPublishHandler(state *AppState, patHand *ModrinthPATHandler, use
 func (h *ModpacksPublishHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	modpackID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	versionID, _ := strconv.Atoi(mux.Vars(r)["versionId"])
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -259,7 +259,7 @@ type collaboratorAddRequest struct {
 
 func (h *CollaboratorsHandler) require(r *http.Request) (*models.Modpack, *services.ModrinthClient, error) {
 	modpackID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	pack, err := h.state.Store.GetModpack(modpackID)
 	if err != nil || pack.OwnerID != userID {
 		return nil, nil, fmt.Errorf("forbidden")

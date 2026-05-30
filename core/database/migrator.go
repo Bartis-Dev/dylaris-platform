@@ -23,19 +23,23 @@ func MigrateFromMySQL(postgresDB *sql.DB, mysqlDSN string) error {
 	}
 
 	// 1. Users
-	log.Println("... migrating Users")
-	rows, err := mysqlDB.Query("SELECT id, username, password, COALESCE(minecraft_username,''), COALESCE(public_id,''), is_admin, created_at FROM users")
+	// NOTE: This legacy MySQL→Postgres migrator predates Phase 15
+	// (users.id is now UUID, public_id was dropped). It is kept only as a
+	// historical reference and would need a rewrite before running again —
+	// the SERIAL id + public_id assumptions no longer match the live schema.
+	log.Println("... migrating Users (LEGACY — no-op against Phase 15 schema)")
+	rows, err := mysqlDB.Query("SELECT id, username, password, COALESCE(minecraft_username,''), is_admin, created_at FROM users")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var id int
-			var u, p, mc, pub, cr string
+			var u, p, mc, cr string
 			var adm bool
-			rows.Scan(&id, &u, &p, &mc, &pub, &adm, &cr)
-			postgresDB.Exec(`INSERT INTO users (id, username, password, minecraft_username, public_id, is_admin, created_at) 
-				VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`, id, u, p, mc, pub, adm, cr)
+			rows.Scan(&id, &u, &p, &mc, &adm, &cr)
+			// users.id is now UUID with a DEFAULT — let it auto-generate.
+			postgresDB.Exec(`INSERT INTO users (username, password, minecraft_username, is_admin, created_at)
+				VALUES ($1, $2, $3, $4, $5) ON CONFLICT (username) DO NOTHING`, u, p, mc, adm, cr)
 		}
-		postgresDB.Exec("SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))")
 	}
 
 	// 2. Nodes

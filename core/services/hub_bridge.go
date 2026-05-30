@@ -77,9 +77,9 @@ type hubQueueMessage struct {
 	TargetPort   int    `json:"target_port,omitempty"`
 	LinkToken    string `json:"link_token,omitempty"`
 	ServerUUID   string `json:"server_uuid,omitempty"`
-	ServerID     *uint  `json:"server_id,omitempty"`
-	OwnerID      *uint  `json:"owner_id,omitempty"`
-	NewLinkToken string `json:"new_link_token,omitempty"`
+	ServerID     *uint   `json:"server_id,omitempty"`
+	OwnerID      *string `json:"owner_id,omitempty"`
+	NewLinkToken string  `json:"new_link_token,omitempty"`
 }
 
 // --- GatewayProvider interface ---
@@ -87,7 +87,7 @@ type hubQueueMessage struct {
 // GatewayProvider handles route lifecycle operations (write path only).
 // Reads are done directly from Redis using the helper functions below.
 type GatewayProvider interface {
-	CreateServerRoute(serverID, ownerID uint, domain string, port int) error
+	CreateServerRoute(serverID uint, ownerID string, domain string, port int) error
 	DeleteRoute(domain string) error
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 }
@@ -96,7 +96,7 @@ type GatewayProvider interface {
 
 type NoOpGateway struct{}
 
-func (n *NoOpGateway) CreateServerRoute(serverID, ownerID uint, domain string, port int) error {
+func (n *NoOpGateway) CreateServerRoute(serverID uint, ownerID string, domain string, port int) error {
 	return fmt.Errorf("gateway not enabled")
 }
 func (n *NoOpGateway) DeleteRoute(domain string) error         { return nil }
@@ -114,7 +114,7 @@ func NewRedisGateway(r *redis.Client, s store.Store, secret string) *RedisGatewa
 	return &RedisGateway{redis: r, store: s, clusterSecret: secret}
 }
 
-func (g *RedisGateway) CreateServerRoute(serverID, ownerID uint, domain string, port int) error {
+func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain string, port int) error {
 	// 1. Resolve server
 	server, err := g.store.GetServerByID(int(serverID))
 	if err != nil {
@@ -142,7 +142,7 @@ func (g *RedisGateway) CreateServerRoute(serverID, ownerID uint, domain string, 
 
 	// 4. Push to queue
 	sID := uint(serverID)
-	oID := uint(ownerID)
+	oID := ownerID
 	msg := hubQueueMessage{
 		Action:     "create_route",
 		Domain:     domain,

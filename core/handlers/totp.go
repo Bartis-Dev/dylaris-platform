@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -312,11 +311,8 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/users/")
-	idStr = strings.TrimSuffix(idStr, "/2fa")
-	var id int
-	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id <= 0 {
-		sendJSONError(w, "Invalid user ID", http.StatusBadRequest)
+	id, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 	if err := h.state.Store.DisableUserTOTP(id); err != nil {
@@ -324,7 +320,7 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

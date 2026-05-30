@@ -65,7 +65,7 @@ func (h *AuditSettingsHandler) SavePolicy(w http.ResponseWriter, r *http.Request
 	if p.ServerRetentionDays > 3650 {
 		p.ServerRetentionDays = 3650
 	}
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.SetSettingBy("audit.server_retention_days", fmt.Sprintf("%d", p.ServerRetentionDays), actorID); err != nil {
 		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return

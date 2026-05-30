@@ -56,7 +56,7 @@ func (s *PostgresStore) UpdateModpack(m *models.Modpack) error {
 	return nil
 }
 
-func (s *PostgresStore) DeleteModpack(id, ownerID int) error {
+func (s *PostgresStore) DeleteModpack(id int, ownerID string) error {
 	res, err := s.db.Exec(`DELETE FROM modpacks WHERE id=$1 AND owner_id=$2`, id, ownerID)
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func (s *PostgresStore) GetModpack(id int) (*models.Modpack, error) {
 	return m, err
 }
 
-func (s *PostgresStore) ListModpacksByOwner(ownerID int) ([]models.Modpack, error) {
+func (s *PostgresStore) ListModpacksByOwner(ownerID string) ([]models.Modpack, error) {
 	rows, err := s.db.Query(`SELECT `+modpackCols+`
 		FROM modpacks WHERE owner_id=$1 ORDER BY updated_at DESC`, ownerID)
 	if err != nil {
@@ -268,7 +268,7 @@ func (s *PostgresStore) DeleteModpackMod(id, versionID int) error {
 
 // --- Modrinth PATs ---
 
-func (s *PostgresStore) SetModrinthPAT(userID int, ciphertext, modrinthUsername string) error {
+func (s *PostgresStore) SetModrinthPAT(userID string, ciphertext, modrinthUsername string) error {
 	_, err := s.db.Exec(`INSERT INTO modrinth_pats
 		(user_id, ciphertext, modrinth_username, last_validated_at)
 		VALUES ($1, $2, $3, NOW())
@@ -281,7 +281,7 @@ func (s *PostgresStore) SetModrinthPAT(userID int, ciphertext, modrinthUsername 
 	return err
 }
 
-func (s *PostgresStore) GetModrinthPAT(userID int) (*models.ModrinthPAT, error) {
+func (s *PostgresStore) GetModrinthPAT(userID string) (*models.ModrinthPAT, error) {
 	var p models.ModrinthPAT
 	var lastValidated sql.NullTime
 	err := s.db.QueryRow(`SELECT user_id, ciphertext, modrinth_username,
@@ -303,7 +303,7 @@ func (s *PostgresStore) GetModrinthPAT(userID int) (*models.ModrinthPAT, error) 
 	return &p, nil
 }
 
-func (s *PostgresStore) ClearModrinthPAT(userID int) error {
+func (s *PostgresStore) ClearModrinthPAT(userID string) error {
 	_, err := s.db.Exec(`DELETE FROM modrinth_pats WHERE user_id=$1`, userID)
 	return err
 }

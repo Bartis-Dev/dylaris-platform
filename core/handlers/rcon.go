@@ -68,7 +68,7 @@ func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -192,7 +192,7 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -223,7 +223,7 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return

@@ -143,7 +143,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// configured (default: no access, admin must grant). This is distinct
 	// from admin-created users, who default to all-regions.
 	if err := h.state.Store.SetUserRegions(user.ID, policy.DefaultNewUserAllRegions, []string{}); err != nil {
-		log.Printf("registration: SetUserRegions failed for userID=%d: %v", user.ID, err)
+		log.Printf("registration: SetUserRegions failed for userID=%s: %v", user.ID, err)
 	}
 
 	// Security questions (Phase 0a.5). When required at signup, the user
@@ -166,7 +166,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := h.state.Store.SetUserSecurityQuestions(user.ID, hashedJSON); err != nil {
-				log.Printf("registration: SetUserSecurityQuestions failed for userID=%d: %v", user.ID, err)
+				log.Printf("registration: SetUserSecurityQuestions failed for userID=%s: %v", user.ID, err)
 				// Non-fatal: account exists, user can set questions in profile.
 			}
 		}
@@ -195,7 +195,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		_ = h.state.Store.MarkEmailVerified(user.ID)
 	}
 
-	LogIdentityAudit(h.state, r, "user_registered", 0, user.ID, map[string]interface{}{
+	LogIdentityAudit(h.state, r, "user_registered", "", user.ID, map[string]interface{}{
 		"username": user.Username,
 		"email":    user.Email,
 	})
@@ -240,7 +240,7 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 		return
 	}
-	LogIdentityAudit(h.state, r, "email_verified", 0, user.ID, nil)
+	LogIdentityAudit(h.state, r, "email_verified", "", user.ID, nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

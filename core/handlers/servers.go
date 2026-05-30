@@ -40,11 +40,11 @@ const aikarsHighMemFlags = "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPa
 
 // checkServerAccess verifies that the user has access to the server.
 // Owner and Admin always have full access. Invited users need the specific permission.
-func checkServerAccess(st store.Store, srv *models.Server, username string, isAdmin bool, userID int, requiredPerm string) bool {
+func checkServerAccess(st store.Store, srv *models.Server, username string, isAdmin bool, userID string, requiredPerm string) bool {
 	if isAdmin || srv.OwnerName == username {
 		return true
 	}
-	if userID == 0 {
+	if userID == "" {
 		return false
 	}
 
@@ -104,7 +104,7 @@ type CreateServerRequest struct {
 	Region     string   `json:"region"` // optional scheduler filter (e.g. "eu-central")
 	Tags       []string `json:"tags"`   // AND-filter when scheduler picks a node
 	Tag        string   `json:"tag"`    // deprecated, single-tag legacy field; folded into Tags
-	OwnerID    int      `json:"ownerId"`
+	OwnerID    string   `json:"ownerId"`
 	IsFixed    *bool    `json:"isFixed"`
 	ServerType string   `json:"serverType"`
 	AutoMove   bool     `json:"autoMove"` // opt-in to load-balancing migrations
@@ -163,7 +163,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 
 	servers, err := h.state.Store.ListServersForUser(userID, isAdmin)
 	if err != nil {
@@ -758,7 +758,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 
 	if !isAdmin && srv.OwnerName != username {
 		// Invited users need the "power" permission
@@ -836,7 +836,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	LogServerAudit(h.state, r, serverID, ServerAuditEventPowerAction, userID, 0, map[string]interface{}{
+	LogServerAudit(h.state, r, serverID, ServerAuditEventPowerAction, userID, "", map[string]interface{}{
 		"action": req.Action,
 	})
 
@@ -895,8 +895,8 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventNameChanged, actorID, 0, map[string]interface{}{
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventNameChanged, actorID, "", map[string]interface{}{
 		"from": previousName,
 		"to":   name,
 	})
@@ -915,7 +915,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 
 	// Phase 1 — capability gate. Admins always pass; non-admins need the
 	// can_change_resources flag set by an admin in the user-settings UI.
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
 	if !perms.IsAdmin && !perms.CanChangeResources {
 		sendJSONError(w, "Changing server resources requires elevated permissions — contact an administrator", 403)
@@ -1032,8 +1032,8 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, 0, map[string]interface{}{
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, "", map[string]interface{}{
 		"ram":        req.RAM,
 		"cpuLimit":   req.CPULimit,
 		"diskLimit":  req.DiskLimit,
@@ -1150,7 +1150,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// Phase 1 — capability gate. Admins always pass; non-admins need the
 	// can_delete_servers flag. This is in addition to the ownership check
 	// that already exists further down — both gates must be open.
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
 	if !perms.IsAdmin && !perms.CanDeleteServers {
 		sendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
@@ -1360,7 +1360,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	user, _ := h.state.Store.GetUserByUsername(username)
-	userID := 0
+	userID := ""
 	if user != nil {
 		userID = user.ID
 	}
@@ -1391,7 +1391,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 
 	if srv.ServerType == "proxy" {
 		// Return endpoints for every linked game-server.
-		linked, _ := h.state.Store.ListServersForUser(0, true)
+		linked, _ := h.state.Store.ListServersForUser("", true)
 		var out []endpoint
 		for _, child := range linked {
 			if child.ProxyID == nil || *child.ProxyID != srv.ID {
@@ -1615,7 +1615,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	servers, err := h.state.Store.ListServersForUser(0, true)
+	servers, err := h.state.Store.ListServersForUser("", true)
 	if err != nil {
 		sendJSONError(w, "Database error", 500)
 		return
@@ -1663,9 +1663,9 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	serverID, _ := strconv.Atoi(vars["id"])
 
 	var req struct {
-		UserID int `json:"userId"`
+		UserID string `json:"userId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
 		sendJSONError(w, "userId required", 400)
 		return
 	}
@@ -1692,7 +1692,7 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 	serverID, _ := strconv.Atoi(vars["id"])
 	username, _ := r.Context().Value("username").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {

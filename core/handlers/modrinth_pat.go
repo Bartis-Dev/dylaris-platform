@@ -50,8 +50,8 @@ type patStatus struct {
 // configured + (if so) the username + last_validated timestamp. Never
 // returns the PAT itself.
 func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -76,8 +76,8 @@ func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
 // against Modrinth /v2/user, encrypts, and stores. Plaintext is never
 // echoed back.
 func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -115,8 +115,8 @@ func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 // Clear DELETE /api/me/modrinth-pat — wipes the PAT entirely.
 func (h *ModrinthPATHandler) Clear(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -164,7 +164,7 @@ func (h *ModrinthPATHandler) validatePAT(ctx context.Context, plaintext string) 
 // LoadPAT decrypts and returns the plaintext PAT for outgoing publishing
 // calls. Exported so the modpacks-publish handler can use it without
 // duplicating the crypto wiring.
-func (h *ModrinthPATHandler) LoadPAT(userID int) (string, string, error) {
+func (h *ModrinthPATHandler) LoadPAT(userID string) (string, string, error) {
 	pat, err := h.state.Store.GetModrinthPAT(userID)
 	if err != nil {
 		return "", "", err

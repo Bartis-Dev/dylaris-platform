@@ -5,7 +5,6 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"errors"
-	"time"
 )
 
 // Phase 9 — RCON config + API keys. Kept separate from main postgres.go so
@@ -85,7 +84,7 @@ func (s *PostgresStore) CreateAPIKey(k *models.APIKey) (int, error) {
 	return id, err
 }
 
-func (s *PostgresStore) ListAPIKeysByUser(userID int) ([]models.APIKey, error) {
+func (s *PostgresStore) ListAPIKeysByUser(userID string) ([]models.APIKey, error) {
 	rows, err := s.db.Query(`SELECT `+apiKeyCols+`
 		FROM api_keys WHERE user_id=$1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -115,7 +114,7 @@ func (s *PostgresStore) GetAPIKeyByHash(hash string) (*models.APIKey, error) {
 
 // RevokeAPIKey is user-scoped — owners can only revoke their own keys.
 // Stamps revoked_at instead of deleting so audit/last-used data survives.
-func (s *PostgresStore) RevokeAPIKey(id, userID int) error {
+func (s *PostgresStore) RevokeAPIKey(id int, userID string) error {
 	res, err := s.db.Exec(`UPDATE api_keys SET revoked_at=NOW()
 		WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL`, id, userID)
 	if err != nil {
@@ -132,6 +131,3 @@ func (s *PostgresStore) TouchAPIKey(id int) error {
 	_, err := s.db.Exec(`UPDATE api_keys SET last_used_at=NOW() WHERE id=$1`, id)
 	return err
 }
-
-// Ensure time import keeps compiling even if all NullTime paths are removed.
-var _ = time.Time{}

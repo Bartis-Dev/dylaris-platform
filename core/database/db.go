@@ -60,6 +60,9 @@ func pingWithRetry(db *sql.DB, attempts int, delay time.Duration) error {
 // NOT EXISTS, conditional inserts), so it is safe to run repeatedly —
 // both at startup and from schemaHealLoop.
 func ensureSchema(db *sql.DB) error {
+	if err := bootGuardUUIDSchema(db); err != nil {
+		return err
+	}
 	if err := createUsersTable(db); err != nil {
 		return err
 	}
@@ -117,6 +120,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase11Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase15Schema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	seedDefaultAdmin(db)
@@ -154,13 +160,13 @@ func createTicketTables(db *sql.DB) error {
 			id               SERIAL PRIMARY KEY,
 			region           VARCHAR(32) NOT NULL DEFAULT 'default',
 			category_id      INTEGER NOT NULL REFERENCES ticket_categories(id) ON DELETE RESTRICT,
-			user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			server_uuid      VARCHAR(64),
 			server_region    VARCHAR(32),
 			title            VARCHAR(200) NOT NULL,
 			status           VARCHAR(32) NOT NULL DEFAULT 'open',
 			priority         VARCHAR(16) NOT NULL DEFAULT 'normal',
-			assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			assigned_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
 			assigned_team    VARCHAR(64),
 			created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -177,7 +183,7 @@ func createTicketTables(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS ticket_messages (
 			id          SERIAL PRIMARY KEY,
 			ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-			user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+			user_id     UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
 			body        TEXT NOT NULL,
 			is_internal BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -188,10 +194,10 @@ func createTicketTables(db *sql.DB) error {
 		// "co-resolves with me" — admin sets the policy default.
 		`CREATE TABLE IF NOT EXISTS ticket_watchers (
 			ticket_id  INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-			user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			can_reply  BOOLEAN NOT NULL DEFAULT FALSE,
 			added_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			added_by   UUID REFERENCES users(id) ON DELETE SET NULL,
 			PRIMARY KEY (ticket_id, user_id)
 		)`,
 
@@ -202,7 +208,7 @@ func createTicketTables(db *sql.DB) error {
 			id            BIGSERIAL PRIMARY KEY,
 			ticket_id     INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
 			event_type    VARCHAR(64) NOT NULL,
-			actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
 			metadata      JSONB,
 			created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
@@ -220,7 +226,7 @@ func createTicketTables(db *sql.DB) error {
 			mime        VARCHAR(128) NOT NULL DEFAULT 'application/octet-stream',
 			size_bytes  BIGINT NOT NULL DEFAULT 0,
 			storage_key VARCHAR(512) NOT NULL,
-			uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ticket_attachments_ticket ON ticket_attachments(ticket_id, created_at ASC)`,
@@ -235,7 +241,7 @@ func createTicketTables(db *sql.DB) error {
 			name        VARCHAR(128) NOT NULL,
 			body        TEXT NOT NULL,
 			category_id INTEGER REFERENCES ticket_categories(id) ON DELETE SET NULL,
-			created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(name)
@@ -248,7 +254,7 @@ func createTicketTables(db *sql.DB) error {
 		// can write here later.
 		`CREATE TABLE IF NOT EXISTS notifications (
 			id         BIGSERIAL PRIMARY KEY,
-			user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			type       VARCHAR(64) NOT NULL,
 			title      VARCHAR(200) NOT NULL,
 			body       TEXT NOT NULL DEFAULT '',
@@ -268,8 +274,8 @@ func createTicketTables(db *sql.DB) error {
 			server_id      INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
 			region         VARCHAR(32) NOT NULL DEFAULT 'default',
 			event_type     VARCHAR(64) NOT NULL,
-			actor_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
-			target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			actor_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+			target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
 			metadata       JSONB,
 			ip_address     INET,
 			user_agent     TEXT,
@@ -309,7 +315,7 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_regions (
-		user_id   INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		user_id   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		region_id VARCHAR(32) NOT NULL REFERENCES regions(id) ON DELETE CASCADE,
 		PRIMARY KEY (user_id, region_id)
 	)`); err != nil {
@@ -319,8 +325,8 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS audit_events_identity (
 		id              BIGSERIAL PRIMARY KEY,
 		event_type      VARCHAR(64) NOT NULL,
-		actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
-		target_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		actor_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+		target_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
 		metadata        JSONB,
 		ip_address      INET,
 		user_agent      TEXT,
@@ -345,7 +351,7 @@ func applyPhase0a1Schema(db *sql.DB) error {
 		{"users", "deletion_scheduled_at", "TIMESTAMPTZ"},
 		{"servers", "region", "VARCHAR(32) NOT NULL DEFAULT 'default'"},
 		{"settings", "updated_at", "TIMESTAMPTZ DEFAULT NOW()"},
-		{"settings", "updated_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"},
+		{"settings", "updated_by", "UUID REFERENCES users(id) ON DELETE SET NULL"},
 	}
 	for _, c := range addCols {
 		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)); err != nil {
@@ -380,6 +386,36 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	return nil
 }
 
+// applyPhase15Schema sets up the Phase 15 (User UUID migration + username
+// history) tables. The users.id UUID + drop of public_id happen in
+// createUsersTable; this function only adds the new history table +
+// settings rows. Idempotent.
+func applyPhase15Schema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_username_history (
+		id           SERIAL PRIMARY KEY,
+		user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		old_username VARCHAR(64) NOT NULL,
+		new_username VARCHAR(64) NOT NULL,
+		changed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		changed_by   UUID REFERENCES users(id) ON DELETE SET NULL
+	)`); err != nil {
+		return fmt.Errorf("phase 15: create user_username_history: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_username_history_user
+		ON user_username_history(user_id, changed_at DESC)`); err != nil {
+		return fmt.Errorf("phase 15: create username_history index: %w", err)
+	}
+	for _, q := range []string{
+		`INSERT INTO settings (key, value) VALUES ('users.allow_name_change', 'true') ON CONFLICT (key) DO NOTHING`,
+		`INSERT INTO settings (key, value) VALUES ('users.name_change_cooldown_days', '30') ON CONFLICT (key) DO NOTHING`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("phase 15: seed settings: %w", err)
+		}
+	}
+	return nil
+}
+
 // applyPhase14Schema sets up Phase 14 (Modpack Builder + Modrinth Publish):
 //   - modpacks         : per-user authored modpacks
 //   - modpack_versions : version history per pack (Draft/Beta/Release channels)
@@ -392,7 +428,7 @@ func applyPhase14Schema(db *sql.DB) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS modpacks (
 			id                   SERIAL PRIMARY KEY,
-			owner_id             INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			owner_id             UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			name                 VARCHAR(128) NOT NULL,
 			slug                 VARCHAR(128) NOT NULL,
 			summary              VARCHAR(255) NOT NULL DEFAULT '',
@@ -446,7 +482,7 @@ func applyPhase14Schema(db *sql.DB) error {
 		// overwrites. Username + last_validated_at let the UI show
 		// "Connected as <username> (valid as of ...)".
 		`CREATE TABLE IF NOT EXISTS modrinth_pats (
-			user_id           INTEGER     PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			user_id           UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
 			ciphertext        TEXT        NOT NULL,
 			modrinth_username VARCHAR(128) NOT NULL DEFAULT '',
 			last_validated_at TIMESTAMPTZ,
@@ -476,7 +512,7 @@ func applyPhase13Schema(db *sql.DB) error {
 		enabled        BOOLEAN     NOT NULL DEFAULT TRUE,
 		open_in_panel  BOOLEAN     NOT NULL DEFAULT TRUE,
 		created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+		created_by     UUID REFERENCES users(id) ON DELETE SET NULL
 	)`); err != nil {
 		return fmt.Errorf("phase 13: create server_tabs: %w", err)
 	}
@@ -497,7 +533,7 @@ func applyPhase11Schema(db *sql.DB) error {
 		url             VARCHAR(512) NOT NULL,
 		started_at      TIMESTAMPTZ,
 		completed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		requested_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		requested_by    UUID REFERENCES users(id) ON DELETE SET NULL,
 		UNIQUE(server_id, url)
 	)`); err != nil {
 		return fmt.Errorf("phase 11: create spark_profiles: %w", err)
@@ -524,7 +560,7 @@ func applyPhase10Schema(db *sql.DB) error {
 		file_name              VARCHAR(255) NOT NULL,
 		sha512                 VARCHAR(128) NOT NULL DEFAULT '',
 		installed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		installed_by           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		installed_by           UUID REFERENCES users(id) ON DELETE SET NULL,
 		UNIQUE(server_id, sub_server_name, modrinth_project_id)
 	)`); err != nil {
 		return fmt.Errorf("phase 10: create server_mods: %w", err)
@@ -553,7 +589,7 @@ func applyPhase9Schema(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS api_keys (
 		id             SERIAL PRIMARY KEY,
-		user_id        INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		name           VARCHAR(128) NOT NULL,
 		key_hash       VARCHAR(64) NOT NULL UNIQUE,
 		scope          JSONB        NOT NULL DEFAULT '{}'::jsonb,
@@ -590,7 +626,7 @@ func applyPhase8Schema(db *sql.DB) error {
 		last_run       TIMESTAMPTZ,
 		last_status    VARCHAR(32)  NOT NULL DEFAULT '',
 		last_error     TEXT         NOT NULL DEFAULT '',
-		created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		created_by     UUID REFERENCES users(id) ON DELETE SET NULL,
 		created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 		updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 	)`); err != nil {
@@ -638,8 +674,11 @@ func schemaHealLoop(db *sql.DB) {
 }
 
 func createUsersTable(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE EXTENSION IF NOT EXISTS pgcrypto`); err != nil {
+		return fmt.Errorf("create pgcrypto extension: %w", err)
+	}
 	query := `CREATE TABLE IF NOT EXISTS users (
-		id SERIAL PRIMARY KEY,
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		username TEXT NOT NULL UNIQUE,
 		password TEXT NOT NULL,
 		minecraft_username TEXT,
@@ -647,8 +686,8 @@ func createUsersTable(db *sql.DB) error {
 		is_admin BOOLEAN DEFAULT FALSE,
 		is_2fa_enabled BOOLEAN DEFAULT FALSE,
 		permissions TEXT,
-		public_id TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		last_username_change TIMESTAMPTZ
 	)`
 	_, err := db.Exec(query)
 	return err
@@ -699,7 +738,7 @@ func createServersTable(db *sql.DB) error {
 		uuid TEXT NOT NULL UNIQUE,
 		name TEXT NOT NULL,
 		node_id INTEGER NOT NULL REFERENCES nodes(id),
-		owner_id INTEGER NOT NULL REFERENCES users(id),
+		owner_id UUID NOT NULL REFERENCES users(id),
 		game_image TEXT,
 		port INTEGER,
 		memory INTEGER,
@@ -725,9 +764,9 @@ func createServerInvitesTable(db *sql.DB) error {
 	query := `CREATE TABLE IF NOT EXISTS server_invites (
 		id SERIAL PRIMARY KEY,
 		server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		permissions JSONB DEFAULT '{}',
-		invited_by INTEGER NOT NULL REFERENCES users(id),
+		invited_by UUID NOT NULL REFERENCES users(id),
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(server_id, user_id)
 	)`
@@ -882,8 +921,8 @@ func seedDefaultAdmin(db *sql.DB) {
 	// First-deploy admin: pre-verified, all-region access (current & future regions).
 	// These columns are guaranteed to exist by applyPhase0a1Schema, which runs first.
 	_, err = db.Exec(
-		`INSERT INTO users (username, password, is_admin, public_id, all_regions_access, email_verified_at)
-		 VALUES ($1, $2, TRUE, 'admin-default', TRUE, NOW())`,
+		`INSERT INTO users (username, password, is_admin, all_regions_access, email_verified_at)
+		 VALUES ($1, $2, TRUE, TRUE, NOW())`,
 		"dylaris", string(hashed),
 	)
 	if err != nil {
@@ -919,7 +958,7 @@ func createGatewayTables(db *sql.DB) error {
 			target_port INTEGER NOT NULL DEFAULT 25565,
 			link_id INTEGER REFERENCES gateway_links(id) ON DELETE SET NULL,
 			server_id INTEGER REFERENCES servers(id) ON DELETE CASCADE,
-			owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
 			server_uuid TEXT DEFAULT '',
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -1043,3 +1082,26 @@ func createServerStatsTable(db *sql.DB) error {
 	return nil
 }
 
+// bootGuardUUIDSchema refuses to start against a legacy INT-based users
+// schema. Phase 15 ships a UUID schema; reusing an old DB would result in
+// silent runtime breakage on the first cast in a handler. We fail loud
+// instead. Owner drops the dev DB before first deploy.
+func bootGuardUUIDSchema(db *sql.DB) error {
+	var dataType string
+	err := db.QueryRow(`SELECT data_type FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'id'`).Scan(&dataType)
+	if err == sql.ErrNoRows {
+		// Fresh DB. Nothing exists yet; downstream ensureSchema will CREATE.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("boot-guard probe failed: %w", err)
+	}
+	if dataType == "integer" {
+		return fmt.Errorf("FATAL: users.id is integer; this build requires UUID schema — drop the database and restart Core")
+	}
+	if dataType != "uuid" {
+		return fmt.Errorf("FATAL: users.id has unexpected type %q (expected uuid)", dataType)
+	}
+	return nil
+}

@@ -327,7 +327,7 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 
 func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
-	userID := r.Context().Value("userID").(int)
+	userID := r.Context().Value("userID").(string)
 
 	// Three input shapes, listed in priority order:
 	//   1. {subdomain, hosterDomain}      — user picked from the admin's hoster list
@@ -360,7 +360,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.state.Gateway.CreateServerRoute(uint(serverID), uint(userID), finalDomain, req.TargetPort); err != nil {
+	if err := h.state.Gateway.CreateServerRoute(uint(serverID), userID, finalDomain, req.TargetPort); err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") {
 			http.Error(w, errMsg, http.StatusNotFound)
@@ -467,7 +467,7 @@ func (h *GatewayHandler) loadGatewayDomainConfig() ([]HosterDomain, bool, string
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	domain := mux.Vars(r)["domain"]
-	userID := r.Context().Value("userID").(int)
+	userID := r.Context().Value("userID").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	if domain == "" {

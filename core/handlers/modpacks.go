@@ -47,8 +47,8 @@ type modpackRequest struct {
 }
 
 func (h *ModpacksHandler) ownsModpack(r *http.Request, modpackID int) (*models.Modpack, bool) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		return nil, false
 	}
 	m, err := h.state.Store.GetModpack(modpackID)
@@ -77,8 +77,8 @@ func slugify(name string) string {
 
 // List GET /api/me/modpacks — packs owned by current user.
 func (h *ModpacksHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -101,8 +101,8 @@ func (h *ModpacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ModpacksHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

@@ -314,14 +314,14 @@ func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun,
 
 func (s *PostgresStore) scanRestore(row interface{ Scan(...interface{}) error }) (*models.BackupRestore, error) {
 	var r models.BackupRestore
-	var requestedBy sql.NullInt64
+	var requestedBy sql.NullString
 	var completed sql.NullTime
 	err := row.Scan(&r.ID, &r.RunID, &r.ServerID, &requestedBy, &r.RequestedAt, &completed, &r.Status, &r.ErrorMessage)
 	if err != nil {
 		return nil, err
 	}
 	if requestedBy.Valid {
-		v := int(requestedBy.Int64)
+		v := requestedBy.String
 		r.RequestedBy = &v
 	}
 	if completed.Valid {

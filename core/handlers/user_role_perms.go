@@ -2,10 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-
-	"github.com/gorilla/mux"
 )
 
 // These endpoints live on UserHandler alongside the existing user CRUD —
@@ -27,10 +24,8 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
-	idStr := mux.Vars(r)["id"]
-	var id int
-	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id <= 0 {
-		sendJSONError(w, "Invalid user id", 400)
+	id, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 	var req setRoleRequest
@@ -46,7 +41,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// Self-demotion guard: an admin demoting themselves is fine as long as
 	// at least one other admin remains. Otherwise refuse — the operator
 	// would lock themselves out of /admin/* immediately.
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	if actorID == id && req.Role != "admin" {
 		users, _ := h.state.Store.ListUsers()
 		adminCount := 0
@@ -105,10 +100,8 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
-	idStr := mux.Vars(r)["id"]
-	var id int
-	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id <= 0 {
-		sendJSONError(w, "Invalid user id", 400)
+	id, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 	var req setPermissionsRequest
@@ -122,7 +115,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventUserPermissionsChanged, actorID, id, map[string]interface{}{
 		"can_delete_servers":   req.CanDeleteServers,
 		"can_change_resources": req.CanChangeResources,

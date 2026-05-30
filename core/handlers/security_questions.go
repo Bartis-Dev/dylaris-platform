@@ -84,8 +84,8 @@ func (h *SecurityQuestionsHandler) GetPool(w http.ResponseWriter, r *http.Reques
 // Returns the current user's chosen questions (texts only). Used by the
 // profile UI to show "your questions are X, Y, Z" before editing.
 func (h *SecurityQuestionsHandler) GetMyQuestions(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID <= 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
@@ -112,8 +112,8 @@ type setMyQuestionsRequest struct {
 // policy, every question is from the current pool (so users can't slip a
 // custom self-known one in), no duplicates.
 func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID <= 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
@@ -195,13 +195,13 @@ func (h *SecurityQuestionsHandler) SetAdminPool(w http.ResponseWriter, r *http.R
 	}
 
 	payload, _ := json.Marshal(cleaned)
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.SetSettingBy("auth.security_questions_pool", string(payload), actorID); err != nil {
 		sendJSONError(w, "Failed to save pool", http.StatusInternalServerError)
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventSecurityQuestionsPoolUpdated, actorID, 0, map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventSecurityQuestionsPoolUpdated, actorID, "", map[string]interface{}{
 		"count": len(cleaned),
 	})
 

@@ -5,7 +5,7 @@ import (
 )
 
 type User struct {
-	ID                int       `json:"id"`
+	ID                string    `json:"id"`
 	Username          string    `json:"username"`
 	Password          string    `json:"password,omitempty"`
 	Email             string    `json:"email"`
@@ -15,7 +15,6 @@ type User struct {
 	TOTPSecret        string    `json:"-"` // never sent to clients
 	TOTPBackupCodes   string    `json:"-"` // JSON array of bcrypt-hashed codes
 	Permissions       string    `json:"permissions"`
-	PublicID          string    `json:"publicId"`
 	CreatedAt         time.Time `json:"createdAt"`
 
 	// Region access (Phase 0a.1)
@@ -41,6 +40,8 @@ type User struct {
 	DeletionStatus           string     `json:"deletionStatus"`
 	DeletionWarningSentAt    *time.Time `json:"deletionWarningSentAt,omitempty"`
 	DeletionScheduledAt      *time.Time `json:"deletionScheduledAt,omitempty"`
+
+	LastUsernameChange *time.Time `json:"lastUsernameChange,omitempty"`
 }
 
 // Region is a geographic deployment region. Single-region setups have one
@@ -59,8 +60,8 @@ type Region struct {
 type AuditEventIdentity struct {
 	ID           int64                  `json:"id"`
 	EventType    string                 `json:"eventType"`
-	ActorUserID  *int                   `json:"actorUserId,omitempty"`
-	TargetUserID *int                   `json:"targetUserId,omitempty"`
+	ActorUserID  *string                `json:"actorUserId,omitempty"`
+	TargetUserID *string                `json:"targetUserId,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	IPAddress    string                 `json:"ipAddress,omitempty"`
 	UserAgent    string                 `json:"userAgent,omitempty"`
@@ -94,7 +95,7 @@ type Ticket struct {
 	Region         string     `json:"region"`
 	CategoryID     int        `json:"categoryId"`
 	CategoryName   string     `json:"categoryName,omitempty"`
-	UserID         int        `json:"userId"`
+	UserID         string     `json:"userId"`
 	Username       string     `json:"username,omitempty"`
 	ServerUUID     string     `json:"serverUuid,omitempty"`
 	ServerRegion   string     `json:"serverRegion,omitempty"`
@@ -102,7 +103,7 @@ type Ticket struct {
 	Title          string     `json:"title"`
 	Status         string     `json:"status"`
 	Priority       string     `json:"priority"`
-	AssignedUserID *int       `json:"assignedUserId,omitempty"`
+	AssignedUserID *string    `json:"assignedUserId,omitempty"`
 	AssignedName   string     `json:"assignedName,omitempty"`
 	AssignedTeam   string     `json:"assignedTeam,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
@@ -120,7 +121,7 @@ type Ticket struct {
 type TicketMessage struct {
 	ID         int       `json:"id"`
 	TicketID   int       `json:"ticketId"`
-	UserID     int       `json:"userId"`
+	UserID     string    `json:"userId"`
 	Username   string    `json:"username,omitempty"`
 	UserRole   string    `json:"userRole,omitempty"` // role at time of post (snapshot)
 	Body       string    `json:"body"`
@@ -132,11 +133,11 @@ type TicketMessage struct {
 // observers from co-authors. Read-only watchers never see internal notes.
 type TicketWatcher struct {
 	TicketID int       `json:"ticketId"`
-	UserID   int       `json:"userId"`
+	UserID   string    `json:"userId"`
 	Username string    `json:"username,omitempty"`
 	CanReply bool      `json:"canReply"`
 	AddedAt  time.Time `json:"addedAt"`
-	AddedBy  *int      `json:"addedBy,omitempty"`
+	AddedBy  *string   `json:"addedBy,omitempty"`
 }
 
 // TicketAuditEvent is an append-only audit row scoped to one ticket.
@@ -145,7 +146,7 @@ type TicketAuditEvent struct {
 	ID          int64                  `json:"id"`
 	TicketID    int                    `json:"ticketId"`
 	EventType   string                 `json:"eventType"`
-	ActorUserID *int                   `json:"actorUserId,omitempty"`
+	ActorUserID *string                `json:"actorUserId,omitempty"`
 	ActorName   string                 `json:"actorName,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt   time.Time              `json:"createdAt"`
@@ -165,7 +166,7 @@ type TicketAttachment struct {
 	Mime       string    `json:"mime"`
 	SizeBytes  int64     `json:"sizeBytes"`
 	StorageKey string    `json:"-"` // never sent to clients
-	UploadedBy *int      `json:"uploadedBy,omitempty"`
+	UploadedBy *string   `json:"uploadedBy,omitempty"`
 	Username   string    `json:"username,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
@@ -179,7 +180,7 @@ type CannedResponse struct {
 	Name       string    `json:"name"`
 	Body       string    `json:"body"`
 	CategoryID *int      `json:"categoryId,omitempty"`
-	CreatedBy  *int      `json:"createdBy,omitempty"`
+	CreatedBy  *string   `json:"createdBy,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
@@ -194,9 +195,9 @@ type ServerAuditEvent struct {
 	ServerID     int                    `json:"serverId"`
 	Region       string                 `json:"region"`
 	EventType    string                 `json:"eventType"`
-	ActorUserID  *int                   `json:"actorUserId,omitempty"`
+	ActorUserID  *string                `json:"actorUserId,omitempty"`
 	ActorName    string                 `json:"actorName,omitempty"`
-	TargetUserID *int                   `json:"targetUserId,omitempty"`
+	TargetUserID *string                `json:"targetUserId,omitempty"`
 	TargetName   string                 `json:"targetName,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	IPAddress    string                 `json:"ipAddress,omitempty"`
@@ -218,7 +219,7 @@ type ServerAuditState struct {
 // bell-dropdown anchors the row to.
 type Notification struct {
 	ID        int64      `json:"id"`
-	UserID    int        `json:"userId"`
+	UserID    string     `json:"userId"`
 	Type      string     `json:"type"`
 	Title     string     `json:"title"`
 	Body      string     `json:"body"`
@@ -268,7 +269,7 @@ type Server struct {
 	NodeID          int          `json:"nodeId"`
 	NodeName        string       `json:"node"`
 	NodeAddress     string       `json:"nodeAddress"`
-	OwnerID         int          `json:"ownerId"`
+	OwnerID         string       `json:"ownerId"`
 	OwnerName       string       `json:"owner"`
 	GameImage       string       `json:"image"`
 	Port            int          `json:"port"`
@@ -320,11 +321,11 @@ type TabPermissions struct {
 type ServerInvite struct {
 	ID          int            `json:"id"`
 	ServerID    int            `json:"serverId"`
-	UserID      int            `json:"userId"`
+	UserID      string         `json:"userId"`
 	Username    string         `json:"username"`
 	Email       string         `json:"email"`
 	Permissions TabPermissions `json:"permissions"`
-	InvitedBy   int            `json:"invitedBy"`
+	InvitedBy   string         `json:"invitedBy"`
 	InviterName string         `json:"inviterName"`
 	CreatedAt   time.Time      `json:"createdAt"`
 }

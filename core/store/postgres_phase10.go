@@ -18,14 +18,14 @@ func scanServerMod(row interface {
 	Scan(dest ...interface{}) error
 }) (*models.ServerMod, error) {
 	var m models.ServerMod
-	var installedBy sql.NullInt64
+	var installedBy sql.NullString
 	if err := row.Scan(&m.ID, &m.ServerID, &m.SubServerName, &m.ModrinthProjectID,
 		&m.ModrinthProjectSlug, &m.ModrinthVersionID, &m.Title, &m.FileName, &m.SHA512,
 		&m.InstalledAt, &installedBy); err != nil {
 		return nil, err
 	}
 	if installedBy.Valid {
-		v := int(installedBy.Int64)
+		v := installedBy.String
 		m.InstalledBy = &v
 	}
 	return &m, nil

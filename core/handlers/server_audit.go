@@ -32,10 +32,10 @@ const (
 // (either auto-flipped by InviteMember or admin-forced). Best-effort:
 // failures log but never block the originating request.
 //
-// Set targetUserID to 0 when the event isn't about a specific user (most
+// Set targetUserID to "" when the event isn't about a specific user (most
 // events). Use it for member-related events so admins can answer "who was
 // removed from my server" without parsing metadata.
-func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType string, actorID, targetID int, metadata map[string]interface{}) {
+func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) {
 	if state == nil || state.Store == nil || serverID <= 0 {
 		return
 	}
@@ -55,11 +55,13 @@ func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType st
 		EventType: eventType,
 		Metadata:  metadata,
 	}
-	if actorID > 0 {
-		ev.ActorUserID = &actorID
+	if actorID != "" {
+		a := actorID
+		ev.ActorUserID = &a
 	}
-	if targetID > 0 {
-		ev.TargetUserID = &targetID
+	if targetID != "" {
+		t := targetID
+		ev.TargetUserID = &t
 	}
 	if r != nil {
 		ev.IPAddress = clientIP(r)
@@ -98,22 +100,22 @@ func NewServerAuditHandler(state *AppState) *ServerAuditHandler {
 
 // gateView returns the loaded server when the caller is allowed to read its
 // audit log. Owner + admin always; non-admin non-owner is denied.
-func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*models.Server, int, bool) {
+func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*models.Server, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid server id", http.StatusBadRequest)
-		return nil, 0, false
+		return nil, "", false
 	}
 	srv, err := h.state.Store.GetServerByID(id)
 	if err != nil || srv == nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return nil, 0, false
+		return nil, "", false
 	}
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	if !isAdmin && srv.OwnerID != userID {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return nil, 0, false
+		return nil, "", false
 	}
 	return srv, userID, true
 }
@@ -200,8 +202,8 @@ func (h *ServerAuditHandler) SetForce(w http.ResponseWriter, r *http.Request) {
 	// new state turns audit on. This way disabling force-on doesn't write
 	// the row right before the table effectively stops accepting writes.
 	if req.ForceOn {
-		actorID, _ := r.Context().Value("userID").(int)
-		LogServerAudit(h.state, r, id, ServerAuditEventForceOnChanged, actorID, 0, map[string]interface{}{
+		actorID, _ := r.Context().Value("userID").(string)
+		LogServerAudit(h.state, r, id, ServerAuditEventForceOnChanged, actorID, "", map[string]interface{}{
 			"force_on": req.ForceOn,
 		})
 	}

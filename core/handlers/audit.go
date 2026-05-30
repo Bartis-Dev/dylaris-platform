@@ -68,9 +68,9 @@ const (
 
 // LogIdentityAudit writes an append-only identity-domain audit row.
 // Best-effort: errors are logged but never propagated — losing an audit row
-// must never block the originating user action. Pass actorID = 0 for system
-// events (no human actor), targetID = 0 when not applicable.
-func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorID, targetID int, metadata map[string]interface{}) {
+// must never block the originating user action. Pass actorID = "" for system
+// events (no human actor), targetID = "" when not applicable.
+func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorID, targetID string, metadata map[string]interface{}) {
 	if state == nil || state.Store == nil {
 		return
 	}
@@ -79,11 +79,13 @@ func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorI
 		EventType: eventType,
 		Metadata:  metadata,
 	}
-	if actorID > 0 {
-		ev.ActorUserID = &actorID
+	if actorID != "" {
+		a := actorID
+		ev.ActorUserID = &a
 	}
-	if targetID > 0 {
-		ev.TargetUserID = &targetID
+	if targetID != "" {
+		t := targetID
+		ev.TargetUserID = &t
 	}
 	if r != nil {
 		ev.IPAddress = clientIP(r)

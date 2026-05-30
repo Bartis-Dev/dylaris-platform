@@ -91,8 +91,8 @@ func FilterServersByRegion(servers []models.Server, p EffectivePermissions) []mo
 // LoadEffectivePermissions is a convenience for handlers: fetches the user
 // + their region IDs, then computes the permissions. Returns zero-value
 // permissions (role="user", everything denied) if the lookup fails.
-func LoadEffectivePermissions(state *AppState, userID int) EffectivePermissions {
-	if state == nil || state.Store == nil || userID <= 0 {
+func LoadEffectivePermissions(state *AppState, userID string) EffectivePermissions {
+	if state == nil || state.Store == nil || userID == "" {
 		return EffectivePermissions{Role: "user"}
 	}
 	user, err := state.Store.GetUserByID(userID)

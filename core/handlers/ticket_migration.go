@@ -42,7 +42,7 @@ type TicketMigrationHandler struct {
 
 type restoreToken struct {
 	BackupName       string
-	UserID           int
+	UserID           string
 	IssuedAt         time.Time
 	MinExecuteAfter  time.Time
 	ConfirmationPhrase string
@@ -396,7 +396,7 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	user, err := h.state.Store.GetUserByID(userID)
 	if err != nil || user == nil {
 		sendJSONError(w, "User not found", http.StatusUnauthorized)
@@ -470,7 +470,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 
 	var req restoreExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -541,7 +541,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	delete(h.tokens, req.Token)
 	h.tokensMu.Unlock()
 
-	LogIdentityAudit(h.state, r, "ticket_restore_executed", userID, 0, map[string]interface{}{
+	LogIdentityAudit(h.state, r, "ticket_restore_executed", userID, "", map[string]interface{}{
 		"backup": t.BackupName,
 	})
 

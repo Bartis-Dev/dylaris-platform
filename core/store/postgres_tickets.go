@@ -125,7 +125,7 @@ const ticketBaseFrom = `FROM tickets t
 func scanTicket(scan func(dest ...interface{}) error) (*models.Ticket, error) {
 	var (
 		t                                                         models.Ticket
-		assignedID                                                sql.NullInt64
+		assignedID                                                sql.NullString
 		serverUUID, serverRegion, assignedName, assignedTeam      string
 		closedAt                                                  sql.NullTime
 	)
@@ -139,7 +139,7 @@ func scanTicket(scan func(dest ...interface{}) error) (*models.Ticket, error) {
 		return nil, err
 	}
 	if assignedID.Valid {
-		n := int(assignedID.Int64)
+		n := assignedID.String
 		t.AssignedUserID = &n
 	}
 	t.ServerUUID = serverUUID
@@ -311,7 +311,7 @@ func (s *PostgresStore) UpdateTicketPriority(id int, priority string) error {
 	return err
 }
 
-func (s *PostgresStore) UpdateTicketAssignment(id int, assignedUserID *int, assignedTeam string) error {
+func (s *PostgresStore) UpdateTicketAssignment(id int, assignedUserID *string, assignedTeam string) error {
 	_, err := s.db.Exec(
 		`UPDATE tickets
 		    SET assigned_user_id = $1,
@@ -384,12 +384,12 @@ func (s *PostgresStore) ListTicketWatchers(ticketID int) ([]models.TicketWatcher
 	var out []models.TicketWatcher
 	for rows.Next() {
 		var w models.TicketWatcher
-		var addedBy sql.NullInt64
+		var addedBy sql.NullString
 		if err := rows.Scan(&w.TicketID, &w.UserID, &w.Username, &w.CanReply, &w.AddedAt, &addedBy); err != nil {
 			continue
 		}
 		if addedBy.Valid {
-			n := int(addedBy.Int64)
+			n := addedBy.String
 			w.AddedBy = &n
 		}
 		out = append(out, w)
@@ -407,12 +407,12 @@ func (s *PostgresStore) AddTicketWatcher(w *models.TicketWatcher) error {
 	return err
 }
 
-func (s *PostgresStore) RemoveTicketWatcher(ticketID, userID int) error {
+func (s *PostgresStore) RemoveTicketWatcher(ticketID int, userID string) error {
 	_, err := s.db.Exec(`DELETE FROM ticket_watchers WHERE ticket_id = $1 AND user_id = $2`, ticketID, userID)
 	return err
 }
 
-func (s *PostgresStore) IsTicketWatcher(ticketID, userID int) (bool, error) {
+func (s *PostgresStore) IsTicketWatcher(ticketID int, userID string) (bool, error) {
 	var n int
 	err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM ticket_watchers WHERE ticket_id = $1 AND user_id = $2`,
@@ -453,13 +453,13 @@ func (s *PostgresStore) ListTicketAudit(ticketID int) ([]models.TicketAuditEvent
 	var out []models.TicketAuditEvent
 	for rows.Next() {
 		var ev models.TicketAuditEvent
-		var actor sql.NullInt64
+		var actor sql.NullString
 		var metaJSON []byte
 		if err := rows.Scan(&ev.ID, &ev.TicketID, &ev.EventType, &actor, &ev.ActorName, &metaJSON, &ev.CreatedAt); err != nil {
 			continue
 		}
 		if actor.Valid {
-			n := int(actor.Int64)
+			n := actor.String
 			ev.ActorUserID = &n
 		}
 		if len(metaJSON) > 0 {
@@ -475,7 +475,7 @@ func (s *PostgresStore) ListTicketAudit(ticketID int) ([]models.TicketAuditEvent
 // ListServersViaActiveTickets returns servers attached to active tickets
 // (open/in_progress/waiting_user) that the given support user is assigned
 // to. Drives the "Via tickets" sidebar tab introduced in Phase 1.
-func (s *PostgresStore) ListServersViaActiveTickets(supportUserID int) ([]models.Server, error) {
+func (s *PostgresStore) ListServersViaActiveTickets(supportUserID string) ([]models.Server, error) {
 	query := `
 		SELECT DISTINCT
 			s.id, s.uuid, s.name, n.name AS node_name, u.username AS owner_name,
@@ -555,7 +555,8 @@ func (s *PostgresStore) AddTicketAttachment(a *models.TicketAttachment) (int, er
 
 func (s *PostgresStore) GetTicketAttachment(id int) (*models.TicketAttachment, error) {
 	var a models.TicketAttachment
-	var msgID, uploadedBy sql.NullInt64
+	var msgID sql.NullInt64
+	var uploadedBy sql.NullString
 	err := s.db.QueryRow(
 		`SELECT id, ticket_id, message_id, filename, mime, size_bytes, storage_key, uploaded_by, created_at
 		   FROM ticket_attachments WHERE id = $1`,
@@ -569,7 +570,7 @@ func (s *PostgresStore) GetTicketAttachment(id int) (*models.TicketAttachment, e
 		a.MessageID = &n
 	}
 	if uploadedBy.Valid {
-		n := int(uploadedBy.Int64)
+		n := uploadedBy.String
 		a.UploadedBy = &n
 	}
 	return &a, nil
@@ -592,7 +593,8 @@ func (s *PostgresStore) ListTicketAttachments(ticketID int) ([]models.TicketAtta
 	var out []models.TicketAttachment
 	for rows.Next() {
 		var a models.TicketAttachment
-		var msgID, uploadedBy sql.NullInt64
+		var msgID sql.NullInt64
+		var uploadedBy sql.NullString
 		if err := rows.Scan(&a.ID, &a.TicketID, &msgID, &a.Filename, &a.Mime, &a.SizeBytes, &a.StorageKey, &uploadedBy, &a.Username, &a.CreatedAt); err != nil {
 			continue
 		}
@@ -601,7 +603,7 @@ func (s *PostgresStore) ListTicketAttachments(ticketID int) ([]models.TicketAtta
 			a.MessageID = &n
 		}
 		if uploadedBy.Valid {
-			n := int(uploadedBy.Int64)
+			n := uploadedBy.String
 			a.UploadedBy = &n
 		}
 		out = append(out, a)
@@ -629,7 +631,7 @@ func (s *PostgresStore) SumAttachmentBytesByTicket(ticketID int) (int64, error) 
 	return 0, nil
 }
 
-func (s *PostgresStore) SumAttachmentBytesByUser(userID int) (int64, error) {
+func (s *PostgresStore) SumAttachmentBytesByUser(userID string) (int64, error) {
 	var sum sql.NullInt64
 	err := s.db.QueryRow(
 		`SELECT SUM(size_bytes) FROM ticket_attachments WHERE uploaded_by = $1`,
@@ -648,7 +650,8 @@ func (s *PostgresStore) SumAttachmentBytesByUser(userID int) (int64, error) {
 
 func scanCannedResponse(scan func(dest ...interface{}) error) (*models.CannedResponse, error) {
 	var c models.CannedResponse
-	var catID, createdBy sql.NullInt64
+	var catID sql.NullInt64
+	var createdBy sql.NullString
 	err := scan(&c.ID, &c.Name, &c.Body, &catID, &createdBy, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -658,7 +661,7 @@ func scanCannedResponse(scan func(dest ...interface{}) error) (*models.CannedRes
 		c.CategoryID = &n
 	}
 	if createdBy.Valid {
-		n := int(createdBy.Int64)
+		n := createdBy.String
 		c.CreatedBy = &n
 	}
 	return &c, nil
@@ -735,7 +738,7 @@ func (s *PostgresStore) InsertNotification(n *models.Notification) (int64, error
 	return id, err
 }
 
-func (s *PostgresStore) ListNotifications(userID int, includeRead bool, limit int) ([]models.Notification, error) {
+func (s *PostgresStore) ListNotifications(userID string, includeRead bool, limit int) ([]models.Notification, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -766,7 +769,7 @@ func (s *PostgresStore) ListNotifications(userID int, includeRead bool, limit in
 	return out, nil
 }
 
-func (s *PostgresStore) CountUnreadNotifications(userID int) (int, error) {
+func (s *PostgresStore) CountUnreadNotifications(userID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL`,
@@ -775,7 +778,7 @@ func (s *PostgresStore) CountUnreadNotifications(userID int) (int, error) {
 	return n, err
 }
 
-func (s *PostgresStore) MarkNotificationRead(id int64, userID int) error {
+func (s *PostgresStore) MarkNotificationRead(id int64, userID string) error {
 	_, err := s.db.Exec(
 		`UPDATE notifications SET read_at = NOW()
 		   WHERE id = $1 AND user_id = $2 AND read_at IS NULL`,
@@ -784,7 +787,7 @@ func (s *PostgresStore) MarkNotificationRead(id int64, userID int) error {
 	return err
 }
 
-func (s *PostgresStore) MarkAllNotificationsRead(userID int) error {
+func (s *PostgresStore) MarkAllNotificationsRead(userID string) error {
 	_, err := s.db.Exec(
 		`UPDATE notifications SET read_at = NOW()
 		   WHERE user_id = $1 AND read_at IS NULL`,
@@ -961,7 +964,7 @@ func (s *PostgresStore) ListServerAudit(serverID int, eventType string, limit, o
 	var out []models.ServerAuditEvent
 	for rows.Next() {
 		var ev models.ServerAuditEvent
-		var actor, target sql.NullInt64
+		var actor, target sql.NullString
 		var metaJSON []byte
 		var ipAddr, ua sql.NullString
 		if err := rows.Scan(&ev.ID, &ev.ServerID, &ev.Region, &ev.EventType,
@@ -971,11 +974,11 @@ func (s *PostgresStore) ListServerAudit(serverID int, eventType string, limit, o
 			continue
 		}
 		if actor.Valid {
-			n := int(actor.Int64)
+			n := actor.String
 			ev.ActorUserID = &n
 		}
 		if target.Valid {
-			n := int(target.Int64)
+			n := target.String
 			ev.TargetUserID = &n
 		}
 		if len(metaJSON) > 0 {
@@ -1030,7 +1033,7 @@ func (s *PostgresStore) PurgeServerAuditOlderThan(cutoff time.Time) (int, error)
 //   - all watchers
 // excludeUserID is used to skip the actor (you don't get notified for your
 // own reply). Returns deduplicated, sorted IDs.
-func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUserID int) ([]int, error) {
+func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUserID string) ([]string, error) {
 	rows, err := s.db.Query(
 		`SELECT user_id FROM (
 		    SELECT user_id FROM tickets WHERE id = $1
@@ -1045,10 +1048,10 @@ func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUse
 		return nil, err
 	}
 	defer rows.Close()
-	seen := map[int]bool{}
-	var out []int
+	seen := map[string]bool{}
+	var out []string
 	for rows.Next() {
-		var id int
+		var id string
 		if err := rows.Scan(&id); err == nil && !seen[id] {
 			seen[id] = true
 			out = append(out, id)

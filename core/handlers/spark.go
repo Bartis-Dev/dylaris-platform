@@ -46,7 +46,7 @@ func (h *SparkHandler) canAccess(r *http.Request, serverID int) bool {
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	return checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "console")
 }
 
@@ -68,7 +68,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srv, _ := h.state.Store.GetServerByID(serverID)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	var startedAt sql.NullTime
 	if req.StartedAt != "" {
 		if t, err := time.Parse(time.RFC3339, req.StartedAt); err == nil {
@@ -76,7 +76,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var requestedBy interface{}
-	if userID > 0 {
+	if userID != "" {
 		requestedBy = userID
 	}
 	_, err := h.state.Redis.Pipeline().Exec(r.Context())

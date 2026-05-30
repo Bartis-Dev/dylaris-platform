@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
@@ -102,7 +101,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.state.Store.SetUserRegions(req.User.ID, allRegions, regionsExplicit); err != nil {
 		// Region setup failed but the user already exists — log but don't
 		// roll back; admin can fix the assignment from the user settings panel.
-		log.Printf("CreateUser: SetUserRegions failed for userID=%d: %v", req.User.ID, err)
+		log.Printf("CreateUser: SetUserRegions failed for userID=%s: %v", req.User.ID, err)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -125,17 +124,15 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
-	idStr := mux.Vars(r)["id"]
-	var id int
-	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id <= 0 {
-		sendJSONError(w, "Invalid user id", 400)
+	id, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 	if err := h.state.Store.CancelUserDeletion(id); err != nil {
 		sendJSONError(w, "Failed to cancel deletion", 500)
 		return
 	}
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventDeletionCancelledByAdmin, actorID, id, nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -150,10 +147,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		sendJSONError(w, "Invalid ID", 400)
+	id, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -180,10 +175,8 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		sendJSONError(w, "Invalid ID", 400)
+	id, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -217,8 +210,8 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	}
 
 	vars := mux.Vars(r)
-	id, _ := strconv.Atoi(vars["id"])
-	scope := fmt.Sprintf("user:%d", id)
+	id := vars["id"]
+	scope := fmt.Sprintf("user:%s", id)
 
 	limit, err := h.state.Store.GetGatewayRouteLimit(scope)
 	if err != nil {
@@ -251,8 +244,8 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	}
 
 	vars := mux.Vars(r)
-	id, _ := strconv.Atoi(vars["id"])
-	scope := fmt.Sprintf("user:%d", id)
+	id := vars["id"]
+	scope := fmt.Sprintf("user:%s", id)
 
 	var req struct {
 		Mode      string `json:"mode"`

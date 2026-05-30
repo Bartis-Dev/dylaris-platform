@@ -51,7 +51,7 @@ func (h *ServerModsHandler) canAccess(r *http.Request, serverID int) (*models.Se
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "config") {
 		return nil, false
 	}
@@ -145,10 +145,11 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _ := r.Context().Value("userID").(int)
-	var installedBy *int
-	if userID > 0 {
-		installedBy = &userID
+	userID, _ := r.Context().Value("userID").(string)
+	var installedBy *string
+	if userID != "" {
+		v := userID
+		installedBy = &v
 	}
 	mod := &models.ServerMod{
 		ServerID:            serverID,

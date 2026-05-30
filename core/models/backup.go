@@ -51,7 +51,7 @@ type BackupRestore struct {
 	ID            int        `json:"id"`
 	RunID         int        `json:"runId"`
 	ServerID      int        `json:"serverId"`
-	RequestedBy   *int       `json:"requestedBy,omitempty"`
+	RequestedBy   *string    `json:"requestedBy,omitempty"`
 	RequestedAt   time.Time  `json:"requestedAt"`
 	CompletedAt   *time.Time `json:"completedAt,omitempty"`
 	Status        string     `json:"status"` // queued | running | success | failed

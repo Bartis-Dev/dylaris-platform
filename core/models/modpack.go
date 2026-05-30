@@ -16,7 +16,7 @@ const (
 
 type Modpack struct {
 	ID                 int       `json:"id"`
-	OwnerID            int       `json:"ownerId"`
+	OwnerID            string    `json:"ownerId"`
 	Name               string    `json:"name"`
 	Slug               string    `json:"slug"`
 	Summary            string    `json:"summary"`
@@ -59,7 +59,7 @@ type ModpackMod struct {
 // struct — the encrypted ciphertext stays in storage and Decrypt produces a
 // short-lived plaintext for outgoing Modrinth API calls only.
 type ModrinthPAT struct {
-	UserID           int        `json:"userId"`
+	UserID           string     `json:"userId"`
 	Ciphertext       string     `json:"-"`
 	ModrinthUsername string     `json:"modrinthUsername"`
 	LastValidatedAt  *time.Time `json:"lastValidatedAt,omitempty"`

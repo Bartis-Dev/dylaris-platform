@@ -370,9 +370,10 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// Track the restore attempt in the DB so the panel can show history
 	// even after the node finishes (or fails).
 	username := r.Context().Value("username").(string)
-	var requestedBy *int
+	var requestedBy *string
 	if user, _ := h.state.Store.GetUserByUsername(username); user != nil {
-		requestedBy = &user.ID
+		v := user.ID
+		requestedBy = &v
 	}
 	restoreID, err := h.state.Store.CreateBackupRestore(&models.BackupRestore{
 		RunID:       run.ID,
@@ -585,7 +586,7 @@ func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, perm stri
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	user, _ := h.state.Store.GetUserByUsername(username)
-	userID := 0
+	userID := ""
 	if user != nil {
 		userID = user.ID
 	}

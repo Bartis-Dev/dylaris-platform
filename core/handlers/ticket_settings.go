@@ -140,7 +140,7 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	if s.AutoCloseDaysAfterResolved > 365 {
 		s.AutoCloseDaysAfterResolved = 365
 	}
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	pairs := []struct{ k, v string }{
 		{"tickets.cross_team_visibility", fmt.Sprintf("%t", s.CrossTeamVisibility)},
 		{"tickets.watchers_default_can_reply", fmt.Sprintf("%t", s.WatchersDefaultCanReply)},

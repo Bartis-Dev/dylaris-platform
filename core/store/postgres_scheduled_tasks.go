@@ -19,7 +19,7 @@ func scanScheduledTask(row interface {
 }) (*models.ScheduledTask, error) {
 	var t models.ScheduledTask
 	var nextRun, lastRun sql.NullTime
-	var createdBy sql.NullInt64
+	var createdBy sql.NullString
 	err := row.Scan(
 		&t.ID, &t.ServerID, &t.Name, &t.TaskType, &t.ScheduleCron, &t.Payload,
 		&t.Enabled, &nextRun, &lastRun, &t.LastStatus, &t.LastError,
@@ -37,7 +37,7 @@ func scanScheduledTask(row interface {
 		t.LastRun = &v
 	}
 	if createdBy.Valid {
-		v := int(createdBy.Int64)
+		v := createdBy.String
 		t.CreatedBy = &v
 	}
 	return &t, nil

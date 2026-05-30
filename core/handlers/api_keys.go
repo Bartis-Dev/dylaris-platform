@@ -53,8 +53,8 @@ var validPermissions = map[string]bool{
 }
 
 func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -130,8 +130,8 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -147,8 +147,8 @@ func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID == 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

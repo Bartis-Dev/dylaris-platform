@@ -22,7 +22,7 @@ func NewCannedResponsesHandler(state *AppState) *CannedResponsesHandler {
 // ListForSupport GET /api/ticket-canned-responses
 // Available to support+admin. Filter optional ?categoryId= to limit.
 func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
 	if !perms.IsAdmin && !perms.IsSupport {
 		sendJSONError(w, "Support or admin required", http.StatusForbidden)
@@ -102,8 +102,13 @@ func (h *CannedResponsesHandler) Create(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	actorID, _ := r.Context().Value("userID").(int)
-	c.CreatedBy = &actorID
+	actorID, _ := r.Context().Value("userID").(string)
+	if actorID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	v := actorID
+	c.CreatedBy = &v
 	id, err := h.state.Store.CreateCannedResponse(c)
 	if err != nil {
 		sendJSONError(w, "Create failed (name may already exist)", http.StatusConflict)

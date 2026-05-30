@@ -46,7 +46,7 @@ func buildAttachmentProvider() storage.StorageProvider {
 // canAttach gates upload + delete. Mirrors canReply from tickets.go but
 // without the "user reply → may not internal" carve-out — internal-ness
 // belongs to the message, not the attachment.
-func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePermissions, userID int, isWatcher, watcherCanReply bool) bool {
+func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePermissions, userID string, isWatcher, watcherCanReply bool) bool {
 	if perms.IsAdmin || perms.IsSupport {
 		return true
 	}
@@ -59,18 +59,18 @@ func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePe
 	return false
 }
 
-func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, EffectivePermissions, int, bool) {
+func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, EffectivePermissions, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
-		return nil, EffectivePermissions{}, 0, false
+		return nil, EffectivePermissions{}, "", false
 	}
 	t, err := h.state.Store.GetTicket(id)
 	if err != nil || t == nil {
 		sendJSONError(w, "Ticket not found", http.StatusNotFound)
-		return nil, EffectivePermissions{}, 0, false
+		return nil, EffectivePermissions{}, "", false
 	}
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
 	return t, perms, userID, true
 }
@@ -189,6 +189,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		}
 	}
 
+	uid := userID
 	a := &models.TicketAttachment{
 		TicketID:   t.ID,
 		MessageID:  msgID,
@@ -196,7 +197,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		Mime:       mime,
 		SizeBytes:  size,
 		StorageKey: storageKey,
-		UploadedBy: &userID,
+		UploadedBy: &uid,
 	}
 	insertedID, err := h.state.Store.AddTicketAttachment(a)
 	if err != nil {
@@ -207,10 +208,11 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	}
 	a.ID = insertedID
 
+	aid := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
 		EventType:   TicketEventAttachmentAdded,
-		ActorUserID: &userID,
+		ActorUserID: &aid,
 		Metadata: map[string]interface{}{
 			"filename": filename,
 			"size":     size,

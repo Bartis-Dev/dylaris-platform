@@ -33,8 +33,8 @@ const (
 
 // List GET /api/notifications?unread_only=1&limit=50
 func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID <= 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
@@ -59,8 +59,8 @@ func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 // UnreadCount GET /api/notifications/unread-count — cheap polling endpoint
 // for the bell badge.
 func (h *NotificationsHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
-	if userID <= 0 {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
 		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
@@ -73,7 +73,7 @@ func (h *NotificationsHandler) UnreadCount(w http.ResponseWriter, r *http.Reques
 
 // MarkRead POST /api/notifications/{id}/read
 func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)
@@ -88,7 +88,7 @@ func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) 
 
 // MarkAllRead POST /api/notifications/read-all
 func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.MarkAllNotificationsRead(userID); err != nil {
 		sendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
@@ -104,7 +104,7 @@ func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Reques
 //
 // Best-effort: each insert error is logged but does not block the originating
 // request. Returns silently when state/store are nil so tests can skip wiring.
-func EmitTicketNotification(state *AppState, recipients []int, kind string, title, body, link string) {
+func EmitTicketNotification(state *AppState, recipients []string, kind string, title, body, link string) {
 	if state == nil || state.Store == nil || len(recipients) == 0 {
 		return
 	}
@@ -117,7 +117,7 @@ func EmitTicketNotification(state *AppState, recipients []int, kind string, titl
 			Link:   link,
 		}
 		if _, err := state.Store.InsertNotification(n); err != nil {
-			log.Printf("notify: insert for user %d failed: %v", uid, err)
+			log.Printf("notify: insert for user %s failed: %v", uid, err)
 		}
 	}
 }

@@ -3,9 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
-
-	"github.com/gorilla/mux"
 )
 
 type UserRegionsHandler struct {
@@ -27,9 +24,8 @@ func (h *UserRegionsHandler) GetUserRegions(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
-	userID, err := strconv.Atoi(mux.Vars(r)["id"])
-	if err != nil {
-		sendJSONError(w, "Invalid user id", http.StatusBadRequest)
+	userID, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 	u, err := h.state.Store.GetUserByID(userID)
@@ -63,9 +59,8 @@ func (h *UserRegionsHandler) SetUserRegions(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
-	userID, err := strconv.Atoi(mux.Vars(r)["id"])
-	if err != nil {
-		sendJSONError(w, "Invalid user id", http.StatusBadRequest)
+	userID, ok := parseUserID(w, r)
+	if !ok {
 		return
 	}
 	if _, err := h.state.Store.GetUserByID(userID); err != nil {
@@ -95,7 +90,7 @@ func (h *UserRegionsHandler) SetUserRegions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	actorID, _ := r.Context().Value("userID").(int)
+	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventUserRegionsChanged, actorID, userID, map[string]interface{}{
 		"all_regions": req.AllRegions,
 		"regions":     req.Regions,
@@ -112,7 +107,7 @@ func (h *UserRegionsHandler) SetUserRegions(w http.ResponseWriter, r *http.Reque
 // (any authenticated user). Drives the frontend's "should I show a region
 // selector or hide it for single-region UX?" decision.
 func (h *UserRegionsHandler) GetMyRegions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("userID").(int)
+	userID, ok := r.Context().Value("userID").(string)
 	if !ok {
 		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return

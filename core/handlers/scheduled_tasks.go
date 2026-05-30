@@ -45,7 +45,7 @@ func (h *ScheduledTasksHandler) canAccess(r *http.Request, serverID int) (*model
 	}
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(int)
+	userID, _ := r.Context().Value("userID").(string)
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
 		return nil, false
 	}
@@ -101,10 +101,11 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	userID, _ := r.Context().Value("userID").(int)
-	var createdBy *int
-	if userID > 0 {
-		createdBy = &userID
+	userID, _ := r.Context().Value("userID").(string)
+	var createdBy *string
+	if userID != "" {
+		v := userID
+		createdBy = &v
 	}
 
 	t := &models.ScheduledTask{
