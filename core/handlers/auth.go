@@ -285,6 +285,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	username := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 
 	var req UpdateRequest
 	json.NewDecoder(r.Body).Decode(&req)
@@ -300,10 +301,41 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Update Fields in Struct
-	if req.NewUsername != nil && *req.NewUsername != "" {
-		user.Username = *req.NewUsername
+	// Username change: route through RenameUser with policy + cooldown + uniqueness guards.
+	// RenameUser writes user_username_history and bumps last_username_change in one tx, so
+	// we MUST NOT also write the username column in the generic UpdateUser call below.
+	if req.NewUsername != nil && strings.TrimSpace(*req.NewUsername) != user.Username {
+		newName := strings.TrimSpace(*req.NewUsername)
+		if newName == "" {
+			sendJSONError(w, "Username cannot be empty", http.StatusBadRequest)
+			return
+		}
+		allow, cooldownDays, _ := h.state.Store.GetUserAccountPolicy()
+		if !allow && !isAdmin {
+			sendJSONError(w, "Username changes are disabled by the admin", http.StatusForbidden)
+			return
+		}
+		if !isAdmin && user.LastUsernameChange != nil {
+			earliest := user.LastUsernameChange.Add(time.Duration(cooldownDays) * 24 * time.Hour)
+			if time.Now().Before(earliest) {
+				w.Header().Set("Retry-After", earliest.UTC().Format(time.RFC3339))
+				sendJSONError(w, "Username cooldown active; try again on "+earliest.Format("2006-01-02"), http.StatusTooManyRequests)
+				return
+			}
+		}
+		if existing, _ := h.state.Store.GetUserByUsername(newName); existing != nil && existing.ID != user.ID {
+			sendJSONError(w, "Username already taken", http.StatusConflict)
+			return
+		}
+		if err := h.state.Store.RenameUser(user.ID, newName, user.ID); err != nil {
+			sendJSONError(w, "Rename failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": user.ID})
+		user.Username = newName
 	}
+
+	// Update Fields in Struct (non-username fields)
 	if req.NewPassword != nil && *req.NewPassword != "" {
 		hashed, _ := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
 		user.Password = string(hashed)
@@ -315,7 +347,9 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		user.MinecraftUsername = *req.MinecraftUsername
 	}
 
-	// Save via Store
+	// Save via Store. Note: user.Username is already the new name if a rename happened,
+	// so this call is idempotent w.r.t. the username column — RenameUser already wrote
+	// it (and the history row + last_username_change) in its own transaction.
 	if err := h.state.Store.UpdateUser(user); err != nil {
 		sendJSONError(w, "Update failed", 500)
 		return

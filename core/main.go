@@ -212,6 +212,8 @@ func main() {
 	modpacksHandler := handlers.NewModpacksHandler(appState)
 	modpacksPublishHandler := handlers.NewModpacksPublishHandler(appState, modrinthPATHandler, "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
 	collaboratorsHandler := handlers.NewCollaboratorsHandler(appState, modrinthPATHandler, "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
+	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
+	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -349,6 +351,12 @@ func main() {
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(collaboratorsHandler.List)).Methods("GET")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(collaboratorsHandler.Add)).Methods("POST")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(collaboratorsHandler.Remove)).Methods("DELETE")
+	// --- Phase 15 — Username history + account policy ---
+	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(usernameHistoryHandler.AdminRename)).Methods("PATCH")
+	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Get)).Methods("GET")
+	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Set)).Methods("PUT")
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---
@@ -359,17 +367,17 @@ func main() {
 	api.HandleFunc("/auth/2fa/disable", authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)).Methods("POST")
 	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)).Methods("POST")
 	api.HandleFunc("/auth/2fa/status", authHandler.AuthMiddleware(authHandler.Get2FAStatusHandler)).Methods("GET")
-	api.HandleFunc("/users/{id:[0-9]+}/2fa", authHandler.AuthMiddleware(authHandler.AdminResetTOTPHandler)).Methods("DELETE")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/2fa", authHandler.AuthMiddleware(authHandler.AdminResetTOTPHandler)).Methods("DELETE")
 
 	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.GetAllUsers)).Methods("GET")
 	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.CreateUser)).Methods("POST")
-	api.HandleFunc("/users/{id:[0-9]+}", authHandler.AuthMiddleware(userHandler.DeleteUser)).Methods("DELETE")
-	api.HandleFunc("/users/{id:[0-9]+}/password", authHandler.AuthMiddleware(userHandler.ResetUserPassword)).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9]+}/cancel-deletion", authHandler.AuthMiddleware(userHandler.CancelUserDeletion)).Methods("POST")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}", authHandler.AuthMiddleware(userHandler.DeleteUser)).Methods("DELETE")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/password", authHandler.AuthMiddleware(userHandler.ResetUserPassword)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion", authHandler.AuthMiddleware(userHandler.CancelUserDeletion)).Methods("POST")
 
 	// --- Roles + capability flags (Phase 1) ---
-	api.HandleFunc("/admin/users/{id:[0-9]+}/role", authHandler.AuthMiddleware(userHandler.SetUserRoleHandler)).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9]+}/permissions", authHandler.AuthMiddleware(userHandler.SetUserPermissionsHandler)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/role", authHandler.AuthMiddleware(userHandler.SetUserRoleHandler)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/permissions", authHandler.AuthMiddleware(userHandler.SetUserPermissionsHandler)).Methods("PUT")
 
 	// --- Maintenance mode (Phase 1) ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
@@ -394,7 +402,7 @@ func main() {
 	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(ticketsHandler.UpdatePriority)).Methods("PATCH")
 	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(ticketsHandler.UpdateAssignment)).Methods("PATCH")
 	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(ticketsHandler.AddWatcher)).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9]+}", authHandler.AuthMiddleware(ticketsHandler.RemoveWatcher)).Methods("DELETE")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(ticketsHandler.RemoveWatcher)).Methods("DELETE")
 
 	// Sidebar source for support's "Via tickets" tab.
 	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(ticketsHandler.ListMyServersViaTickets)).Methods("GET")
@@ -444,8 +452,8 @@ func main() {
 	// Restore: two-step Danger Zone (init + execute) — 2FA + 15s timer + typed phrase.
 	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(ticketMigrationHandler.InitRestore)).Methods("POST")
 	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(ticketMigrationHandler.ExecuteRestore)).Methods("POST")
-	api.HandleFunc("/users/{id:[0-9]+}/route-limit", authHandler.AuthMiddleware(userHandler.GetUserRouteLimit)).Methods("GET")
-	api.HandleFunc("/users/{id:[0-9]+}/route-limit", authHandler.AuthMiddleware(userHandler.SetUserRouteLimit)).Methods("PUT")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(userHandler.GetUserRouteLimit)).Methods("GET")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(userHandler.SetUserRouteLimit)).Methods("PUT")
 
 	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.GetModulesHandler)).Methods("GET")
 	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.CreateModuleHandler)).Methods("POST")
@@ -492,8 +500,8 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(memberHandler.GetMembers)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(memberHandler.InviteMember)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/members/inherited", authHandler.AuthMiddleware(memberHandler.GetInheritedMembers)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9]+}", authHandler.AuthMiddleware(memberHandler.UpdateMemberPermissions)).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9]+}", authHandler.AuthMiddleware(memberHandler.RemoveMember)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(memberHandler.UpdateMemberPermissions)).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(memberHandler.RemoveMember)).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}", authHandler.AuthMiddleware(serverHandler.DeleteServer)).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/sub-servers/{subServerName}", authHandler.AuthMiddleware(serverHandler.DeleteSubServer)).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(serverHandler.LinkServerToProxy)).Methods("PUT")
@@ -599,8 +607,8 @@ func main() {
 	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(regionsHandler.UpdateRegion)).Methods("PATCH")
 	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(regionsHandler.DeleteRegion)).Methods("DELETE")
 	// Admin: per-user region assignment.
-	api.HandleFunc("/admin/users/{id:[0-9]+}/regions", authHandler.AuthMiddleware(userRegionsHandler.GetUserRegions)).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9]+}/regions", authHandler.AuthMiddleware(userRegionsHandler.SetUserRegions)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(userRegionsHandler.GetUserRegions)).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(userRegionsHandler.SetUserRegions)).Methods("PUT")
 
 	// --- Registration + Email Verify (Phase 0a.2) ---
 	// Public — login page polls registration-status to decide whether to show the register link.
