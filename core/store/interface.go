@@ -371,6 +371,14 @@ type Store interface {
 
 	// --- Phase 16 — Per-user feature flag ---
 	SetUserCanCreateModpacks(userID string, can bool) error
+
+	// --- Phase 17 — Setup wizard ---
+	// CountUsers is declared above in the Users block; only CountAdmins is new.
+	CountAdmins() (int, error)
+	// CreateFirstAdmin atomically inserts the first admin via a guarded CTE.
+	// Returns ErrSetupAlreadyComplete / ErrSetupInvalidToken to let the
+	// handler map outcomes to HTTP status codes without parsing strings.
+	CreateFirstAdmin(username, passwordHash, totpSecret, recoveryToken string) (*models.User, error)
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job

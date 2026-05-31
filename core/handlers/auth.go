@@ -21,6 +21,21 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 	return &AuthHandler{state: state, jwtKey: []byte(jwtSecret)}
 }
 
+// IssueToken signs a standard 24h session JWT for the given user. Extracted
+// from the login handler so other handlers (Phase 17 setup wizard, future
+// admin-impersonation flows) can mint tokens without duplicating the signing
+// + claim shape.
+func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) {
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		Username:         username,
+		IsAdmin:          isAdmin,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(h.jwtKey)
+}
+
 // ... Structs LoginRequest, Claims, UpdateRequest etc. kept as-is ...
 // Claims.Purpose distinguishes normal sessions ("" / "session") from
 // short-lived special-purpose tokens. Phase 0a.3 introduces "2fa_setup":

@@ -1558,3 +1558,56 @@ func (s *PostgresStore) AnonymizeUser(userID string) error {
 	return err
 }
 
+// ==========================================
+// PHASE 17 — Setup wizard
+// ==========================================
+
+// CountAdmins returns the number of users currently flagged as admin. Used by
+// the first-run setup wizard + the Lost-Admin recovery flow to detect "no
+// admin present" state.
+func (s *PostgresStore) CountAdmins() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin = true`).Scan(&n)
+	return n, err
+}
+
+// CreateFirstAdmin atomically inserts the first admin via a guarded CTE so
+// N Cores can race without producing duplicate admins. The guard fires when:
+//  1. No admin exists yet (covers both Fresh-Install and Lost-Admin modes)
+//  2. AND (no users at all  OR  recoveryToken matches settings)
+//
+// Returns ErrSetupAlreadyComplete when an admin already exists at insert time.
+// Returns ErrSetupInvalidToken when the token guard rejected the insert.
+func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret, recoveryToken string) (*models.User, error) {
+	const q = `
+		WITH guard AS (
+			SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = true)
+				AND (
+					NOT EXISTS (SELECT 1 FROM users)
+					OR (SELECT value FROM settings WHERE key = 'setup_recovery_token') = $4
+				)
+		)
+		INSERT INTO users (id, username, password_hash, is_admin, role, totp_secret, created_at)
+		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW()
+		FROM guard
+		RETURNING id, username, is_admin, role, totp_secret, created_at
+	`
+	var u models.User
+	err := s.db.QueryRow(q, username, passwordHash, totpSecret, recoveryToken).
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		// The guard rejected the insert. Figure out which condition failed
+		// by re-querying — this is the slow path only; happy path is one
+		// round-trip.
+		var adminCount int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin = true`).Scan(&adminCount)
+		if adminCount > 0 {
+			return nil, ErrSetupAlreadyComplete
+		}
+		return nil, ErrSetupInvalidToken
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}

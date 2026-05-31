@@ -217,6 +217,7 @@ func main() {
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
+	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -254,6 +255,11 @@ func main() {
 	scheduledTasksService.SetLeader(coreLeader)
 	scheduledTasksService.Start(context.Background())
 
+	// Phase 17 — Recovery-token printer. Background loop that logs either the
+	// Fresh-Install hint or the Lost-Admin token + URL every 30s as long as
+	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.
+	services.StartSetupRecoveryLoop(context.Background(), pgStore, cfg.FrontendURL)
+
 	// Router & API Endpunkte einrichten
 	r := mux.NewRouter()
 
@@ -275,6 +281,16 @@ func main() {
 
 	api := r.PathPrefix("/api").Subrouter().StrictSlash(true)
 
+	// Phase 17 — setup-lock middleware wraps every /api/* route. /api/setup/*
+	// is short-circuited by the middleware itself so the wizard endpoints stay
+	// reachable in Fresh-Install mode (when every other API route returns 503
+	// setup_required). In Lost-Admin + Complete modes this is a tiny COUNT()
+	// per request that we deliberately don't cache so a wizard completion on
+	// one Core unlocks others on their very next request.
+	api.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(appState.RequireSetupComplete(next.ServeHTTP))
+	})
+
 	// --- PUBLIC ENDPOINTS ---
 	api.HandleFunc("/auth/login", authHandler.LoginHandler).Methods("POST")
 	api.HandleFunc("/status", authHandler.StatusHandler).Methods("GET")
@@ -285,6 +301,13 @@ func main() {
 	// subscribes once on boot and refreshes its caches reactively. Auth via
 	// ?token= query param since EventSource can't set Authorization headers.
 	api.HandleFunc("/system/events", authHandler.AuthMiddleware(systemEventsHandler.StreamEvents)).Methods("GET")
+
+	// Phase 17 — Setup wizard. Open routes; /api/setup/* is also exempt from
+	// the setup-lock middleware so they remain reachable in Fresh-Install
+	// mode. Atomic CTE in Store.CreateFirstAdmin prevents racing inserts
+	// across N Cores.
+	api.HandleFunc("/setup/status", setupHandler.Status).Methods("GET")
+	api.HandleFunc("/setup/admin", setupHandler.CreateAdmin).Methods("POST")
 
 	// --- Scheduled Tasks (Phase 8) ---
 	// Cron preview — pure transform, available to anyone authed.
