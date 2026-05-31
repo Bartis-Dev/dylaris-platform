@@ -1,0 +1,283 @@
+"use client";
+
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
+import { ShieldCheck, ArrowLeft, ArrowRight, CircleAlert, Loader2 } from 'lucide-react';
+import {
+    getSetupStatus,
+    createFirstAdmin,
+    type SetupMode,
+} from '@/lib/api/setup';
+
+type Step = 1 | 2;
+
+export default function SetupWizard() {
+    const router = useRouter();
+    const [mode, setMode] = useState<SetupMode | null>(null);
+    const [frontendUrl, setFrontendUrl] = useState<string>('');
+
+    const [step, setStep] = useState<Step>(1);
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [passwordRepeat, setPasswordRepeat] = useState('');
+    const [token, setToken] = useState('');
+
+    // TOTP — secret is generated client-side at mount so the QR code can
+    // render without a backend round-trip. Backend re-verifies the code
+    // against this secret when the wizard submits.
+    const [totpSecret] = useState(() => genBase32(20));
+    const [totpCode, setTotpCode] = useState('');
+    const [enable2FA, setEnable2FA] = useState(false);
+
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        getSetupStatus().then(s => {
+            if (s.mode === 'complete') {
+                router.replace('/login');
+                return;
+            }
+            setMode(s.mode);
+            setFrontendUrl(s.frontendUrl || '');
+        });
+    }, [router]);
+
+    const requiresToken = mode === 'lost_admin';
+
+    const step1Valid =
+        username.trim().length >= 3 &&
+        /^[a-zA-Z0-9_-]{3,32}$/.test(username.trim()) &&
+        password.length >= 8 &&
+        password === passwordRepeat &&
+        (!requiresToken || token.trim().length > 0);
+
+    const otpAuthURL = useMemo(() => {
+        if (!username) return '';
+        const label = encodeURIComponent(`Dylaris:${username.trim()}`);
+        return `otpauth://totp/${label}?secret=${totpSecret}&issuer=Dylaris&algorithm=SHA1&digits=6&period=30`;
+    }, [username, totpSecret]);
+
+    const submit = async (withTotp: boolean) => {
+        setSubmitting(true);
+        setError('');
+        const res = await createFirstAdmin({
+            username: username.trim(),
+            password,
+            recoveryToken: requiresToken ? token.trim() : undefined,
+            totp: withTotp ? { secret: totpSecret, code: totpCode.trim() } : undefined,
+        });
+        setSubmitting(false);
+        if (!res.success) {
+            const msg = res.message || res.error || 'Setup failed.';
+            setError(msg);
+            if (res.error === 'setup_already_complete') {
+                setTimeout(() => router.replace('/login'), 2500);
+            }
+            return;
+        }
+        if (res.token) {
+            localStorage.setItem('token', res.token);
+            localStorage.setItem('authToken', res.token);
+        }
+        router.replace('/servers');
+    };
+
+    if (!mode) {
+        return (
+            <div className="text-(--base-06) text-sm">Loading setup status…</div>
+        );
+    }
+
+    return (
+        <div className="card p-6 w-full max-w-md">
+            <header className="mb-5">
+                <div className="flex items-center gap-2 mb-1">
+                    <ShieldCheck size={18} className="text-(--accent-light)" />
+                    <h1 className="text-lg font-display text-(--base-09)">Dylaris Setup</h1>
+                </div>
+                {mode === 'fresh_install' && (
+                    <p className="text-xs text-(--base-06)">
+                        Fresh install detected. Create the first administrator account to unlock the platform.
+                    </p>
+                )}
+                {mode === 'lost_admin' && (
+                    <p className="text-xs text-(--base-06)">
+                        No administrator is currently configured on this platform. Paste the recovery token from your Core logs to set up a new admin.
+                    </p>
+                )}
+            </header>
+
+            {/* Step indicator */}
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) mb-4">
+                <span className={step === 1 ? 'text-(--accent-light)' : ''}>1 — Account</span>
+                <span>·</span>
+                <span className={step === 2 ? 'text-(--accent-light)' : ''}>2 — Two-Factor (optional)</span>
+            </div>
+
+            {step === 1 && (
+                <div className="space-y-3">
+                    <div>
+                        <div className="mono-label">Username</div>
+                        <input
+                            type="text"
+                            value={username}
+                            onChange={e => setUsername(e.target.value)}
+                            placeholder="alice"
+                            autoComplete="username"
+                            className="input w-full"
+                        />
+                        <div className="text-[10px] text-(--base-06) mt-1">
+                            3-32 chars: letters, digits, _ or -
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="mono-label">Password</div>
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={e => setPassword(e.target.value)}
+                            autoComplete="new-password"
+                            className="input w-full"
+                        />
+                    </div>
+
+                    <div>
+                        <div className="mono-label">Repeat password</div>
+                        <input
+                            type="password"
+                            value={passwordRepeat}
+                            onChange={e => setPasswordRepeat(e.target.value)}
+                            autoComplete="new-password"
+                            className="input w-full"
+                        />
+                        {passwordRepeat && password !== passwordRepeat && (
+                            <div className="text-[10px] text-(--error-light) mt-1">
+                                Passwords do not match.
+                            </div>
+                        )}
+                    </div>
+
+                    {requiresToken && (
+                        <div>
+                            <div className="mono-label">Recovery token</div>
+                            <input
+                                type="text"
+                                value={token}
+                                onChange={e => setToken(e.target.value)}
+                                placeholder="64 hex chars from Core logs"
+                                className="input w-full font-mono text-xs"
+                            />
+                            <div className="text-[10px] text-(--base-06) mt-1">
+                                Printed in your Core's stdout every 30s. Search for "[SETUP] No admin in DB".
+                            </div>
+                        </div>
+                    )}
+
+                    {error && (
+                        <div className="text-xs text-(--error-light) flex items-start gap-1.5">
+                            <CircleAlert size={12} className="mt-0.5 shrink-0" />
+                            <span>{error}</span>
+                        </div>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => submit(false)}
+                            disabled={!step1Valid || submitting}
+                            className="btn btn-secondary text-xs py-1.5 px-3"
+                        >
+                            {submitting ? <Loader2 size={12} className="animate-spin" /> : 'Finish without 2FA'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setStep(2); setEnable2FA(true); }}
+                            disabled={!step1Valid || submitting}
+                            className="btn btn-primary text-xs py-1.5 px-3 inline-flex items-center gap-1"
+                        >
+                            Set up 2FA <ArrowRight size={12} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {step === 2 && (
+                <div className="space-y-3">
+                    <p className="text-xs text-(--base-06)">
+                        Scan this QR code with your authenticator app, then enter the 6-digit code.
+                    </p>
+                    <div className="flex justify-center bg-white p-3 rounded">
+                        <QRCodeSVG value={otpAuthURL} size={160} />
+                    </div>
+                    <div className="font-mono text-[10px] text-(--base-06) break-all">
+                        Or enter manually: <span className="text-(--base-09)">{totpSecret}</span>
+                    </div>
+                    <div>
+                        <div className="mono-label">6-digit code</div>
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            value={totpCode}
+                            onChange={e => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                            placeholder="123456"
+                            className="input w-full font-mono"
+                            maxLength={6}
+                        />
+                    </div>
+                    {error && (
+                        <div className="text-xs text-(--error-light) flex items-start gap-1.5">
+                            <CircleAlert size={12} className="mt-0.5 shrink-0" />
+                            <span>{error}</span>
+                        </div>
+                    )}
+                    <div className="flex justify-between gap-2 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => { setStep(1); setError(''); }}
+                            disabled={submitting}
+                            className="btn btn-secondary text-xs py-1.5 px-3 inline-flex items-center gap-1"
+                        >
+                            <ArrowLeft size={12} /> Back
+                        </button>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => submit(false)}
+                                disabled={submitting}
+                                className="btn btn-secondary text-xs py-1.5 px-3"
+                            >
+                                Skip for now
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => submit(true)}
+                                disabled={submitting || totpCode.length !== 6}
+                                className="btn btn-primary text-xs py-1.5 px-3"
+                            >
+                                {submitting ? <Loader2 size={12} className="animate-spin" /> : 'Enable & Finish'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {(mode === 'fresh_install' || mode === 'lost_admin') && frontendUrl && (
+                <footer className="mt-5 pt-4 border-t border-(--base-03) text-[10px] font-mono text-(--base-06)">
+                    Platform URL: {frontendUrl}
+                </footer>
+            )}
+        </div>
+    );
+}
+
+function genBase32(byteLen: number): string {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    const buf = new Uint8Array(byteLen);
+    crypto.getRandomValues(buf);
+    let out = '';
+    for (let i = 0; i < byteLen; i++) out += alphabet[buf[i] % 32];
+    return out;
+}

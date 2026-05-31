@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { AppDataProvider, useAppData } from '@/lib/AppDataContext';
 import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
+import { getSetupStatus } from '@/lib/api/setup';
 import Navbar from '@/components/Navbar';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import ProfilePopup from '@/components/ProfilePopup';
@@ -169,16 +170,30 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
     const router = useRouter();
     const [tokenChecked, setTokenChecked] = useState(false);
 
-    // Token presence check (full validation happens in AppDataProvider via getProfile)
+    // Phase 17 + auth check. Setup status is read first because in
+    // Fresh-Install or Lost-Admin mode the API would either 503 every
+    // /api/* route or be missing admins — sending the user to /login in
+    // either case is wrong. Token presence is the second gate; full token
+    // validation happens in AppDataProvider via getProfile.
     useEffect(() => {
-        const token = localStorage.getItem('token') || localStorage.getItem('authToken');
-        if (!token) {
-            const target = window.location.pathname + window.location.search;
-            sessionStorage.setItem('postLoginRedirect', target);
-            router.push('/login');
-            return;
-        }
-        setTokenChecked(true);
+        let cancelled = false;
+        (async () => {
+            const status = await getSetupStatus();
+            if (cancelled) return;
+            if (status.mode !== 'complete') {
+                router.replace('/setup');
+                return;
+            }
+            const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+            if (!token) {
+                const target = window.location.pathname + window.location.search;
+                sessionStorage.setItem('postLoginRedirect', target);
+                router.push('/login');
+                return;
+            }
+            setTokenChecked(true);
+        })();
+        return () => { cancelled = true; };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleUnauthenticated = () => {
