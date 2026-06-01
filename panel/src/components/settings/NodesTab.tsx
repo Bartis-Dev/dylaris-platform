@@ -6,7 +6,7 @@ import {
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement,
 } from '@/lib/api';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
@@ -297,7 +297,12 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         showToast(res.success ? 'Placement settings saved.' : (res.message || 'Save failed.'), res.success);
     };
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-96" />
+        </div>
+    );
 
     return (
         <div className="space-y-6">

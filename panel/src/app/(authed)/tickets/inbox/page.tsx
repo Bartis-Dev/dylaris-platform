@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { Inbox, Filter, ShieldAlert, Globe, Check } from 'lucide-react';
 import { listInboxTickets, listTicketCategories, Ticket, TicketStatus, TicketCategory } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
-import LoadingState from '@/components/LoadingState';
 import RegionBadge from '@/components/RegionBadge';
+import { SkeletonCard } from '@/components/Skeleton';
 
 type Scope = 'all' | 'mine' | 'team' | 'unassigned';
 const SCOPES: { id: Scope; label: string }[] = [
@@ -193,7 +193,13 @@ export default function InboxPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto">
-                {loading ? <LoadingState /> : (() => {
+                {loading ? (
+                    <div className="space-y-2">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <SkeletonCard key={i} height="h-16" />
+                        ))}
+                    </div>
+                ) : (() => {
                     const filtered = regionFilter.size > 0
                         ? tickets.filter(t => regionFilter.has(t.region || 'default'))
                         : tickets;

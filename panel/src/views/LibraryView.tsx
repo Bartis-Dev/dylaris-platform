@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getLibraryFiles, deleteLibraryPath, createLibraryDir, uploadLibraryFiles, getLibraryDownloadUrl, toggleLibraryPath } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
-import { FolderPlus, Upload, RefreshCw, ArrowUp, FolderOpen, Folder, Archive, Trash2, Eye, EyeOff } from 'lucide-react';
+import { FolderPlus, Upload, ArrowUp, FolderOpen, Folder, Archive, Trash2, Eye, EyeOff } from 'lucide-react';
+import { SkeletonTable } from '@/components/Skeleton';
 
 interface FileEntry {
     name: string;
@@ -171,9 +172,7 @@ export default function LibraryView() {
             {/* File list */}
             <div className="flex-1 overflow-y-auto table-wrapper">
                 {loading ? (
-                    <div className="flex items-center justify-center h-full text-(--base-07)">
-                        <RefreshCw size={30} className="animate-spin" />
-                    </div>
+                    <SkeletonTable rows={8} cols={3} />
                 ) : error ? (
                     <div className="p-6 text-center text-(--error-light)">{error}</div>
                 ) : (

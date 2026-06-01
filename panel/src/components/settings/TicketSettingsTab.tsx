@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { LifeBuoy, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
 import { getTicketSettings, saveTicketSettings, TicketSettings } from '@/lib/api/tickets';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 
 const defaultSettings: TicketSettings = {
     crossTeamVisibility: true,
@@ -49,10 +50,8 @@ export default function TicketSettingsTab() {
     if (loading) {
         return (
             <div className="space-y-6 max-w-3xl">
-                <h2 className="text-lg font-display flex items-center gap-2">
-                    <LifeBuoy size={18} className="text-(--accent-light)" /> Ticket Settings
-                </h2>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <SkeletonHeader />
+                <SkeletonCard height="h-[480px]" />
             </div>
         );
     }

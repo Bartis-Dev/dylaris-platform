@@ -9,6 +9,7 @@ import {
     getModrinthPATStatus, setModrinthPAT, clearModrinthPAT,
     type ModrinthPATStatus,
 } from '@/lib/api/modrinthPat';
+import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
 
 // Phase 14 — Modrinth account integration. Lets the user attach a Personal
 // Access Token so the platform can publish modpacks on their behalf. Token
@@ -86,7 +87,10 @@ export default function ModrinthIntegrationPage() {
             </div>
 
             {loading ? (
-                <div className="card p-6 text-center text-sm text-(--base-06)">Loading…</div>
+                <div className="space-y-3">
+                    <SkeletonHeader />
+                    <SkeletonCard height="h-32" />
+                </div>
             ) : status?.connected ? (
                 <section className="card p-5 space-y-4">
                     <header className="flex items-start gap-3">

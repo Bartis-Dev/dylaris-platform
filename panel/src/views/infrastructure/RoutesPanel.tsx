@@ -9,6 +9,7 @@ import {
 import {
     Trash2, RefreshCw, AlertTriangle, X, Search, Copy, Check, Layers,
 } from 'lucide-react';
+import { SkeletonTable, SkeletonText } from '@/components/Skeleton';
 
 interface Toast {
     id: number;
@@ -141,7 +142,14 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
     }, [routes, search]);
 
     if (loading) {
-        return <div className="flex items-center justify-center h-48 text-(--base-07) text-sm">Loading routes...</div>;
+        return (
+            <div className="flex flex-col gap-4">
+                <div className="card p-4 flex flex-col gap-3">
+                    <SkeletonText width="w-32" className="h-4" />
+                    <SkeletonTable rows={6} cols={5} />
+                </div>
+            </div>
+        );
     }
 
     return (

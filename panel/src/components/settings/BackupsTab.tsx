@@ -11,7 +11,7 @@ import {
     listBackupStorages, createBackupStorage, updateBackupStorage, deleteBackupStorage, testBackupStorage,
     getBackupConfig, saveBackupConfig,
 } from '@/lib/api';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 
 interface LocalConfig {
     basePath: string;
@@ -286,7 +286,16 @@ export default function BackupsTab() {
         }
     };
 
-    if (loading || !config) return <LoadingState />;
+    if (loading || !config) return (
+        <div className="max-w-3xl space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-64" />
+            <div className="card card-pad space-y-3">
+                <SkeletonHeader />
+                <SkeletonList rows={3} />
+            </div>
+        </div>
+    );
 
     const configDirty = savedConfig && JSON.stringify(savedConfig) !== JSON.stringify(config);
     const activeProvider = PROVIDER_FOR_MODE[config.mode];

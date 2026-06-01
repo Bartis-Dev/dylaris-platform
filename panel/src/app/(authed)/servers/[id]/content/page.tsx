@@ -8,6 +8,7 @@ import {
     ChevronDown, Box,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions,
@@ -336,7 +337,16 @@ export default function ServerContentPage() {
                 <div className="modal-overlay animate-fade-in" onClick={closeProjectDetail}>
                     <div className="modal-panel w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
                         {projectLoading || !projectDetail ? (
-                            <div className="modal-body py-12 text-center text-(--base-06)">Loading…</div>
+                            <div className="modal-body py-6 space-y-3">
+                                <div className="flex items-start gap-3">
+                                    <Skeleton className="w-12 h-12 rounded-md shrink-0" />
+                                    <div className="flex-1 space-y-2">
+                                        <SkeletonText width="w-1/2" className="h-4" />
+                                        <SkeletonText width="w-3/4" className="h-2.5" />
+                                    </div>
+                                </div>
+                                <SkeletonCard height="h-32" />
+                            </div>
                         ) : (
                             <>
                                 <div className="modal-header flex items-start gap-3">

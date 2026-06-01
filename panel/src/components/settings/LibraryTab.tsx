@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getLibrarySettings, saveLibrarySettings, testLibraryConnection, LibrarySettings } from '@/lib/api';
 import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const STORAGE_TYPES = [
@@ -109,7 +109,16 @@ export default function LibraryTab() {
 
     const currentProvider = S3_PROVIDERS.find(p => p.id === selectedProvider) ?? S3_PROVIDERS[0];
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="max-w-2xl space-y-6">
+            <SkeletonHeader />
+            <div className="grid grid-cols-2 gap-3">
+                <SkeletonCard height="h-24" />
+                <SkeletonCard height="h-24" />
+            </div>
+            <SkeletonFormRow />
+        </div>
+    );
 
     return (
         <div className="max-w-2xl space-y-6">

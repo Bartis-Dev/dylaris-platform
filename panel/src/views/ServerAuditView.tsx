@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { FileText, Filter, Loader2, ShieldCheck, ShieldOff, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { listServerAudit, getServerAuditStatus, setServerAuditForce, ServerAuditEvent, ServerAuditState } from '@/lib/api/serverAudit';
-import LoadingState from '@/components/LoadingState';
+import { Skeleton, SkeletonText, SkeletonList } from '@/components/Skeleton';
 
 // Event-type → friendly label. Unknown types fall through verbatim, so a
 // later server-side addition shows up immediately without a panel deploy.
@@ -75,7 +75,29 @@ export default function ServerAuditView() {
         }
     };
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <main className="flex-1 flex flex-col overflow-hidden p-6 gap-4">
+            <header className="shrink-0 flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                    <SkeletonText width="w-40" className="h-5" />
+                    <SkeletonText width="w-80" className="h-3" />
+                </div>
+                <Skeleton className="w-24 h-7 rounded-md" />
+            </header>
+            <section className="card p-4 border border-(--base-03) flex items-center justify-between gap-3">
+                <SkeletonText width="w-64" className="h-3" />
+                <Skeleton className="w-28 h-7 rounded-md" />
+            </section>
+            <div className="shrink-0 flex items-center gap-1.5">
+                {Array.from({ length: 7 }).map((_, i) => (
+                    <Skeleton key={i} className="w-20 h-7 rounded-md" />
+                ))}
+            </div>
+            <div className="flex-1 max-w-4xl">
+                <SkeletonList rows={6} />
+            </div>
+        </main>
+    );
 
     if (!isOwner && !isAdmin) {
         return (

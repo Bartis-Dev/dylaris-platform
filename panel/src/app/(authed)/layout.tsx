@@ -15,6 +15,7 @@ import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon } from 'lucide-react';
+import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
     const { user, ready, featureFlags } = useAppData();
@@ -205,9 +206,46 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
     };
 
     if (!tokenChecked) {
+        // Skeleton chrome that mirrors the authed shell: a top navbar with
+        // logo + utility cluster, then a flex row of left sidebar + main
+        // content placeholder. Avoids the spinner→full-UI snap when the
+        // setup/token check resolves.
         return (
-            <div className="flex h-screen items-center justify-center bg-(--base-00) text-(--base-07)">
-                Checking authentication...
+            <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+                {/* Navbar placeholder */}
+                <div className="shrink-0 h-14 border-b border-(--base-03) px-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <SkeletonCircle size="h-8 w-8" />
+                        <SkeletonText width="w-28" className="h-4" />
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Skeleton className="h-7 w-20 rounded-md" />
+                        <SkeletonCircle size="h-8 w-8" />
+                        <SkeletonCircle size="h-8 w-8" />
+                        <div className="flex items-center gap-2 pl-3 border-l border-(--base-03)">
+                            <SkeletonCircle size="h-8 w-8" />
+                            <SkeletonText width="w-20" className="h-3 hidden md:block" />
+                        </div>
+                    </div>
+                </div>
+                {/* Body: sidebar + main area */}
+                <div className="flex flex-1 overflow-hidden">
+                    <aside className="w-60 shrink-0 border-r border-(--base-03) p-4 space-y-2">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <Skeleton key={i} className="h-9 w-full rounded-md" />
+                        ))}
+                    </aside>
+                    <main className="flex-1 p-6 space-y-4">
+                        <SkeletonText width="w-48" className="h-5" />
+                        <SkeletonText width="w-72" className="h-3" />
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
+                            {Array.from({ length: 4 }).map((_, i) => (
+                                <Skeleton key={i} className="h-20 w-full rounded-(--radius-md)" />
+                            ))}
+                        </div>
+                        <Skeleton className="h-64 w-full rounded-(--radius-md) mt-4" />
+                    </main>
+                </div>
             </div>
         );
     }

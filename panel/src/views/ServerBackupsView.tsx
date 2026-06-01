@@ -14,6 +14,7 @@ import {
     listBackupStorages, listBackupRestores,
 } from '@/lib/api';
 import Spinner from '@/components/Spinner';
+import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
 function formatBytes(b: number): string {
     if (!b) return '—';
@@ -334,7 +335,45 @@ export default function ServerBackupsView() {
             )}
 
             {loading ? (
-                <div className="flex-1 flex items-center justify-center"><Spinner size="xl" /></div>
+                <div className="flex-1 overflow-auto space-y-3">
+                    {Array.from({ length: 2 }).map((_, i) => (
+                        <div key={i} className="card card-pad">
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div className="min-w-0 space-y-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <SkeletonText width="w-32" className="h-4" />
+                                        <Skeleton className="w-16 h-4 rounded-sm" />
+                                        <Skeleton className="w-20 h-4 rounded-sm" />
+                                    </div>
+                                    <div className="flex items-center gap-3 mt-1">
+                                        <SkeletonText width="w-20" className="h-2.5" />
+                                        <SkeletonText width="w-14" className="h-2.5" />
+                                        <SkeletonText width="w-24" className="h-2.5" />
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    <Skeleton className="w-20 h-7 rounded-md" />
+                                    <Skeleton className="w-7 h-7 rounded-md" />
+                                    <Skeleton className="w-7 h-7 rounded-md" />
+                                </div>
+                            </div>
+                            <div className="mt-4 border-t border-(--base-03) pt-3 space-y-2">
+                                <SkeletonText width="w-24" className="h-2.5" />
+                                {Array.from({ length: 3 }).map((_, j) => (
+                                    <div key={j} className="flex items-center gap-3 py-1.5 px-2">
+                                        <Skeleton className="w-2 h-2 rounded-full" />
+                                        <SkeletonText width="w-24" className="flex-1" />
+                                        <SkeletonText width="w-16" />
+                                        <Skeleton className="w-16 h-4 rounded-sm" />
+                                        <Skeleton className="w-7 h-7 rounded-md" />
+                                        <Skeleton className="w-7 h-7 rounded-md" />
+                                        <Skeleton className="w-7 h-7 rounded-md" />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             ) : jobs.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-(--base-06) gap-2">
                     <HardDrive size={40} className="opacity-40" />

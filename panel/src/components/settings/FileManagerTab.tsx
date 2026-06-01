@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getFileManagerSettings, saveFileManagerSettings, FileManagerSettings } from '@/lib/api';
 import { CircleCheck, CircleAlert } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const UNITS = [
@@ -129,7 +129,13 @@ export default function FileManagerTab() {
     const set = (key: keyof FileManagerSettings, value: number) =>
         setSettings(prev => ({ ...prev, [key]: value }));
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="max-w-2xl space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-36" />
+            <SkeletonCard height="h-36" />
+        </div>
+    );
 
     return (
         <div className="max-w-2xl space-y-6">

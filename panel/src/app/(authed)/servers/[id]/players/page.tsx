@@ -14,6 +14,7 @@ import {
     parsePlayerList, type OnlinePlayer,
 } from '@/lib/api/rcon';
 import { getFileContent } from '@/lib/api';
+import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 
 // Phase 9 — Player Management. All operations are RCON underneath. Online
 // list is polled every 10s. Bans/whitelist/ops are sourced from the JSON
@@ -247,7 +248,21 @@ export default function ServerPlayersPage() {
                 )}
 
                 {loading ? (
-                    <div className="text-center py-12 text-sm text-(--base-06)">Loading…</div>
+                    <div className="space-y-1.5">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <article key={i} className="card p-2 flex items-center gap-3">
+                                <SkeletonCircle size="w-8 h-8 rounded-sm" />
+                                <div className="min-w-0 flex-1">
+                                    <SkeletonText width="w-32" className="h-3.5" />
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <Skeleton className="w-7 h-7 rounded-md" />
+                                    <Skeleton className="w-7 h-7 rounded-md" />
+                                    <Skeleton className="w-7 h-7 rounded-md" />
+                                </div>
+                            </article>
+                        ))}
+                    </div>
                 ) : currentList.length === 0 ? (
                     <div className="text-center py-12 text-sm text-(--base-06)">
                         {section === 'online' ? 'Nobody is online.' : 'No entries.'}

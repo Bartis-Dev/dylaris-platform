@@ -12,7 +12,7 @@ import {
     initTicketRestore, executeTicketRestore,
     BackupSummary,
 } from '@/lib/api/ticketMigration';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
@@ -34,7 +34,14 @@ export default function TicketDBTab() {
 
     useEffect(() => { reload(); }, []);
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-8 max-w-4xl">
+            <SkeletonHeader />
+            <SkeletonCard height="h-32" />
+            <SkeletonCard height="h-56" />
+            <SkeletonCard height="h-40" />
+        </div>
+    );
 
     return (
         <div className="space-y-8 max-w-4xl">

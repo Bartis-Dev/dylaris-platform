@@ -6,7 +6,7 @@ import {
     adminListTicketCategories, createTicketCategory, updateTicketCategory, deleteTicketCategory,
     TicketCategory, TicketPriority,
 } from '@/lib/api/tickets';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 
@@ -110,7 +110,12 @@ export default function TicketCategoriesTab() {
         }
     };
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6 max-w-4xl">
+            <SkeletonHeader />
+            <SkeletonTable rows={4} cols={6} />
+        </div>
+    );
 
     return (
         <div className="space-y-6 max-w-4xl">

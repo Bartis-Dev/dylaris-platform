@@ -6,6 +6,7 @@ import { assignOrphan, AssignOrphanInput, inspectOrphan } from '@/lib/api';
 import { getUsers } from '@/lib/api/resources';
 import type { User as UserType } from '@/lib/api';
 import { OrphanFileBrowser } from './OrphanFileBrowser';
+import { Skeleton } from '@/components/Skeleton';
 
 interface AssignOrphanModalProps {
     nodeId: number;
@@ -226,10 +227,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
                                 {ownerMode === 'existing' ? (
                                     usersLoading ? (
-                                        <div className="flex items-center gap-2 text-xs text-(--base-06)">
-                                            <Loader2 size={13} className="animate-spin" />
-                                            Lade Benutzer…
-                                        </div>
+                                        <Skeleton className="h-9 w-full rounded" />
                                     ) : usersError ? (
                                         <div className="alert alert-error text-sm">
                                             Benutzer konnten nicht geladen werden.

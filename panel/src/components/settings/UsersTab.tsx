@@ -14,6 +14,7 @@ import {
 } from '@/lib/api/accountPolicy';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package } from 'lucide-react';
+import { SkeletonText } from '@/components/Skeleton';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -820,7 +821,14 @@ function UsernameHistoryModal({ user, onClose }: { user: { id: string; username:
                 </div>
                 <div className="modal-body max-h-[60vh] overflow-y-auto">
                     {loading ? (
-                        <p className="text-sm text-(--base-06)">Loading…</p>
+                        <div className="space-y-1">
+                            {Array.from({ length: 4 }).map((_, i) => (
+                                <div key={i} className="p-2 rounded-md border border-(--base-04) space-y-1.5">
+                                    <SkeletonText width="w-1/2" />
+                                    <SkeletonText width="w-2/3" className="h-2" />
+                                </div>
+                            ))}
+                        </div>
                     ) : rows.length === 0 ? (
                         <p className="text-sm text-(--base-06)">No renames recorded.</p>
                     ) : (

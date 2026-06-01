@@ -2,9 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ExternalLink } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
+import { Skeleton } from '@/components/Skeleton';
 
 // Phase 13 — dynamic renderer for custom tabs. Loads the tab metadata, then
 // embeds the configured URL in an iframe (open_in_panel=true) or shows a
@@ -34,9 +35,8 @@ export default function ServerCustomTabPage() {
 
     if (tab === undefined) {
         return (
-            <main className="flex-1 flex items-center justify-center text-(--base-06) text-sm">
-                <RefreshCw size={14} className="animate-spin mr-2" />
-                Loading…
+            <main className="flex-1 overflow-hidden bg-(--base-01) p-4">
+                <Skeleton className="w-full h-full rounded" />
             </main>
         );
     }

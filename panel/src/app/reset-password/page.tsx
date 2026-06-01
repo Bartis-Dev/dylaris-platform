@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { validateResetToken, resetPassword, getRegistrationStatus } from '@/lib/api/registration';
 import { CircleCheck, CircleAlert, Loader2, KeyRound, ArrowLeft, HelpCircle } from 'lucide-react';
+import { Skeleton, SkeletonHeader, SkeletonFormRow } from '@/components/Skeleton';
 
 type Status = 'validating' | 'invalid' | 'ready' | 'submitting' | 'done';
 
@@ -218,7 +219,12 @@ export default function ResetPasswordPage() {
     return (
         <Suspense fallback={
             <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <p className="text-(--base-06) text-sm">Loading…</p>
+                <div className="card w-full max-w-md p-8 space-y-4">
+                    <SkeletonHeader />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <Skeleton className="h-10 w-full mt-2" />
+                </div>
             </div>
         }>
             <ResetPasswordInner />

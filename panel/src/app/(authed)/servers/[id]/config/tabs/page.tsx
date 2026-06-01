@@ -13,6 +13,7 @@ import {
     type ServerTab, type ServerTabInput,
 } from '@/lib/api/serverTabs';
 import { DynamicIcon } from '@/lib/icons';
+import { SkeletonList } from '@/components/Skeleton';
 
 // Phase 13 — Custom Tabs management. Each tab points at a URL; in the
 // Server Detail nav strip the tab renders either as an iframe inside the
@@ -155,7 +156,7 @@ export default function ServerConfigTabsPage() {
             </div>
 
             {loading ? (
-                <div className="card p-6 text-center text-sm text-(--base-06)">Loading…</div>
+                <SkeletonList rows={3} />
             ) : tabs.length === 0 ? (
                 <div className="card p-8 flex flex-col items-center text-center gap-2">
                     <LayoutGrid size={28} className="text-(--base-05)" />

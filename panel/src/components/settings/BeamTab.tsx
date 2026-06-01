@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { CircleCheck, CircleAlert, Radar } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 interface BeamRelayInfo {
@@ -202,7 +202,13 @@ export default function BeamTab() {
     // Register with the shared unsaved-changes bar.
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="max-w-2xl space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-72" />
+            <SkeletonCard height="h-40" />
+        </div>
+    );
 
     return (
         <div className="max-w-2xl space-y-6">

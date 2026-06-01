@@ -9,6 +9,7 @@ import {
 import { systemEvents } from '@/lib/systemEvents';
 import { listModpacks, createModpack, deleteModpack, type Modpack } from '@/lib/api/modpacks';
 import { useAppData } from '@/lib/AppDataContext';
+import { SkeletonCard } from '@/components/Skeleton';
 
 // Phase 14 — top-level Modpacks list. Per-user authored modpacks. The
 // builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -120,7 +121,11 @@ export default function ModpacksListPage() {
             </div>
 
             {loading ? (
-                <div className="card p-6 text-center text-sm text-(--base-06)">Loading…</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                        <SkeletonCard key={i} height="h-28" />
+                    ))}
+                </div>
             ) : packs.length === 0 ? (
                 <div className="card p-8 flex flex-col items-center text-center gap-2">
                     <Package size={28} className="text-(--base-05)" />

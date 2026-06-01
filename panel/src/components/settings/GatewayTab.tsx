@@ -8,7 +8,7 @@ import {
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 
@@ -301,7 +301,14 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
     const setRefField = (k: RefKey, mbit: number) =>
         setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-72" />
+            <SkeletonCard height="h-64" />
+            <SkeletonCard height="h-64" />
+        </div>
+    );
 
     return (
         <div className="space-y-6">
@@ -649,7 +656,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-72" />
+            <SkeletonCard height="h-80" />
+            <SkeletonCard height="h-96" />
+        </div>
+    );
 
     return (
         <div className="space-y-6">
@@ -1196,7 +1210,15 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-80" />
+            <SkeletonCard height="h-44" />
+            <SkeletonCard height="h-72" />
+            <SkeletonCard height="h-40" />
+        </div>
+    );
 
     return (
         <div className="space-y-6">

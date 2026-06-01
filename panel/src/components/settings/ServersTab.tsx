@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getServerSettings, saveServerSettings, ServerLimitSettings } from '@/lib/api';
 import { CircleCheck, CircleAlert, Server } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 export default function ServersTab() {
@@ -52,7 +52,12 @@ export default function ServersTab() {
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="max-w-2xl space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-32" />
+        </div>
+    );
 
     return (
         <div className="max-w-2xl space-y-6">

@@ -15,7 +15,7 @@ import {
     Ticket, TicketMessage, TicketWatcher, TicketAuditEvent, TicketStatus, TicketAttachment, CannedResponse,
 } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonText, SkeletonCard, Skeleton } from '@/components/Skeleton';
 
 const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'waiting_user', 'resolved', 'closed'];
 
@@ -168,7 +168,22 @@ export default function TicketDetailPage() {
         setShowCannedMenu(false);
     };
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <main className="flex-1 flex flex-col overflow-hidden">
+            <div className="shrink-0 border-b border-(--base-03) p-6 pb-4">
+                <SkeletonText width="w-24" className="mb-3" />
+                <SkeletonHeader />
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+                <SkeletonCard height="h-20" className="max-w-2xl" />
+                <SkeletonCard height="h-24" className="max-w-2xl ml-auto" />
+                <SkeletonCard height="h-16" className="max-w-2xl" />
+            </div>
+            <div className="shrink-0 border-t border-(--base-03) p-4 bg-(--base-02)">
+                <Skeleton className="h-20 w-full rounded" />
+            </div>
+        </main>
+    );
     if (!ticket) {
         return (
             <main className="flex-1 flex items-center justify-center p-6 text-(--base-06)">

@@ -16,6 +16,7 @@ import {
     listCollaborators, addCollaborator, removeCollaborator, type Collaborator,
 } from '@/lib/api/modpackPublish';
 import { useAppData } from '@/lib/AppDataContext';
+import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 
 // Phase 14.1 — Modpack detail. Shows pack metadata + version history with
 // channel badges (draft/beta/release). Version → mods builder UI lands in
@@ -131,7 +132,24 @@ export default function ModpackDetailPage() {
     };
 
     if (loading) {
-        return <main className="flex-1 p-6 text-sm text-(--base-06)">Loading…</main>;
+        return (
+            <main className="flex-1 overflow-y-auto p-6 max-w-4xl">
+                <SkeletonText width="w-32" className="mb-3" />
+                <header className="flex items-start gap-3 mb-4">
+                    <Skeleton className="w-12 h-12 rounded-md shrink-0" />
+                    <div className="flex-1">
+                        <SkeletonHeader />
+                    </div>
+                </header>
+                <div className="flex items-center gap-2 mb-4">
+                    <SkeletonText width="w-16" />
+                    <SkeletonText width="w-20" />
+                    <SkeletonText width="w-24" />
+                </div>
+                <SkeletonText width="w-28" className="mb-3 h-4" />
+                <SkeletonList rows={4} />
+            </main>
+        );
     }
     if (!pack) {
         return (
@@ -291,7 +309,7 @@ export default function ModpackDetailPage() {
                         </div>
 
                         {!collabsLoaded ? (
-                            <p className="text-xs text-(--base-06)">Loading collaborators…</p>
+                            <SkeletonList rows={2} />
                         ) : collabs.length === 0 ? (
                             <p className="text-xs text-(--base-06) text-center py-3">
                                 No collaborators yet.

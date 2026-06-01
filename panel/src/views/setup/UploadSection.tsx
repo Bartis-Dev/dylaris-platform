@@ -3,6 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { FileArchive, Folder, X, AlertTriangle, Upload } from 'lucide-react';
 import { getSftpCredentials, SftpCredentials, getUserLimits } from '@/lib/api';
+import { SkeletonText } from '@/components/Skeleton';
 
 declare const JSZip: any;
 
@@ -122,7 +123,7 @@ export default function UploadSection({
                         {sftpCreds.host}:{sftpCreds.port} &middot; {sftpCreds.username}
                     </span>
                 ) : (
-                    <span className="text-xs text-(--base-06)">Loading...</span>
+                    <SkeletonText width="w-40" className="h-3" />
                 )}
                 {uploadLimit > 0 && (
                     <span className="ml-auto text-[10px] font-mono text-(--base-06) shrink-0">

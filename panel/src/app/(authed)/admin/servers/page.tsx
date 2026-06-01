@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, RefreshCw, UserCheck, X, Loader2, Copy, Check, Network, Box, Globe } from 'lucide-react';
+import { Search, RefreshCw, UserCheck, X, Copy, Check, Network, Box, Globe } from 'lucide-react';
 import { getAdminServers, getUsers, AdminServer, User } from '@/lib/api';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { AssignOwnerModal } from '@/components/admin/AssignOwnerModal';
 import RegionBadge from '@/components/RegionBadge';
 import { useAppData } from '@/lib/AppDataContext';
+import { SkeletonTable } from '@/components/Skeleton';
 
 function formatBytesMB(mb: number | undefined): string {
     if (!mb || mb <= 0) return '—';
@@ -192,9 +193,7 @@ export default function AdminServersPage() {
 
             <div className="flex-1 overflow-auto">
                 {loading ? (
-                    <div className="flex items-center justify-center py-16">
-                        <Loader2 size={20} className="animate-spin text-(--base-05)" />
-                    </div>
+                    <SkeletonTable rows={8} cols={multiRegion ? 6 : 5} />
                 ) : filteredServers.length === 0 ? (
                     <div className="text-center py-16 text-(--base-05) text-sm">No servers found</div>
                 ) : (

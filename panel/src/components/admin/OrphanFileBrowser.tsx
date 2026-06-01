@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Folder, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Folder, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
 import { listOrphanFiles, getOrphanFileContent } from '@/lib/api/orphans';
+import { SkeletonList, Skeleton } from '@/components/Skeleton';
 
 interface FileEntry {
   name: string;
@@ -128,10 +129,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
         {/* File content */}
         <div className="mt-3 flex-1 overflow-hidden">
           {fileLoading ? (
-            <div className="flex items-center gap-2 text-xs text-(--base-06)">
-              <Loader2 size={13} className="animate-spin" />
-              Lade Datei…
-            </div>
+            <Skeleton className="h-40 w-full rounded-(--radius-md)" />
           ) : fileError ? (
             <div className="alert alert-error text-sm">{fileError}</div>
           ) : looksLikeBinary(fileContent) ? (
@@ -187,10 +185,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
 
       {/* File list */}
       {listLoading ? (
-        <div className="flex items-center gap-2 text-xs text-(--base-06)">
-          <Loader2 size={13} className="animate-spin" />
-          Lade Verzeichnis…
-        </div>
+        <SkeletonList rows={5} />
       ) : (
         <div className="border border-(--base-03) rounded-(--radius-md) overflow-hidden">
           {/* Up button */}

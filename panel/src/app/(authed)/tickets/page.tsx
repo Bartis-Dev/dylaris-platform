@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { LifeBuoy, Plus, Filter, CircleDot, CircleCheckBig, Clock, AlertTriangle } from 'lucide-react';
 import { listMyTickets, Ticket, TicketStatus, TicketPriority } from '@/lib/api/tickets';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonCard } from '@/components/Skeleton';
 
 const STATUS_FILTERS: { id: TicketStatus | 'all' | 'open_active'; label: string }[] = [
     { id: 'open_active', label: 'Open' },
@@ -71,7 +71,13 @@ export default function MyTicketsPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto">
-                {loading ? <LoadingState /> : tickets.length === 0 ? (
+                {loading ? (
+                    <div className="space-y-2 max-w-4xl">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                            <SkeletonCard key={i} height="h-20" />
+                        ))}
+                    </div>
+                ) : tickets.length === 0 ? (
                     <EmptyState filter={filter} />
                 ) : (
                     <div className="space-y-2 max-w-4xl">

@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Info } from 'lucide-react';
+import { Info } from 'lucide-react';
+import { Skeleton } from '@/components/Skeleton';
 
 const SOFTWARE_META: Record<string, { desc: string; url: string }> = {
     paper:      { desc: 'High-performance Spigot fork with major optimizations.',    url: 'https://papermc.io' },
@@ -69,9 +70,18 @@ export default function VersionPicker({
         ? allVersions.filter(v => v.major === selectedMajor).map(v => v.build).sort(compareVersionsDesc)
         : [];
 
-    const spinner = (
-        <div className="h-full flex items-center justify-center min-h-[120px]">
-            <RefreshCw size={20} className="animate-spin text-(--base-07)" />
+    const versionSkeleton = (
+        <div className="space-y-0.5">
+            {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="w-full h-6 rounded-md" />
+            ))}
+        </div>
+    );
+    const buildSkeleton = (
+        <div className="space-y-0.5">
+            {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="w-full h-5 rounded-md" />
+            ))}
         </div>
     );
 
@@ -139,7 +149,7 @@ export default function VersionPicker({
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label">Version</label>
                 <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${VERSION_MAX_H}`}>
-                    {loading ? spinner : majorVersions.map(m => (
+                    {loading ? versionSkeleton : majorVersions.map(m => (
                         <button key={m} type="button" onClick={() => {
                             onMajorChange(m);
                             const builds = allVersions.filter(v => v.major === m).map(v => v.build).sort(compareVersionsDesc);
@@ -160,7 +170,7 @@ export default function VersionPicker({
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label">Build</label>
                 <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${BUILD_MAX_H}`}>
-                    {loading ? spinner : buildsForMajor.map(b => (
+                    {loading ? buildSkeleton : buildsForMajor.map(b => (
                         <button key={b} type="button" onClick={() => onBuildChange(b)}
                             className={`w-full p-1 text-xs rounded-md text-left font-mono ${
                                 selectedBuild === b ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'

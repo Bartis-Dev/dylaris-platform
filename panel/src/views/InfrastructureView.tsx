@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats } from '@/lib/api';
 import RoutesPanel from './infrastructure/RoutesPanel';
+import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
 
 interface StorageInfo {
   path: string;
@@ -240,7 +241,7 @@ function NodeCard({
           Storage
         </div>
         {storageData === null ? (
-          <p className="text-[10px] font-mono text-(--base-05) italic">Loading...</p>
+          <SkeletonCard height="h-10" />
         ) : storageData.length === 0 ? (
           <p className="text-[10px] font-mono text-(--base-05) italic">No storage info available</p>
         ) : (
@@ -467,8 +468,22 @@ export default function InfrastructureView({
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <RefreshCw size={24} className="text-(--base-06) animate-spin" />
+      <div className="h-full flex flex-col gap-4 overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+              <Server size={18} className="text-(--accent-light)" />
+            </div>
+            <h1 className="h-page">Infrastructure</h1>
+          </div>
+        </div>
+        <SkeletonStatGrid tiles={2} />
+        <SkeletonText width="w-40" className="h-4" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonCard key={i} height="h-56" />
+          ))}
+        </div>
       </div>
     );
   }

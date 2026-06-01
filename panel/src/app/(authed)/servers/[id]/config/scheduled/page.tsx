@@ -12,6 +12,7 @@ import {
     listScheduledTasks, createScheduledTask, updateScheduledTask, deleteScheduledTask, validateCron,
     type ScheduledTask, type ScheduledTaskType, type ScheduledTaskInput,
 } from '@/lib/api/scheduledTasks';
+import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
 // Phase 8 — Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
@@ -201,7 +202,29 @@ export default function ServerConfigScheduledPage() {
             </header>
 
             {loading ? (
-                <div className="card p-6 text-center text-sm text-(--base-06)">Loading…</div>
+                <div className="space-y-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                        <article key={i} className="card p-3 flex items-start gap-3">
+                            <Skeleton className="w-9 h-9 rounded-md shrink-0" />
+                            <div className="min-w-0 flex-1 space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <SkeletonText width="w-32" className="h-3.5" />
+                                    <Skeleton className="w-12 h-3 rounded-sm" />
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1">
+                                    <SkeletonText width="w-24" className="h-2.5" />
+                                    <SkeletonText width="w-28" className="h-2.5" />
+                                    <SkeletonText width="w-24" className="h-2.5" />
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                                <Skeleton className="w-7 h-7 rounded-md" />
+                                <Skeleton className="w-7 h-7 rounded-md" />
+                                <Skeleton className="w-7 h-7 rounded-md" />
+                            </div>
+                        </article>
+                    ))}
+                </div>
             ) : tasks.length === 0 ? (
                 <div className="card p-8 flex flex-col items-center text-center gap-2">
                     <Clock size={28} className="text-(--base-05)" />

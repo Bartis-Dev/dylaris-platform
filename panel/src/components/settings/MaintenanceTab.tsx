@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Wrench, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
 import { getMaintenance, saveMaintenance, MaintenanceState } from '@/lib/api';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 
 const BLOCK_LEVELS: { value: MaintenanceState['blockLevel']; label: string; help: string }[] = [
     { value: 'off',          label: 'Off',                help: 'Feature off entirely. Banner hidden, no blocking.' },
@@ -52,10 +53,8 @@ export default function MaintenanceTab() {
     if (loading) {
         return (
             <div className="space-y-6 max-w-3xl">
-                <h2 className="text-lg font-display flex items-center gap-2">
-                    <Wrench size={18} className="text-(--accent-light)" /> Maintenance Mode
-                </h2>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <SkeletonHeader />
+                <SkeletonCard height="h-[28rem]" />
             </div>
         );
     }

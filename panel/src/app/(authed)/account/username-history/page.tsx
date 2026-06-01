@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { History as HistoryIcon } from 'lucide-react';
 import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accountPolicy';
+import { SkeletonList } from '@/components/Skeleton';
 
 export default function MyUsernameHistoryPage() {
     const [rows, setRows] = useState<UsernameHistoryEntry[]>([]);
@@ -15,7 +16,7 @@ export default function MyUsernameHistoryPage() {
                 <HistoryIcon size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Username History</h1>
             </header>
-            {loading ? <p className="text-sm text-(--base-06)">Loading…</p> : rows.length === 0 ? (
+            {loading ? <SkeletonList rows={3} /> : rows.length === 0 ? (
                 <p className="text-sm text-(--base-06)">You haven&apos;t renamed your account.</p>
             ) : (
                 <div className="space-y-2">

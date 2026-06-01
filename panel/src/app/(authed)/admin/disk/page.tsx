@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { getNodes, Node } from '@/lib/api';
 import { DiskAnalysisPanel } from '@/components/admin/DiskAnalysisPanel';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 
 function AdminDiskInner() {
     const searchParams = useSearchParams();
@@ -65,7 +66,12 @@ function AdminDiskInner() {
 
 export default function AdminDiskPage() {
     return (
-        <Suspense fallback={<div className="text-sm text-(--base-06) p-4">Loading…</div>}>
+        <Suspense fallback={
+            <div className="p-4 space-y-3">
+                <SkeletonHeader />
+                <SkeletonCard height="h-40" />
+            </div>
+        }>
             <AdminDiskInner />
         </Suspense>
     );

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { adminListRegions, createRegion, updateRegion, deleteRegion, Region } from '@/lib/api/regions';
 import { Globe, Plus, Pencil, Trash2, X, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 
 interface RegionFormState {
     id: string;
@@ -91,7 +91,12 @@ export default function RegionsTab() {
         }
     };
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6 max-w-4xl">
+            <SkeletonHeader />
+            <SkeletonTable rows={4} cols={5} />
+        </div>
+    );
 
     return (
         <div className="space-y-6 max-w-4xl">

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { verifyEmail } from '@/lib/api/registration';
 import { CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 
 type Status = 'pending' | 'ok' | 'error';
 
@@ -80,7 +81,14 @@ function VerifyEmailInner() {
 import { Suspense } from 'react';
 export default function VerifyEmailPage() {
     return (
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center p-4 bg-(--background)"><p className="text-(--base-06) text-sm">Loading…</p></div>}>
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
+                <div className="card w-full max-w-md p-8 space-y-3">
+                    <SkeletonHeader />
+                    <SkeletonCard height="h-16" />
+                </div>
+            </div>
+        }>
             <VerifyEmailInner />
         </Suspense>
     );

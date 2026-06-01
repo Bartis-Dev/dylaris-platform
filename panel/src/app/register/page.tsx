@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { getRegistrationStatus, register } from '@/lib/api/registration';
 import { MailCheck, ArrowLeft, HelpCircle } from 'lucide-react';
+import { Skeleton, SkeletonHeader, SkeletonFormRow } from '@/components/Skeleton';
 
 interface SecurityQA { question: string; answer: string }
 
@@ -86,7 +87,13 @@ export default function RegisterPage() {
     if (enabled === null) {
         return (
             <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <p className="text-(--base-06) text-sm">Loading…</p>
+                <div className="card w-full max-w-md p-8 space-y-4">
+                    <SkeletonHeader />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <Skeleton className="h-10 w-full mt-2" />
+                </div>
             </div>
         );
     }

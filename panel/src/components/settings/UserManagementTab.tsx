@@ -11,6 +11,7 @@ import {
 } from '@/lib/api/authSettings';
 import { getAdminSecurityQuestionPool, setAdminSecurityQuestionPool } from '@/lib/api/securityQuestions';
 import { getAuditPolicy, saveAuditPolicy, AuditPolicy } from '@/lib/api/serverAudit';
+import { Skeleton, SkeletonText, SkeletonFormRow } from '@/components/Skeleton';
 
 const ENCRYPTION_OPTIONS = [
     { value: 'starttls', label: 'STARTTLS (port 587)' },
@@ -111,9 +112,20 @@ function AuthPolicySection() {
 
     if (loading || !policy) {
         return (
-            <section className="card p-5 border border-(--base-03)">
+            <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><Mail size={14} /> Authentication policy</h3>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <div className="space-y-3">
+                    <SkeletonText width="w-1/3" className="h-3.5" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <SkeletonFormRow />
+                </div>
+                <div className="pt-4 border-t border-(--base-03) space-y-3">
+                    <SkeletonText width="w-1/3" className="h-3.5" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                </div>
             </section>
         );
     }
@@ -304,9 +316,17 @@ function SMTPSection() {
 
     if (loading || !cfg) {
         return (
-            <section className="card p-5 border border-(--base-03)">
+            <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><Send size={14} /> SMTP — Outgoing Email</h3>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                </div>
+                <SkeletonFormRow />
             </section>
         );
     }
@@ -441,9 +461,16 @@ function AutoDeleteSection() {
 
     if (loading || !policy) {
         return (
-            <section className="card p-5 border border-(--base-03)">
+            <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><Trash2 size={14} /> Auto-delete inactive users</h3>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <SkeletonText width="w-3/4" />
+                <Skeleton className="h-10 w-full" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                    <SkeletonFormRow />
+                </div>
             </section>
         );
     }
@@ -575,9 +602,13 @@ function AuditPolicySection() {
 
     if (loading || !policy) {
         return (
-            <section className="card p-5 border border-(--base-03)">
+            <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><FileText size={14} /> Audit retention</h3>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <SkeletonText width="w-3/4" />
+                <div className="flex items-center gap-3">
+                    <SkeletonText width="w-32" />
+                    <Skeleton className="h-9 w-24" />
+                </div>
             </section>
         );
     }
@@ -683,9 +714,18 @@ function SecurityQuestionsPoolSection() {
 
     if (loading) {
         return (
-            <section className="card p-5 border border-(--base-03)">
+            <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <SkeletonText width="w-3/4" />
+                <div className="space-y-1.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <Skeleton key={i} className="h-9 w-full" />
+                    ))}
+                </div>
+                <div className="flex gap-2">
+                    <Skeleton className="h-9 flex-1" />
+                    <Skeleton className="h-9 w-20" />
+                </div>
             </section>
         );
     }

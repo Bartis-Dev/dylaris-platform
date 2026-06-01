@@ -19,6 +19,7 @@ import {
 import { publishModpackVersion } from '@/lib/api/modpackPublish';
 import { API_URL } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
+import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 
 // Phase 14.2 — Modpack version builder. Two columns:
 //   left:  current mods in this version (remove inline)
@@ -174,7 +175,30 @@ export default function ModpackVersionBuilderPage() {
     const isFrozen = !!version?.frozen;
     const disabled = modpacksDisabled || isFrozen;
 
-    if (loading) return <main className="flex-1 p-6 text-sm text-(--base-06)">Loading…</main>;
+    if (loading) return (
+        <main className="flex-1 flex flex-col overflow-hidden">
+            <header className="shrink-0 p-6 pb-3 max-w-6xl">
+                <SkeletonText width="w-32" className="mb-3" />
+                <div className="flex items-start gap-3">
+                    <Skeleton className="w-10 h-10 rounded-md shrink-0" />
+                    <div className="flex-1">
+                        <SkeletonHeader />
+                    </div>
+                </div>
+            </header>
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 px-6 pb-6 max-w-6xl w-full overflow-hidden">
+                <section className="card p-4 flex flex-col overflow-hidden">
+                    <SkeletonText width="w-32" className="mb-3 h-4" />
+                    <SkeletonList rows={4} />
+                </section>
+                <section className="card p-4 flex flex-col overflow-hidden">
+                    <SkeletonText width="w-32" className="mb-3 h-4" />
+                    <Skeleton className="h-9 w-full rounded mb-3" />
+                    <SkeletonList rows={5} />
+                </section>
+            </div>
+        </main>
+    );
     if (!pack) {
         return (
             <main className="flex-1 flex flex-col items-center justify-center p-6 text-(--base-06) gap-3">

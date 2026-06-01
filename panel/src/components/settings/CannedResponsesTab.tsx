@@ -7,7 +7,7 @@ import {
     listTicketCategories,
     CannedResponse, TicketCategory,
 } from '@/lib/api/tickets';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 
 const TEMPLATE_VARS = ['{{user_name}}', '{{ticket_id}}', '{{server_name}}', '{{actor_name}}'];
 
@@ -94,7 +94,12 @@ export default function CannedResponsesTab() {
         }
     };
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="space-y-6 max-w-4xl">
+            <SkeletonHeader />
+            <SkeletonTable rows={5} cols={4} showHeader />
+        </div>
+    );
 
     return (
         <div className="space-y-6 max-w-4xl">

@@ -6,6 +6,7 @@ import {
     searchModrinth, getModrinthVersions, pickPrimaryFile,
     type ModrinthSearchHit, type ModrinthVersion,
 } from '@/lib/api/modrinth';
+import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
 // Phase 12 — Modpack picker for the setup flow. Hooked into the existing
 // install-tab strip in SetupEditMode. The user searches Modrinth modpacks,
@@ -122,9 +123,16 @@ export default function ModpackPicker({ selection, onSelect }: ModpackPickerProp
                     </div>
 
                     {searching ? (
-                        <div className="text-center py-6 text-sm text-(--base-06) flex items-center justify-center gap-2">
-                            <RefreshCw size={12} className="animate-spin" />
-                            Searching…
+                        <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                                <div key={i} className="card p-2 flex items-center gap-3">
+                                    <Skeleton className="w-8 h-8 rounded-md shrink-0" />
+                                    <div className="min-w-0 flex-1 space-y-1.5">
+                                        <SkeletonText width="w-1/3" className="h-3" />
+                                        <SkeletonText width="w-1/4" className="h-2" />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     ) : hits.length === 0 ? (
                         <div className="text-center py-6 text-sm text-(--base-06)">No modpacks match.</div>

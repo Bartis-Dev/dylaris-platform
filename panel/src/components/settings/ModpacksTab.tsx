@@ -10,7 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Package, Plus, X, CircleCheck, CircleAlert } from 'lucide-react';
-import LoadingState from '@/components/LoadingState';
+import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { getModpackSettings, setModpackSettings, type ModpackSettings } from '@/lib/api/modpackSettings';
 
@@ -81,7 +81,13 @@ export default function ModpacksTab() {
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return <LoadingState />;
+    if (loading) return (
+        <div className="max-w-3xl space-y-6">
+            <SkeletonHeader />
+            <SkeletonCard height="h-20" />
+            <SkeletonCard height="h-56" />
+        </div>
+    );
 
     return (
         <div className="max-w-3xl space-y-6">

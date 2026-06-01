@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey } from '@/lib/api/apiKeys';
+import { SkeletonList } from '@/components/Skeleton';
 
 // Phase 9 — per-user API key management. Lives under /account/ because
 // keys are owned by users, not the admin platform. Plaintext is shown
@@ -110,7 +111,7 @@ export default function ApiKeysPage() {
             </div>
 
             {loading ? (
-                <div className="card p-6 text-center text-sm text-(--base-06)">Loading…</div>
+                <SkeletonList rows={3} />
             ) : keys.length === 0 ? (
                 <div className="card p-8 flex flex-col items-center text-center gap-2">
                     <Key size={28} className="text-(--base-05)" />
