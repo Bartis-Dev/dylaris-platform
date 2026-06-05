@@ -178,6 +178,16 @@ func main() {
 	nodeGRPCHandler := handlers.NewNodeGRPCHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState, libraryHandler)
+
+	// Warp: external/home node WireGuard bridge.
+	warpSubnet, _ := pgStore.GetSetting("warp:client_subnet")
+	if warpSubnet == "" {
+		warpSubnet = "10.0.99.0/24"
+	}
+	warpService := services.NewWarpService(pgStore, redisClient, warpSubnet, "leader-01", cfg.ClusterSecret)
+	warpHandler := handlers.NewWarpHandler(appState, warpService)
+	warpService.StartResyncWatcher(coreLeader.IsLeader)
+
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
 	statsHandler := handlers.NewStatsHandler(appState)
@@ -388,6 +398,14 @@ func main() {
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Set)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(modpackSettingsHandler.SetUserFlag)).Methods("PATCH")
 	api.HandleFunc("/system/features", authHandler.AuthMiddleware(systemFeaturesHandler.Get)).Methods("GET")
+
+	// Warp enrollment (warp API-key auth, NOT user session)
+	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")
+	// Warp admin + settings (user session; admin enforced inside handler)
+	api.HandleFunc("/warp/settings", authHandler.AuthMiddleware(warpHandler.GetSettings)).Methods("GET")
+	api.HandleFunc("/warp/settings", authHandler.AuthMiddleware(warpHandler.SaveSettings)).Methods("PUT")
+	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(warpHandler.MintAPIKey)).Methods("POST")
+
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---
