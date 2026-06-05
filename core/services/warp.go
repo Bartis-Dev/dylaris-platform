@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -191,4 +192,49 @@ func (s *WarpService) takenIPs() (map[string]bool, error) {
 		taken[p.WGIP] = true
 	}
 	return taken, nil
+}
+
+// processResyncRequest checks for a pending leader resync-request and, if set
+// for our leader, pushes the full peer set as a `resync` command then clears it.
+func (s *WarpService) processResyncRequest(ctx context.Context) error {
+	leaderID, err := s.redis.Get(ctx, "dylaris:warp:resync-request").Result()
+	if err == redis.Nil {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if leaderID != s.leaderID {
+		return nil
+	}
+	all, err := s.warp.ListAllWarpPeers()
+	if err != nil {
+		return err
+	}
+	peers := make([]map[string]interface{}, 0, len(all))
+	for _, p := range all {
+		peers = append(peers, map[string]interface{}{
+			"pubkey": p.Pubkey, "wg_ip": p.WGIP, "allowed_ips": []string{p.WGIP + "/32"},
+		})
+	}
+	if err := s.pushCommand(ctx, map[string]interface{}{"type": "resync", "peers": peers}); err != nil {
+		return err
+	}
+	return s.redis.Del(ctx, "dylaris:warp:resync-request").Err()
+}
+
+// StartResyncWatcher runs processResyncRequest on a ticker. isLeader gates it so
+// only the elected Core acts.
+func (s *WarpService) StartResyncWatcher(isLeader func() bool) {
+	ticker := time.NewTicker(5 * time.Second)
+	go func() {
+		for range ticker.C {
+			if isLeader != nil && !isLeader() {
+				continue
+			}
+			if err := s.processResyncRequest(context.Background()); err != nil {
+				fmt.Printf("[warp] resync watcher: %v\n", err)
+			}
+		}
+	}()
 }
