@@ -121,6 +121,15 @@ type Store interface {
 	GetSetting(key string) (string, error)
 	SetSetting(key, value string) error
 
+	// --- Warp ---
+	CreateWarpAPIKey(k WarpAPIKey) (int, error)
+	GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error)
+	InsertWarpPeer(p WarpPeer) (int, error)
+	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)
+	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)
+	ListAllWarpPeers() ([]WarpPeer, error)
+	DeleteWarpPeerByPubkey(pubkey string) error
+
 	// --- SFTP ---
 	GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error)
 
