@@ -1,7 +1,9 @@
 package services
 
 import (
+	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 
@@ -11,16 +13,37 @@ import (
 	"dylaris-core/store"
 )
 
+// warpStore is the narrow store surface Enroll needs (satisfied by store.Store
+// and by test fakes).
+type warpStore interface {
+	InsertWarpPeer(p store.WarpPeer) (int, error)
+	GetWarpPeerByPubkey(pubkey string) (*store.WarpPeer, error)
+	ListWarpPeersByKey(apiKeyID int) ([]store.WarpPeer, error)
+	ListAllWarpPeers() ([]store.WarpPeer, error)
+	DeleteWarpPeerByPubkey(pubkey string) error
+}
+
 // WarpService owns the warp peer registry side of Core: it derives the leader
 // public key, allocates WG IPs, enforces connection policies, and pushes peer
 // commands to the leader's Redis queue.
 type WarpService struct {
-	store store.Store
-	redis *redis.Client
+	warp          warpStore
+	redis         *redis.Client
+	clientSubnet  string // e.g. "10.0.99.0/24"
+	leaderID      string // "leader-01"
+	clusterSecret string // for deriving the leader's public key (no heartbeat)
 }
 
-func NewWarpService(s store.Store, r *redis.Client) *WarpService {
-	return &WarpService{store: s, redis: r}
+func NewWarpService(s warpStore, r *redis.Client, clientSubnet, leaderID, clusterSecret string) *WarpService {
+	return &WarpService{warp: s, redis: r, clientSubnet: clientSubnet, leaderID: leaderID, clusterSecret: clusterSecret}
+}
+
+// LeaderID exposes the configured leader id.
+func (s *WarpService) LeaderID() string { return s.leaderID }
+
+// LeaderPublicKey derives the leader's WG public key from clusterSecret+leaderID.
+func (s *WarpService) LeaderPublicKey() (string, error) {
+	return DeriveLeaderPublicKey(s.clusterSecret, s.leaderID)
 }
 
 // DeriveLeaderPublicKey reproduces the gateway warp DeriveLeaderKey derivation
@@ -77,4 +100,95 @@ func incIP(ip net.IP) {
 			break
 		}
 	}
+}
+
+// EnrollResult mirrors the gateway client's enrollResponse JSON.
+type EnrollResult struct {
+	WGIP            string `json:"wg_ip"`
+	WGSubnet        string `json:"wg_subnet"`
+	LeaderPublicKey string `json:"leader_public_key"`
+	LeaderEndpoint  string `json:"leader_endpoint"`
+	DNS             string `json:"dns,omitempty"`
+	Keepalive       int    `json:"keepalive"`
+}
+
+func (s *WarpService) leaderQueueKey() string { return "dylaris:warp:" + s.leaderID + ":queue" }
+
+func (s *WarpService) pushCommand(ctx context.Context, cmd map[string]interface{}) error {
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	return s.redis.RPush(ctx, s.leaderQueueKey(), b).Err()
+}
+
+// Enroll enforces the key's policy, allocates/persists a peer, pushes add_peer
+// (plus remove_peer for kill_old), and returns the tunnel config (WGIP/WGSubnet;
+// the handler fills leader pubkey/endpoint).
+func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey string, _ []string) (EnrollResult, error) {
+	if existing, err := s.warp.GetWarpPeerByPubkey(pubkey); err == nil && existing != nil {
+		return EnrollResult{WGIP: existing.WGIP, WGSubnet: s.clientSubnet, Keepalive: 25}, nil
+	}
+
+	peers, err := s.warp.ListWarpPeersByKey(key.ID)
+	if err != nil {
+		return EnrollResult{}, err
+	}
+
+	limit := key.MaxConns
+	if key.Policy == "fixed" {
+		limit = 1
+	}
+	if len(peers) >= limit {
+		if key.OnNewConn == "kill_old" {
+			old := peers[0]
+			if err := s.warp.DeleteWarpPeerByPubkey(old.Pubkey); err != nil {
+				return EnrollResult{}, err
+			}
+			if err := s.pushCommand(ctx, map[string]interface{}{
+				"type": "remove_peer", "pubkey": old.Pubkey,
+			}); err != nil {
+				return EnrollResult{}, err
+			}
+		} else {
+			return EnrollResult{}, fmt.Errorf("connection limit reached (policy=%s, max=%d)", key.Policy, limit)
+		}
+	}
+
+	wgIP := key.FixedWGIP
+	if wgIP == "" {
+		taken, err := s.takenIPs()
+		if err != nil {
+			return EnrollResult{}, err
+		}
+		wgIP, err = NextFreeIP(s.clientSubnet, taken)
+		if err != nil {
+			return EnrollResult{}, err
+		}
+	}
+
+	if _, err := s.warp.InsertWarpPeer(store.WarpPeer{
+		APIKeyID: key.ID, Pubkey: pubkey, WGIP: wgIP, LeaderID: s.leaderID,
+	}); err != nil {
+		return EnrollResult{}, err
+	}
+	if err := s.pushCommand(ctx, map[string]interface{}{
+		"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"},
+	}); err != nil {
+		return EnrollResult{}, err
+	}
+
+	return EnrollResult{WGIP: wgIP, WGSubnet: s.clientSubnet, Keepalive: 25}, nil
+}
+
+func (s *WarpService) takenIPs() (map[string]bool, error) {
+	all, err := s.warp.ListAllWarpPeers()
+	if err != nil {
+		return nil, err
+	}
+	taken := make(map[string]bool, len(all))
+	for _, p := range all {
+		taken[p.WGIP] = true
+	}
+	return taken, nil
 }
