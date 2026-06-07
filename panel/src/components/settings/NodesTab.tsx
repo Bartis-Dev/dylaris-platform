@@ -185,7 +185,7 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
                     )}
                     {node.tags && node.tags !== 'auto-discovered' && (
                         <div className="flex flex-wrap gap-1.5">
-                            {node.tags.split(',').map(tag => {
+                            {node.tags.split(',').filter(tag => tag.trim() !== 'external').map(tag => {
                                 const t = tag.trim();
                                 if (!t) return null;
                                 return <span key={t} className="badge badge-accent">{t}</span>;
