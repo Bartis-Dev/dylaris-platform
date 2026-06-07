@@ -55,6 +55,35 @@ func (f *fakeWarpStore) DeleteWarpPeerByPubkey(pk string) error {
 	return nil
 }
 
+func (f *fakeWarpStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (string, string, error) {
+	var evicted string
+	if len(f.byKey[keyID]) >= limit {
+		if onNewConn != "kill_old" {
+			return "", "", errLimitReached
+		}
+		old := f.byKey[keyID][0]
+		evicted = old.Pubkey
+		_ = f.DeleteWarpPeerByPubkey(old.Pubkey)
+	}
+	wgIP := fixedIP
+	if wgIP == "" {
+		taken := map[string]bool{}
+		for _, p := range f.peers {
+			taken[p.WGIP] = true
+		}
+		ip, err := allocIP(taken)
+		if err != nil {
+			return "", "", err
+		}
+		wgIP = ip
+	}
+	_, _ = f.InsertWarpPeer(store.WarpPeer{APIKeyID: keyID, Pubkey: pubkey, WGIP: wgIP, LeaderID: leaderID})
+	return wgIP, evicted, nil
+}
+
+// errLimitReached lets the fake return the same sentinel the real store does.
+var errLimitReached = store.ErrWarpLimitReached
+
 var errNotFound = errString("not found")
 
 type errString string

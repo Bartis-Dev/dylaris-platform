@@ -55,6 +55,22 @@ func (f *warpFakeStore) ListAllWarpPeers() ([]store.WarpPeer, error) {
 	return out, nil
 }
 func (f *warpFakeStore) DeleteWarpPeerByPubkey(pk string) error { delete(f.peers, pk); return nil }
+func (f *warpFakeStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (string, string, error) {
+	wgIP := fixedIP
+	if wgIP == "" {
+		taken := map[string]bool{}
+		for _, p := range f.peers {
+			taken[p.WGIP] = true
+		}
+		ip, err := allocIP(taken)
+		if err != nil {
+			return "", "", err
+		}
+		wgIP = ip
+	}
+	_, _ = f.InsertWarpPeer(store.WarpPeer{APIKeyID: keyID, Pubkey: pubkey, WGIP: wgIP, LeaderID: leaderID})
+	return wgIP, "", nil
+}
 
 type warpErr string
 

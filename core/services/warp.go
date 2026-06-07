@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -17,11 +18,9 @@ import (
 // warpStore is the narrow store surface Enroll needs (satisfied by store.Store
 // and by test fakes).
 type warpStore interface {
-	InsertWarpPeer(p store.WarpPeer) (int, error)
 	GetWarpPeerByPubkey(pubkey string) (*store.WarpPeer, error)
-	ListWarpPeersByKey(apiKeyID int) ([]store.WarpPeer, error)
 	ListAllWarpPeers() ([]store.WarpPeer, error)
-	DeleteWarpPeerByPubkey(pubkey string) error
+	EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (wgIP string, evicted string, err error)
 }
 
 // WarpService owns the warp peer registry side of Core: it derives the leader
@@ -127,71 +126,37 @@ func (s *WarpService) pushCommand(ctx context.Context, cmd map[string]interface{
 // (plus remove_peer for kill_old), and returns the tunnel config (WGIP/WGSubnet;
 // the handler fills leader pubkey/endpoint).
 func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey string, _ []string) (EnrollResult, error) {
+	// Idempotent: same pubkey already enrolled → return its IP, no new push.
 	if existing, err := s.warp.GetWarpPeerByPubkey(pubkey); err == nil && existing != nil {
 		return EnrollResult{WGIP: existing.WGIP, WGSubnet: s.clientSubnet, Keepalive: 25}, nil
-	}
-
-	peers, err := s.warp.ListWarpPeersByKey(key.ID)
-	if err != nil {
-		return EnrollResult{}, err
 	}
 
 	limit := key.MaxConns
 	if key.Policy == "fixed" {
 		limit = 1
 	}
-	if len(peers) >= limit {
-		if key.OnNewConn == "kill_old" {
-			old := peers[0]
-			if err := s.warp.DeleteWarpPeerByPubkey(old.Pubkey); err != nil {
-				return EnrollResult{}, err
-			}
-			if err := s.pushCommand(ctx, map[string]interface{}{
-				"type": "remove_peer", "pubkey": old.Pubkey,
-			}); err != nil {
-				return EnrollResult{}, err
-			}
-		} else {
+
+	// Atomic: policy enforcement + IP allocation + insert under one tx + advisory lock.
+	wgIP, evicted, err := s.warp.EnrollPeerTx(key.ID, limit, key.OnNewConn, pubkey, key.FixedWGIP, s.leaderID,
+		func(taken map[string]bool) (string, error) { return NextFreeIP(s.clientSubnet, taken) })
+	if err != nil {
+		if errors.Is(err, store.ErrWarpLimitReached) {
 			return EnrollResult{}, fmt.Errorf("connection limit reached (policy=%s, max=%d)", key.Policy, limit)
 		}
-	}
-
-	wgIP := key.FixedWGIP
-	if wgIP == "" {
-		taken, err := s.takenIPs()
-		if err != nil {
-			return EnrollResult{}, err
-		}
-		wgIP, err = NextFreeIP(s.clientSubnet, taken)
-		if err != nil {
-			return EnrollResult{}, err
-		}
-	}
-
-	if _, err := s.warp.InsertWarpPeer(store.WarpPeer{
-		APIKeyID: key.ID, Pubkey: pubkey, WGIP: wgIP, LeaderID: s.leaderID,
-	}); err != nil {
 		return EnrollResult{}, err
 	}
-	if err := s.pushCommand(ctx, map[string]interface{}{
-		"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"},
-	}); err != nil {
+
+	// Push leader commands after the DB commit (best-effort; resync covers leader reboots).
+	if evicted != "" {
+		if perr := s.pushCommand(ctx, map[string]interface{}{"type": "remove_peer", "pubkey": evicted}); perr != nil {
+			fmt.Printf("[warp] enroll: remove_peer push failed for evicted %s: %v\n", evicted, perr)
+		}
+	}
+	if err := s.pushCommand(ctx, map[string]interface{}{"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"}}); err != nil {
 		return EnrollResult{}, err
 	}
 
 	return EnrollResult{WGIP: wgIP, WGSubnet: s.clientSubnet, Keepalive: 25}, nil
-}
-
-func (s *WarpService) takenIPs() (map[string]bool, error) {
-	all, err := s.warp.ListAllWarpPeers()
-	if err != nil {
-		return nil, err
-	}
-	taken := make(map[string]bool, len(all))
-	for _, p := range all {
-		taken[p.WGIP] = true
-	}
-	return taken, nil
 }
 
 // processResyncRequest checks for a pending leader resync-request and, if set
