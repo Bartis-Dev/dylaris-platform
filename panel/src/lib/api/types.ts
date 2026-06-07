@@ -674,6 +674,23 @@ export const getRoutingMode = () => fetchAPI('/settings/routing-mode');
 export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessMode }) =>
     fetchAPI('/settings/routing-mode', { method: 'POST', body: JSON.stringify(data) });
 
+// --- Warp (external/home node WireGuard bridge) ---
+export interface WarpSettings {
+    clientSubnet: string;
+    leaderEndpoint: string;
+}
+export interface MintWarpKeyInput {
+    name: string;
+    policy: 'fixed' | 'general';
+    max_conns: number;
+    on_new_conn: 'kill_old' | 'block';
+}
+export const getWarpSettings = () => fetchAPI('/warp/settings');
+export const saveWarpSettings = (data: WarpSettings) =>
+    fetchAPI('/warp/settings', { method: 'PUT', body: JSON.stringify(data) });
+export const mintWarpKey = (data: MintWarpKeyInput) =>
+    fetchAPI('/admin/warp/keys', { method: 'POST', body: JSON.stringify(data) });
+
 // Gateway User API (per-server routes)
 export const getServerRoutes = (serverId: number) => fetchAPI(`/servers/${serverId}/routes`);
 export interface CreateRouteRequest {
