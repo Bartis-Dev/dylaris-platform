@@ -1,0 +1,16 @@
+DYLARIS Platform
+Copyright 2025-2026 Bartis
+
+This product includes software developed by the DYLARIS project.
+
+This repository (DYLARIS platform — Core, Node, Panel, and helper services)
+is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Dylaris Gateway is a separate, closed-source product that integrates with
+this platform via a documented protocol. It is NOT included in this
+repository and is NOT covered by this license. Commercial hosting providers
+running Dylaris multi-tenant against paying customers should refer to the
+Dylaris Gateway commercial license terms at https://dylaris.dev/license.
+
+Third-party components included or required are listed under their own
+licenses in their respective dependency manifests (go.mod, package.json).

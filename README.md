@@ -286,6 +286,33 @@ Server files live on the Node host under the `dylaris_data` volume; back that up
 - **Data:** PostgreSQL 16 / TimescaleDB, Redis-compatible **Valkey**.
 - **Runtime:** Docker / Docker Compose / Docker Swarm.
 
+## License & commercial use
+
+**Dylaris platform** — everything in this repository (Core, Node, Panel, Agent, Link, Hub, Log-Shipper) — is licensed under the [Apache License 2.0](LICENSE). Use it, fork it, ship it inside your own product: keep the copyright notice and you're good.
+
+**Dylaris Gateway** is a separate, closed-source product under a commercial license. Gateway delivers multi-region routing, edge ingress, NAT-traversal, and the WireGuard bridge (*Warp*) for off-site nodes. The platform runs fine without it — single-host or single-region setups use direct IP:port or SFTP. Gateway is the value-add for multi-region and hosting-provider deployments.
+
+**You need a Gateway commercial license if:**
+
+- You're a hosting provider selling Minecraft hosting to paying customers built on Dylaris.
+- You're running Dylaris multi-tenant for an organisation with revenue derived from the platform.
+
+**You do NOT need a Gateway license for:**
+
+- Personal use (your own homelab, your own Minecraft community).
+- Non-profit communities (gaming clans, friend groups, school clubs).
+- Internal corporate use that does not resell hosting.
+
+Pricing and B2B terms: `https://dylaris.dev/license` (in preparation). Until then, contact `callmebartis@outlook.com` for early-access pricing.
+
+**Why this split?** Solo-dev OSS infrastructure projects that try to monetise everything either burn out from supporting non-paying users, or break trust by relicensing midway. Both fail-modes get avoided here: the platform is and stays Apache 2.0 — your data is yours, your forks are yours, no rug-pulls. Gateway is the focused commercial wedge that funds continued development of both pieces. If you're not in the hosting-provider segment, Dylaris is and stays free for you, no asterisks.
+
+### Anonymous usage stats
+
+Each Dylaris Core sends a tiny anonymized payload to `dylaris.dev/api/heartbeat` every 10 min so a public live counter on the website can show *"N platforms · N gateways · N containers · N players online"*. The payload contains: a hash of the Core ID (so we don't even see your hostname), instance type (platform vs gateway), container counts, total players, version. No user data, no server names, no IPs.
+
+Disable any time: Settings → Features → "Anonymous Usage Stats" toggle, or the `DYLARIS_TELEMETRY=false` ENV variable (hard kill, bypasses the DB toggle).
+
 ---
 
 <div align="center">
