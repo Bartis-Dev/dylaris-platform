@@ -26,6 +26,7 @@ const ALL_TABS = [
     // was retired — admins still need to configure the feature before
     // toggling it on from the Features tab.
     { slug: 'gateway', label: 'Gateway', always: true },
+    { slug: 'warp', label: 'Warp', always: true },
     { slug: 'backups', label: 'Backups', always: true },
     { slug: 'maintenance', label: 'Maintenance', always: true },
     { slug: 'ticket-categories', label: 'Ticket Categories', always: true },

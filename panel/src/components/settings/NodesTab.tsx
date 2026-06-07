@@ -192,6 +192,9 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
                             })}
                         </div>
                     )}
+                    {node.tags && node.tags.split(',').map(t => t.trim()).includes('external') && (
+                        <span className="badge badge-accent" title="External / home node — forces gateway+beam">external</span>
+                    )}
                     {!isEditing && (
                         <button
                             onClick={onEdit}
