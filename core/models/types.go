@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 )
 
@@ -265,6 +266,17 @@ type Node struct {
 	RAMFree   int64   `json:"ramFree"`
 	RAMTotal  uint64  `json:"ramTotal"`
 	LinkCount int     `json:"linkCount"`
+}
+
+// IsExternal reports whether this node is an external/home node (tag "external").
+// External nodes force gateway+beam locally, so SFTP + direct ports are unusable.
+func (n *Node) IsExternal() bool {
+	for _, t := range strings.Split(n.Tags, ",") {
+		if strings.TrimSpace(t) == "external" {
+			return true
+		}
+	}
+	return false
 }
 
 type Server struct {

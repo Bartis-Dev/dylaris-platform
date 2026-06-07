@@ -1723,6 +1723,20 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// External/home nodes force beam locally and never expose SFTP — withhold
+	// credentials even when the platform-global file mode is sftp/both.
+	if node.IsExternal() {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":  true,
+			"host":     "",
+			"port":     0,
+			"username": "",
+			"path":     "",
+			"reason":   "external_node_beam_only",
+		})
+		return
+	}
+
 	host := node.Address
 	if node.PublicIP != "" {
 		host = node.PublicIP
