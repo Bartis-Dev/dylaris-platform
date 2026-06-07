@@ -60,6 +60,29 @@ var (
 	fileAccessMode string // "sftp" | "both" | "beam"
 )
 
+// nodeExternal is set at startup: an external/home node forces gateway+beam
+// locally so it never binds host ports or exposes SFTP, regardless of the
+// platform-global routing/file-access setting (spec §9 per-node override).
+var nodeExternal bool
+
+// hasTag reports whether comma-separated tags contains target (trimmed).
+func hasTag(tags, target string) bool {
+	for _, t := range strings.Split(tags, ",") {
+		if strings.TrimSpace(t) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// applyExternalOverride forces gateway+beam when external; otherwise passes through.
+func applyExternalOverride(routing, file string, external bool) (string, string) {
+	if external {
+		return "gateway", "beam"
+	}
+	return routing, file
+}
+
 type NodeCommand struct {
 	Action     string          `json:"action"`
 	Config     ServerConfig    `json:"config"`
@@ -195,6 +218,10 @@ func parseConfig() {
 	nodeID = os.Getenv("NODE_ID")
 	clusterSecret = os.Getenv("CLUSTER_SECRET")
 	nodeTags = os.Getenv("NODE_TAGS")
+	nodeExternal = os.Getenv("NODE_EXTERNAL") == "true" || hasTag(nodeTags, "external")
+	if nodeExternal {
+		log.Println("Node flagged EXTERNAL — forcing gateway routing + beam file access locally")
+	}
 	nodeRegion = os.Getenv("NODE_REGION")
 
 	if clusterSecret == "" {
@@ -365,6 +392,7 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 			containerPort = n
 		}
 	}
+	routingMode, fileAccessMode = applyExternalOverride(routingMode, fileAccessMode, nodeExternal)
 }
 
 // saveNodeConfig persists the ServerConfig as .node_config.json in the server directory.
