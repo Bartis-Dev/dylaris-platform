@@ -7,6 +7,9 @@ import {
 	getWarpSettings, saveWarpSettings, mintWarpKey,
 	type WarpSettings,
 } from '@/lib/api/types';
+import { API_URL } from '@/lib/api/core';
+
+const enrollUrl = API_URL.replace(/\/api\/?$/, '');
 
 export default function WarpTab() {
 	const { routingMode, fileAccessMode } = useAppData();
@@ -140,7 +143,7 @@ export default function WarpTab() {
 								<label className="mono-label">Client deploy ENV</label>
 								<pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{`LEADER=false
 LEADER_ENDPOINT=${settings.leaderEndpoint || '<leader-endpoint>'}
-ENROLL_URL=${typeof window !== 'undefined' ? window.location.origin.replace(/:\d+$/, ':25500') : 'https://core:25500'}
+ENROLL_URL=${enrollUrl || '<core-url e.g. https://core.example.com:25500>'}
 API_KEY=${revealed.apiKey}
 TUNNEL_SUBNETS=<your-dc-subnet e.g. 10.0.0.0/24>`}</pre>
 							</div>
