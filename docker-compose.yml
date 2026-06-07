@@ -1,10 +1,25 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DYLARIS — SINGLE-HOST deployment
+#
+# Everything runs on ONE machine over a local bridge network.
+# Best for a single VPS / homelab box.
+#
+#   cp .env.example .env   # then edit JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD
+#   docker compose up -d
+#   open http://localhost:25510  →  /setup
+#
+# For a multi-host fleet, use docker-stack.yml (Docker Swarm) instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
   core:
     image: ghcr.io/callmebartis/dylaris/core:latest
     restart: unless-stopped
     depends_on:
-      - timescaledb
-      - redis
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       API_PORT: "25500"
       FRONTEND_URL: "http://panel:3000"
@@ -18,11 +33,9 @@ services:
       DB_NAME: "${DB_NAME}"
       REDIS_ADDR: "redis:6379"
       GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
-      # When GATEWAY_ENABLED=true, Hub must share the same Redis:
-      # GATEWAY_REDIS_ADDR: "redis:6379"
     ports:
-      - "25500:25500"
-      - "25520:25520"
+      - "25500:25500"   # REST API
+      - "25520:25520"   # gRPC node mesh
     networks:
       - dylaris_net
 
@@ -41,8 +54,14 @@ services:
       PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
       PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
     volumes:
+      # The Node drives the host Docker daemon to launch MC server containers.
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data
+    # MC server host ports (ip_port / both routing modes) are published from the
+    # container by the Node. Expose the configured range on the host:
+    ports:
+      - "25600-30000:25600-30000"
+      - "2222:2222"     # SFTP (when file access = sftp/both)
     networks:
       - dylaris_net
 
@@ -50,6 +69,7 @@ services:
     image: ghcr.io/callmebartis/dylaris/panel:latest
     restart: unless-stopped
     environment:
+      # Browser-reachable Core API URL (NOT the internal service name).
       NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
     ports:
       - "25510:3000"
@@ -67,8 +87,7 @@ services:
       - timescaledb_data:/var/lib/postgresql/data
     healthcheck:
       # $$ escapes compose interpolation so the container shell expands
-      # POSTGRES_USER/DB from its own environment. start_period covers
-      # the initdb run on a first (empty-volume) boot.
+      # POSTGRES_USER/DB from its own environment.
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
@@ -78,9 +97,12 @@ services:
       - dylaris_net
 
   redis:
-    image: redis:7-alpine
+    # Valkey — a drop-in, Redis-compatible fork. Service name stays "redis"
+    # so REDIS_ADDR=redis:6379 works everywhere. In-memory only (coordination
+    # bus, not the source of truth — Postgres is).
+    image: valkey/valkey:8-alpine
     restart: unless-stopped
-    command: redis-server --save "" --appendonly no
+    command: valkey-server --save "" --appendonly no
     networks:
       - dylaris_net
 
@@ -90,5 +112,4 @@ volumes:
 
 networks:
   dylaris_net:
-    driver: overlay
-    attachable: true
+    driver: bridge

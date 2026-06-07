@@ -1,0 +1,140 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DYLARIS — DOCKER SWARM deployment
+#
+# A multi-host fleet on an overlay network, with `deploy:` blocks
+# (replicas, placement, restart policy, resources).
+#
+#   docker swarm init                                            # once, on the manager
+#   docker node update --label-add dylaris.db=true <node-id>     # pin the DB host
+#   set -a; . ./.env; set +a                                     # load env into the shell
+#   docker stack deploy -c docker-stack.yml dylaris
+#
+#   docker stack services dylaris
+#   docker service logs -f dylaris_core
+#
+# Join more hosts as Nodes:  `docker swarm join-token worker`  → run the printed
+# command on each host. The `node` service is GLOBAL, so every host becomes a
+# Node automatically (NODE_ID templated from the hostname).
+#
+# For a single machine, use docker-compose.yml instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  core:
+    image: ghcr.io/callmebartis/dylaris/core:latest
+    environment:
+      API_PORT: "25500"
+      FRONTEND_URL: "http://panel:3000"
+      JWT_SECRET: "${JWT_SECRET}"
+      CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      DYLARIS_REGION: "${DYLARIS_REGION:-default}"
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+      DB_NAME: "${DB_NAME}"
+      REDIS_ADDR: "redis:6379"
+      GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
+    ports:
+      - "25500:25500"   # REST API
+      - "25520:25520"   # gRPC node mesh
+    networks:
+      - dylaris_net
+    deploy:
+      # Multiple replicas are safe: Redis leader-election keeps singleton jobs
+      # (discovery, Warp resync) on one replica; all replicas serve the API.
+      replicas: 2
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
+        parallelism: 1
+      resources:
+        limits:
+          memory: 512M
+
+  node:
+    image: ghcr.io/callmebartis/dylaris/node:latest
+    environment:
+      # Templated per host → every swarm host is a distinct Node.
+      NODE_ID: "{{.Node.Hostname}}"
+      CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      NODE_TAGS: "${NODE_TAGS:-}"
+      NODE_REGION: "${NODE_REGION:-}"
+      REDIS_ADDR: "redis:6379"
+      GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
+      PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
+      PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dylaris_data:/app/dylaris_data
+    networks:
+      - dylaris_net
+    deploy:
+      # One Node task per swarm host.
+      mode: global
+      restart_policy:
+        condition: any
+    # NOTE: external/home (Warp) nodes are deployed separately with a
+    # `node.labels.dylaris_role == external` constraint + `NODE_EXTERNAL=true`.
+    # See docs/superpowers/warp-deploy.md.
+
+  panel:
+    image: ghcr.io/callmebartis/dylaris/panel:latest
+    environment:
+      NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
+    ports:
+      - "25510:3000"
+    networks:
+      - dylaris_net
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
+        parallelism: 1
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: "${DB_USER}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
+      POSTGRES_DB: "${DB_NAME}"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    networks:
+      - dylaris_net
+    deploy:
+      # Single replica pinned to a labelled host (the named volume is node-local).
+      # For real HA, point Core at an external/managed PostgreSQL instead.
+      replicas: 1
+      placement:
+        constraints: [node.labels.dylaris.db == true]
+      restart_policy:
+        condition: any
+
+  redis:
+    # Valkey — drop-in Redis-compatible fork. Service name stays "redis" so
+    # REDIS_ADDR=redis:6379 resolves. In-memory coordination bus.
+    image: valkey/valkey:8-alpine
+    command: valkey-server --save "" --appendonly no
+    networks:
+      - dylaris_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: any
+
+volumes:
+  timescaledb_data:
+  dylaris_data:
+
+networks:
+  dylaris_net:
+    driver: overlay
+    attachable: true
