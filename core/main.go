@@ -226,6 +226,7 @@ func main() {
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
+	telemetrySettingsHandler := handlers.NewTelemetrySettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -264,6 +265,13 @@ func main() {
 	scheduledTasksService := services.NewScheduledTaskService(pgStore, redisClient, appState.Queue, appState.Events)
 	scheduledTasksService.SetLeader(coreLeader)
 	scheduledTasksService.Start(context.Background())
+
+	// Phase 18 — Telemetry heartbeat. Posts anonymous platform stats to
+	// dylaris.dev every 10min for the live counter on the website.
+	// Leader-gated so multi-Core deployments don't double-count.
+	telemetryHeartbeat := services.NewTelemetryHeartbeat(pgStore, cfg.CoreID, cfg.Region)
+	telemetryHeartbeat.SetLeader(coreLeader)
+	telemetryHeartbeat.Start(context.Background())
 
 	// Phase 17 — Recovery-token printer. Background loop that logs either the
 	// Fresh-Install hint or the Lost-Admin token + URL every 30s as long as
@@ -398,6 +406,9 @@ func main() {
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Set)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(modpackSettingsHandler.SetUserFlag)).Methods("PATCH")
 	api.HandleFunc("/system/features", authHandler.AuthMiddleware(systemFeaturesHandler.Get)).Methods("GET")
+	// --- Phase 18 — Telemetry settings ---
+	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
+	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")
 
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")

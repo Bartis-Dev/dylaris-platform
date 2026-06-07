@@ -128,6 +128,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase17Schema(db); err != nil {
 		return err
 	}
+	if err := applyPhase18Schema(db); err != nil {
+		return err
+	}
 	if err := applyWarpSchema(db); err != nil {
 		return err
 	}
@@ -972,6 +975,23 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`UPDATE gateway_route_limits SET max_routes = -1 WHERE max_routes = 0`)
 	// Migrate port:80 → port:443
 	db.Exec(`UPDATE gateway_route_limits SET scope = 'port:443' WHERE scope = 'port:80'`)
+}
+
+// applyPhase18Schema (Phase 18 — Telemetry Heartbeat) seeds the toggle for
+// anonymous usage stats that the website's live counter consumes. Default
+// is ENABLED — operators are informed at boot + in Settings → Features and
+// can opt out via the toggle or DYLARIS_TELEMETRY=false ENV.
+func applyPhase18Schema(db *sql.DB) error {
+	for _, kv := range []struct{ k, v string }{
+		{"telemetry_enabled", "true"},
+		{"telemetry_endpoint", "https://dylaris.dev/api/heartbeat"},
+	} {
+		if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ($1, $2)
+			ON CONFLICT (key) DO NOTHING`, kv.k, kv.v); err != nil {
+			return fmt.Errorf("phase 18: seed %s: %w", kv.k, err)
+		}
+	}
+	return nil
 }
 
 // applyPhase17Schema (Phase 17 — First-Run Setup Wizard) seeds the two
