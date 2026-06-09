@@ -244,6 +244,22 @@ type Store interface {
 	// Sidebar: servers attached to active tickets assigned to a support user.
 	ListServersViaActiveTickets(supportUserID string) ([]models.Server, error)
 
+	// --- Ticket deletion (admin-only, audited) ---
+	// DeleteTicket removes the ticket + every attached row in one tx. Returns
+	// sql.ErrNoRows when the ticket id doesn't exist.
+	DeleteTicket(id int) error
+	// InsertTicketDeletion stamps the audit row. The handler builds the
+	// snapshot fields before calling DeleteTicket so the row is independent of
+	// the now-gone source data.
+	InsertTicketDeletion(rec *models.TicketDeletion) error
+	// ListTicketDeletions returns (rows, total) for the admin Deletion-Log UI.
+	// deletedBy "" means no filter; limit is clamped server-side.
+	ListTicketDeletions(limit, offset int, deletedBy string) ([]models.TicketDeletion, int, error)
+	// ListAttachmentStorageKeysByTicket returns the on-disk storage keys for a
+	// ticket so the handler can delete the file blobs after the DB rows are
+	// gone. Called BEFORE DeleteTicket so the keys are still readable.
+	ListAttachmentStorageKeysByTicket(ticketID int) ([]string, error)
+
 	// --- Tickets Phase 3 ---
 	// Attachments
 	AddTicketAttachment(a *models.TicketAttachment) (int, error)

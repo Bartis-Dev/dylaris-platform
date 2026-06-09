@@ -65,6 +65,13 @@ func (f *FeatureFlags) IsModpacksEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_modpacks_enabled", true)
 }
 
+// IsTicketsEnabled gates the ticket subsystem (tickets, categories, canned
+// responses, attachments, notifications, settings, deletion log). Default =
+// false (the feature ships OFF and the admin opts in via Settings → Features).
+func (f *FeatureFlags) IsTicketsEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_tickets_enabled", false)
+}
+
 // Invalidate drops the cached entry for a key so the next Get re-reads from
 // the store. Called by settings PUT handlers after a write.
 func (f *FeatureFlags) Invalidate(key string) {

@@ -79,6 +79,26 @@ export interface TicketSettings {
     maxUserSizeMb: number;
     autoCloseEnabled: boolean;
     autoCloseDaysAfterResolved: number;
+    // Admin-only DELETE /api/tickets/{id} gate. Default false. When false the
+    // backend returns 403 deletion_disabled even for admins.
+    deletionEnabled: boolean;
+}
+
+// TicketDeletion is one row of the admin deletion-log audit table. Snapshot
+// fields stay populated even after the source ticket / owner / category have
+// been removed.
+export interface TicketDeletion {
+    id: string;
+    ticketId: number;
+    ticketSubject: string;
+    ownerUserId?: string;
+    ownerUsername: string;
+    categoryName?: string;
+    deletedBy: string;
+    deletedByName: string;
+    deletedAt: string;
+    ipAddress?: string;
+    userAgent?: string;
 }
 
 export interface TicketAttachment {
@@ -276,6 +296,39 @@ export async function removeTicketWatcher(id: number, userId: string) {
             method: 'DELETE',
             headers: getAuthHeader(),
         });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+// deleteTicket DELETE /api/tickets/{id} — admin only, gated by
+// tickets.deletionEnabled. The backend stamps the audit log BEFORE the
+// cascade so a failed delete is still observable.
+export async function deleteTicket(id: number) {
+    try {
+        const res = await fetch(`${API_URL}/tickets/${id}`, {
+            method: 'DELETE',
+            headers: getAuthHeader(),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+// listTicketDeletions GET /api/admin/tickets/deletion-log — paginated.
+// deletedBy is a UUID filter; pass nothing or empty string for no filter.
+export interface ListTicketDeletionsQuery {
+    limit?: number;
+    offset?: number;
+    deletedBy?: string;
+}
+
+export async function listTicketDeletions(opts: ListTicketDeletionsQuery = {}) {
+    try {
+        const params = new URLSearchParams();
+        if (opts.limit != null) params.set('limit', String(opts.limit));
+        if (opts.offset != null) params.set('offset', String(opts.offset));
+        if (opts.deletedBy) params.set('deletedBy', opts.deletedBy);
+        const q = params.toString();
+        const res = await fetch(`${API_URL}/admin/tickets/deletion-log${q ? `?${q}` : ''}`, { headers: getAuthHeader() });
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { LifeBuoy, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
+import Link from 'next/link';
+import { LifeBuoy, Loader2, CircleCheck, CircleAlert, Trash2, ArrowRight } from 'lucide-react';
 import { getTicketSettings, saveTicketSettings, TicketSettings } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 
@@ -15,6 +16,7 @@ const defaultSettings: TicketSettings = {
     maxUserSizeMb: 500,
     autoCloseEnabled: false,
     autoCloseDaysAfterResolved: 7,
+    deletionEnabled: false,
 };
 
 export default function TicketSettingsTab() {
@@ -141,6 +143,25 @@ export default function TicketSettingsTab() {
                             className="input-field w-24" disabled={!s.autoCloseEnabled} />
                         <span className="text-sm text-(--base-07)">days</span>
                     </div>
+                </div>
+
+                {/* Ticket deletion gate. Off by default — when on, admins get
+                    a Delete button on the ticket detail page and every delete
+                    is stamped in the audit log. */}
+                <div className="pt-4 border-t border-(--base-03) space-y-3">
+                    <Toggle
+                        label="Ticket-Löschung erlauben"
+                        description="Wenn aktiviert können Admins Tickets unwiderruflich löschen. Audit-Eintrag bleibt erhalten."
+                        value={s.deletionEnabled}
+                        onChange={v => setS({ ...s, deletionEnabled: v })}
+                    />
+                    <Link
+                        href="/settings/tickets/deletion-log"
+                        className="text-xs text-(--accent-light) hover:underline inline-flex items-center gap-1"
+                    >
+                        <Trash2 size={11} /> View deletion log
+                        <ArrowRight size={11} />
+                    </Link>
                 </div>
 
                 <div className="flex justify-end pt-1">

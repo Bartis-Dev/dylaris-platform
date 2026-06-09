@@ -9,6 +9,10 @@ import (
 // + JSON error responses for the modpacks feature.
 const FeatureModpacks = "modpacks"
 
+// FeatureTickets is the canonical name used in X-Feature-Disabled headers
+// + JSON error responses for the ticket subsystem.
+const FeatureTickets = "tickets"
+
 // RequireModpacksEnabled blocks the request with 503 feature_disabled when
 // the platform-wide modpacks toggle is off. Use on every WRITE endpoint that
 // touches modpack data (modpacks CRUD, versions, mods, publish, mrpack PAT
@@ -17,6 +21,21 @@ func (s *AppState) RequireModpacksEnabled(next http.HandlerFunc) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsModpacksEnabled(r.Context()) {
 			featureDisabledResponse(w, FeatureModpacks, "Modpack authoring is disabled by the platform admin.")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// RequireTicketsEnabled blocks the request with 503 feature_disabled when
+// the platform-wide tickets toggle is off. Wrap every endpoint under the
+// ticket subsystem (tickets, categories, attachments, canned responses,
+// notifications, settings) so the panel + external clients all see the same
+// 503 when the admin pauses tickets.
+func (s *AppState) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.FeatureFlags.IsTicketsEnabled(r.Context()) {
+			featureDisabledResponse(w, FeatureTickets, "The ticket system is disabled by the platform admin.")
 			return
 		}
 		next(w, r)

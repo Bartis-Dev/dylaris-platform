@@ -27,6 +27,12 @@ type TicketSettings struct {
 	// the background job after AutoCloseDaysAfterResolved days of no activity.
 	AutoCloseEnabled           bool `json:"autoCloseEnabled"`
 	AutoCloseDaysAfterResolved int  `json:"autoCloseDaysAfterResolved"`
+
+	// Ticket deletion gate (admin-only DELETE /api/tickets/{id}). Default OFF:
+	// the audited delete path stays dormant until the admin opts in. Flipping
+	// this off again does NOT undo any prior deletions — the deletion log row
+	// is permanent.
+	DeletionEnabled bool `json:"deletionEnabled"`
 }
 
 var defaultTicketSettings = TicketSettings{
@@ -39,6 +45,7 @@ var defaultTicketSettings = TicketSettings{
 	MaxUserSizeMB:              500,
 	AutoCloseEnabled:           false,
 	AutoCloseDaysAfterResolved: 7,
+	DeletionEnabled:            false,
 }
 
 func LoadTicketSettings(state *AppState) TicketSettings {
@@ -84,6 +91,9 @@ func LoadTicketSettings(state *AppState) TicketSettings {
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 1 && n <= 365 {
 			s.AutoCloseDaysAfterResolved = n
 		}
+	}
+	if v, _ := state.Store.GetSetting("tickets.deletion_enabled"); v != "" {
+		s.DeletionEnabled = v == "true"
 	}
 	return s
 }
@@ -151,6 +161,7 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 		{"tickets.max_user_size_mb", fmt.Sprintf("%d", s.MaxUserSizeMB)},
 		{"tickets.auto_close_enabled", fmt.Sprintf("%t", s.AutoCloseEnabled)},
 		{"tickets.auto_close_days_after_resolved", fmt.Sprintf("%d", s.AutoCloseDaysAfterResolved)},
+		{"tickets.deletion_enabled", fmt.Sprintf("%t", s.DeletionEnabled)},
 	}
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {

@@ -294,6 +294,28 @@ func createTicketTables(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_audit_server ON server_audit_events(server_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_audit_type   ON server_audit_events(event_type, created_at DESC)`,
+
+		// ticket_deletions — append-only audit log for admin-driven ticket
+		// deletions. Decoupled from tickets via no FK so the row survives the
+		// referenced ticket disappearing. Username + category snapshots are
+		// stored as text to stay readable after the source rows are gone.
+		// deleted_by stays as UUID FK (SET NULL) so the actor's identity row
+		// can be anonymized without nuking the audit history.
+		`CREATE TABLE IF NOT EXISTS ticket_deletions (
+			id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			ticket_id       INTEGER NOT NULL,
+			ticket_subject  TEXT NOT NULL,
+			owner_user_id   UUID,
+			owner_username  TEXT NOT NULL,
+			category_name   TEXT,
+			deleted_by      UUID NOT NULL,
+			deleted_by_name TEXT NOT NULL,
+			deleted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			ip_address      INET,
+			user_agent      TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ticket_deletions_deleted_at ON ticket_deletions (deleted_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_ticket_deletions_deleted_by ON ticket_deletions (deleted_by)`,
 	}
 	for _, q := range tables {
 		if _, err := db.Exec(q); err != nil {

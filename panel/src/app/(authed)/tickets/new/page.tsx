@@ -6,10 +6,11 @@ import Link from 'next/link';
 import { ArrowLeft, LifeBuoy, Loader2, CircleAlert } from 'lucide-react';
 import { listTicketCategories, createTicket, TicketCategory, TicketPriority } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
+import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 
 export default function NewTicketPage() {
     const router = useRouter();
-    const { servers } = useAppData();
+    const { servers, featureFlags } = useAppData();
     const [categories, setCategories] = useState<TicketCategory[]>([]);
     const [loading, setLoading] = useState(true);
     const [categoryId, setCategoryId] = useState<number | ''>('');
@@ -21,11 +22,14 @@ export default function NewTicketPage() {
     const [error, setError] = useState('');
 
     useEffect(() => {
+        if (!featureFlags.tickets) return;
         listTicketCategories().then(res => {
             if (res.success) setCategories(res.categories || []);
             setLoading(false);
         });
-    }, []);
+    }, [featureFlags.tickets]);
+
+    if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 
     const selectedCategory = categories.find(c => c.id === categoryId);
     const requiresServer = !!selectedCategory?.requiresServer;

@@ -158,6 +158,24 @@ type TicketAuditEvent struct {
 	CreatedAt   time.Time              `json:"createdAt"`
 }
 
+// TicketDeletion is an immutable audit row for an admin-driven ticket
+// deletion. Username + category snapshots are stored as plain text so the
+// row stays readable after the originating user or category is removed.
+// OwnerUserID is nullable because users can be anonymized post-deletion.
+type TicketDeletion struct {
+	ID             string    `json:"id"`
+	TicketID       int       `json:"ticketId"`
+	TicketSubject  string    `json:"ticketSubject"`
+	OwnerUserID    *string   `json:"ownerUserId,omitempty"`
+	OwnerUsername  string    `json:"ownerUsername"`
+	CategoryName   *string   `json:"categoryName,omitempty"`
+	DeletedBy      string    `json:"deletedBy"`
+	DeletedByName  string    `json:"deletedByName"`
+	DeletedAt      time.Time `json:"deletedAt"`
+	IPAddress      *string   `json:"ipAddress,omitempty"`
+	UserAgent      *string   `json:"userAgent,omitempty"`
+}
+
 // ── Phase 3 — Tickets Polish ─────────────────────────────────────────
 
 // TicketAttachment is the metadata row for a file uploaded to a ticket.

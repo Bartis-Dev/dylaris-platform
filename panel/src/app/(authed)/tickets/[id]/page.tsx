@@ -12,17 +12,25 @@ import {
     addTicketWatcher, removeTicketWatcher,
     listTicketAttachments, uploadTicketAttachment, deleteTicketAttachment, downloadTicketAttachmentURL,
     listCannedResponses, expandCannedTemplate,
+    deleteTicket, getTicketSettings,
     Ticket, TicketMessage, TicketWatcher, TicketAuditEvent, TicketStatus, TicketAttachment, CannedResponse,
+    TicketSettings,
 } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonText, SkeletonCard, Skeleton } from '@/components/Skeleton';
+import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
+import { useRouter } from 'next/navigation';
 
 const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'waiting_user', 'resolved', 'closed'];
 
 export default function TicketDetailPage() {
     const params = useParams();
+    const router = useRouter();
     const ticketId = Number(params?.id);
-    const { user } = useAppData();
+    const { user, featureFlags } = useAppData();
+    const [ticketSettings, setTicketSettings] = useState<TicketSettings | null>(null);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     const [ticket, setTicket] = useState<Ticket | null>(null);
     const [messages, setMessages] = useState<TicketMessage[]>([]);
@@ -66,13 +74,38 @@ export default function TicketDetailPage() {
 
     useEffect(() => {
         if (!Number.isFinite(ticketId) || ticketId <= 0) return;
+        if (!featureFlags.tickets) return;
         reload();
         // Attachments live on a separate endpoint so we can reload them
         // independently after an upload without re-fetching the whole ticket.
         listTicketAttachments(ticketId).then(r => {
             if (r.success) setAttachments(r.attachments || []);
         });
-    }, [ticketId, reload]);
+    }, [ticketId, reload, featureFlags.tickets]);
+
+    // Admins need ticketSettings.deletionEnabled to know whether to show the
+    // Delete button enabled or disabled-with-tooltip. The endpoint is admin-
+    // only so we silently skip for non-admins.
+    useEffect(() => {
+        if (!user?.isAdmin || !featureFlags.tickets) return;
+        getTicketSettings().then(res => {
+            if (res.success && res.settings) setTicketSettings(res.settings);
+        });
+    }, [user?.isAdmin, featureFlags.tickets]);
+
+    const handleDelete = async () => {
+        setDeleting(true);
+        const res = await deleteTicket(ticketId);
+        setDeleting(false);
+        if (res.success) {
+            router.replace(isSupport ? '/tickets/inbox' : '/tickets');
+        } else {
+            setError(res.message || 'Deletion failed.');
+            setConfirmDelete(false);
+        }
+    };
+
+    if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 
     // Canned responses are support-only and category-scoped. Re-fetch when
     // the ticket's category changes so we get the right snippets.
@@ -235,6 +268,27 @@ export default function TicketDetailPage() {
                             >
                                 <CircleCheckBig size={12} /> Close
                             </button>
+                        )}
+                        {user?.isAdmin && (
+                            ticketSettings && !ticketSettings.deletionEnabled ? (
+                                <button
+                                    type="button"
+                                    disabled
+                                    title="Ticket deletion is disabled in Settings → Ticket Settings."
+                                    className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 opacity-50 cursor-not-allowed"
+                                >
+                                    <Trash2 size={12} /> Delete
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setConfirmDelete(true)}
+                                    className="btn btn-sm inline-flex items-center gap-1.5 bg-(--error-ghost) text-(--error-light) border border-(--error)/30 hover:bg-(--error)/15"
+                                    title="Delete ticket"
+                                >
+                                    <Trash2 size={12} /> Delete
+                                </button>
+                            )
                         )}
                     </div>
                 </div>
@@ -484,6 +538,46 @@ export default function TicketDetailPage() {
             {ticket.status === 'closed' && (
                 <div className="shrink-0 border-t border-(--base-03) p-4 text-sm text-(--base-06) text-center italic">
                     This ticket is closed. Reopen it to add new replies.
+                </div>
+            )}
+
+            {/* Admin-only confirm-delete modal. Renders inside <main> so it
+                inherits the layout context but uses a fixed overlay to sit
+                above the rest of the page. */}
+            {confirmDelete && user?.isAdmin && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-(--base-00)/70 backdrop-blur-sm">
+                    <div className="card max-w-md w-full p-6 border border-(--base-03)">
+                        <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 rounded-md bg-(--error-ghost) flex items-center justify-center shrink-0">
+                                <Trash2 size={18} className="text-(--error-light)" />
+                            </div>
+                            <div className="min-w-0">
+                                <h2 className="text-base font-display font-bold text-(--base-09)">Ticket löschen?</h2>
+                                <p className="text-sm text-(--base-06) mt-1">
+                                    Ticket <span className="font-mono">#{ticket.id}</span> — <span className="text-(--base-09)">&ldquo;{ticket.title}&rdquo;</span> wird unwiderruflich gelöscht. Diese Aktion wird im Audit-Log festgehalten.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-2 mt-5">
+                            <button
+                                type="button"
+                                onClick={() => setConfirmDelete(false)}
+                                disabled={deleting}
+                                className="btn btn-secondary btn-sm"
+                            >
+                                Abbrechen
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleDelete}
+                                disabled={deleting}
+                                className="btn btn-sm inline-flex items-center gap-1.5 bg-(--error) text-white border border-(--error) hover:bg-(--error)/85 disabled:opacity-50"
+                            >
+                                {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                {deleting ? 'Lösche…' : 'Endgültig löschen'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </main>

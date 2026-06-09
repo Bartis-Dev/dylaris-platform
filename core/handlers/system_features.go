@@ -24,6 +24,7 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"features": map[string]bool{
 			"modpacks": h.state.FeatureFlags.IsModpacksEnabled(r.Context()),
+			"tickets":  h.state.FeatureFlags.IsTicketsEnabled(r.Context()),
 		},
 	})
 }

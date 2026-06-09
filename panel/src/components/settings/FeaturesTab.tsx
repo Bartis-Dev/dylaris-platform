@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
 import { getTelemetrySettings, setTelemetrySettings } from '@/lib/api/telemetry';
-import { CircleCheck, CircleAlert, Network, Globe, Radio } from 'lucide-react';
+import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload } from '@/lib/api/featureFlags';
+import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
@@ -18,6 +19,13 @@ export default function FeaturesTab() {
     // user can flip it independently without needing to remember to Save.
     const [telemetryEnabled, setTelemetryEnabled] = useState(true);
     const [telemetrySaving, setTelemetrySaving] = useState(false);
+
+    // Platform-wide subsystem toggles (tickets, modpacks) — these live behind
+    // /api/admin/settings/features and save-on-click independently of the
+    // proxy/gateway settings above. Each flip persists immediately so the
+    // admin doesn't have to remember a Save bar for a dangerous gate.
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true });
+    const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
     // Snapshot of last-saved settings for dirty detection.
     const snapshotRef = useRef<FeatureSettings | null>(null);
@@ -40,7 +48,29 @@ export default function FeaturesTab() {
                 setTelemetryEnabled(res.settings.enabled);
             }
         });
+        getSystemFeaturesAdmin().then(res => {
+            if (res.success && res.features) setPlatformFlags(res.features);
+        });
     }, []);
+
+    // Save-on-click for the platform-wide bundle. We send BOTH keys every
+    // time so the wire shape stays predictable even when only one toggle
+    // flipped; cheaper than tracking partial dirty state for a 2-bool form.
+    const savePlatformFlag = async (key: keyof FeatureFlagsAdminPayload, value: boolean) => {
+        if (platformSaving) return;
+        const prev = platformFlags;
+        const next = { ...platformFlags, [key]: value };
+        setPlatformFlags(next);
+        setPlatformSaving(key);
+        const res = await updateSystemFeatures(next);
+        if (!res.success) {
+            setPlatformFlags(prev);
+            showToast(res.message || 'Save failed.', false);
+        } else if (res.features) {
+            setPlatformFlags(res.features);
+        }
+        setPlatformSaving(null);
+    };
 
     // Save-on-click: flip the UI optimistically, persist, revert + toast on
     // failure so the user sees the truth instead of a stale "on" state.
@@ -164,6 +194,61 @@ export default function FeaturesTab() {
                         className={`toggle-track ${telemetryEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
                     >
                         <span className={`toggle-knob ${telemetryEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Platform-wide subsystem toggles. Save on click — each flip
+                immediately blocks/restores the whole API surface so an
+                explicit Save bar would be a footgun. */}
+            <div className="card p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <LifeBuoy size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">Ticket System</div>
+                            <div className="text-xs text-(--base-06)">
+                                Enables the tickets module, inbox, attachments, canned responses and notifications. When off, all <code className="font-mono">/api/tickets/*</code> endpoints return 503 and the Tickets nav entry is hidden.
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={platformFlags.tickets}
+                        disabled={platformSaving !== null}
+                        onClick={() => savePlatformFlag('tickets', !platformFlags.tickets)}
+                        className={`toggle-track ${platformFlags.tickets ? 'toggle-track-on' : 'toggle-track-off'}`}
+                    >
+                        <span className={`toggle-knob ${platformFlags.tickets ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+            </div>
+
+            <div className="card p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Package size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">Modpack Authoring</div>
+                            <div className="text-xs text-(--base-06)">
+                                When off, modpack write endpoints return 503 and the Modpacks UI is hidden for non-admins. Existing modpacks stay readable and downloadable.
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={platformFlags.modpacks}
+                        disabled={platformSaving !== null}
+                        onClick={() => savePlatformFlag('modpacks', !platformFlags.modpacks)}
+                        className={`toggle-track ${platformFlags.modpacks ? 'toggle-track-on' : 'toggle-track-off'}`}
+                    >
+                        <span className={`toggle-knob ${platformFlags.modpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
             </div>

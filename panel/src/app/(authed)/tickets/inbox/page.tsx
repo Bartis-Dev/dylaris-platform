@@ -7,6 +7,7 @@ import { listInboxTickets, listTicketCategories, Ticket, TicketStatus, TicketCat
 import { useAppData } from '@/lib/AppDataContext';
 import RegionBadge from '@/components/RegionBadge';
 import { SkeletonCard } from '@/components/Skeleton';
+import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 
 type Scope = 'all' | 'mine' | 'team' | 'unassigned';
 const SCOPES: { id: Scope; label: string }[] = [
@@ -25,7 +26,7 @@ const STATUS_FILTERS: { id: 'open_active' | 'waiting_user' | 'resolved' | 'close
 ];
 
 export default function InboxPage() {
-    const { user, regions } = useAppData();
+    const { user, regions, featureFlags } = useAppData();
     const [scope, setScope] = useState<Scope>('all');
     const [status, setStatus] = useState<typeof STATUS_FILTERS[number]['id']>('open_active');
     const [categoryId, setCategoryId] = useState<number | ''>('');
@@ -48,7 +49,7 @@ export default function InboxPage() {
     }, []);
 
     useEffect(() => {
-        if (!isSupport) {
+        if (!isSupport || !featureFlags.tickets) {
             setLoading(false);
             return;
         }
@@ -66,7 +67,9 @@ export default function InboxPage() {
             setLoading(false);
         })();
         return () => { cancelled = true; };
-    }, [scope, status, categoryId, isSupport]);
+    }, [scope, status, categoryId, isSupport, featureFlags.tickets]);
+
+    if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 
     if (!isSupport) {
         return (

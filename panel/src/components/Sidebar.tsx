@@ -55,7 +55,7 @@ function buildProxyHierarchy(servers: Server[]) {
 }
 
 export default function Sidebar({ onNewServer }: SidebarProps) {
-  const { servers, user: currentUser, proxiesEnabled } = useAppData();
+  const { servers, user: currentUser, proxiesEnabled, featureFlags } = useAppData();
   const params = useParams();
   const activeServerId = params?.id ? Number(params.id) : null;
 
@@ -73,17 +73,24 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
 
   // Phase 2 — servers reachable via active tickets assigned to me. Polled
   // on tab focus only; not refreshed automatically since the ticket list
-  // itself is the live source of truth.
+  // itself is the live source of truth. Disabled when the platform-wide
+  // tickets toggle is off.
   const [viaTicketsServers, setViaTicketsServers] = useState<Server[]>([]);
   useEffect(() => {
-    if (activeTab !== 'tickets' || !isSupport) return;
+    if (activeTab !== 'tickets' || !isSupport || !featureFlags.tickets) return;
     let cancelled = false;
     listServersViaTickets().then(res => {
       if (cancelled) return;
       if (res.success) setViaTicketsServers(res.servers || []);
     });
     return () => { cancelled = true; };
-  }, [activeTab, isSupport]);
+  }, [activeTab, isSupport, featureFlags.tickets]);
+
+  // If the toggle flips off while the "Via tickets" tab was selected, drop
+  // back to "mine" so the tab strip stays consistent with the active panel.
+  useEffect(() => {
+    if (!featureFlags.tickets && activeTab === 'tickets') setActiveTab('mine');
+  }, [featureFlags.tickets, activeTab]);
 
   const filteredServers = useMemo(() => {
     if (!searchQuery.trim()) return servers;
@@ -330,7 +337,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             >
               Invited {invitedServers.length > 0 && <span className="ml-1 text-(--accent-light)">({invitedServers.length})</span>}
             </button>
-            {isSupport && (
+            {isSupport && featureFlags.tickets && (
               <button
                 onClick={() => setActiveTab('tickets')}
                 className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-colors ${

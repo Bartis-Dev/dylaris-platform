@@ -1059,3 +1059,173 @@ func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUse
 	}
 	return out, nil
 }
+
+// ==========================================
+// TICKET DELETION (admin-only, audited)
+// ==========================================
+
+// ListAttachmentStorageKeysByTicket returns the storage_key column for every
+// attachment on a ticket so the handler can DeletePath() the file blobs
+// after the rows are gone. Empty/duplicate keys are skipped.
+func (s *PostgresStore) ListAttachmentStorageKeysByTicket(ticketID int) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT storage_key FROM ticket_attachments WHERE ticket_id = $1`,
+		ticketID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	seen := map[string]bool{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			continue
+		}
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// DeleteTicket removes the ticket and every dependent row in a single tx.
+// ON DELETE CASCADE on ticket_messages / ticket_watchers / ticket_audit_events
+// / ticket_attachments would already cover most of this; we still issue
+// explicit deletes so the contract is obvious from the source and so deletes
+// fire in a deterministic order. notifications are not FK'd to tickets — they
+// stay (the link will 404 gracefully when followed, by design).
+func (s *PostgresStore) DeleteTicket(id int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Order matters only when FK constraints aren't set ON DELETE CASCADE; we
+	// run the explicit deletes regardless so the path stays correct even if
+	// the cascade is loosened in the future.
+	for _, q := range []string{
+		`DELETE FROM ticket_attachments    WHERE ticket_id = $1`,
+		`DELETE FROM ticket_watchers       WHERE ticket_id = $1`,
+		`DELETE FROM ticket_messages       WHERE ticket_id = $1`,
+		`DELETE FROM ticket_audit_events   WHERE ticket_id = $1`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	res, err := tx.Exec(`DELETE FROM tickets WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
+// InsertTicketDeletion stamps the audit row. id + deleted_at default
+// server-side; leave them blank in the caller-supplied struct.
+func (s *PostgresStore) InsertTicketDeletion(rec *models.TicketDeletion) error {
+	if rec == nil {
+		return fmt.Errorf("nil deletion record")
+	}
+	var ip interface{}
+	if rec.IPAddress != nil && *rec.IPAddress != "" {
+		ip = *rec.IPAddress
+	}
+	var ua interface{}
+	if rec.UserAgent != nil && *rec.UserAgent != "" {
+		ua = *rec.UserAgent
+	}
+	var cat interface{}
+	if rec.CategoryName != nil && *rec.CategoryName != "" {
+		cat = *rec.CategoryName
+	}
+	var owner interface{}
+	if rec.OwnerUserID != nil && *rec.OwnerUserID != "" {
+		owner = *rec.OwnerUserID
+	}
+	return s.db.QueryRow(
+		`INSERT INTO ticket_deletions
+			(ticket_id, ticket_subject, owner_user_id, owner_username, category_name,
+			 deleted_by, deleted_by_name, ip_address, user_agent)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 RETURNING id, deleted_at`,
+		rec.TicketID, rec.TicketSubject, owner, rec.OwnerUsername, cat,
+		rec.DeletedBy, rec.DeletedByName, ip, ua,
+	).Scan(&rec.ID, &rec.DeletedAt)
+}
+
+// ListTicketDeletions returns (rows, total). limit is clamped to [1,200],
+// offset to [0,∞). deletedBy "" means no actor filter.
+func (s *PostgresStore) ListTicketDeletions(limit, offset int, deletedBy string) ([]models.TicketDeletion, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	where := ""
+	args := []interface{}{}
+	if deletedBy != "" {
+		where = " WHERE deleted_by = $1"
+		args = append(args, deletedBy)
+	}
+
+	var total int
+	countQuery := `SELECT COUNT(*) FROM ticket_deletions` + where
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	limitArg := len(args) + 1
+	offsetArg := len(args) + 2
+	args = append(args, limit, offset)
+	rowsQ := `SELECT id, ticket_id, ticket_subject, owner_user_id, owner_username,
+	                 category_name, deleted_by, deleted_by_name, deleted_at,
+	                 host(ip_address), user_agent
+	            FROM ticket_deletions` + where +
+		fmt.Sprintf(` ORDER BY deleted_at DESC LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
+	rows, err := s.db.Query(rowsQ, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []models.TicketDeletion{}
+	for rows.Next() {
+		var d models.TicketDeletion
+		var owner, cat, ip, ua sql.NullString
+		if err := rows.Scan(&d.ID, &d.TicketID, &d.TicketSubject, &owner, &d.OwnerUsername,
+			&cat, &d.DeletedBy, &d.DeletedByName, &d.DeletedAt, &ip, &ua); err != nil {
+			continue
+		}
+		if owner.Valid && owner.String != "" {
+			s := owner.String
+			d.OwnerUserID = &s
+		}
+		if cat.Valid && cat.String != "" {
+			s := cat.String
+			d.CategoryName = &s
+		}
+		if ip.Valid && ip.String != "" {
+			s := ip.String
+			d.IPAddress = &s
+		}
+		if ua.Valid && ua.String != "" {
+			s := ua.String
+			d.UserAgent = &s
+		}
+		out = append(out, d)
+	}
+	return out, total, nil
+}

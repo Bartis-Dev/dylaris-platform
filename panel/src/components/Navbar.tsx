@@ -26,9 +26,14 @@ export function moduleHref(module: AppModule): string {
 }
 
 export default function Navbar({ children }: NavbarProps) {
-  const { modules } = useAppData();
+  const { modules, featureFlags } = useAppData();
   const pathname = usePathname();
-  const sortedModules = [...modules].sort((a, b) => (a.position || 99) - (b.position || 99));
+  const sortedModules = [...modules]
+    // Platform-wide tickets toggle hides the Tickets module entry-point.
+    // The module row itself stays in the DB so flipping the toggle back on
+    // restores the nav without re-seeding.
+    .filter(m => featureFlags.tickets || m.name !== 'Tickets')
+    .sort((a, b) => (a.position || 99) - (b.position || 99));
 
   return (
     <nav className="w-full bg-(--base-01) border-b border-(--base-03) flex items-center justify-between px-6 py-2.5 shrink-0 relative z-30">

@@ -69,7 +69,10 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
     const [regions, setRegions] = useState<Region[]>([]);
     const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
-    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true });
+    // modpacks defaults to true (legacy: ships enabled, admin opts out).
+    // tickets defaults to false so the nav doesn't briefly flash a Tickets
+    // module on first paint before /system/features comes back.
+    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, tickets: false });
     const [ready, setReady] = useState(false);
 
     const refreshUser = useCallback(async () => {

@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { LifeBuoy, Plus, Filter, CircleDot, CircleCheckBig, Clock, AlertTriangle } from 'lucide-react';
 import { listMyTickets, Ticket, TicketStatus, TicketPriority } from '@/lib/api/tickets';
 import { SkeletonCard } from '@/components/Skeleton';
+import { useAppData } from '@/lib/AppDataContext';
+import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 
 const STATUS_FILTERS: { id: TicketStatus | 'all' | 'open_active'; label: string }[] = [
     { id: 'open_active', label: 'Open' },
@@ -15,11 +17,13 @@ const STATUS_FILTERS: { id: TicketStatus | 'all' | 'open_active'; label: string 
 ];
 
 export default function MyTicketsPage() {
+    const { featureFlags } = useAppData();
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<typeof STATUS_FILTERS[number]['id']>('open_active');
 
     useEffect(() => {
+        if (!featureFlags.tickets) return;
         let cancelled = false;
         const load = async () => {
             setLoading(true);
@@ -35,7 +39,9 @@ export default function MyTicketsPage() {
         };
         load();
         return () => { cancelled = true; };
-    }, [filter]);
+    }, [filter, featureFlags.tickets]);
+
+    if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 
     return (
         <main className="flex-1 flex flex-col overflow-hidden p-6 gap-5">

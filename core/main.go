@@ -228,6 +228,8 @@ func main() {
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
 	telemetrySettingsHandler := handlers.NewTelemetrySettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
+	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
+	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
 	// gRPC Server for Node connections (NodeService)
@@ -406,6 +408,11 @@ func main() {
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Set)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(modpackSettingsHandler.SetUserFlag)).Methods("PATCH")
 	api.HandleFunc("/system/features", authHandler.AuthMiddleware(systemFeaturesHandler.Get)).Methods("GET")
+	// Bundled admin GET/PUT for all platform-wide feature toggles. Replaces
+	// the per-feature toggle that used to live inside /admin/settings/modpacks
+	// (still works for back-compat; this is the new canonical surface).
+	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Get)).Methods("GET")
+	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
 	// --- Phase 18 — Telemetry settings ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")
@@ -445,50 +452,55 @@ func main() {
 	api.HandleFunc("/admin/maintenance", authHandler.AuthMiddleware(maintenanceHandler.SaveState)).Methods("PUT")
 
 	// --- Tickets (Phase 2) ---
+	// Every ticket-related endpoint is wrapped in RequireTicketsEnabled so the
+	// platform-wide tickets toggle flips the entire subsystem (UI + API +
+	// notifications fan-out) without a per-handler check.
 	// Categories: public list (enabled only) for create form, admin CRUD for management.
-	api.HandleFunc("/ticket-categories", authHandler.AuthMiddleware(ticketCategoriesHandler.ListCategories)).Methods("GET")
-	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(ticketCategoriesHandler.AdminListCategories)).Methods("GET")
-	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(ticketCategoriesHandler.CreateCategory)).Methods("POST")
-	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(ticketCategoriesHandler.UpdateCategory)).Methods("PATCH")
-	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(ticketCategoriesHandler.DeleteCategory)).Methods("DELETE")
+	api.HandleFunc("/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.ListCategories))).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.AdminListCategories))).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.CreateCategory))).Methods("POST")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.UpdateCategory))).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.DeleteCategory))).Methods("DELETE")
 
 	// Tickets: user CRUD + support inbox.
-	api.HandleFunc("/tickets", authHandler.AuthMiddleware(ticketsHandler.ListMyTickets)).Methods("GET")
-	api.HandleFunc("/tickets", authHandler.AuthMiddleware(ticketsHandler.CreateTicket)).Methods("POST")
-	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(ticketsHandler.ListInboxTickets)).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(ticketsHandler.GetTicket)).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/messages", authHandler.AuthMiddleware(ticketsHandler.AddReply)).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/status", authHandler.AuthMiddleware(ticketsHandler.UpdateStatus)).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(ticketsHandler.UpdatePriority)).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(ticketsHandler.UpdateAssignment)).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(ticketsHandler.AddWatcher)).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(ticketsHandler.RemoveWatcher)).Methods("DELETE")
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyTickets))).Methods("GET")
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.CreateTicket))).Methods("POST")
+	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListInboxTickets))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.GetTicket))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.DeleteTicket))).Methods("DELETE")
+	api.HandleFunc("/tickets/{id:[0-9]+}/messages", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.AddReply))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/status", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdateStatus))).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdatePriority))).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdateAssignment))).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.AddWatcher))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.RemoveWatcher))).Methods("DELETE")
 
 	// Sidebar source for support's "Via tickets" tab.
-	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(ticketsHandler.ListMyServersViaTickets)).Methods("GET")
+	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyServersViaTickets))).Methods("GET")
 
 	// Settings.
-	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(ticketSettingsHandler.GetSettings)).Methods("GET")
-	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(ticketSettingsHandler.SaveSettings)).Methods("PUT")
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketSettingsHandler.GetSettings))).Methods("GET")
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings))).Methods("PUT")
 
 	// --- Tickets Phase 3: attachments, canned responses, notifications ---
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(ticketAttachmentsHandler.UploadAttachment)).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(ticketAttachmentsHandler.ListAttachments)).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(ticketAttachmentsHandler.DownloadAttachment)).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(ticketAttachmentsHandler.DeleteAttachment)).Methods("DELETE")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.UploadAttachment))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.ListAttachments))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DownloadAttachment))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DeleteAttachment))).Methods("DELETE")
 
 	// Canned responses: support sees the read list, admin manages.
-	api.HandleFunc("/ticket-canned-responses", authHandler.AuthMiddleware(cannedResponsesHandler.ListForSupport)).Methods("GET")
-	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(cannedResponsesHandler.AdminList)).Methods("GET")
-	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(cannedResponsesHandler.Create)).Methods("POST")
-	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(cannedResponsesHandler.Update)).Methods("PATCH")
-	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(cannedResponsesHandler.Delete)).Methods("DELETE")
+	api.HandleFunc("/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.ListForSupport))).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.AdminList))).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.Create))).Methods("POST")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.Update))).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.Delete))).Methods("DELETE")
 
-	// Notifications: in-app inbox.
-	api.HandleFunc("/notifications", authHandler.AuthMiddleware(notificationsHandler.List)).Methods("GET")
-	api.HandleFunc("/notifications/unread-count", authHandler.AuthMiddleware(notificationsHandler.UnreadCount)).Methods("GET")
-	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(notificationsHandler.MarkRead)).Methods("POST")
-	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(notificationsHandler.MarkAllRead)).Methods("POST")
+	// Notifications: in-app inbox. Currently ticket-driven; gated with the
+	// rest of the ticket subsystem.
+	api.HandleFunc("/notifications", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.List))).Methods("GET")
+	api.HandleFunc("/notifications/unread-count", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.UnreadCount))).Methods("GET")
+	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkRead))).Methods("POST")
+	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkAllRead))).Methods("POST")
 
 	// --- Server audit (Phase 4) ---
 	// Owner + admin can view. Force-on flag is admin-only.
@@ -500,18 +512,20 @@ func main() {
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.SavePolicy)).Methods("PUT")
 
 	// --- Ticket DB migration + backups (Phase 5, admin-only) ---
-	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(ticketMigrationHandler.GetStatus)).Methods("GET")
-	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(ticketMigrationHandler.TestExternalConnection)).Methods("POST")
-	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(ticketMigrationHandler.DryRunMigration)).Methods("POST")
-	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(ticketMigrationHandler.ExecuteMigration)).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.GetStatus))).Methods("GET")
+	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.TestExternalConnection))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration))).Methods("POST")
 	// Backups: create, list, download, delete.
-	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(ticketMigrationHandler.CreateBackup)).Methods("POST")
-	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(ticketMigrationHandler.ListBackups)).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(ticketMigrationHandler.DownloadBackup)).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(ticketMigrationHandler.DeleteBackup)).Methods("DELETE")
+	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.CreateBackup))).Methods("POST")
+	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ListBackups))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DownloadBackup))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DeleteBackup))).Methods("DELETE")
 	// Restore: two-step Danger Zone (init + execute) — 2FA + 15s timer + typed phrase.
-	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(ticketMigrationHandler.InitRestore)).Methods("POST")
-	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(ticketMigrationHandler.ExecuteRestore)).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.InitRestore))).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore))).Methods("POST")
+	// Deletion audit log (admin-only).
+	api.HandleFunc("/admin/tickets/deletion-log", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.ListDeletions))).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(userHandler.GetUserRouteLimit)).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(userHandler.SetUserRouteLimit)).Methods("PUT")
 
