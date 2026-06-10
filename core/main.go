@@ -63,12 +63,21 @@ func main() {
 	// gRPC Registry for Node connections
 	grpcRegistry := nodegrpc.NewRegistry()
 
+	// Embedded changelog: parsed once at boot, cached. Fatal on parse failure
+	// because a totally broken changelog folder usually signals a build/embed
+	// mistake we want to catch early, not at the first /api/changelog hit.
+	changelogSvc, err := services.NewChangelogService(changelogFS)
+	if err != nil {
+		log.Fatalf("changelog: failed to load embedded entries: %v", err)
+	}
+
 	appState := &handlers.AppState{
 		Store:               pgStore,
 		GRPCRegistry:        grpcRegistry,
 		FrontendURL:         cfg.FrontendURL,
 		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
 		FeatureFlags:        services.NewFeatureFlags(pgStore),
+		Changelog:           changelogSvc,
 	}
 
 	redisClient, err := database.InitRedis(cfg)
@@ -231,6 +240,7 @@ func main() {
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
+	changelogHandler := handlers.NewChangelogHandler(appState)
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
@@ -416,6 +426,12 @@ func main() {
 	// --- Phase 18 — Telemetry settings ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")
+
+	// --- Changelog (in-panel drawer) ---
+	// Released + coming-soon entries come from the embedded changelog folders;
+	// the per-user last-seen cursor drives the unread badge on the bell.
+	api.HandleFunc("/changelog", authHandler.AuthMiddleware(changelogHandler.Get)).Methods("GET")
+	api.HandleFunc("/changelog/mark-seen", authHandler.AuthMiddleware(changelogHandler.MarkSeen)).Methods("POST")
 
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")

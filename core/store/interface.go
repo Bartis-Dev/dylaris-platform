@@ -407,6 +407,14 @@ type Store interface {
 	// Returns ErrSetupAlreadyComplete / ErrSetupInvalidToken to let the
 	// handler map outcomes to HTTP status codes without parsing strings.
 	CreateFirstAdmin(username, passwordHash, totpSecret, recoveryToken string) (*models.User, error)
+
+	// --- Changelog (in-panel) ---
+	// GetLastSeenChangelog returns the last released-entry date the user has
+	// marked as seen. nil = never opened the drawer; treat everything as unread.
+	GetLastSeenChangelog(userID string) (*time.Time, error)
+	// SetLastSeenChangelog stamps the cursor. Callers should clamp upward
+	// (max(current, new)) so reopening an older entry doesn't reset progress.
+	SetLastSeenChangelog(userID string, date time.Time) error
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job

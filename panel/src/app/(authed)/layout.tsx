@@ -12,6 +12,7 @@ import MaintenanceBanner from '@/components/MaintenanceBanner';
 import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
+import ChangelogBell from '@/components/changelog/ChangelogBell';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon } from 'lucide-react';
@@ -68,6 +69,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 <Navbar>
                     <CoreRegionChip />
                     <UploadManagerWidget />
+                    <ChangelogBell />
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
                         regular users see only their inbox. */}

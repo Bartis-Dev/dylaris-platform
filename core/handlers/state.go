@@ -33,4 +33,10 @@ type AppState struct {
 	// FeatureFlags (Phase 16) is the cached platform feature toggle reader.
 	// Read by the modpack route gates; flipped via /admin/settings/modpacks.
 	FeatureFlags *services.FeatureFlags
+
+	// Changelog is the build-time embedded changelog reader. Constructed at
+	// boot from core/changelog/*.md (released) + core/changelog/dev/*.md
+	// (coming soon). Filtering by audience happens at read time so admins and
+	// regular users share the single cached parse.
+	Changelog *services.ChangelogService
 }

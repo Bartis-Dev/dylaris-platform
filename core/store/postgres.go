@@ -1633,3 +1633,34 @@ func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret, rec
 	}
 	return &u, nil
 }
+
+// ==========================================
+// CHANGELOG (in-panel unread cursor)
+// ==========================================
+
+// GetLastSeenChangelog reads the user's last-seen-changelog cursor. nil
+// means the user has never opened the drawer — every released entry counts
+// as unread on first sight.
+func (s *PostgresStore) GetLastSeenChangelog(userID string) (*time.Time, error) {
+	var t sql.NullTime
+	err := s.db.QueryRow(`SELECT last_seen_changelog_date FROM users WHERE id = $1`, userID).Scan(&t)
+	if err != nil {
+		return nil, err
+	}
+	if !t.Valid {
+		return nil, nil
+	}
+	v := t.Time
+	return &v, nil
+}
+
+// SetLastSeenChangelog stamps the cursor. The handler should clamp upward
+// (max(current, new)) before calling — this method just writes whatever it
+// gets so an admin can deliberately rewind for testing if ever needed.
+func (s *PostgresStore) SetLastSeenChangelog(userID string, date time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET last_seen_changelog_date = $1 WHERE id = $2`,
+		date, userID,
+	)
+	return err
+}

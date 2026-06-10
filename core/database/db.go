@@ -131,6 +131,9 @@ func ensureSchema(db *sql.DB) error {
 	if err := applyPhase18Schema(db); err != nil {
 		return err
 	}
+	if err := applyChangelogSchema(db); err != nil {
+		return err
+	}
 	if err := applyWarpSchema(db); err != nil {
 		return err
 	}
@@ -997,6 +1000,16 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`UPDATE gateway_route_limits SET max_routes = -1 WHERE max_routes = 0`)
 	// Migrate port:80 → port:443
 	db.Exec(`UPDATE gateway_route_limits SET scope = 'port:443' WHERE scope = 'port:80'`)
+}
+
+// applyChangelogSchema adds the per-user cursor used by the in-panel
+// changelog drawer to count unread entries. NULL = the user has never opened
+// the drawer, so every released entry is unread on first sight. Idempotent.
+func applyChangelogSchema(db *sql.DB) error {
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_changelog_date DATE`); err != nil {
+		return fmt.Errorf("changelog: add last_seen_changelog_date: %w", err)
+	}
+	return nil
 }
 
 // applyPhase18Schema (Phase 18 — Telemetry Heartbeat) seeds the toggle for
