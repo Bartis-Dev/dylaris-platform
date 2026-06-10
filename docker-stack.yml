@@ -24,7 +24,7 @@ services:
     image: ghcr.io/callmebartis/dylaris/core:latest
     environment:
       API_PORT: "25500"
-      FRONTEND_URL: "http://panel:3000"
+      FRONTEND_URL: "http://panel:25510"
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       DYLARIS_REGION: "${DYLARIS_REGION:-default}"
@@ -37,7 +37,7 @@ services:
       GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
     ports:
       - "25500:25500"   # REST API
-      - "25520:25520"   # gRPC node mesh
+      - "25501:25501"   # gRPC node mesh (Cluster-Sync)
     networks:
       - dylaris_net
     deploy:
@@ -86,7 +86,7 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
     ports:
-      - "25510:3000"
+      - "25510:25510"
     networks:
       - dylaris_net
     deploy:

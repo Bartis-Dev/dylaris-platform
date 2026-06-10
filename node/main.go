@@ -191,7 +191,7 @@ func main() {
 	meshMgr := NewMeshManager(nodeID, rdb, streamHandler)
 	go meshMgr.Run(ctx)
 
-	// Beam: file transfer gRPC server on localhost:9091.
+	// Beam: file transfer gRPC server (BEAM_GRPC_PORT, default :25521).
 	// BEAM_JWT_SECRET must match the gateway's beam-relay so tickets that
 	// the relay validated also pass the node-side Authenticate gate.
 	beamThrottle := NewBeamThrottle(ctx, rdb)
@@ -337,7 +337,7 @@ func parseConfig() {
 
 	sftpPort = os.Getenv("SFTP_PORT")
 	if sftpPort == "" {
-		sftpPort = "2222"
+		sftpPort = "25520"
 	}
 }
 

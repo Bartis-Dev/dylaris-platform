@@ -119,13 +119,13 @@ export default function ServerFilesPage() {
                                 <div className="flex items-center gap-2 font-mono text-xs text-(--base-08)">
                                     <span>{server.nodeAddress}</span>
                                     <span className="text-(--base-05)">:</span>
-                                    <span>2222</span>
+                                    <span>25520</span>
                                     <span className="text-(--base-05)">·</span>
                                     <span>{user?.username}</span>
                                 </div>
                             </div>
                             <button
-                                onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${server.nodeAddress} -p 2222`)}
+                                onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${server.nodeAddress} -p 25520`)}
                                 className="text-(--base-05) hover:text-(--base-09) transition-colors shrink-0 p-1 rounded"
                                 title="Copy SFTP command"
                             >

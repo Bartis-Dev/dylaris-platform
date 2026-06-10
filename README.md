@@ -65,7 +65,7 @@ DYLARIS is a small set of independently deployable services that coordinate thro
                                                   │ REST
                                                   ▼
    TimescaleDB ◀───────── SQL ─────────┐  ┌──────────────────────┐
-   (Postgres 16)                       └──│         CORE         │  Go API (:25500) + gRPC (:25520)
+   (Postgres 16)                       └──│         CORE         │  Go API (:25500) + gRPC (:25501)
                                           │  leader election,    │
    Redis / Valkey ◀── queues ────────────│  scheduler, auth,    │
    (queues / pub-sub / discovery)        │  RCON, SSE, library  │
@@ -102,7 +102,7 @@ DYLARIS is a small set of independently deployable services that coordinate thro
    - `ip_port` — the Node binds a host port (`PORT_RANGE_START`–`PORT_RANGE_END`); players connect to `node-ip:port`.
    - `gateway` — the Node binds **no** host port; player traffic is routed through the optional Gateway **edge** via a reverse tunnel (no node IP exposed). Required for home/external (Warp) nodes.
    - `both` — direct ports *and* gateway routes.
-5. **Files** — `sftp` exposes SFTP (:2222), `beam` uses an overlay transport that never exposes the node IP. (External/Warp nodes force `gateway`+`beam` automatically.)
+5. **Files** — `sftp` exposes SFTP (:25520), `beam` uses an overlay transport that never exposes the node IP. (External/Warp nodes force `gateway`+`beam` automatically.)
 
 ## Quick start (single host)
 
@@ -187,9 +187,9 @@ Both files declare the same five services:
 
 | Service | Image | Role |
 |---|---|---|
-| **core** | `ghcr.io/callmebartis/dylaris/core` | REST API (`:25500`) + gRPC mesh endpoint (`:25520`). Auth, scheduler, RCON, SSE, library, leader election. |
+| **core** | `ghcr.io/callmebartis/dylaris/core` | REST API (`:25500`) + gRPC mesh endpoint (`:25501`). Auth, scheduler, RCON, SSE, library, leader election. |
 | **node** | `ghcr.io/callmebartis/dylaris/node` | Per-host agent. Mounts `/var/run/docker.sock` to create/manage MC server containers; persists data to the `dylaris_data` volume. |
-| **panel** | `ghcr.io/callmebartis/dylaris/panel` | Next.js web UI (`:3000`, published on `:25510`). |
+| **panel** | `ghcr.io/callmebartis/dylaris/panel` | Next.js web UI (`:25510`). |
 | **timescaledb** | `timescale/timescaledb:latest-pg16` | PostgreSQL 16 + TimescaleDB for relational data and time-series stats. Data on the `timescaledb_data` volume. |
 | **redis** | `valkey/valkey:8-alpine` | In-memory store for command queues, pub/sub, service discovery, settings mirroring and stats streams. **Valkey** is a drop-in, Redis-compatible fork; the service keeps the hostname `redis` so `REDIS_ADDR=redis:6379` works everywhere. |
 
@@ -215,7 +215,7 @@ Set these in `.env` (single-host) or your shell/secret store (swarm). See [`.env
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | — | **Required.** Postgres credentials/database. |
 | `REDIS_ADDR` | `redis:6379` | Redis/Valkey address. |
 | `DYLARIS_REGION` | `default` | Region label for this Core. |
-| `FRONTEND_URL` | `http://panel:3000` | Internal panel URL (CORS / links). |
+| `FRONTEND_URL` | `http://panel:25510` | Internal panel URL (CORS / links). |
 | `GATEWAY_ENABLED` | `false` | Enable integration with the optional Gateway stack. |
 
 ### Node
@@ -241,10 +241,11 @@ Set these in `.env` (single-host) or your shell/secret store (swarm). See [`.env
 | Port | Service | Purpose |
 |---|---|---|
 | `25500` | core | REST API |
-| `25520` | core | gRPC node mesh |
+| `25501` | core | gRPC node mesh (Cluster-Sync) |
 | `25510` | panel | Web UI |
+| `25520` | node | SFTP (when file access = `sftp`/`both`) |
+| `25521` | node | Beam gRPC (overlay-only, JWT-gated) |
 | `25600–30000` | node | MC server host ports (`ip_port`/`both` routing) |
-| `2222` | node | SFTP (when file access = `sftp`/`both`) |
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`51820/udp`) — see the `dylaris-gateway` repo.
 

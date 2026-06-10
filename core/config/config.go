@@ -51,7 +51,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
-	grpcPort, _ := strconv.Atoi(getEnv("DYLARIS_GRPC_PORT", "25520"))
+	grpcPort, _ := strconv.Atoi(getEnv("DYLARIS_GRPC_PORT", "25501"))
 
 	coreID := getEnv("DYLARIS_CORE_ID", "")
 	if coreID == "" {

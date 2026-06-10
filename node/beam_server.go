@@ -26,11 +26,12 @@ import (
 const beamChunkSize = 64 * 1024 // 64KB
 
 // beamServer implements the BeamNodeService gRPC interface.
-// It listens on :9091 reachable on the container's overlay network so the
-// Link sidecar in a separate Swarm container can forward Yamux streams to
-// it. Public exposure is still blocked at the Swarm boundary — every RPC
-// must present a valid BEAM_JWT_SECRET-signed ticket via Authenticate
-// before any file op runs, so overlay-internal reachability is safe.
+// It listens on BEAM_GRPC_PORT (default :25521), reachable on the container's
+// overlay network so the Link sidecar in a separate Swarm container can
+// forward Yamux streams to it. Public exposure is still blocked at the Swarm
+// boundary — every RPC must present a valid BEAM_JWT_SECRET-signed ticket via
+// Authenticate before any file op runs, so overlay-internal reachability is
+// safe.
 type beamServer struct {
 	pb.UnimplementedBeamNodeServiceServer
 	storageMgr *StorageManager
@@ -51,7 +52,8 @@ type beamServer struct {
 	serverUUIDByPeer sync.Map // map[string]string
 }
 
-// StartBeamServer starts the BeamNodeService gRPC server on :9091.
+// StartBeamServer starts the BeamNodeService gRPC server on BEAM_GRPC_PORT
+// (default :25521).
 //
 // Binds to all interfaces (was 127.0.0.1) so a Link in a sibling Swarm
 // container — different network namespace, so different loopback — can
@@ -68,9 +70,14 @@ type beamServer struct {
 // (cross-stack, custom service names, mixed global/replicated), where
 // the NodeID is not necessarily a resolvable hostname.
 func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *StorageManager, throttle *BeamThrottle, jwtSecret, nodeID string) {
-	lis, err := net.Listen("tcp", ":9091")
+	beamPort := os.Getenv("BEAM_GRPC_PORT")
+	if beamPort == "" {
+		beamPort = "25521"
+	}
+	listenAddr := ":" + beamPort
+	lis, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		log.Printf("beam-server: failed to listen on :9091: %v", err)
+		log.Printf("beam-server: failed to listen on %s: %v", listenAddr, err)
 		return
 	}
 
@@ -82,10 +89,10 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 		nodeID:     nodeID,
 	})
 
-	log.Println("beam-server: listening on :9091 (reachable via overlay; JWT-gated)")
+	log.Printf("beam-server: listening on %s (reachable via overlay; JWT-gated)", listenAddr)
 
 	// Publish endpoint to Redis so Link can discover us via overlay IP.
-	go publishBeamEndpoint(ctx, rdb, nodeID)
+	go publishBeamEndpoint(ctx, rdb, nodeID, beamPort)
 
 	// Sweep stale .beam-upload-* temp files. The UploadFile handler's
 	// defer normally removes them on cancel/error, but a kill -9 or
@@ -114,12 +121,11 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 // Best-effort: a Redis outage just causes Link to fall back to its
 // service-name / loopback guess. Beam.exe surfaces "could not reach the
 // Beam relay ..." in that case, so the failure mode is visible.
-func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID string) {
+func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID, port string) {
 	if rdb == nil || strings.TrimSpace(nodeID) == "" {
 		return
 	}
 	const (
-		port        = "9091"
 		key         = "beam:node-endpoint:"
 		ttl         = 30 * time.Second
 		refreshTick = 10 * time.Second

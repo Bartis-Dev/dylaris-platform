@@ -1745,7 +1745,7 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"host":     host,
-		"port":     2222,
+		"port":     25520,
 		"username": username,
 		"path":     "/" + srv.UUID,
 	})

@@ -2,7 +2,7 @@ syntax = "proto3";
 package dylaris.beam;
 option go_package = "dylaris-proto/beam";
 
-// BeamNodeService runs on each Node (localhost:9091 only).
+// BeamNodeService runs on each Node (BEAM_GRPC_PORT, default localhost:25521).
 // Beam desktop clients connect through the BeamRelay tunnel.
 // Auth is stateless: Node validates the JWT ticket signature locally.
 service BeamNodeService {
