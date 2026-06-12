@@ -347,13 +347,18 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             }
         }
         return results;
-    }, []);
+    }, [adapter, serverUuid]);
 
+    const searchGenRef = useRef(0);
     useEffect(() => {
+        // Generation guard: a slow recursive walk must not overwrite the
+        // results of a newer search started after the term or path changed.
+        const gen = ++searchGenRef.current;
         const search = async () => {
             if (globalSearchTerm) {
                 setIsSearching(true);
                 const results = await handleRecursiveSearch(currentPath, globalSearchTerm);
+                if (gen !== searchGenRef.current) return;
                 setSearchResults(results);
                 setIsSearching(false);
             } else {
@@ -363,7 +368,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         const timer = setTimeout(() => {
           search();
         }, 300); // Debounce search
-        
+
         return () => clearTimeout(timer);
     }, [globalSearchTerm, currentPath, handleRecursiveSearch]);
 
@@ -457,8 +462,18 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   useEffect(() => {
       if (searchTerm) {
-          const regex = new RegExp(searchTerm, 'gi');
-          const matches = [...fileContent.matchAll(regex)].map(match => match.index as number);
+          // Literal, case-insensitive substring search (same approach as the
+          // CodeMirror editor). Compiling raw user input as a RegExp risked a
+          // SyntaxError on invalid patterns and catastrophic backtracking
+          // (ReDoS) against large file content.
+          const matches: number[] = [];
+          const haystack = fileContent.toLowerCase();
+          const needle = searchTerm.toLowerCase();
+          let i = haystack.indexOf(needle);
+          while (i !== -1) {
+              matches.push(i);
+              i = haystack.indexOf(needle, i + needle.length);
+          }
           setSearchMatches(matches);
           setCurrentMatchIndex(matches.length > 0 ? 0 : -1);
       } else {

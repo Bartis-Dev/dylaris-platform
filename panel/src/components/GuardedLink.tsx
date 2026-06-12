@@ -64,9 +64,13 @@ export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
         setSaving(true);
         try {
             await registration.save();
-        } finally {
+        } catch {
+            // Save failed: stay on the page so the user keeps their edits
+            // instead of navigating away and losing them.
             setSaving(false);
+            return;
         }
+        setSaving(false);
         const href = pending;
         close();
         navigate(href);

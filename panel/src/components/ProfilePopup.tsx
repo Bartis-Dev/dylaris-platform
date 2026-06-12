@@ -42,6 +42,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [localError, setLocalError] = useState("");
 
   // 2FA wizard state
   const [twoFactorOpen, setTwoFactorOpen] = useState(false);
@@ -66,11 +67,18 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
 
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
+      setLocalError("");
+      if (newPassword !== confirmPassword) {
+          // Surface the mismatch instead of silently dropping the password
+          // change (sending "" left the user thinking it had changed).
+          setLocalError("New password and confirmation do not match");
+          return;
+      }
       setLoading(true);
       await onUpdate({
           newUsername,
           oldPassword,
-          newPassword: newPassword === confirmPassword ? newPassword : "",
+          newPassword,
           minecraftUsername,
           email,
       });
@@ -97,7 +105,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
         </div>
 
         <div className="modal-body">
-          {error && <div className="alert alert-error mb-4 font-medium">{error}</div>}
+          {(localError || error) && <div className="alert alert-error mb-4 font-medium">{localError || error}</div>}
           {success && <div className="alert alert-success mb-4 font-medium">{success}</div>}
 
           <form onSubmit={handleSubmit} className="space-y-4">
