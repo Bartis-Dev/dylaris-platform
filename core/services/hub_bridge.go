@@ -92,16 +92,6 @@ type GatewayProvider interface {
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 }
 
-// --- NoOpGateway (GATEWAY_ENABLED=false) ---
-
-type NoOpGateway struct{}
-
-func (n *NoOpGateway) CreateServerRoute(serverID uint, ownerID string, domain string, port int) error {
-	return fmt.Errorf("gateway not enabled")
-}
-func (n *NoOpGateway) DeleteRoute(domain string) error         { return nil }
-func (n *NoOpGateway) MigrateServerRoutes(serverID, newNodeID uint) error { return nil }
-
 // --- RedisGateway (GATEWAY_ENABLED=true) ---
 
 type RedisGateway struct {

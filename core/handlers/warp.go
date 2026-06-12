@@ -58,9 +58,8 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		PublicKey         string   `json:"public_key"`
-		RequestedHostname string   `json:"requested_hostname"`
-		TunnelSubnets     []string `json:"tunnel_subnets"`
+		PublicKey     string   `json:"public_key"`
+		TunnelSubnets []string `json:"tunnel_subnets"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PublicKey == "" {
 		sendJSONError(w, "Invalid request (public_key required)", http.StatusBadRequest)

@@ -34,12 +34,6 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Self-heal: if the database is later restored from an empty volume
-	// (a stack update that reset the TimescaleDB volume, etc.), rebuild
-	// the schema in place so the Core recovers on its own — no manual
-	// restart needed.
-	go schemaHealLoop(db)
-
 	return db, nil
 }
 
@@ -59,8 +53,7 @@ func pingWithRetry(db *sql.DB, attempts int, delay time.Duration) error {
 
 // ensureSchema creates every table, applies column migrations and seeds
 // the baseline rows. Every statement is idempotent (CREATE/ALTER ... IF
-// NOT EXISTS, conditional inserts), so it is safe to run repeatedly —
-// both at startup and from schemaHealLoop.
+// NOT EXISTS, conditional inserts), so it is safe to run repeatedly.
 func ensureSchema(db *sql.DB) error {
 	if err := createUsersTable(db); err != nil {
 		return err
@@ -737,32 +730,6 @@ func applyPhase8Schema(db *sql.DB) error {
 		return fmt.Errorf("phase 8: create scheduled_tasks server index: %w", err)
 	}
 	return nil
-}
-
-// schemaHealLoop watches for the core schema disappearing — which is
-// what happens when the database comes back up on an empty volume — and
-// rebuilds it. A cheap to_regclass probe gates the (idempotent but
-// chatty) full rebuild, so the steady state is one fast query per tick.
-func schemaHealLoop(db *sql.DB) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		var reg sql.NullString
-		if err := db.QueryRow(`SELECT to_regclass('public.users')`).Scan(&reg); err != nil {
-			// DB unreachable — the sql pool reconnects on its own;
-			// there's nothing to rebuild while it's down.
-			continue
-		}
-		if reg.Valid {
-			continue // schema present — steady state
-		}
-		log.Println("schema-heal: core tables are gone — rebuilding schema")
-		if err := ensureSchema(db); err != nil {
-			log.Printf("schema-heal: rebuild failed: %v", err)
-		} else {
-			log.Println("schema-heal: schema rebuilt successfully")
-		}
-	}
 }
 
 func createUsersTable(db *sql.DB) error {

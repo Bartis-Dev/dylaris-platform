@@ -30,15 +30,11 @@ type StorageProvider interface {
 	WriteFile(path string, content io.Reader) error
 }
 
-// NewProvider creates the appropriate StorageProvider based on type.
-// Supported types: "local" (default)
+// NewProvider creates a library StorageProvider. Only local storage is
+// implemented; storageType and opts are accepted for call-site stability and
+// future backends but every type currently resolves to LocalProvider.
 func NewProvider(storageType, basePath string, opts map[string]string) StorageProvider {
-	switch strings.ToLower(storageType) {
-	case "local", "":
-		return &LocalProvider{BasePath: basePath}
-	default:
-		return &LocalProvider{BasePath: basePath}
-	}
+	return &LocalProvider{BasePath: basePath}
 }
 
 // ==========================================
