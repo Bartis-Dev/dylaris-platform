@@ -122,6 +122,30 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// IsAdminToken reports whether the request carries a valid token whose claims
+// mark an admin. Used by middleware that runs before AuthMiddleware (the
+// maintenance gate) to honor the admin bypass without a full auth pass.
+func (h *AuthHandler) IsAdminToken(r *http.Request) bool {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		if q := r.URL.Query().Get("token"); q != "" {
+			authHeader = "Bearer " + q
+		}
+	}
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenString == "" {
+		return false
+	}
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return h.jwtKey, nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || !token.Valid {
+		return false
+	}
+	return claims.IsAdmin
+}
+
 func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)

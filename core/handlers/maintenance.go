@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -58,6 +59,28 @@ func LoadMaintenanceState(state *AppState) MaintenanceState {
 		s.BlockLevel = v
 	}
 	return s
+}
+
+// maintenanceCache memoizes the maintenance state for the hot request path so
+// the gate middleware doesn't do five settings reads on every API call. Short
+// TTL so toggling maintenance takes effect within a few seconds.
+var (
+	maintCacheMu  sync.Mutex
+	maintCache    MaintenanceState
+	maintCacheSet bool
+	maintCacheExp time.Time
+)
+
+func loadMaintenanceStateCached(state *AppState) MaintenanceState {
+	maintCacheMu.Lock()
+	defer maintCacheMu.Unlock()
+	if maintCacheSet && time.Now().Before(maintCacheExp) {
+		return maintCache
+	}
+	maintCache = LoadMaintenanceState(state)
+	maintCacheSet = true
+	maintCacheExp = time.Now().Add(5 * time.Second)
+	return maintCache
 }
 
 type MaintenanceHandler struct {
@@ -125,14 +148,15 @@ func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// MaintenanceMuxMiddleware is a gorilla/mux-compatible middleware that wraps
-// the entire /api subrouter. Same blocking semantics as MaintenanceMiddleware
-// but works with api.Use(...). Prefer this over the HandlerFunc variant when
-// applying to a whole router — one call covers every route.
-func MaintenanceMuxMiddleware(state *AppState) func(http.Handler) http.Handler {
+// MaintenanceMuxMiddleware is a gorilla/mux middleware (api.Use) that blocks
+// traffic per block_level while maintenance is active. It runs before
+// AuthMiddleware, so isAdminFn resolves admin status from the request token
+// directly to honor the admin bypass. Returns 503 on a block — standard HTTP
+// semantics for planned downtime, with an optional Retry-After.
+func MaintenanceMuxMiddleware(state *AppState, isAdminFn func(*http.Request) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !shouldBlockForMaintenance(state, r) {
+			if !shouldBlockForMaintenance(state, r, isAdminFn(r)) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -141,46 +165,23 @@ func MaintenanceMuxMiddleware(state *AppState) func(http.Handler) http.Handler {
 	}
 }
 
-// MaintenanceMiddleware wraps API handlers and blocks traffic per block_level
-// when maintenance is active. Admins always pass through. The GET endpoint
-// for the state itself is always allowed so the frontend can keep polling
-// and the banner stays accurate even while everything else is blocked.
-//
-// Returns 503 Service Unavailable on blocks — matches standard HTTP semantics
-// for planned downtime, and lets reverse proxies surface a Retry-After if
-// they want to.
-func MaintenanceMiddleware(state *AppState, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !shouldBlockForMaintenance(state, r) {
-			next(w, r)
-			return
-		}
-		writeMaintenanceBlock(state, w)
-	}
-}
-
 // shouldBlockForMaintenance returns true when the request must be rejected
-// because maintenance mode is on and the user/method isn't on the pass-list.
-// Centralized so both per-handler and router-level middlewares share the
-// exact same decision tree.
-func shouldBlockForMaintenance(state *AppState, r *http.Request) bool {
+// because maintenance mode is on and the caller/method isn't on the pass-list.
+// isAdmin is resolved by the caller — the mux middleware runs before
+// AuthMiddleware, so it parses the token itself.
+func shouldBlockForMaintenance(state *AppState, r *http.Request, isAdmin bool) bool {
 	// Always allow the state endpoint, login + status — otherwise users
 	// can't even see why they're being blocked.
 	if r.URL.Path == "/api/maintenance" || r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/status" {
 		return false
 	}
-	s := LoadMaintenanceState(state)
+	s := loadMaintenanceStateCached(state)
 	if !s.Active || s.BlockLevel == "off" || s.BlockLevel == "banner_only" {
 		return false
 	}
-	// Admin pass-through. Trusts the isAdmin context value set by AuthMiddleware
-	// — at the router-level the middleware runs before AuthMiddleware, so the
-	// claim is absent and admins on protected routes do still get blocked.
-	// Acceptable trade-off: admins simply see a 503, learn maintenance is on,
-	// and can toggle it off via the public GET endpoint + an auth retry.
-	// To bypass for admins reliably, wire MaintenanceMiddleware per-handler
-	// AFTER the AuthMiddleware instead.
-	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
+	// Admins are never blocked — they still need to manage the platform and
+	// turn maintenance back off.
+	if isAdmin {
 		return false
 	}
 	if s.BlockLevel == "block_writes" {

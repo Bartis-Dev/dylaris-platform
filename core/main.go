@@ -311,6 +311,12 @@ func main() {
 		return http.HandlerFunc(appState.RequireSetupComplete(next.ServeHTTP))
 	})
 
+	// Maintenance gate: blocks writes / all traffic per block_level while
+	// maintenance is active. Runs before per-route AuthMiddleware, so it
+	// resolves admin status from the token itself — admins always pass and
+	// can toggle maintenance back off.
+	api.Use(handlers.MaintenanceMuxMiddleware(appState, authHandler.IsAdminToken))
+
 	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
 	authLimiter := handlers.NewIPRateLimiter()
