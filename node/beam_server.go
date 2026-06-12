@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
 
@@ -46,10 +47,38 @@ type beamServer struct {
 	// with "server_uuid required" — the symptom Beam.exe surfaces as EOF
 	// on the first upload chunk.
 	//
-	// Entries are keyed by peer address. Beam sessions are short-lived
-	// and the same port gets recycled / overwritten on a new Authenticate,
-	// so the map stays bounded without explicit cleanup.
+	// Entries are keyed by peer address and cleared when the connection ends
+	// (beamConnCleaner, wired as a gRPC StatsHandler), so a recycled peer
+	// address can't inherit a previous session's binding.
 	serverUUIDByPeer sync.Map // map[string]string
+}
+
+// beamConnKey carries the connection's remote address from TagConn through to
+// the ConnEnd callback.
+type beamConnKey struct{}
+
+// beamConnCleaner clears a peer's serverUUIDByPeer binding when its gRPC
+// connection ends. Without this the binding outlives the session, so a later
+// connection that reuses the same (recycled) peer address would inherit the
+// previous session's authorization without authenticating.
+type beamConnCleaner struct {
+	m *sync.Map
+}
+
+func (c *beamConnCleaner) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
+func (c *beamConnCleaner) HandleRPC(context.Context, stats.RPCStats)                        {}
+func (c *beamConnCleaner) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
+	if info != nil && info.RemoteAddr != nil {
+		return context.WithValue(ctx, beamConnKey{}, info.RemoteAddr.String())
+	}
+	return ctx
+}
+func (c *beamConnCleaner) HandleConn(ctx context.Context, st stats.ConnStats) {
+	if _, ended := st.(*stats.ConnEnd); ended {
+		if addr, _ := ctx.Value(beamConnKey{}).(string); addr != "" {
+			c.m.Delete(addr)
+		}
+	}
 }
 
 // StartBeamServer starts the BeamNodeService gRPC server on BEAM_GRPC_PORT
@@ -81,13 +110,14 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 		return
 	}
 
-	srv := grpc.NewServer()
-	pb.RegisterBeamNodeServiceServer(srv, &beamServer{
+	bs := &beamServer{
 		storageMgr: storageMgr,
 		throttle:   throttle,
 		jwtSecret:  jwtSecret,
 		nodeID:     nodeID,
-	})
+	}
+	srv := grpc.NewServer(grpc.StatsHandler(&beamConnCleaner{m: &bs.serverUUIDByPeer}))
+	pb.RegisterBeamNodeServiceServer(srv, bs)
 
 	log.Printf("beam-server: listening on %s (reachable via overlay; JWT-gated)", listenAddr)
 
