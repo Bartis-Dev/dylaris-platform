@@ -8,7 +8,14 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	// Node connections are server-to-server and send no Origin header. Allow
+	// empty/same-origin and reject foreign Origins. Auth here is token-based
+	// (not cookie-based), so this is defense-in-depth rather than the primary
+	// guard.
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
+	},
 }
 
 type NodeGRPCHandler struct {
@@ -35,7 +42,8 @@ func (h *NodeGRPCHandler) NodeConnectHandler(w http.ResponseWriter, r *http.Requ
 	// Use Store for token check
 	node, err := h.state.Store.GetNodeByToken(token)
 	if err != nil {
-		log.Printf("Unknown Node Token: %s", token)
+		// Never log the token value itself — it is a credential.
+		log.Printf("Node connect rejected: unknown token")
 		http.Error(w, "Invalid Token", 401)
 		return
 	}

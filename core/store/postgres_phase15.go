@@ -3,8 +3,17 @@ package store
 import (
 	"database/sql"
 	"dylaris-core/models"
+	"errors"
 	"strconv"
+
+	"github.com/lib/pq"
 )
+
+// ErrUsernameTaken is returned by RenameUser when the new username collides
+// with an existing one. Lets the handler answer 409 instead of a generic 500,
+// and closes the check-then-act race: the DB UNIQUE constraint is the real
+// guard, this just classifies its violation.
+var ErrUsernameTaken = errors.New("username already taken")
 
 // RenameUser is the canonical username-change path. Single transaction:
 // insert history row, update users row. Atomicity matters — a partial run
@@ -34,6 +43,10 @@ func (s *PostgresStore) RenameUser(userID, newUsername, changedBy string) error 
 	}
 	if _, err := tx.Exec(`UPDATE users SET username=$2, last_username_change=NOW() WHERE id=$1`,
 		userID, newUsername); err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return ErrUsernameTaken
+		}
 		return err
 	}
 	return tx.Commit()

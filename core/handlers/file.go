@@ -91,6 +91,7 @@ func (h *FileHandler) getServerUUID(r *http.Request) (string, error) {
 	}
 	username, _ := r.Context().Value("username").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
 	if isAdmin {
 		return uuid, nil
 	}
@@ -98,7 +99,9 @@ func (h *FileHandler) getServerUUID(r *http.Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("server not found")
 	}
-	if srv.OwnerName != username {
+	// Honor invited-member permissions, not just ownership: a user invited to
+	// this server with the "files" permission may use the file browser.
+	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
 		return "", fmt.Errorf("access denied")
 	}
 	return uuid, nil

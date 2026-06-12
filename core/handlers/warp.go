@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -67,7 +69,15 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.svc.Enroll(r.Context(), key, req.PublicKey, req.TunnelSubnets)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusConflict)
+		// 409 only for a genuine connection-limit conflict; everything else is
+		// a server-side fault (DB, IP allocation, leader key) — surface it as
+		// 500 and log it instead of masking it behind 409 + leaking internals.
+		if errors.Is(err, store.ErrWarpLimitReached) {
+			sendJSONError(w, "Connection limit reached for this key", http.StatusConflict)
+			return
+		}
+		log.Printf("warp enroll failed (key=%d): %v", key.ID, err)
+		sendJSONError(w, "Enrollment failed", http.StatusInternalServerError)
 		return
 	}
 

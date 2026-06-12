@@ -590,13 +590,13 @@ func applyTicketSchema(db *sql.DB) error {
 			id SERIAL PRIMARY KEY,
 			region VARCHAR(32) NOT NULL DEFAULT 'default',
 			category_id INTEGER NOT NULL,
-			user_id INTEGER NOT NULL,
+			user_id UUID NOT NULL,
 			server_uuid VARCHAR(64),
 			server_region VARCHAR(32),
 			title VARCHAR(200) NOT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'open',
 			priority VARCHAR(16) NOT NULL DEFAULT 'normal',
-			assigned_user_id INTEGER,
+			assigned_user_id UUID,
 			assigned_team VARCHAR(64),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -605,24 +605,24 @@ func applyTicketSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS ticket_messages (
 			id SERIAL PRIMARY KEY,
 			ticket_id INTEGER NOT NULL,
-			user_id INTEGER NOT NULL,
+			user_id UUID NOT NULL,
 			body TEXT NOT NULL,
 			is_internal BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE TABLE IF NOT EXISTS ticket_watchers (
 			ticket_id INTEGER NOT NULL,
-			user_id INTEGER NOT NULL,
+			user_id UUID NOT NULL,
 			can_reply BOOLEAN NOT NULL DEFAULT FALSE,
 			added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			added_by INTEGER,
+			added_by UUID,
 			PRIMARY KEY (ticket_id, user_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS ticket_audit_events (
 			id BIGSERIAL PRIMARY KEY,
 			ticket_id INTEGER NOT NULL,
 			event_type VARCHAR(64) NOT NULL,
-			actor_user_id INTEGER,
+			actor_user_id UUID,
 			metadata JSONB,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
@@ -634,7 +634,7 @@ func applyTicketSchema(db *sql.DB) error {
 			mime VARCHAR(128) NOT NULL DEFAULT 'application/octet-stream',
 			size_bytes BIGINT NOT NULL DEFAULT 0,
 			storage_key VARCHAR(512) NOT NULL,
-			uploaded_by INTEGER,
+			uploaded_by UUID,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE TABLE IF NOT EXISTS ticket_canned_responses (
@@ -642,7 +642,7 @@ func applyTicketSchema(db *sql.DB) error {
 			name VARCHAR(128) NOT NULL,
 			body TEXT NOT NULL,
 			category_id INTEGER,
-			created_by INTEGER,
+			created_by UUID,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(name)

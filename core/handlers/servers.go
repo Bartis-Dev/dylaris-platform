@@ -230,6 +230,18 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Non-admins can only create servers they own. Only admins may set an
+	// arbitrary OwnerID; otherwise any authenticated user could create
+	// servers under another user's identity and burn their quotas.
+	if isAdmin, _ := r.Context().Value("isAdmin").(bool); !isAdmin {
+		userID, _ := r.Context().Value("userID").(string)
+		if userID == "" {
+			sendJSONError(w, "Unauthorized", 401)
+			return
+		}
+		req.OwnerID = userID
+	}
+
 	// Validate owner exists before going further.
 	if _, err := h.state.Store.GetUserByID(req.OwnerID); err != nil {
 		sendJSONError(w, "Owner not found", 404)

@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql" // Import Models
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
+
+	"dylaris-core/store"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -90,7 +93,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return h.jwtKey, nil
-		})
+		}, jwt.WithValidMethods([]string{"HS256"}))
 		if err != nil || !token.Valid {
 			sendJSONError(w, "Invalid Token", http.StatusUnauthorized)
 			return
@@ -343,6 +346,12 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if err := h.state.Store.RenameUser(user.ID, newName, user.ID); err != nil {
+			// The pre-check above is best-effort UX; the username UNIQUE
+			// constraint is the real guard against a concurrent rename race.
+			if errors.Is(err, store.ErrUsernameTaken) {
+				sendJSONError(w, "Username already taken", http.StatusConflict)
+				return
+			}
 			sendJSONError(w, "Rename failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

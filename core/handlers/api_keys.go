@@ -26,10 +26,13 @@ type APIKeysHandler struct {
 	// the only real risk is "2x burst" if a script flaps between Cores. A
 	// distributed Redis-backed limiter is wired in when that matters.
 	rateLimiter *apiKeyRateLimiter
+	// ipLimiter throttles per source IP BEFORE the key lookup so invalid-key
+	// guessing can't hammer the DB hash lookup unbounded.
+	ipLimiter *IPRateLimiter
 }
 
 func NewAPIKeysHandler(state *AppState) *APIKeysHandler {
-	return &APIKeysHandler{state: state, rateLimiter: newAPIKeyRateLimiter()}
+	return &APIKeysHandler{state: state, rateLimiter: newAPIKeyRateLimiter(), ipLimiter: NewIPRateLimiter()}
 }
 
 type createAPIKeyRequest struct {
@@ -186,6 +189,14 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 				sendJSONError(w, "Invalid key", http.StatusUnauthorized)
 				return
 			}
+			// Throttle by source IP before the DB lookup so invalid-key brute
+			// force can't hammer GetAPIKeyByHash unbounded (the per-key limiter
+			// below never gets a chance to run for keys that don't exist).
+			if !h.ipLimiter.allow(clientIP(r), 120) {
+				w.Header().Set("Retry-After", "60")
+				sendJSONError(w, "Too many requests", http.StatusTooManyRequests)
+				return
+			}
 			key, err := h.state.Store.GetAPIKeyByHash(HashAPIKey(plaintext))
 			if err != nil {
 				sendJSONError(w, "Invalid key", http.StatusUnauthorized)
@@ -214,8 +225,11 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 				sendJSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
-			// Best-effort last-used stamp; failure here is not a hard error.
-			go h.state.Store.TouchAPIKey(key.ID)
+			// Best-effort last-used stamp, throttled to ~once/min/key so a
+			// hammered key can't spawn an unbounded goroutine fan-out.
+			if h.rateLimiter.shouldTouch(key.ID) {
+				go h.state.Store.TouchAPIKey(key.ID)
+			}
 			next(w, r)
 		}
 	}
@@ -229,12 +243,27 @@ type rateBucket struct {
 }
 
 type apiKeyRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[int]*rateBucket
+	mu        sync.Mutex
+	buckets   map[int]*rateBucket
+	lastTouch map[int]time.Time
 }
 
 func newAPIKeyRateLimiter() *apiKeyRateLimiter {
-	return &apiKeyRateLimiter{buckets: make(map[int]*rateBucket)}
+	return &apiKeyRateLimiter{buckets: make(map[int]*rateBucket), lastTouch: make(map[int]time.Time)}
+}
+
+// shouldTouch returns true at most once per minute per key, gating the
+// last-used DB stamp so a hot key doesn't spawn a goroutine + UPDATE on
+// every request.
+func (l *apiKeyRateLimiter) shouldTouch(keyID int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if t, ok := l.lastTouch[keyID]; ok && now.Sub(t) < time.Minute {
+		return false
+	}
+	l.lastTouch[keyID] = now
+	return true
 }
 
 // allow returns false when the per-key budget is exhausted for the current

@@ -311,8 +311,12 @@ func main() {
 		return http.HandlerFunc(appState.RequireSetupComplete(next.ServeHTTP))
 	})
 
+	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
+	// credential-stuffing on login/register/reset/setup.
+	authLimiter := handlers.NewIPRateLimiter()
+
 	// --- PUBLIC ENDPOINTS ---
-	api.HandleFunc("/auth/login", authHandler.LoginHandler).Methods("POST")
+	api.HandleFunc("/auth/login", authLimiter.Limit(10, authHandler.LoginHandler)).Methods("POST")
 	api.HandleFunc("/status", authHandler.StatusHandler).Methods("GET")
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
 	// Public — used by the topbar to display "Connected to <region> Core".
@@ -327,7 +331,7 @@ func main() {
 	// mode. Atomic CTE in Store.CreateFirstAdmin prevents racing inserts
 	// across N Cores.
 	api.HandleFunc("/setup/status", setupHandler.Status).Methods("GET")
-	api.HandleFunc("/setup/admin", setupHandler.CreateAdmin).Methods("POST")
+	api.HandleFunc("/setup/admin", authLimiter.Limit(10, setupHandler.CreateAdmin)).Methods("POST")
 
 	// --- Scheduled Tasks (Phase 8) ---
 	// Cron preview — pure transform, available to anyone authed.
@@ -687,14 +691,14 @@ func main() {
 	// --- Registration + Email Verify (Phase 0a.2) ---
 	// Public — login page polls registration-status to decide whether to show the register link.
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
-	api.HandleFunc("/auth/register", registrationHandler.Register).Methods("POST")
+	api.HandleFunc("/auth/register", authLimiter.Limit(5, registrationHandler.Register)).Methods("POST")
 	api.HandleFunc("/auth/verify-email", registrationHandler.VerifyEmail).Methods("POST")
 	api.HandleFunc("/auth/resend-verification", registrationHandler.ResendVerification).Methods("POST")
 
 	// --- Password reset (Phase 0a.4) — all public, all enumeration-safe ---
-	api.HandleFunc("/auth/forgot-password", passwordResetHandler.ForgotPassword).Methods("POST")
+	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, passwordResetHandler.ForgotPassword)).Methods("POST")
 	api.HandleFunc("/auth/validate-reset-token", passwordResetHandler.ValidateResetToken).Methods("POST")
-	api.HandleFunc("/auth/reset-password", passwordResetHandler.ResetPassword).Methods("POST")
+	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, passwordResetHandler.ResetPassword)).Methods("POST")
 
 	// --- Security questions (Phase 0a.5) ---
 	// Public: pool query used by /register and /reset-password to render pickers.
@@ -804,7 +808,17 @@ func main() {
 	}
 
 	log.Printf("Dylaris Core API running on port %s", port)
-	if err := http.ListenAndServe(":"+port, corsObj(r)); err != nil {
+	// ReadHeaderTimeout defends against Slowloris (slow header drip) without
+	// capping body read/write time — Core serves SSE streams and multi-GB
+	// uploads/downloads, so ReadTimeout/WriteTimeout are deliberately left
+	// unset. IdleTimeout reaps idle keep-alive connections.
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           corsObj(r),
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Core API crashed: %v", err)
 	}
 }

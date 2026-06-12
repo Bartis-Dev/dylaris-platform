@@ -288,6 +288,21 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Path required", http.StatusBadRequest)
 		return
 	}
+	if strings.Contains(path, "..") {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Mirror the browse handler's access model: a non-admin must not download
+	// a file that lives under an admin-disabled path (the browse listing hides
+	// these, but download took the path verbatim).
+	if isAdmin, _ := r.Context().Value("isAdmin").(bool); !isAdmin {
+		disabledSet := h.disabledPathSet()
+		if _, blocked := disabledSet[normalizeLibraryPath(path)]; blocked || isPathBlocked(path, disabledSet) {
+			sendJSONError(w, "Access denied", http.StatusForbidden)
+			return
+		}
+	}
 
 	rc, err := h.provider.GetFile(path)
 	if err != nil {

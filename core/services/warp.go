@@ -141,7 +141,9 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 		func(taken map[string]bool) (string, error) { return NextFreeIP(s.clientSubnet, taken) })
 	if err != nil {
 		if errors.Is(err, store.ErrWarpLimitReached) {
-			return EnrollResult{}, fmt.Errorf("connection limit reached (policy=%s, max=%d)", key.Policy, limit)
+			// Preserve the sentinel (%w) so the handler can answer 409 for this
+			// genuine conflict while treating other enroll errors as 500.
+			return EnrollResult{}, fmt.Errorf("%w (policy=%s, max=%d)", store.ErrWarpLimitReached, key.Policy, limit)
 		}
 		return EnrollResult{}, err
 	}

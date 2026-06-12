@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -79,6 +80,16 @@ func LoadConfig() (Config, error) {
 		RedisDB:   redisDB,
 
 		ExternalTicketDBURL: getEnv("EXTERNAL_TICKET_DB_URL", ""),
+	}
+
+	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET
+	// makes every session token forgeable; a default CLUSTER_SECRET also exposes
+	// the derived Warp leader key and inter-service auth.
+	if cfg.JWTSecret == "" || cfg.JWTSecret == "change-this-secret" {
+		return cfg, fmt.Errorf("JWT_SECRET is unset or still the default placeholder — set a strong random value")
+	}
+	if cfg.ClusterSecret == "" || cfg.ClusterSecret == "dylaris-cluster-secret" {
+		return cfg, fmt.Errorf("CLUSTER_SECRET is unset or still the default placeholder — set a strong random value")
 	}
 
 	return cfg, nil

@@ -79,7 +79,16 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hashed, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if req.Password == "" {
+		sendJSONError(w, "Password is required", 400)
+		return
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("CreateUser: bcrypt hashing failed for username=%q: %v", req.Username, err)
+		sendJSONError(w, "Could not create user", 500)
+		return
+	}
 	req.Password = string(hashed)
 
 	if err := h.state.Store.CreateUser(&req.User); err != nil {
