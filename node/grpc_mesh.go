@@ -270,17 +270,19 @@ func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg
 			pw.lastActive = time.Now()
 			if _, err := pw.tempFile.WriteAt(chunk.Data, chunk.Offset); err != nil {
 				log.Printf("gRPC Mesh: Write chunk to disk failed (request_id=%s): %v", msg.RequestId, err)
-				// Check for EDQUOT (disk quota exceeded)
+				// Any write failure corrupts the upload. Abort and clean up
+				// instead of falling through, which would let a later
+				// TransferDone report success on a partial/corrupt file.
+				pw.tempFile.Close()
+				os.Remove(pw.tempPath)
+				delete(m.pendingWrites, msg.RequestId)
+				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
-					// Clean up temp file and remove pending write
-					pw.tempFile.Close()
-					os.Remove(pw.tempPath)
-					delete(m.pendingWrites, msg.RequestId)
-					m.writeMu.Unlock()
-					// Send error response to Core
-					stream.Send(errorMsg(msg.RequestId, 413, "Speicherlimit erreicht"))
-					return
+					stream.Send(errorMsg(msg.RequestId, 413, "Storage quota exceeded"))
+				} else {
+					stream.Send(errorMsg(msg.RequestId, 500, "Failed to write upload to disk"))
 				}
+				return
 			}
 		}
 		m.writeMu.Unlock()
