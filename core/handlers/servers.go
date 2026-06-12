@@ -1225,6 +1225,15 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// reappearing in Redis: when Hub's queue lag bumped into Hub's
 	// SyncData cadence, the route was re-published before the delete
 	// landed.
+	//
+	// Delete the authoritative server row FIRST. If it fails we return having
+	// touched nothing, so Core and Hub stay consistent — the route cleanup
+	// below only runs once the server is actually gone.
+	if err := h.state.Store.DeleteServer(serverID); err != nil {
+		sendJSONError(w, "Delete failed", 500)
+		return
+	}
+
 	if h.state.Redis != nil {
 		ctx := context.Background()
 		routes := services.GetRoutesFromRedis(ctx, h.state.Redis)
@@ -1255,11 +1264,6 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
-	}
-
-	if err := h.state.Store.DeleteServer(serverID); err != nil {
-		sendJSONError(w, "Delete failed", 500)
-		return
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)

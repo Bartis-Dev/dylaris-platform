@@ -43,10 +43,6 @@ func (s *StatusWatcherService) Start() {
 
 func (s *StatusWatcherService) scan() {
 	ctx := context.Background()
-	keys, err := s.redis.Keys(ctx, "dylaris:server:*:status").Result()
-	if err != nil {
-		return
-	}
 
 	// Track whether anything panel-visible changed this tick so we can fire
 	// exactly one servers.changed event per scan cycle, regardless of how
@@ -54,33 +50,46 @@ func (s *StatusWatcherService) scan() {
 	// boot at once.
 	dirty := false
 
-	for _, key := range keys {
-		// Key format: dylaris:server:<uuid>:status
-		parts := strings.Split(key, ":")
-		if len(parts) != 4 {
-			continue
-		}
-		uuid := parts[2]
-
-		newStatus, err := s.redis.Get(ctx, key).Result()
+	// SCAN (not KEYS) so this 5s poll stays O(batch) instead of blocking Redis
+	// with an O(N) keyspace walk as the number of servers grows.
+	var cursor uint64
+	for {
+		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:server:*:status", 100).Result()
 		if err != nil {
-			continue
+			break
 		}
+		for _, key := range keys {
+			// Key format: dylaris:server:<uuid>:status
+			parts := strings.Split(key, ":")
+			if len(parts) != 4 {
+				continue
+			}
+			uuid := parts[2]
 
-		// Find server by UUID and update status
-		srv, err := s.store.GetServerByUUID(uuid)
-		if err != nil {
-			continue
+			newStatus, err := s.redis.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+
+			// Find server by UUID and update status
+			srv, err := s.store.GetServerByUUID(uuid)
+			if err != nil {
+				continue
+			}
+
+			if srv.Status != newStatus {
+				log.Printf("Status update for %s: %s -> %s", uuid, srv.Status, newStatus)
+				s.store.UpdateServerStatus(srv.ID, newStatus)
+				dirty = true
+			}
+
+			// Delete key after processing
+			s.redis.Del(ctx, key)
 		}
-
-		if srv.Status != newStatus {
-			log.Printf("Status update for %s: %s -> %s", uuid, srv.Status, newStatus)
-			s.store.UpdateServerStatus(srv.ID, newStatus)
-			dirty = true
+		cursor = next
+		if cursor == 0 {
+			break
 		}
-
-		// Delete key after processing
-		s.redis.Del(ctx, key)
 	}
 
 	// Publish desired states to Redis so nodes can reconcile

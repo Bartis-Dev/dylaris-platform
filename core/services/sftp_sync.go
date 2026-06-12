@@ -42,6 +42,27 @@ type sftpServerEntry struct {
 	Name string `json:"name"`
 }
 
+// pruneStaleAuthKeys removes any sftp:auth:* key whose user is no longer in
+// the valid set. SCAN keeps it O(batch) instead of blocking Redis with KEYS.
+func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[string]bool) {
+	var cursor uint64
+	for {
+		keys, next, err := s.redis.Scan(ctx, cursor, "sftp:auth:*", 100).Result()
+		if err != nil {
+			return
+		}
+		for _, k := range keys {
+			if !valid[k] {
+				s.redis.Del(ctx, k)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return
+		}
+	}
+}
+
 func (s *SFTPSyncService) sync() {
 	ctx := context.Background()
 
@@ -52,14 +73,21 @@ func (s *SFTPSyncService) sync() {
 		return
 	}
 	pipe := s.redis.Pipeline()
+	valid := make(map[string]bool, len(users))
 	for _, u := range users {
 		if u.Password != "" {
-			pipe.Set(ctx, "sftp:auth:"+u.Username, u.Password, 0)
+			key := "sftp:auth:" + u.Username
+			pipe.Set(ctx, key, u.Password, 0)
+			valid[key] = true
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("SFTPSync: failed to write auth keys: %v", err)
 	}
+	// Drop auth keys for users that no longer exist (deleted or renamed); the
+	// keys carry no TTL, so without this stale credentials would authenticate
+	// over SFTP forever.
+	s.pruneStaleAuthKeys(ctx, valid)
 
 	// 2. Publish per-node, per-user server lists
 	nodes, err := s.store.ListNodes()
