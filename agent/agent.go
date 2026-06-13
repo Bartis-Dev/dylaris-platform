@@ -137,8 +137,8 @@ func (m *Monitor) Snapshot() (*SystemSnapshot, error) {
 	currentNetStats, err := net.IOCounters(false)
 	if err == nil && len(currentNetStats) > 0 {
 		current := currentNetStats[0]
-		currentSessionRx := current.BytesRecv - m.bootRx
-		currentSessionTx := current.BytesSent - m.bootTx
+		currentSessionRx := subClamp(current.BytesRecv, m.bootRx)
+		currentSessionTx := subClamp(current.BytesSent, m.bootTx)
 		totalRx = currentSessionRx + m.data.TotalRxOffset
 		totalTx = currentSessionTx + m.data.TotalTxOffset
 	}
@@ -154,6 +154,16 @@ func (m *Monitor) Snapshot() (*SystemSnapshot, error) {
 		NetTotalRx: totalRx,
 		NetTotalTx: totalTx,
 	}, nil
+}
+
+// subClamp returns a-b, or 0 when b > a. Network byte counters reset on an
+// interface/host reboot; without clamping the unsigned subtraction underflows
+// into a bogus huge value that then gets pushed to Redis.
+func subClamp(a, b uint64) uint64 {
+	if a < b {
+		return 0
+	}
+	return a - b
 }
 
 // GetCurrentStats returns ONLY the live data (CPU, RAM, Speed)
@@ -189,16 +199,16 @@ func (m *Monitor) GetCurrentStats() (*SystemStats, error) {
 		duration := now.Sub(m.lastTime).Seconds()
 
 		if duration > 0 {
-			rxDiff := float64(current.BytesRecv - prev.BytesRecv)
-			txDiff := float64(current.BytesSent - prev.BytesSent)
+			rxDiff := float64(subClamp(current.BytesRecv, prev.BytesRecv))
+			txDiff := float64(subClamp(current.BytesSent, prev.BytesSent))
 			stats.NetRxSpeed = uint64(rxDiff / duration)
 			stats.NetTxSpeed = uint64(txDiff / duration)
 			m.cachedRxSpeed = stats.NetRxSpeed
 			m.cachedTxSpeed = stats.NetTxSpeed
 		}
 
-		currentSessionRx := current.BytesRecv - m.bootRx
-		currentSessionTx := current.BytesSent - m.bootTx
+		currentSessionRx := subClamp(current.BytesRecv, m.bootRx)
+		currentSessionTx := subClamp(current.BytesSent, m.bootTx)
 
 		stats.NetTotalRx = currentSessionRx + m.data.TotalRxOffset
 		stats.NetTotalTx = currentSessionTx + m.data.TotalTxOffset
