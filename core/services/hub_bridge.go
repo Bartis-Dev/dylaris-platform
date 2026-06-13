@@ -249,11 +249,23 @@ func readLatestEdgeStats(ctx context.Context, rdb *redis.Client, edgeID string) 
 
 // GetLinksFromRedis reads all known link tokens and their online status from Redis.
 func GetLinksFromRedis(ctx context.Context, rdb *redis.Client) []GatewayLinkStatus {
-	// Tokens with active keep-alive
-	onlineSet, _ := rdb.SMembers(ctx, "sys:online_links").Result()
-	onlineMap := make(map[string]bool, len(onlineSet))
-	for _, t := range onlineSet {
-		onlineMap[t] = true
+	// Tokens with active keep-alive — one self-expiring key per live link
+	// (online_link:<token>, 15s TTL). A dead link's key expires on its own,
+	// unlike the old shared set whose single TTL any live link refreshed.
+	onlineMap := make(map[string]bool)
+	var oCursor uint64
+	for {
+		keys, next, err := rdb.Scan(ctx, oCursor, "online_link:*", 100).Result()
+		if err != nil {
+			break
+		}
+		for _, key := range keys {
+			onlineMap[key[len("online_link:"):]] = true
+		}
+		oCursor = next
+		if oCursor == 0 {
+			break
+		}
 	}
 
 	// All known tokens from link:{token} keys
