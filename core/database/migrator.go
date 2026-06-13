@@ -23,8 +23,8 @@ func MigrateFromMySQL(postgresDB *sql.DB, mysqlDSN string) error {
 	}
 
 	// 1. Users
-	// NOTE: This legacy MySQL→Postgres migrator predates Phase 15
-	// (users.id is now UUID, public_id was dropped). It is kept only as a
+	// NOTE: This legacy MySQL→Postgres migrator predates the current UUID
+	// schema (users.id is now UUID, public_id was dropped). It is kept only as a
 	// historical reference and would need a rewrite before running again —
 	// the SERIAL id + public_id assumptions no longer match the live schema.
 	log.Println("... migrating Users (LEGACY — no-op against Phase 15 schema)")

@@ -137,7 +137,7 @@ func ensureSchema(db *sql.DB) error {
 	return nil
 }
 
-// createTicketTables (Phase 2) sets up the ticket-system schema: categories,
+// createTicketTables sets up the ticket-system schema: categories,
 // tickets themselves, messages on those tickets, watchers (CC), and per-ticket
 // audit events. The region column is on tickets from day one so a future
 // cross-region migration doesn't have to rewrite history.
@@ -162,7 +162,7 @@ func createTicketTables(db *sql.DB) error {
 		)`,
 		// Tickets. server_uuid + server_region are nullable — only set when
 		// the category required a server. assigned_user_id is the supporter
-		// owning the ticket; assigned_team scopes visibility per Phase 1
+		// owning the ticket; assigned_team scopes visibility per the
 		// support_team semantics.
 		`CREATE TABLE IF NOT EXISTS tickets (
 			id               SERIAL PRIMARY KEY,
@@ -222,7 +222,7 @@ func createTicketTables(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ticket_audit_ticket ON ticket_audit_events(ticket_id, created_at DESC)`,
 
-		// Phase 3 — attachments. Storage layer holds the actual bytes;
+		// Attachments table — storage layer holds the actual bytes;
 		// this table is just metadata + the storage key the provider uses
 		// to retrieve. message_id is nullable so attachments can be
 		// uploaded into the create-ticket form before any messages exist.
@@ -239,7 +239,7 @@ func createTicketTables(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ticket_attachments_ticket ON ticket_attachments(ticket_id, created_at ASC)`,
 
-		// Phase 3 — canned responses. Admin-managed snippets that support
+		// Canned responses — admin-managed snippets that support
 		// staff insert into replies. category_id ties a snippet to a
 		// specific category for discoverability (NULL = global).
 		// body supports variable expansion at insert-time on the client:
@@ -256,7 +256,7 @@ func createTicketTables(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_canned_category ON ticket_canned_responses(category_id) WHERE category_id IS NOT NULL`,
 
-		// Phase 3 — notifications. Generic in-app inbox; ticket events are
+		// Notifications — generic in-app inbox; ticket events are
 		// the first producer but the schema is intentionally open-ended
 		// so other systems (backups, maintenance, security questions)
 		// can write here later.
@@ -273,7 +273,7 @@ func createTicketTables(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, created_at DESC) WHERE read_at IS NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_user        ON notifications(user_id, created_at DESC)`,
 
-		// Phase 4 — per-server audit. Indexed by (server_id, created_at)
+		// Per-server audit — indexed by (server_id, created_at)
 		// since the dominant query is "events for one server, newest first".
 		// Index on event_type lets the future filter dropdown stay fast.
 		// metadata stays JSONB so producers can shape it freely.
@@ -322,7 +322,7 @@ func createTicketTables(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase0a1Schema sets up the Phase 0a.1 (Auth Foundation) schema:
+// applyPhase0a1Schema sets up the Auth Foundation schema:
 //   - new tables: regions, user_regions, audit_events_identity
 //   - new columns on users (verification, reset, deletion tracking, all-regions flag)
 //   - new column on servers (region)
@@ -410,14 +410,14 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	db.Exec(`UPDATE users SET all_regions_access = TRUE
 		WHERE all_regions_access = FALSE
 		  AND id NOT IN (SELECT user_id FROM user_regions)`)
-	// Normalize blank node region (column existed pre-Phase-0a.1) to the seeded default.
+	// Normalize blank node region (column predates the auth-foundation schema) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
 	return nil
 }
 
-// applyPhase15Schema sets up the Phase 15 (User UUID migration + username
-// history) tables. The users.id UUID + drop of public_id happen in
+// applyPhase15Schema sets up the User UUID migration + username
+// history tables. The users.id UUID + drop of public_id happen in
 // createUsersTable; this function only adds the new history table +
 // settings rows. Idempotent.
 func applyPhase15Schema(db *sql.DB) error {
@@ -446,7 +446,7 @@ func applyPhase15Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase16Schema sets up Phase 16 (Modpack Storage + Feature Toggle):
+// applyPhase16Schema sets up the Modpack Storage + Feature Toggle schema:
 //   - users.can_create_modpacks per-user gate (default true)
 //   - modpack_versions gets frozen + mrpack_sha256 columns
 //   - mrpack_storage_path renamed to mrpack_storage_key (semantic: relative
@@ -454,7 +454,7 @@ func applyPhase15Schema(db *sql.DB) error {
 //   - Default settings rows for feature toggle + storage config
 //
 // Idempotent. Schema is dev-fresh on first boot; the RENAME catches the case
-// where Phase 14 wrote the old column name and Phase 16 swaps it.
+// where an older build wrote the old column name and this one swaps it.
 func applyPhase16Schema(db *sql.DB) error {
 	// users.can_create_modpacks
 	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_modpacks BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
@@ -500,7 +500,7 @@ func applyPhase16Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase14Schema sets up Phase 14 (Modpack Builder + Modrinth Publish):
+// applyPhase14Schema sets up the Modpack Builder + Modrinth Publish schema:
 //   - modpacks         : per-user authored modpacks
 //   - modpack_versions : version history per pack (Draft/Beta/Release channels)
 //   - modpack_mods     : Modrinth project+version refs per version
@@ -528,9 +528,9 @@ func applyPhase14Schema(db *sql.DB) error {
 
 		// Version-per-pack with channel column. Modrinth IDs are nullable
 		// while the version is still a Draft (local).
-		// Phase 16 renamed mrpack_storage_path → mrpack_storage_key (the
+		// mrpack_storage_path was renamed to mrpack_storage_key (the
 		// column is a provider-relative key, not a filesystem path) and
-		// added frozen + mrpack_sha256 for the cached-build model.
+		// frozen + mrpack_sha256 added for the cached-build model.
 		`CREATE TABLE IF NOT EXISTS modpack_versions (
 			id                  SERIAL PRIMARY KEY,
 			modpack_id          INTEGER     NOT NULL REFERENCES modpacks(id) ON DELETE CASCADE,
@@ -586,7 +586,7 @@ func applyPhase14Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase13Schema sets up Phase 13 (Custom Tabs):
+// applyPhase13Schema sets up the Custom Tabs schema:
 //   - server_tabs: per-server user-defined tabs that render an external URL
 //     in an iframe (Minimap, BlueMap, custom plugin dashboards). V1 holds
 //     just the URL — auto-reverse-proxy via Gateway is a follow-up.
@@ -612,7 +612,7 @@ func applyPhase13Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase11Schema sets up Phase 11 (Spark Profiler):
+// applyPhase11Schema sets up the Spark Profiler schema:
 //   - spark_profiles: profile-completion records keyed by spark.lucko.me URL
 func applyPhase11Schema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS spark_profiles (
@@ -634,7 +634,7 @@ func applyPhase11Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase10Schema sets up Phase 10 (Modrinth Mod Browser):
+// applyPhase10Schema sets up the Modrinth Mod Browser schema:
 //   - server_mods: tracks which Modrinth project/version is installed per
 //     server+sub-server so "Update available" can compare installed vs latest
 func applyPhase10Schema(db *sql.DB) error {
@@ -661,11 +661,11 @@ func applyPhase10Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase9Schema sets up Phase 9 (RCON + API keys + Player Management):
+// applyPhase9Schema sets up the RCON + API keys + Player Management schema:
 //   - servers: rcon_enabled, rcon_port, rcon_password columns
 //   - api_keys table for external RCON automation
 //
-// Idempotent. Wired from ensureSchema right after applyPhase8Schema.
+// Idempotent. Wired from ensureSchema right after the scheduled-tasks schema.
 func applyPhase9Schema(db *sql.DB) error {
 	for _, q := range []string{
 		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_enabled  BOOLEAN     NOT NULL DEFAULT FALSE`,
@@ -697,11 +697,11 @@ func applyPhase9Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase8Schema sets up Phase 8 (Configuration Sub-Tabs + Scheduled Tasks):
+// applyPhase8Schema sets up the Configuration Sub-Tabs + Scheduled Tasks schema:
 //   - new table: scheduled_tasks (per-server cron jobs for restart + say)
 //
-// Idempotent. task_type is open-ended (varchar) so later phases can introduce
-// new types (e.g. rcon-command in P9) without a schema migration.
+// Idempotent. task_type is open-ended (varchar) so later work can introduce
+// new types (e.g. rcon-command) without a schema migration.
 func applyPhase8Schema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS scheduled_tasks (
 		id             SERIAL PRIMARY KEY,
@@ -886,19 +886,19 @@ func migrateSchema(db *sql.DB) error {
 		// orthogonal to tags — tags describe capability/tier, region the
 		// physical location for latency-based placement.
 		{"nodes", "region", "TEXT DEFAULT ''"},
-		// Phase 0a.5 — security questions. JSON array of
+		// Security questions — JSON array of
 		// {question, answer_hash} pairs; answer_hash is bcrypt.
 		{"users", "security_questions", "JSONB DEFAULT '[]'"},
-		// Phase 4 — server audit. audit_enabled flips on automatically the
+		// Server audit — audit_enabled flips on automatically the
 		// first time a non-owner is invited (saves space for solo-owner servers).
 		// audit_force_on is the admin override for unconditional audit
 		// (compliance setups). Effective gate is OR of the two.
 		{"servers", "audit_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{"servers", "audit_force_on", "BOOLEAN NOT NULL DEFAULT FALSE"},
-		// Phase 1 — roles + granular capability flags.
+		// Roles + granular capability flags.
 		// role values: 'user' | 'support' | 'admin'. is_admin is kept as a
 		// derived view for backward compat with handlers that read it
-		// directly. support_team is used in Phase 2 (Tickets) to scope
+		// directly. support_team is used by Tickets to scope
 		// ticket visibility — nullable for everyone else.
 		{"users", "role", "VARCHAR(16) NOT NULL DEFAULT 'user'"},
 		{"users", "can_delete_servers", "BOOLEAN NOT NULL DEFAULT FALSE"},
@@ -913,7 +913,7 @@ func migrateSchema(db *sql.DB) error {
 	// Unique constraints (idempotent)
 	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_unique ON nodes (name)`)
 
-	// Phase 1 backfill: existing admins (is_admin=TRUE) get role='admin'
+	// Backfill: existing admins (is_admin=TRUE) get role='admin'
 	// so the new role column matches their legacy capability. Idempotent —
 	// users that already have a non-default role stay as-is.
 	db.Exec(`UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND role = 'user'`)
@@ -932,7 +932,7 @@ func seedSystemModules(db *sql.DB) {
 		{"Admin", "internal", "shield-check", "/admin", "admin", 2, true, true},
 		{"Infrastructure", "internal", "cpu", "/infrastructure", "admin", 3, true, true},
 		{"Library", "internal", "folder-open", "/library", "admin", 4, false, false},
-		// Phase 2 — Tickets module, default disabled. Admin opts in from
+		// Tickets module, default disabled. Admin opts in from
 		// Settings → Modules. Once enabled it appears in the user-facing
 		// sidebar via the standard module loader.
 		{"Tickets", "internal", "life-buoy", "/tickets", "all", 5, false, false},
@@ -956,8 +956,8 @@ func seedSystemModules(db *sql.DB) {
 	// Gateway was retired as a standalone module — its UI moved into the
 	// Infrastructure module's Routes tab. Drop the row from existing installs.
 	db.Exec(`DELETE FROM modules WHERE name = 'Gateway'`)
-	// 'Tickets' was previously deleted as a system module — Phase 2 reintroduces
-	// it as a non-system, opt-in module. Drop only the legacy system row.
+	// 'Tickets' was previously deleted as a system module — it is now reintroduced
+	// as a non-system, opt-in module. Drop only the legacy system row.
 	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files') AND is_system = TRUE`)
 	db.Exec(`DELETE FROM modules WHERE name = 'Tickets' AND is_system = TRUE`)
 	// Migrate existing Tickets row if present from prior phase: ensure it
@@ -970,7 +970,7 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`UPDATE gateway_route_limits SET scope = 'port:443' WHERE scope = 'port:80'`)
 }
 
-// applyPhase18Schema (Phase 18 — Telemetry Heartbeat) seeds the toggle for
+// applyPhase18Schema seeds the Telemetry Heartbeat toggle for
 // anonymous usage stats that the website's live counter consumes. Default
 // is ENABLED — operators are informed at boot + in Settings → Features and
 // can opt out via the toggle or DYLARIS_TELEMETRY=false ENV.
@@ -987,7 +987,7 @@ func applyPhase18Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase17Schema (Phase 17 — First-Run Setup Wizard) seeds the two
+// applyPhase17Schema seeds the two First-Run Setup Wizard
 // settings rows used by the wizard + admin-reset ENV. Both default to empty
 // strings.
 func applyPhase17Schema(db *sql.DB) error {
@@ -1000,7 +1000,7 @@ func applyPhase17Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyAdminResetEnvIfRequested (Phase 17 — Admin Recovery)
+// applyAdminResetEnvIfRequested — Admin Recovery
 //
 // If the operator sets DYLARIS_RESET_ADMINS=<any-unique-nonce>, this:
 //   1. Demotes every admin (is_admin=true) to role=user, wipes their TOTP

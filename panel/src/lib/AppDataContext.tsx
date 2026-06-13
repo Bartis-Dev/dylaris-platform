@@ -30,13 +30,13 @@ interface AppData {
     refreshSettings: () => Promise<void>;
     gatewayEnabled: boolean;
     libraryEnabled: boolean;
-    // Phase 16 — platform-wide feature toggles. Loaded on boot from
+    // platform-wide feature toggles. Loaded on boot from
     // /api/system/features; refreshed when features.changed SSE fires.
     // `modpacks` defaults to true on transport failure so the UI doesn't go
     // dark when the network blips.
     featureFlags: FeatureFlags;
     refreshFeatureFlags: () => Promise<void>;
-    // Phase 6 — regions + connected-Core. Loaded once at boot and cached so
+    // regions + connected-Core. Loaded once at boot and cached so
     // child components can call useAppData() without each issuing their own
     // fetch. Refreshes happen lazily on visible state changes (Settings →
     // Regions tab triggers refresh after save).
@@ -142,7 +142,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         init();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Phase 7 — subscribe to /api/system/events SSE for live config refresh.
+    // subscribe to /api/system/events SSE for live config refresh.
     // Replaces the old 5s setInterval(refreshServers) poll: status flips and
     // CRUD mutations on any Core publish servers.changed / regions.changed /
     // modules.changed / features.changed / maintenance.changed, and each

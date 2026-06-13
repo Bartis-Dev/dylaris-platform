@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// APIKey is an external automation credential (Phase 9). Plaintext key is
+// APIKey is an external automation credential. Plaintext key is
 // shown once on creation; storage only ever holds sha256(plaintext).
 //
 // Scope shape (JSONB column):
@@ -12,8 +12,8 @@ import "time"
 //	  "permissions": ["rcon.exec"]            // capabilities
 //	}
 //
-// V1 ships one capability: rcon.exec. Later phases can add modpack.publish,
-// server.power, etc. without a schema migration.
+// Capabilities live in JSONB so adding modpack.publish / server.power / etc.
+// needs no schema migration. Today only rcon.exec is honored server-side.
 type APIKey struct {
 	ID         int        `json:"id"`
 	UserID     string     `json:"userId"`

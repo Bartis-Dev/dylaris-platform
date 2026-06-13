@@ -73,7 +73,6 @@ export interface TicketSettings {
     watchersDefaultCanReply: boolean;
     allowUsersToAddWatchers: boolean;
     auditRetentionDays: number;
-    // Phase 3
     maxFileSizeMb: number;
     maxTicketSizeMb: number;
     maxUserSizeMb: number;
@@ -257,17 +256,6 @@ export async function setTicketStatus(id: number, status: TicketStatus) {
     } catch (err) { return handleError(err); }
 }
 
-export async function setTicketPriority(id: number, priority: TicketPriority) {
-    try {
-        const res = await fetch(`${API_URL}/tickets/${id}/priority`, {
-            method: 'PATCH',
-            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ priority }),
-        });
-        return handleResponse(res);
-    } catch (err) { return handleError(err); }
-}
-
 export async function setTicketAssignment(id: number, payload: { assignedUserId?: string | null; assignedTeam?: string }) {
     try {
         const res = await fetch(`${API_URL}/tickets/${id}/assignment`, {
@@ -360,7 +348,7 @@ export async function saveTicketSettings(payload: TicketSettings) {
     } catch (err) { return handleError(err); }
 }
 
-// ── Phase 3 — Attachments ──────────────────────────────────────────
+// ── Attachments ──────────────────────────────────────────
 
 export async function listTicketAttachments(ticketId: number) {
     try {
@@ -404,7 +392,7 @@ export async function deleteTicketAttachment(ticketId: number, attachmentId: num
     } catch (err) { return handleError(err); }
 }
 
-// ── Phase 3 — Canned responses ─────────────────────────────────────
+// ── Canned responses ─────────────────────────────────────
 
 export async function listCannedResponses(categoryId?: number) {
     try {

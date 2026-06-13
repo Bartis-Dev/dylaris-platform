@@ -17,7 +17,7 @@ import {
     type ModrinthVersion, type InstalledMod,
 } from '@/lib/api/modrinth';
 
-// Phase 10 — Modrinth Content tab. Default mode auto-filters to the server's
+// Modrinth Content tab. Default mode auto-filters to the server's
 // loader + MC version; an "Advanced" toggle reveals the full Modrinth-style
 // filter sidebar. Installed mods are listed inline so the user can uninstall
 // without flipping tabs.

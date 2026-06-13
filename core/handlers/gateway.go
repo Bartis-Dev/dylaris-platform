@@ -336,14 +336,12 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request) {
 	serverID := mux.Vars(r)["id"]
 
-	// Get server UUID from Core's store
 	server, err := h.state.Store.GetServerByID(mustAtoi(serverID))
 	if err != nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
-	// Filter routes by server_uuid
 	all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	var routes []services.GatewayRoute
 	for _, rt := range all {

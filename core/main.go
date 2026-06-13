@@ -79,14 +79,14 @@ func main() {
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
 
-	// Phase 7 — system-events publisher. Mutating handlers (regions,
+	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a
 	// single Redis Pub/Sub channel; panels subscribe via SSE so they refresh
 	// without polling. Construction is cheap — wired before any handler so
 	// every code path can call h.state.Events.Publish unconditionally.
 	appState.Events = services.NewSystemEventsPublisher(redisClient)
 
-	// Leader election (Phase 0b): a single Redis lease named for the
+	// Leader election: a single Redis lease named for the
 	// "core-leader" role, identified by this instance's CoreID. Every
 	// scheduled background loop consults the leader's IsLeader() to
 	// decide whether to perform its work or idle. Single-instance Core
@@ -113,7 +113,7 @@ func main() {
 	sftpSync := services.NewSFTPSyncService(pgStore, redisClient)
 	sftpSync.Start()
 
-	// Auto-delete service (Phase 0a.6) — daily ticker scans inactive users,
+	// Auto-delete service — daily ticker scans inactive users,
 	// emails warnings, executes deletions per the auth.* settings. No-op
 	// unless the operator turns it on. Leader-gated so only one Core runs
 	// it under multi-instance.
@@ -121,20 +121,20 @@ func main() {
 	autoDelete.SetLeader(coreLeader)
 	autoDelete.Start(context.Background())
 
-	// Ticket auto-close (Phase 3) — daily ticker, leader-gated. No-op until
+	// Ticket auto-close — daily ticker, leader-gated. No-op until
 	// the operator turns it on via Settings → Ticket Settings.
 	ticketAutoClose := services.NewTicketAutoCloseService(pgStore)
 	ticketAutoClose.SetLeader(coreLeader)
 	ticketAutoClose.Start(context.Background())
 
-	// Server-audit retention sweep (Phase 4) — daily, leader-gated. No-op
+	// Server-audit retention sweep — daily, leader-gated. No-op
 	// when audit.server_retention_days is 0 (keep forever).
 	serverAuditRetention := services.NewServerAuditRetentionService(pgStore)
 	serverAuditRetention.SetLeader(coreLeader)
 	serverAuditRetention.Start(context.Background())
 
 	// Fallback cleanup if TimescaleDB retention policy is not active.
-	// Leader-gated (Phase 0b) so under multi-Core only one instance
+	// Leader-gated so under multi-Core only one instance
 	// fires the hourly DELETE — the followers idle on the tick.
 	go func() {
 		for range time.NewTicker(1 * time.Hour).C {
@@ -254,28 +254,28 @@ func main() {
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
-	// Leader-gated (Phase 0b): tick + Pub/Sub result processing run only on
+	// Leader-gated: tick + Pub/Sub result processing run only on
 	// the elected Core to avoid double-dispatch and double-result-write.
 	backupScheduler := services.NewBackupScheduler(pgStore, redisClient)
 	backupScheduler.SetRegistry(grpcRegistry)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(context.Background())
 
-	// Scheduled-tasks executor (Phase 8) — per-server cron jobs (restart, say).
+	// Scheduled-tasks executor — per-server cron jobs (restart, say).
 	// Leader-gated, 30s tick. Publishes scheduled_tasks.changed via the SSE
 	// channel after each dispatch so the panel updates last-run/next-run.
 	scheduledTasksService := services.NewScheduledTaskService(pgStore, redisClient, appState.Queue, appState.Events)
 	scheduledTasksService.SetLeader(coreLeader)
 	scheduledTasksService.Start(context.Background())
 
-	// Phase 18 — Telemetry heartbeat. Posts anonymous platform stats to
+	// Telemetry heartbeat. Posts anonymous platform stats to
 	// dylaris.dev every 10min for the live counter on the website.
 	// Leader-gated so multi-Core deployments don't double-count.
 	telemetryHeartbeat := services.NewTelemetryHeartbeat(pgStore, cfg.CoreID, cfg.Region)
 	telemetryHeartbeat.SetLeader(coreLeader)
 	telemetryHeartbeat.Start(context.Background())
 
-	// Phase 17 — Recovery-token printer. Background loop that logs either the
+	// Recovery-token printer. Background loop that logs either the
 	// Fresh-Install hint or the Lost-Admin token + URL every 30s as long as
 	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.
 	services.StartSetupRecoveryLoop(context.Background(), pgStore, cfg.FrontendURL)
@@ -301,7 +301,7 @@ func main() {
 
 	api := r.PathPrefix("/api").Subrouter().StrictSlash(true)
 
-	// Phase 17 — setup-lock middleware wraps every /api/* route. /api/setup/*
+	// Setup-lock middleware wraps every /api/* route. /api/setup/*
 	// is short-circuited by the middleware itself so the wizard endpoints stay
 	// reachable in Fresh-Install mode (when every other API route returns 503
 	// setup_required). In Lost-Admin + Complete modes this is a tiny COUNT()
@@ -327,19 +327,19 @@ func main() {
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
 	// Public — used by the topbar to display "Connected to <region> Core".
 	api.HandleFunc("/system/core-info", systemHandler.GetCoreInfo).Methods("GET")
-	// Phase 7 — SSE stream of platform-wide config-change events. Panel
+	// SSE stream of platform-wide config-change events. Panel
 	// subscribes once on boot and refreshes its caches reactively. Auth via
 	// ?token= query param since EventSource can't set Authorization headers.
 	api.HandleFunc("/system/events", authHandler.AuthMiddleware(systemEventsHandler.StreamEvents)).Methods("GET")
 
-	// Phase 17 — Setup wizard. Open routes; /api/setup/* is also exempt from
+	// Setup wizard. Open routes; /api/setup/* is also exempt from
 	// the setup-lock middleware so they remain reachable in Fresh-Install
 	// mode. Atomic CTE in Store.CreateFirstAdmin prevents racing inserts
 	// across N Cores.
 	api.HandleFunc("/setup/status", setupHandler.Status).Methods("GET")
 	api.HandleFunc("/setup/admin", authLimiter.Limit(10, setupHandler.CreateAdmin)).Methods("POST")
 
-	// --- Scheduled Tasks (Phase 8) ---
+	// --- Scheduled Tasks ---
 	// Cron preview — pure transform, available to anyone authed.
 	api.HandleFunc("/scheduled-tasks/validate", authHandler.AuthMiddleware(scheduledTasksHandler.ValidateCron)).Methods("POST")
 	// Per-server CRUD. Access gated to power-class (owner/admin/permitted).
@@ -348,7 +348,7 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Update)).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Delete)).Methods("DELETE")
 
-	// --- RCON + API keys (Phase 9) ---
+	// --- RCON + API keys ---
 	// Panel-internal RCON. Power-class permission enforced inside the handler.
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon", authHandler.AuthMiddleware(rconHandler.ExecForUser)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(rconHandler.GetConfig)).Methods("GET")
@@ -361,7 +361,7 @@ func main() {
 	// path-uuid happens in the middleware itself.
 	api.HandleFunc("/external/rcon/{uuid}/exec", apiKeysHandler.APIKeyMiddleware("rcon.exec")(rconHandler.ExecExternal)).Methods("POST")
 
-	// --- Modrinth proxy + per-server mod install (Phase 10) ---
+	// --- Modrinth proxy + per-server mod install ---
 	// Browse + project metadata are cached in Redis (5 min / 1 h). All authed.
 	// Per-IP rate limit on the Modrinth proxy: each distinct query is a cache
 	// miss that both hits Modrinth and grows the Redis cache, so cap volume.
@@ -375,22 +375,22 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.Install)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(serverModsHandler.Uninstall)).Methods("DELETE")
 
-	// --- Spark profiles (Phase 11) ---
+	// --- Spark profiles ---
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.List)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.Record)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}", authHandler.AuthMiddleware(sparkHandler.Delete)).Methods("DELETE")
 
-	// --- Custom Tabs (Phase 13) ---
+	// --- Custom Tabs ---
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(serverTabsHandler.List)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(serverTabsHandler.Create)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Update)).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Delete)).Methods("DELETE")
 
-	// --- Modrinth PAT (Phase 14) ---
+	// --- Modrinth PAT ---
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set)))).Methods("PUT")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear)))).Methods("DELETE")
-	// --- Modpacks CRUD (Phase 14.1) ---
+	// --- Modpacks CRUD ---
 	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.List))).Methods("GET")
 	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Create)))).Methods("POST")
 	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.Get))).Methods("GET")
@@ -405,18 +405,18 @@ func main() {
 	// .mrpack export — query-token auth so it can be opened via window.open
 	// without setting custom headers.
 	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mrpack", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ExportMrpack))).Methods("GET")
-	// --- Modrinth publish + collaborators (Phase 14.3) ---
+	// --- Modrinth publish + collaborators ---
 	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksPublishHandler.Publish)))).Methods("POST")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(collaboratorsHandler.List))).Methods("GET")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Add)))).Methods("POST")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Remove)))).Methods("DELETE")
-	// --- Phase 15 — Username history + account policy ---
+	// --- Username history + account policy ---
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(usernameHistoryHandler.AdminRename)).Methods("PATCH")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Set)).Methods("PUT")
-	// --- Phase 16 — Modpack settings + system feature flags ---
+	// --- Modpack settings + system feature flags ---
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Set)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(modpackSettingsHandler.SetUserFlag)).Methods("PATCH")
@@ -426,7 +426,7 @@ func main() {
 	// (still works for back-compat; this is the new canonical surface).
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
-	// --- Phase 18 — Telemetry settings ---
+	// --- Telemetry settings ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")
 
@@ -455,16 +455,16 @@ func main() {
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/password", authHandler.AuthMiddleware(userHandler.ResetUserPassword)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion", authHandler.AuthMiddleware(userHandler.CancelUserDeletion)).Methods("POST")
 
-	// --- Roles + capability flags (Phase 1) ---
+	// --- Roles + capability flags ---
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/role", authHandler.AuthMiddleware(userHandler.SetUserRoleHandler)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/permissions", authHandler.AuthMiddleware(userHandler.SetUserPermissionsHandler)).Methods("PUT")
 
-	// --- Maintenance mode (Phase 1) ---
+	// --- Maintenance mode ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
 	api.HandleFunc("/maintenance", maintenanceHandler.GetState).Methods("GET")
 	api.HandleFunc("/admin/maintenance", authHandler.AuthMiddleware(maintenanceHandler.SaveState)).Methods("PUT")
 
-	// --- Tickets (Phase 2) ---
+	// --- Tickets ---
 	// Every ticket-related endpoint is wrapped in RequireTicketsEnabled so the
 	// platform-wide tickets toggle flips the entire subsystem (UI + API +
 	// notifications fan-out) without a per-handler check.
@@ -495,7 +495,7 @@ func main() {
 	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketSettingsHandler.GetSettings))).Methods("GET")
 	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings))).Methods("PUT")
 
-	// --- Tickets Phase 3: attachments, canned responses, notifications ---
+	// --- Tickets: attachments, canned responses, notifications ---
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.UploadAttachment))).Methods("POST")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.ListAttachments))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DownloadAttachment))).Methods("GET")
@@ -515,7 +515,7 @@ func main() {
 	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkRead))).Methods("POST")
 	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkAllRead))).Methods("POST")
 
-	// --- Server audit (Phase 4) ---
+	// --- Server audit ---
 	// Owner + admin can view. Force-on flag is admin-only.
 	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(serverAuditHandler.ListAudit)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(serverAuditHandler.GetStatus)).Methods("GET")
@@ -524,7 +524,7 @@ func main() {
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.GetPolicy)).Methods("GET")
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.SavePolicy)).Methods("PUT")
 
-	// --- Ticket DB migration + backups (Phase 5, admin-only) ---
+	// --- Ticket DB migration + backups (admin-only) ---
 	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.TestExternalConnection))).Methods("POST")
 	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration))).Methods("POST")
@@ -684,7 +684,7 @@ func main() {
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.GetBackupConfig)).Methods("GET")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.SaveBackupConfig)).Methods("POST")
 
-	// --- Regions (Phase 0a.1) ---
+	// --- Regions ---
 	// User-facing: list of enabled regions (drives region pickers).
 	api.HandleFunc("/regions", authHandler.AuthMiddleware(regionsHandler.ListRegions)).Methods("GET")
 	api.HandleFunc("/me/regions", authHandler.AuthMiddleware(userRegionsHandler.GetMyRegions)).Methods("GET")
@@ -697,19 +697,19 @@ func main() {
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(userRegionsHandler.GetUserRegions)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(userRegionsHandler.SetUserRegions)).Methods("PUT")
 
-	// --- Registration + Email Verify (Phase 0a.2) ---
+	// --- Registration + Email Verify ---
 	// Public — login page polls registration-status to decide whether to show the register link.
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
 	api.HandleFunc("/auth/register", authLimiter.Limit(5, registrationHandler.Register)).Methods("POST")
 	api.HandleFunc("/auth/verify-email", registrationHandler.VerifyEmail).Methods("POST")
 	api.HandleFunc("/auth/resend-verification", registrationHandler.ResendVerification).Methods("POST")
 
-	// --- Password reset (Phase 0a.4) — all public, all enumeration-safe ---
+	// --- Password reset — all public, all enumeration-safe ---
 	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, passwordResetHandler.ForgotPassword)).Methods("POST")
 	api.HandleFunc("/auth/validate-reset-token", passwordResetHandler.ValidateResetToken).Methods("POST")
 	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, passwordResetHandler.ResetPassword)).Methods("POST")
 
-	// --- Security questions (Phase 0a.5) ---
+	// --- Security questions ---
 	// Public: pool query used by /register and /reset-password to render pickers.
 	api.HandleFunc("/auth/security-questions/pool", securityQuestionsHandler.GetPool).Methods("GET")
 	// Authenticated: user manages their own questions in profile.
@@ -719,7 +719,7 @@ func main() {
 	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(securityQuestionsHandler.GetAdminPool)).Methods("GET")
 	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(securityQuestionsHandler.SetAdminPool)).Methods("PUT")
 
-	// --- Auth policy + SMTP config (Phase 0a.2, admin) ---
+	// --- Auth policy + SMTP config (admin) ---
 	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(authSettingsHandler.GetAuthPolicy)).Methods("GET")
 	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(authSettingsHandler.SaveAuthPolicy)).Methods("PUT")
 	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(authSettingsHandler.GetSMTPConfig)).Methods("GET")

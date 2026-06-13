@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// ScheduledTask is a per-server cron job. Phase 8 ships two task types:
+// ScheduledTask is a per-server cron job. Two task types are supported today:
 //   - "restart" — payload unused, dispatches the same pipeline as the
 //     Restart power button
 //   - "say"     — payload is the chat message, executed as `say <payload>`

@@ -11,7 +11,7 @@ import {
 } from '@/lib/api/modrinthPat';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
 
-// Phase 14 — Modrinth account integration. Lets the user attach a Personal
+// Modrinth account integration. Lets the user attach a Personal
 // Access Token so the platform can publish modpacks on their behalf. Token
 // validation hits Modrinth's /v2/user once; ciphertext is stored AES-GCM
 // encrypted in the DB. Plaintext is never echoed back from any read.

@@ -16,7 +16,7 @@ import (
 
 const (
 	routingMigrationKey = "dylaris:routing_migration"
-	// routingMigrationLockKey is a Redis SETNX gate (Phase 0b) preventing
+	// routingMigrationLockKey is a Redis SETNX gate preventing
 	// two Cores from kicking off the same migration simultaneously. The
 	// existing in-process sync.Mutex only covered single-instance Core —
 	// multi-instance would otherwise race past the local mutex and both

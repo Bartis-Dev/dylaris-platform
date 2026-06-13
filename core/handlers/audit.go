@@ -8,9 +8,9 @@ import (
 	"dylaris-core/models"
 )
 
-// Identity audit event types (Phase 0a.1). Used by LogIdentityAudit callers
-// to keep event_type strings consistent. New event types added in later
-// sub-phases (user_registered, login_failed, password_reset_requested, …)
+// Identity audit event types. Used by LogIdentityAudit callers
+// to keep event_type strings consistent. New event types
+// (user_registered, login_failed, password_reset_requested, …)
 // should be appended here so there's one canonical list.
 const (
 	AuditEventRegionCreated        = "region_created"
@@ -19,7 +19,7 @@ const (
 	AuditEventUserRegionsChanged   = "user_regions_changed"
 	AuditEventUserAllRegionsToggle = "user_all_regions_toggled"
 
-	// Phase 0a.3 — 2FA / TOTP lifecycle. The "consumed" event distinguishes
+	// 2FA / TOTP lifecycle. The "consumed" event distinguishes
 	// successful backup-code uses (rare, expected to drop ownership counts)
 	// from regular TOTP success (noisy, intentionally not audited).
 	AuditEvent2FASetupCompleted     = "2fa_setup_completed"
@@ -28,28 +28,28 @@ const (
 	AuditEvent2FABackupRegenerated  = "2fa_backup_codes_regenerated"
 	AuditEvent2FABackupCodeConsumed = "2fa_backup_code_consumed"
 
-	// Phase 0a.4 — password reset flow.
+	// Password reset flow.
 	AuditEventPasswordResetRequested = "password_reset_requested"
 	AuditEventPasswordResetCompleted = "password_reset_completed"
 
-	// Phase 0a.5 — security questions.
+	// Security questions.
 	AuditEventSecurityQuestionsSet         = "security_questions_set"
 	AuditEventSecurityQuestionsPoolUpdated = "security_questions_pool_updated"
 	AuditEventSecurityAnswersFailedAtReset = "security_answers_failed_at_reset"
 
-	// Phase 0a.6 — auto-delete of inactive users.
+	// Auto-delete of inactive users.
 	AuditEventDeletionWarningSent       = "deletion_warning_sent"
 	AuditEventUserAnonymized            = "user_anonymized"
 	AuditEventUserHardDeleted           = "user_hard_deleted"
 	AuditEventDeletionCancelledByAdmin  = "deletion_cancelled_by_admin"
 	AuditEventDeletionCancelledAtLogin  = "deletion_cancelled_at_login"
 
-	// Phase 1 — roles + maintenance.
+	// Roles + maintenance.
 	AuditEventUserRoleChanged        = "user_role_changed"
 	AuditEventUserPermissionsChanged = "user_permissions_changed"
 	AuditEventMaintenanceToggled     = "maintenance_toggled"
 
-	// Phase 2 — tickets (ticket-scoped audit, written to ticket_audit_events
+	// Tickets (ticket-scoped audit, written to ticket_audit_events
 	// rather than audit_events_identity).
 	TicketEventCreated         = "ticket_created"
 	TicketEventStatusChanged   = "status_changed"
@@ -60,7 +60,7 @@ const (
 	TicketEventWatcherRemoved  = "watcher_removed"
 	TicketEventReopened        = "reopened"
 
-	// Phase 3 — attachments + auto-close.
+	// Attachments + auto-close.
 	TicketEventAttachmentAdded   = "attachment_added"
 	TicketEventAttachmentRemoved = "attachment_removed"
 	TicketEventAutoClosed        = "auto_closed"

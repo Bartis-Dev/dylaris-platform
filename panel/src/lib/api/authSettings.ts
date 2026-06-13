@@ -5,17 +5,17 @@ export interface AuthPolicy {
     emailVerifyRequired: boolean;
     passwordMinLength: number;
     defaultNewUserAllRegions: boolean;
-    // Phase 0a.3 — 2FA enforcement
+    // 2FA enforcement
     require2FAForAdmins: boolean;
     require2FAForAllUsers: boolean;
-    // Phase 0a.4 — password reset link lifetime (minutes, 5–1440)
+    // password reset link lifetime (minutes, 5–1440)
     passwordResetLinkTTLMinutes: number;
-    // Phase 0a.5 — security questions
+    // security questions
     securityQuestionsEnabled: boolean;
     securityQuestionsRequiredAtSignup: boolean;
     securityQuestionsRequiredAtReset: boolean;
     securityQuestionsCount: number;
-    // Phase 0a.6 — auto-delete inactive users
+    // auto-delete inactive users
     inactiveDeleteEnabled: boolean;
     inactiveDaysBeforeDelete: number;
     historyGraceExtraDays: number;

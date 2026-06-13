@@ -125,7 +125,7 @@ func (h *PasswordResetHandler) ValidateResetToken(w http.ResponseWriter, r *http
 		"username": user.Username,
 	}
 
-	// Phase 0a.5 — surface the user's chosen questions when the policy
+	// Surface the user's chosen questions when the policy
 	// demands answers at reset AND the user actually has questions set up.
 	// Users without questions get a free pass: reset works without a
 	// verification step (otherwise the policy locks them out forever).
@@ -174,7 +174,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Phase 0a.5 — verify security answers when the policy demands it AND
+	// Verify security answers when the policy demands it AND
 	// the user has questions on file. Skipping the check when the user has
 	// none on file is intentional: matches ValidateResetToken's behavior and
 	// avoids permanently locking out users created before the policy flipped on.

@@ -75,7 +75,7 @@ export default function AdminServersPage() {
     const [loading, setLoading] = useState(true);
     const [assignTarget, setAssignTarget] = useState<AdminServer | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
-    // Phase 6 — region multi-select filter. Empty set = no filter (show all).
+    // region multi-select filter. Empty set = no filter (show all).
     // Auto-hides UI when only the 'default' region exists.
     const [regionFilter, setRegionFilter] = useState<Set<string>>(new Set());
     const [showRegionMenu, setShowRegionMenu] = useState(false);

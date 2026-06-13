@@ -6,7 +6,7 @@ import (
 	"errors"
 )
 
-// Phase 10 — server_mods queries (Modrinth-sourced installs).
+// server_mods queries (Modrinth-sourced installs).
 
 var errServerModNotFound = errors.New("server mod not found")
 

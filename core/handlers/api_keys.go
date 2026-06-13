@@ -15,7 +15,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 9 — API key surface. Owner manages keys per-account. Each key has a
+// API key surface. Owner manages keys per-account. Each key has a
 // scope (server UUIDs + permission names). The external RCON middleware
 // validates Authorization: Bearer <key> against this store.
 
@@ -81,8 +81,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Caller must already own access to each scoped server (admins bypass).
-	// We compute access against the user's own server set.
+	// Non-admin callers can only scope keys to servers they themselves can power-access.
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	if !isAdmin {
 		for _, serverUUID := range req.Servers {
@@ -219,7 +218,6 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 				sendJSONError(w, "Key not scoped to this server", http.StatusForbidden)
 				return
 			}
-			// Rate limit.
 			if !h.rateLimiter.allow(key.ID, key.RatePerMin) {
 				w.Header().Set("Retry-After", "60")
 				sendJSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)

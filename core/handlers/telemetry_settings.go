@@ -6,7 +6,7 @@ import (
 )
 
 // TelemetrySettingsHandler exposes the admin-side toggle for the anonymous
-// usage-stats heartbeat (Phase 18). Mirrors the ModpackSettingsHandler
+// usage-stats heartbeat. Mirrors the ModpackSettingsHandler
 // pattern so the panel can read/write a single dedicated endpoint.
 type TelemetrySettingsHandler struct {
 	state *AppState
@@ -34,7 +34,7 @@ func (h *TelemetrySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	// Default ON: only an explicit "false" disables. Treats empty/missing
 	// rows as enabled so the toggle doesn't silently flip off on
-	// pre-Phase-18 databases that miss the seed.
+	// older databases that miss the seed.
 	out := telemetrySettings{Enabled: en != "false", Endpoint: ep}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

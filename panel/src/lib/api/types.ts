@@ -24,26 +24,26 @@ export interface User {
     is2FAEnabled?: boolean;
     createdAt?: string;
     lastUsernameChange?: string;
-    // Region access (Phase 0a.1). allRegionsAccess=true overrides the
+    // Region access. allRegionsAccess=true overrides the
     // explicit regions list — user sees all current and future regions.
     allRegionsAccess?: boolean;
     regions?: string[];
-    // Lifecycle (Phase 0a.1, surfaced in later sub-phases for UI badges).
+    // Lifecycle (surfaced for UI badges).
     emailVerifiedAt?: string;
     lastLoginAt?: string;
     deletionStatus?: string;
-    // Phase 0a.6 — when status === 'pending_deletion', this is the date the
+    // When status === 'pending_deletion', this is the date the
     // auto-delete job will execute. Surfaced in the admin UsersTab so admins
     // can see how urgent a rescue is.
     deletionScheduledAt?: string;
     deletionWarningSentAt?: string;
-    // Phase 1 — roles + granular capability flags.
+    // Roles + granular capability flags.
     role?: 'user' | 'support' | 'admin';
     canDeleteServers?: boolean;
     canChangeResources?: boolean;
     supportTeam?: string;
-    // Phase 16 — per-user modpack authoring gate. Optional for forward-compat
-    // with older API responses; the Wave A backend always populates it.
+    // Per-user modpack authoring gate. Optional for forward-compat
+    // with older API responses; the current backend always populates it.
     canCreateModpacks?: boolean;
 }
 
@@ -201,7 +201,7 @@ export const setUserPermissions = (
     data: { canDeleteServers: boolean; canChangeResources: boolean; supportTeam?: string },
 ) => fetchAPI(`/admin/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(data) });
 
-// Maintenance API (Phase 1)
+// Maintenance API
 export interface MaintenanceState {
     active: boolean;
     title: string;
@@ -219,8 +219,6 @@ export const setUserRouteLimit = (id: string, data: { mode: string; maxRoutes: n
 // --- NODES ---
 export const getNodes = () => fetchAPI('/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
-export const updateNode = (id: number, data: Partial<Node>) => fetchAPI(`/nodes/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteNode = (id: number) => fetchAPI(`/nodes/${id}`, { method: 'DELETE' });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
 export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { method: 'DELETE' });
 
@@ -539,14 +537,6 @@ export interface GatewayRoute {
     link_name?: string;
 }
 
-export interface GatewayStats {
-    links: number;
-    linksOnline: number;
-    edges: number;
-    edgesOnline: number;
-    routes: number;
-}
-
 export interface GatewayLog {
     id: number;
     timestamp: string;
@@ -596,8 +586,6 @@ export interface GatewayRouteOptions {
 }
 
 // Gateway Admin API (read-only for links/edges — they auto-register via Redis)
-export const getGatewayLinks = () => fetchAPI('/gateway/links');
-export const getGatewayEdges = () => fetchAPI('/gateway/edges');
 export const getGatewayRoutes = () => fetchAPI('/gateway/routes');
 export const deleteGatewayRoute = (domain: string) => fetchAPI(`/gateway/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
@@ -611,10 +599,7 @@ export const getRouteSuffixes = (): Promise<{ success: boolean; suffixes: RouteS
     fetchAPI('/gateway/routes/suffixes');
 export const bulkDeleteRoutesBySuffix = (suffix: string): Promise<{ success: boolean; deleted: number; failed: number; suffix: string; message?: string }> =>
     fetchAPI('/gateway/routes/bulk-delete', { method: 'POST', body: JSON.stringify({ suffix }) });
-export const getGatewayLogs = () => fetchAPI('/gateway/logs');
-export const getGatewayStats = (): Promise<GatewayStats> => fetchAPI('/gateway/stats');
 export const triggerGatewaySync = () => fetchAPI('/gateway/sync', { method: 'POST' });
-export const getGatewayErrors = (service?: string) => fetchAPI(`/gateway/errors${service ? `?service=${service}` : ''}`);
 
 export const getGatewaySettings = () => fetchAPI('/settings/gateway');
 export const saveGatewaySettings = (data: GatewaySettings) => fetchAPI('/settings/gateway', { method: 'POST', body: JSON.stringify(data) });
@@ -786,5 +771,4 @@ export const getAdminServers = (params?: { search?: string; orphaned?: boolean }
 };
 export const getAdminDiskAnalysis = (nodeId: number): Promise<{ success: boolean } & DiskAnalysis> => fetchAPI(`/admin/nodes/${nodeId}/disk-analysis`);
 export const updateServerOwner = (serverId: number, userId: string | null) => fetchAPI(`/admin/servers/${serverId}/owner`, { method: 'PATCH', body: JSON.stringify({ userId }) });
-export const getAdminFiles = (nodeId: number, uuid: string, path?: string) => fetchAPI(`/admin/files?nodeId=${nodeId}&uuid=${encodeURIComponent(uuid)}${path ? `&path=${encodeURIComponent(path)}` : ''}`);
 export const deleteOrphanedFolder = (nodeId: number, uuid: string) => fetchAPI(`/admin/nodes/${nodeId}/orphan?uuid=${encodeURIComponent(uuid)}`, { method: 'DELETE' });

@@ -6,7 +6,7 @@ import React from 'react';
 // All variants use Tailwind's animate-pulse with the panel's --base-03 token
 // so the placeholders blend with cards/inputs and inherit the brand palette.
 //
-// Use these instead of <LoadingState /> wherever the eventual content has a
+// Use these instead of a bare spinner wherever the eventual content has a
 // predictable shape (table rows, cards, stat tiles). The result is no
 // "spinner → instant content reflow" jank.
 

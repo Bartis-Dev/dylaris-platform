@@ -13,7 +13,7 @@ import { listInstalledMods } from '@/lib/api/modrinth';
 import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE, type SparkProfile } from '@/lib/api/spark';
 import { API_URL } from '@/lib/api/core';
 
-// Phase 11 — Spark profiler integration. UX:
+// Spark profiler integration. UX:
 //   * "Not installed" → prompts user to add `spark` from the Content tab
 //   * "Idle" → "Start profile" button (duration + thread grouper)
 //   * "Running" → live timer + "Stop profile" button

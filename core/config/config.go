@@ -18,7 +18,7 @@ type Config struct {
 	ClusterSecret string
 	CoreID        string
 	GRPCPort      int
-	// Region (Phase 6) — which logical region this Core lives in. Stamped
+	// Region — which logical region this Core lives in. Stamped
 	// into heartbeat + the system info endpoint so the panel can show a
 	// "Connected to <region> Core" chip and downstream consumers can attribute
 	// telemetry to a region. 'default' for single-region setups.
@@ -38,10 +38,9 @@ type Config struct {
 	RedisPass string
 	RedisDB   int
 
-	// Optional external ticket DB (Phase 5). When set, the migration UI
-	// surfaces this as the target. Today queries still route to the main
-	// DB — a future polish phase wires the live read/write switch once
-	// the cross-DB-user-JOIN story is settled.
+	// Optional external ticket DB. When set, the migration UI surfaces this
+	// as the target. Read by the migration/backup/restore handler — live
+	// runtime queries always target the main DB.
 	ExternalTicketDBURL string
 }
 

@@ -1,4 +1,4 @@
-// Phase 10 — Modrinth proxy client + installed-mods CRUD. All requests go
+// Modrinth proxy client + installed-mods CRUD. All requests go
 // through the core proxy at /api/modrinth/* so we get caching + CORS for
 // free. Types mirror Modrinth's API shape (only the fields we use).
 

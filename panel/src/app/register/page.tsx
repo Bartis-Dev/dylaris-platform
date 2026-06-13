@@ -20,7 +20,7 @@ export default function RegisterPage() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState<{ verifySent: boolean } | null>(null);
 
-    // Phase 0a.5 — security questions step. When required, an extra
+    // security questions step. When required, an extra
     // panel below the password fields renders before submit is allowed.
     const [securityQuestionsRequired, setSecurityQuestionsRequired] = useState(false);
     const [securityQuestionsCount, setSecurityQuestionsCount] = useState(0);

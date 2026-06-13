@@ -50,7 +50,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [javaImage, setJavaImage] = useState(JAVA_IMAGES[0].id);
     const [extraFlags, setExtraFlags] = useState('');
     const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'modpack'>('online');
-    // Phase 12 — selected Modrinth modpack (project + version + .mrpack URL).
+    // Selected Modrinth modpack (project + version + .mrpack URL).
     // Cleared on tab change or on submit.
     const [modpackSelection, setModpackSelection] = useState<import('@/views/setup/ModpackPicker').ModpackSelection | null>(null);
 

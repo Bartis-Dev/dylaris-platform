@@ -7,7 +7,7 @@ import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
 import { Skeleton } from '@/components/Skeleton';
 
-// Phase 13 — dynamic renderer for custom tabs. Loads the tab metadata, then
+// dynamic renderer for custom tabs. Loads the tab metadata, then
 // embeds the configured URL in an iframe (open_in_panel=true) or shows a
 // landing card with a popout button (false). Reacts to server_tabs.changed
 // SSE so URL edits in another tab refresh here without reload.

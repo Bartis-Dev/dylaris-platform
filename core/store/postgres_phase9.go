@@ -7,7 +7,7 @@ import (
 	"errors"
 )
 
-// Phase 9 — RCON config + API keys. Kept separate from main postgres.go so
+// RCON config + API keys. Kept separate from main postgres.go so
 // the giant scan lists don't grow on every feature.
 
 var errAPIKeyNotFound = errors.New("api key not found")

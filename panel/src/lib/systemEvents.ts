@@ -1,4 +1,4 @@
-// Phase 7 — panel-side client for the /api/system/events SSE stream.
+// panel-side client for the /api/system/events SSE stream.
 //
 // One EventSource per session, opened by AppDataContext on boot. Callers
 // subscribe via `systemEvents.on(type, cb)` and get an unsubscribe closure.

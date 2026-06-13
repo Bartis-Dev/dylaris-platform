@@ -8,7 +8,7 @@ import {
 } from '@/lib/api/modrinth';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
-// Phase 12 — Modpack picker for the setup flow. Hooked into the existing
+// Modpack picker for the setup flow. Hooked into the existing
 // install-tab strip in SetupEditMode. The user searches Modrinth modpacks,
 // picks one, then picks a version — the parent SetupView collects the
 // chosen project + version IDs and the .mrpack download URL.

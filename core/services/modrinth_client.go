@@ -1,4 +1,4 @@
-// Phase 14.3 — minimal Modrinth API client for publishing modpacks on
+// Minimal Modrinth API client for publishing modpacks on
 // behalf of users. Uses the per-user PAT obtained via the PAT mgmt handler.
 //
 // We only implement the endpoints we actually call:

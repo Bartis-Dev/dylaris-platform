@@ -6,7 +6,7 @@ import (
 	"errors"
 )
 
-// Phase 14 — modpack authoring + Modrinth PAT storage queries.
+// modpack authoring + Modrinth PAT storage queries.
 
 var (
 	errModpackNotFound        = errors.New("modpack not found")

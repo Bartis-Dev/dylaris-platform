@@ -71,7 +71,6 @@ func (s *StatusWatcherService) scan() {
 				continue
 			}
 
-			// Find server by UUID and update status
 			srv, err := s.store.GetServerByUUID(uuid)
 			if err != nil {
 				continue
@@ -83,7 +82,6 @@ func (s *StatusWatcherService) scan() {
 				dirty = true
 			}
 
-			// Delete key after processing
 			s.redis.Del(ctx, key)
 		}
 		cursor = next

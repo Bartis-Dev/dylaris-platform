@@ -48,20 +48,20 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [editRegions, setEditRegions] = useState<string[]>([]);
     const [editRegionsSaving, setEditRegionsSaving] = useState(false);
 
-    // Deletion-rescue state (Phase 0a.6)
+    // Deletion-rescue state
     const [cancellingDeletion, setCancellingDeletion] = useState(false);
 
-    // Username-history modal (Phase 15 / Wave G)
+    // Username-history modal
     const [historyUser, setHistoryUser] = useState<{ id: string; username: string } | null>(null);
 
-    // Role + permissions (Phase 1) — edit modal
+    // Role + permissions — edit modal
     const [editRole, setEditRole] = useState<'user' | 'support' | 'admin'>('user');
     const [editCanDeleteServers, setEditCanDeleteServers] = useState(false);
     const [editCanChangeResources, setEditCanChangeResources] = useState(false);
     const [editSupportTeam, setEditSupportTeam] = useState('');
     const [editRolePermsSaving, setEditRolePermsSaving] = useState(false);
 
-    // Phase 16 / Wave G — per-user modpack-authoring flag. Drives the
+    // Per-user modpack-authoring flag. Drives the
     // Modpacks UI gate + 503 from /api/me/modpacks for non-admins. Default
     // true so accounts older than the column flip aren't surprised off.
     const [editCanCreateModpacks, setEditCanCreateModpacks] = useState(true);
@@ -211,7 +211,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             /* keep optimistic defaults */
         }
 
-        // Role + capability flags (Phase 1). User payload already carries these
+        // Role + capability flags. User payload already carries these
         // from the list endpoint — no extra request needed.
         setEditRole((user.role === 'admin' || user.role === 'support') ? user.role : 'user');
         setEditCanDeleteServers(!!user.canDeleteServers);
@@ -497,7 +497,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         </div>
                                     </div>
 
-                                    {/* Phase 1 — Role + capability flags. Role drives the badge in the
+                                    {/* Role + capability flags. Role drives the badge in the
                                         user list and is_admin sync; flags are checked at the matching
                                         server-mutation handlers. SupportTeam ist optional and reserved
                                         for the upcoming ticket-system. */}
@@ -550,7 +550,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     type="text"
                                                     value={editSupportTeam}
                                                     onChange={e => setEditSupportTeam(e.target.value)}
-                                                    placeholder="e.g. nodes, billing — used for ticket scoping in Phase 2"
+                                                    placeholder="e.g. nodes, billing — used for ticket scoping"
                                                     maxLength={64}
                                                     className="input-field w-full"
                                                     disabled={editRolePermsSaving}
@@ -569,7 +569,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         </div>
                                     </div>
 
-                                    {/* Phase 16 — modpack-authoring flag. Admins always pass the
+                                    {/* Modpack-authoring flag. Admins always pass the
                                         backend check regardless of this toggle (handlers short-circuit
                                         on isAdmin), so the help-text says so explicitly. */}
                                     <div>
@@ -724,7 +724,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                 </div>
             )}
 
-            {/* Username history modal (Phase 15 / Wave G) */}
+            {/* Username history modal */}
             {historyUser && (
                 <UsernameHistoryModal user={historyUser} onClose={() => setHistoryUser(null)} />
             )}
@@ -733,7 +733,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 }
 
 // ─────────────────────────────────────────────
-// Account Policy card — Phase 15 / Wave G
+// Account Policy card
 // ─────────────────────────────────────────────
 // Loads the platform-level rename policy and lets the admin toggle whether
 // users may rename themselves and set a cooldown between renames. The
@@ -802,7 +802,7 @@ function AccountPolicyCard() {
 }
 
 // ─────────────────────────────────────────────
-// Username history modal — Phase 15 / Wave G
+// Username history modal
 // ─────────────────────────────────────────────
 function UsernameHistoryModal({ user, onClose }: { user: { id: string; username: string }; onClose: () => void }) {
     const [rows, setRows] = useState<UsernameHistoryEntry[]>([]);

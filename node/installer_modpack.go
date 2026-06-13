@@ -1,6 +1,6 @@
 package main
 
-// Phase 12 — install a Modrinth modpack (.mrpack format) as a fresh
+// Install a Modrinth modpack (.mrpack format) as a fresh
 // sub-server.
 //
 // .mrpack format reference (https://docs.modrinth.com/docs/modpacks/format):

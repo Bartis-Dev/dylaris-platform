@@ -1,6 +1,6 @@
 "use client";
 
-// Phase 16 — settings tab for the modpack-authoring subsystem. Houses:
+// Settings tab for the modpack-authoring subsystem. Houses:
 //   - the platform-wide feature toggle (gates write endpoints + non-admin UI)
 //   - the .mrpack storage provider (local mirror list or S3 bucket)
 //   - the S3-secret "(unchanged — leave empty)" placeholder when a secret is

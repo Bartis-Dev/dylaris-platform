@@ -1,4 +1,4 @@
-// Phase 17 — first-run setup wizard client. Two endpoints:
+// first-run setup wizard client. Two endpoints:
 //   GET  /api/setup/status — what mode are we in?
 //   POST /api/setup/admin  — create the first admin
 //

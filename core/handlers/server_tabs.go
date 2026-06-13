@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 13 — per-server "Tabs". User defines extra tabs that show up in the
+// Per-server "Tabs". User defines extra tabs that show up in the
 // Server Detail nav strip and render a URL (Minimap, BlueMap, custom plugin
 // dashboards) either inside an iframe in the panel (open_in_panel=true) or
 // by opening the URL in a new tab. V1 stops there — automatic Gateway

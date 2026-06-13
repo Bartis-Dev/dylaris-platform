@@ -137,7 +137,7 @@ type Store interface {
 	InsertStatsBatch(stats []models.ServerStatRow) error
 	GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error)
 
-	// --- Phase 18 — Telemetry ---
+	// --- Telemetry ---
 	SumLatestPlayerCounts() (int, error)
 
 	// --- Library Disabled Paths ---
@@ -150,7 +150,7 @@ type Store interface {
 	ListGatewayRouteLimits() ([]models.GatewayRouteLimit, error)
 	DeleteGatewayRouteLimit(scope string) error
 
-	// --- Regions (Phase 0a.1) ---
+	// --- Regions ---
 	ListRegions(includeDisabled bool) ([]models.Region, error)
 	GetRegion(id string) (*models.Region, error)
 	CreateRegion(r *models.Region) error
@@ -159,35 +159,35 @@ type Store interface {
 	CountServersInRegion(regionID string) (int, error)
 	CountNodesInRegion(regionID string) (int, error)
 
-	// --- User <-> Region M:N (Phase 0a.1) ---
+	// --- User <-> Region M:N ---
 	GetUserRegionIDs(userID string) ([]string, error)
 	SetUserRegions(userID string, allAccess bool, regionIDs []string) error
 	SetUserAllRegionsAccess(userID string, allAccess bool) error
 	GetUserAllRegionsAccess(userID string) (bool, error)
 
-	// --- Identity Audit Log (Phase 0a.1, append-only) ---
+	// --- Identity Audit Log (append-only) ---
 	InsertAuditIdentity(ev *models.AuditEventIdentity) error
 	ListAuditIdentity(targetUserID *string, eventType string, limit int) ([]models.AuditEventIdentity, error)
 
-	// --- Settings audit trail (Phase 0a.1) ---
+	// --- Settings audit trail ---
 	// SetSettingBy stores a setting value plus the user who changed it. Existing
 	// callers can keep using SetSetting (updated_by = NULL) — only new flows
 	// that care about audit need this variant.
 	SetSettingBy(key, value string, updatedBy string) error
 
-	// --- Email verification + login tracking (Phase 0a.2) ---
+	// --- Email verification + login tracking ---
 	GetUserByEmail(email string) (*models.User, error)
 	GetUserByEmailVerificationToken(token string) (*models.User, error)
 	SetEmailVerificationToken(userID string, token string) error
 	MarkEmailVerified(userID string) error
 	UpdateLastLoginAt(userID string) error
 
-	// --- Password reset (Phase 0a.4) ---
+	// --- Password reset ---
 	GetUserByPasswordResetToken(token string) (*models.User, error)
 	SetPasswordResetToken(userID string, token string, expiresAt time.Time) error
 	ClearPasswordResetToken(userID string) error
 
-	// --- Security questions (Phase 0a.5) ---
+	// --- Security questions ---
 	// GetUserSecurityQuestions returns the question texts only (no hashes),
 	// in the same order they were stored — the verify path matches answers
 	// positionally so order is part of the contract.
@@ -199,7 +199,7 @@ type Store interface {
 	// — caller bcrypt-compares answer-by-answer.
 	GetUserSecurityQuestionsRaw(userID string) (string, error)
 
-	// --- Roles + granular permissions (Phase 1) ---
+	// --- Roles + granular permissions ---
 	// SetUserRole writes both role and the legacy is_admin flag so handlers
 	// that still read is_admin stay in sync. Valid roles: 'user', 'support', 'admin'.
 	SetUserRole(userID string, role string) error
@@ -207,7 +207,7 @@ type Store interface {
 	// pass "" to clear.
 	SetUserPermissionFlags(userID string, canDeleteServers, canChangeResources bool, supportTeam string) error
 
-	// --- Tickets (Phase 2) ---
+	// --- Tickets ---
 	// Categories
 	ListTicketCategories(includeDisabled bool) ([]models.TicketCategory, error)
 	GetTicketCategory(id int) (*models.TicketCategory, error)
@@ -260,7 +260,7 @@ type Store interface {
 	// gone. Called BEFORE DeleteTicket so the keys are still readable.
 	ListAttachmentStorageKeysByTicket(ticketID int) ([]string, error)
 
-	// --- Tickets Phase 3 ---
+	// --- Tickets (attachments, canned responses, notifications) ---
 	// Attachments
 	AddTicketAttachment(a *models.TicketAttachment) (int, error)
 	GetTicketAttachment(id int) (*models.TicketAttachment, error)
@@ -288,7 +288,7 @@ type Store interface {
 	// Watchers + assignee lookup for notification fan-out
 	ListTicketParticipantsForNotify(ticketID int, excludeUserID string) ([]string, error)
 
-	// --- Phase 5 — migration + backup raw access ---
+	// --- Migration + backup raw access ---
 	// CountTicketRows returns the row count for a single ticket-related
 	// table from the main DB. Used by the dry-run + status endpoints
 	// without dragging full per-table SELECTs into the migration handler.
@@ -297,7 +297,7 @@ type Store interface {
 	// []map[string]interface{}. Used by both backup and migration.
 	DumpTicketTable(table string) ([]map[string]interface{}, error)
 
-	// --- Server audit (Phase 4) ---
+	// --- Server audit ---
 	InsertServerAudit(ev *models.ServerAuditEvent) error
 	ListServerAudit(serverID int, eventType string, limit, offset int) ([]models.ServerAuditEvent, int, error)
 	SetServerAuditEnabled(serverID int, enabled bool) error
@@ -308,7 +308,7 @@ type Store interface {
 	// PurgeServerAuditOlderThan supports the retention sweep service.
 	PurgeServerAuditOlderThan(cutoff time.Time) (int, error)
 
-	// --- Auto-delete inactive users (Phase 0a.6) ---
+	// --- Auto-delete inactive users ---
 	// ListInactiveCandidates returns active non-admin users whose last login
 	// (or creation when never logged in) is older than `idleSince`. The
 	// HasHistory flag lets the calling job apply an extra grace window
@@ -327,7 +327,7 @@ type Store interface {
 	// but keeps the row + id so audit references stay valid.
 	AnonymizeUser(userID string) error
 
-	// --- Scheduled Tasks (Phase 8) ---
+	// --- Scheduled Tasks ---
 	// Per-server cron jobs. NextRun is computed on insert/update from the cron
 	// string + now() and re-computed by the leader-gated executor after each
 	// run. ListDueScheduledTasks is the executor's hot path; the partial
@@ -341,14 +341,14 @@ type Store interface {
 	ListDueScheduledTasks(now time.Time, limit int) ([]models.ScheduledTask, error)
 	RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error
 
-	// --- RCON config (Phase 9) ---
+	// --- RCON config ---
 	// Lazy accessors so RCON fields don't bloat every server-list scan.
 	// Password is stored in plaintext for V1 — the column is excluded from
 	// any list query and only fetched by the RCON-exec path.
 	GetServerRconConfig(serverID int) (enabled bool, port int, password string, err error)
 	SetServerRconConfig(serverID int, enabled bool, port int, password string) error
 
-	// --- API Keys (Phase 9) ---
+	// --- API Keys ---
 	// Public RCON surface backing. Plaintext key is shown to the user once
 	// on creation; the DB only ever sees sha256 hash. Scope JSON shape:
 	//   { "servers": ["uuid-1", ...], "permissions": ["rcon.exec"] }
@@ -358,14 +358,14 @@ type Store interface {
 	RevokeAPIKey(id int, userID string) error
 	TouchAPIKey(id int) error
 
-	// --- Installed Mods (Phase 10) ---
+	// --- Installed Mods ---
 	// Per-server-per-sub-server inventory of Modrinth-sourced mods/plugins.
 	// Drives the "Installed" view + the lazy update-detection scan.
 	UpsertServerMod(m *models.ServerMod) (int, error)
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
 	DeleteServerMod(id, serverID int) error
 
-	// --- Modpacks (Phase 14) ---
+	// --- Modpacks ---
 	// User-authored modpacks. Slug uniqueness is per-owner so two users can
 	// each have a "skyblock" pack without collision.
 	CreateModpack(m *models.Modpack) (int, error)
@@ -391,16 +391,16 @@ type Store interface {
 	GetModrinthPAT(userID string) (*models.ModrinthPAT, error)
 	ClearModrinthPAT(userID string) error
 
-	// --- Phase 15 — Username history + admin rename ---
+	// --- Username history + admin rename ---
 	RenameUser(userID string, newUsername string, changedBy string) error
 	ListUsernameHistory(userID string) ([]models.UsernameHistory, error)
 	GetUserAccountPolicy() (allowChange bool, cooldownDays int, err error)
 	SetUserAccountPolicy(allowChange bool, cooldownDays int) error
 
-	// --- Phase 16 — Per-user feature flag ---
+	// --- Per-user feature flag ---
 	SetUserCanCreateModpacks(userID string, can bool) error
 
-	// --- Phase 17 — Setup wizard ---
+	// --- Setup wizard ---
 	// CountUsers is declared above in the Users block; only CountAdmins is new.
 	CountAdmins() (int, error)
 	// CreateFirstAdmin atomically inserts the first admin via a guarded CTE.

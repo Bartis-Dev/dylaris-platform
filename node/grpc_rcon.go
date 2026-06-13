@@ -1,6 +1,6 @@
 package main
 
-// Phase 9 — node-side handler for the RCON-exec RPC. Core sends us the
+// Node-side handler for the RCON-exec RPC. Core sends us the
 // server UUID + command + password + (optionally) the RCON port; we open a
 // TCP connection to the container's RCON socket and forward the reply.
 //

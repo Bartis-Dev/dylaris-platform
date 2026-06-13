@@ -20,8 +20,7 @@ type NodeConnection struct {
 	mu      sync.Mutex
 }
 
-// Registry holds all active Node connections indexed by NodeID.
-// Thread-safe for concurrent access from HTTP handlers.
+// Registry is thread-safe for concurrent access from HTTP handlers.
 type Registry struct {
 	connections map[int]*NodeConnection
 	mu          sync.RWMutex
@@ -43,7 +42,6 @@ func (r *Registry) Register(nodeID int, token string, stream pb.NodeService_Node
 	}
 
 	r.mu.Lock()
-	// Close previous connection if exists
 	if old, ok := r.connections[nodeID]; ok {
 		old.mu.Lock()
 		for _, ch := range old.pending {
@@ -97,7 +95,6 @@ func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Dur
 		return nil, fmt.Errorf("node %d not connected", nodeID)
 	}
 
-	// Create response channel
 	ch := make(chan *pb.NodeMessage, 1)
 	conn.mu.Lock()
 	if conn.pending == nil {
@@ -107,19 +104,16 @@ func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Dur
 	conn.pending[msg.RequestId] = ch
 	conn.mu.Unlock()
 
-	// Clean up on exit
 	defer func() {
 		conn.mu.Lock()
 		delete(conn.pending, msg.RequestId)
 		conn.mu.Unlock()
 	}()
 
-	// Send request
 	if err := conn.Stream.Send(msg); err != nil {
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
 
-	// Wait for response
 	select {
 	case resp, ok := <-ch:
 		if !ok {
@@ -140,7 +134,6 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 		return nil, fmt.Errorf("node %d not connected", nodeID)
 	}
 
-	// Buffered channel for chunks
 	ch := make(chan *pb.NodeMessage, 64)
 	conn.mu.Lock()
 	if conn.pending == nil {
@@ -158,7 +151,6 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 		close(ch)
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
-
 	return ch, nil
 }
 
@@ -188,7 +180,6 @@ func (conn *NodeConnection) RouteResponse(msg *pb.NodeMessage) bool {
 	case ch <- msg:
 		return true
 	default:
-		// Channel full, drop message
 		return false
 	}
 }

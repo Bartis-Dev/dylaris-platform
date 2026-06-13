@@ -1,4 +1,4 @@
-// Phase 9 — panel client for user-owned API keys. Plaintext is only ever
+// panel client for user-owned API keys. Plaintext is only ever
 // returned once on creation; subsequent reads (list) carry hash metadata
 // without the key value.
 

@@ -1,4 +1,4 @@
-// Phase 14.3 — publish + collaborators client.
+// publish + collaborators client.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 

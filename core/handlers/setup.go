@@ -129,9 +129,8 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear the recovery token now that an admin exists. Best-effort — even
-	// if this fails, the next status check will report mode=complete and
-	// future POSTs to /api/setup/admin would be rejected by the CTE guard.
+	// Best-effort token wipe. Status check + CTE guard re-reject this path
+	// even if the SET fails.
 	_ = h.state.Store.SetSetting("setup_recovery_token", "")
 
 	token, err := h.auth.IssueToken(user.Username, user.IsAdmin)

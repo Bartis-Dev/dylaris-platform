@@ -21,7 +21,7 @@ import { API_URL } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 
-// Phase 14.2 — Modpack version builder. Two columns:
+// Modpack version builder. Two columns:
 //   left:  current mods in this version (remove inline)
 //   right: Modrinth search panel filtered to the pack's loader + MC version
 // Click a hit → expand version list → "Add to pack" → POST AddMod.
@@ -170,7 +170,7 @@ export default function ModpackVersionBuilderPage() {
     };
 
     // Combined gate for mod-list mutations + publish/export. Frozen versions
-    // are immutable by design (Wave A pins the persisted .mrpack to a content
+    // are immutable by design (the persisted .mrpack is pinned to a content
     // hash); platform-disabled is the admin kill-switch.
     const isFrozen = !!version?.frozen;
     const disabled = modpacksDisabled || isFrozen;

@@ -1,6 +1,6 @@
 package main
 
-// Phase 10 — install/remove a single mod or plugin file inside a server's
+// Install/remove a single mod or plugin file inside a server's
 // sub-server tree. Source URL is always cdn.modrinth.com (enforced core-side
 // in handlers/server_mods.go before the queue dispatch, but we re-check here
 // since a stale queued payload is technically a stale trust boundary).

@@ -185,7 +185,6 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get servers for response before deleting
 	servers, _ := h.state.Store.ListServersByNode(id)
 
 	// Delete all servers on this node first (FK constraint)
@@ -194,7 +193,6 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the node itself
 	if err := h.state.Store.DeleteNode(id); err != nil {
 		sendJSONError(w, "Failed to delete node", 500)
 		return
@@ -228,7 +226,6 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read storage info from Redis discovery heartbeat
 	if h.state.Redis == nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -343,7 +340,8 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 			orphaned = append(orphaned, orphanedEntry{UUID: u})
 		}
 	}
-	// Heartbeat safety: only compute the missing list for an online node
+	// Only compute the missing list against an online node — an offline node has no
+	// fresh disk view and would mislabel every server as missing.
 	if nodeOnline {
 		for u, srv := range dbByUUID {
 			if !diskUUIDs[u] {

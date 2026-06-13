@@ -12,9 +12,9 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 14 — modpack authoring CRUD. Builder UI consumes these to manage
+// Modpack authoring CRUD. Builder UI consumes these to manage
 // packs + versions + mod selection. Publish + .mrpack export land in
-// follow-up commits (P14.2/P14.3).
+// follow-up commits.
 
 type ModpacksHandler struct {
 	state *AppState

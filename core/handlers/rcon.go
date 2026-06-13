@@ -18,7 +18,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 9 — RCON handlers. Two surfaces:
+// RCON handlers. Two surfaces:
 //   * Panel-internal: POST /api/servers/{id}/rcon (auth via session JWT)
 //   * External:       POST /api/external/rcon/{uuid}/exec (auth via API key)
 //
@@ -163,7 +163,7 @@ func (h *RconHandler) execAgainstServer(ctx context.Context, serverID int, serve
 	}
 }
 
-// --- RCON config CRUD (Phase 9 Network sub-tab support) ---
+// --- RCON config CRUD (Network sub-tab support) ---
 
 type rconConfigRequest struct {
 	Enabled    bool   `json:"enabled"`

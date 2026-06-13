@@ -14,11 +14,10 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 14.2 — .mrpack export. Streams a Modrinth-format archive (zip with
+// .mrpack export. Streams a Modrinth-format archive (zip with
 // modrinth.index.json) built from the modpack_mods rows of a version. The
 // archive content is generated on the fly so we never have to write the
-// .mrpack to disk — the same byte stream feeds the Modrinth publish call
-// in P14.3.
+// .mrpack to disk — the same byte stream feeds the Modrinth publish call.
 
 // mrpackIndexOut mirrors Modrinth's modrinth.index.json schema. We write
 // only the keys Modrinth's spec marks as required + the ones the launcher

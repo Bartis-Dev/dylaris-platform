@@ -18,25 +18,25 @@ type User struct {
 	Permissions       string    `json:"permissions"`
 	CreatedAt         time.Time `json:"createdAt"`
 
-	// Region access (Phase 0a.1)
+	// Region access.
 	// AllRegionsAccess=true means "all regions, current and future" — overrides Regions.
 	// Regions is populated on demand by handlers that need it (not by default scanUser).
 	AllRegionsAccess bool     `json:"allRegionsAccess"`
 	Regions          []string `json:"regions,omitempty"`
 
-	// Phase 1 — role + granular capability flags. is_admin (above) is kept
+	// Role + granular capability flags. is_admin (above) is kept
 	// in sync with role for backward-compat with handlers that read it.
 	Role               string `json:"role"`
 	CanDeleteServers   bool   `json:"canDeleteServers"`
 	CanChangeResources bool   `json:"canChangeResources"`
 	SupportTeam        string `json:"supportTeam,omitempty"`
 
-	// Phase 16 — per-user feature gate for the Modpack Builder. Default TRUE.
+	// Per-user feature gate for the Modpack Builder. Default TRUE.
 	// Admin can flip this to revoke modpack-authoring rights without disabling
 	// the feature globally.
 	CanCreateModpacks bool `json:"canCreateModpacks"`
 
-	// Verification / lifecycle (Phase 0a.1, used in later sub-phases)
+	// Verification / lifecycle
 	EmailVerifiedAt          *time.Time `json:"emailVerifiedAt,omitempty"`
 	EmailVerificationToken   string     `json:"-"`
 	EmailVerificationSentAt  *time.Time `json:"-"`
@@ -74,7 +74,7 @@ type AuditEventIdentity struct {
 	CreatedAt    time.Time              `json:"createdAt"`
 }
 
-// ── Phase 2 — Tickets ─────────────────────────────────────────────────
+// ── Tickets ───────────────────────────────────────────────────────────
 
 // TicketCategory is an admin-curated category. RequiresServer toggles the
 // server-picker step in the create form. DefaultAssigneeTeam pre-populates
@@ -94,7 +94,7 @@ type TicketCategory struct {
 
 // Ticket is the canonical ticket row. ServerUUID/ServerRegion are nullable
 // — only set when the category requires a server. AssignedUserID is the
-// supporter currently responsible; AssignedTeam carries the Phase-1
+// supporter currently responsible; AssignedTeam carries the
 // support_team string and drives the cross-team visibility scope.
 type Ticket struct {
 	ID             int        `json:"id"`
@@ -176,7 +176,7 @@ type TicketDeletion struct {
 	UserAgent      *string   `json:"userAgent,omitempty"`
 }
 
-// ── Phase 3 — Tickets Polish ─────────────────────────────────────────
+// ── Tickets Polish ───────────────────────────────────────────────────
 
 // TicketAttachment is the metadata row for a file uploaded to a ticket.
 // The actual bytes live in the configured StorageProvider under StorageKey.
@@ -209,7 +209,7 @@ type CannedResponse struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
-// ServerAuditEvent is one row in the per-server audit log (Phase 4).
+// ServerAuditEvent is one row in the per-server audit log.
 // Append-only by convention — there's no UPDATE/DELETE in the store layer
 // beyond the retention sweep. TargetUserID is set on member-related events
 // (invite/remove/permission change) so admins can answer "who was kicked off
@@ -326,7 +326,7 @@ type Server struct {
 	ProxyID         *int            `json:"proxyId"`
 	AutoMove        bool            `json:"autoMove"`
 	Region          string          `json:"region"`
-	// Phase 9 — RCON config. RconEnabled controls whether the server writes
+	// RCON config. RconEnabled controls whether the server writes
 	// enable-rcon=true to server.properties on next launch and whether the
 	// panel surfaces RCON-driven UIs (Players tab, /rcon endpoint). RconPort
 	// 0 = MC default 25575; RconPassword is stored separately (encrypted) and

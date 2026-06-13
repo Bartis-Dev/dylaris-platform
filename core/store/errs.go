@@ -2,7 +2,7 @@ package store
 
 import "errors"
 
-// Phase 17 sentinel errors used by the setup wizard handler to map store
+// Sentinel errors used by the setup wizard handler to map store
 // outcomes to HTTP status codes without parsing error strings.
 var (
 	// ErrSetupAlreadyComplete is returned by CreateFirstAdmin when an admin

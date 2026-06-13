@@ -55,23 +55,6 @@ func GenerateContainerSlug() string {
 	return fmt.Sprintf("%s-%s-%s", adj, noun, suffix)
 }
 
-// GenerateUniqueContainerSlug retries up to `maxAttempts` times if the
-// caller's `exists` check returns true. After that, returns the last
-// attempt regardless — uniqueness should be enforced at the storage layer.
-func GenerateUniqueContainerSlug(exists func(name string) bool, maxAttempts int) string {
-	if maxAttempts <= 0 {
-		maxAttempts = 5
-	}
-	var name string
-	for i := 0; i < maxAttempts; i++ {
-		name = GenerateContainerSlug()
-		if !exists(name) {
-			return name
-		}
-	}
-	return name
-}
-
 func pickWord(words []string) string {
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(words))))
 	if err != nil {

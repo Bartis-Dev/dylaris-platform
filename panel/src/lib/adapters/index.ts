@@ -10,4 +10,4 @@ export function createBeamAdapter(): FileBrowserAdapter {
     return isWails() ? createWailsBeamAdapter() : createPanelAdapter();
 }
 
-export { isWails, getWailsApp, syncSessionWithWails, connectWailsToServer, resetWailsConnectionCache } from './wailsBeamAdapter';
+export { isWails, getWailsApp, syncSessionWithWails, connectWailsToServer } from './wailsBeamAdapter';

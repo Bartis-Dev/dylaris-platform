@@ -16,11 +16,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// BackupRunStarter is implemented by anything that can dispatch a backup
-// command to a node. The handlers package owns the canonical dispatch logic
-// — the scheduler simply asks the same Store for due jobs and pushes
-// commands directly to Redis (mirrors handlers.startBackupRun without the
-// HTTP-specific bits to avoid an import cycle).
+// BackupScheduler is leader-gated: it ticks every minute, lists due backup
+// jobs, dispatches them to nodes via Redis, and advances next_run_at. It
+// pushes commands directly to Redis (mirroring handlers.startBackupRun
+// without the HTTP-specific bits) to avoid an import cycle with handlers.
 type BackupScheduler struct {
 	store    store.Store
 	redis    *redis.Client
@@ -88,7 +87,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// Leader-gate (Phase 0b): Pub/Sub broadcasts to every
+			// Leader-gate: Pub/Sub broadcasts to every
 			// subscriber, so without this guard each Core writes the
 			// same backup_restores row N times. Only the leader updates.
 			if b.leader != nil && !b.leader.IsLeader() {
@@ -132,7 +131,7 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// Leader-gate (Phase 0b): same Pub/Sub broadcast issue as in
+			// Leader-gate: same Pub/Sub broadcast issue as in
 			// consumeRestoreResults — only the leader processes results.
 			if b.leader != nil && !b.leader.IsLeader() {
 				continue

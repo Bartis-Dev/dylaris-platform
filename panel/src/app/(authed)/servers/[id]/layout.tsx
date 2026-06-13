@@ -74,7 +74,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
 
-    // Phase 13 — user-defined extra tabs. Loaded on server change + refreshed
+    // User-defined extra tabs. Loaded on server change + refreshed
     // when the SSE channel signals a CRUD change on this server.
     const [customTabs, setCustomTabs] = useState<ServerTab[]>([]);
     useEffect(() => {
@@ -326,15 +326,15 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         { slug: 'console', icon: 'square-terminal', label: 'Console',       disabled: tabDisabled('console') },
         { slug: 'files',   icon: 'folder-open',     label: 'Files',         disabled: tabDisabled('files') },
         { slug: 'config',  icon: 'settings',        label: 'Configuration', disabled: tabDisabled('config') || uploadLocked },
-        // Phase 10 — Modrinth-driven mod/plugin browser.
+        // Modrinth-driven mod/plugin browser.
         { slug: 'content', icon: 'package',         label: 'Content',       disabled: tabDisabled('config') },
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
-        // Phase 9 — Players tab. RCON-driven (online list + ban/kick/op/whitelist).
+        // Players tab. RCON-driven (online list + ban/kick/op/whitelist).
         // Power-class permission since every action mutates server state.
         { slug: 'players', icon: 'users-round',     label: 'Players',       disabled: isPendingSetup || (!isOwner && (!perms || !perms.power)) },
         { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
         { slug: 'members', icon: 'users',           label: 'Members',       disabled: !isOwner && (!perms || !perms.members) },
-        // Phase 4 — Audit tab. Owner + admin only; non-owners (even with
+        // Audit tab. Owner + admin only; non-owners (even with
         // permission bundles) can't see who changed what on someone else's
         // server. The view itself self-hides empty audit gracefully.
         { slug: 'audit',   icon: 'file-text',       label: 'Audit',         disabled: !isOwner && !user?.isAdmin },
@@ -558,7 +558,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 <div className="flex flex-wrap gap-x-1 gap-y-0">
                     {[
                         ...tabs,
-                        // Phase 13 — append any user-defined custom tabs after the
+                        // Append any user-defined custom tabs after the
                         // built-ins. Disabled rows are filtered out so the nav
                         // matches the user's intent without extra greying logic.
                         ...customTabs
@@ -571,7 +571,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             })),
                     ].map(tab => {
                         const href = `/servers/${selectedServer.id}/${tab.slug}`;
-                        // Phase 8 — Configuration is now a sub-tab parent (config/properties,
+                        // Configuration is a sub-tab parent (config/properties,
                         // config/display, …); match the whole prefix so the top-level tab stays
                         // highlighted while you click between sub-tabs.
                         const isActive = tab.slug === 'config'

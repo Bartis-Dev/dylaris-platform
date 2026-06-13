@@ -18,34 +18,34 @@ func NewAuthSettingsHandler(state *AppState) *AuthSettingsHandler {
 }
 
 // AuthPolicy mirrors the auth.* settings keys. Defaults are chosen so a
-// fresh install behaves identically to pre-Phase-0a.2 (no self-registration,
-// no email verification, no password policy enforcement beyond what users
-// type). Operators opt in by toggling.
+// fresh install behaves conservatively: no self-registration, no email
+// verification, no password policy enforcement beyond what users type.
+// Operators opt in by toggling.
 type AuthPolicy struct {
 	RegistrationEnabled      bool `json:"registrationEnabled"`
 	EmailVerifyRequired      bool `json:"emailVerifyRequired"`
 	PasswordMinLength        int  `json:"passwordMinLength"`
 	DefaultNewUserAllRegions bool `json:"defaultNewUserAllRegions"`
-	// Phase 0a.3 — 2FA enforcement. When on, affected users that don't
-	// have 2FA configured are forced through a setup flow at the next
-	// login instead of receiving a normal session token.
+	// 2FA enforcement. When on, affected users that don't have 2FA
+	// configured are forced through a setup flow at the next login
+	// instead of receiving a normal session token.
 	Require2FAForAdmins   bool `json:"require2FAForAdmins"`
 	Require2FAForAllUsers bool `json:"require2FAForAllUsers"`
 
-	// Phase 0a.4 — Password-reset token lifetime. Short enough that a
-	// leaked link expires quickly, long enough for the user to retrieve
-	// the email out-of-band. Range is enforced server-side in SaveAuthPolicy.
+	// Password-reset token lifetime. Short enough that a leaked link
+	// expires quickly, long enough for the user to retrieve the email
+	// out-of-band. Range is enforced server-side in SaveAuthPolicy.
 	PasswordResetLinkTTLMinutes int `json:"passwordResetLinkTTLMinutes"`
 
-	// Phase 0a.5 — security questions. Master toggle gates the entire
-	// feature; the per-use-case requireds layer on top. Count is how many
-	// questions the user must pick + answer (3 is the de-facto standard).
+	// Security questions. Master toggle gates the entire feature; the
+	// per-use-case requireds layer on top. Count is how many questions
+	// the user must pick + answer (3 is the de-facto standard).
 	SecurityQuestionsEnabled           bool `json:"securityQuestionsEnabled"`
 	SecurityQuestionsRequiredAtSignup  bool `json:"securityQuestionsRequiredAtSignup"`
 	SecurityQuestionsRequiredAtReset   bool `json:"securityQuestionsRequiredAtReset"`
 	SecurityQuestionsCount             int  `json:"securityQuestionsCount"`
 
-	// Phase 0a.6 — auto-delete of inactive users.
+	// Auto-delete of inactive users.
 	// InactiveDaysBeforeDelete is the dormancy threshold; users idle that
 	// long become eligible. HistoryGraceExtraDays tacks on additional time
 	// for users with server history (and tickets later) so frequent admins

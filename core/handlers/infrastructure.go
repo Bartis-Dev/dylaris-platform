@@ -40,7 +40,6 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	// Links with online status
 	links := services.GetLinksFromRedis(ctx, h.state.Redis)
 
-	// Route count
 	routeCount := services.CountRoutesFromRedis(ctx, h.state.Redis)
 
 	// Nodes with server count + live heartbeat stats
@@ -53,7 +52,7 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		count, _ := h.state.Store.CountServersByNode(nodes[i].ID)
 		nodes[i].ServerCount = count
 
-		// Read live stats from heartbeat key (written by node every 5s)
+		// Node writes the heartbeat key every 5s — values may be up to that stale.
 		redisKey := fmt.Sprintf("dylaris:discovery:%s", nodes[i].Token)
 		val, redisErr := h.state.Redis.Get(ctx, redisKey).Result()
 		if redisErr == nil && val != "" {

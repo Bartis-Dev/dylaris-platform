@@ -1,4 +1,4 @@
-// Phase 16 — read the public feature-toggle map exposed by /api/system/features.
+// read the public feature-toggle map exposed by /api/system/features.
 // Used by the AppDataContext to drive panel banners + UI gating.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';

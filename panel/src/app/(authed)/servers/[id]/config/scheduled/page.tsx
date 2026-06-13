@@ -14,7 +14,7 @@ import {
 } from '@/lib/api/scheduledTasks';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
-// Phase 8 — Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
+// Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
 // minutes to restart" message, hourly broadcast); the Custom toggle exposes
 // raw 5-field cron for the rest. Server-side `validateCron` previews the
@@ -92,8 +92,7 @@ export default function ServerConfigScheduledPage() {
 
     useEffect(() => { refresh(); }, [refresh]);
 
-    // Phase 7 SSE — refresh on `scheduled_tasks.changed` so executor-driven
-    // status updates (next_run / last_run / last_status) appear live.
+    // Refresh on `scheduled_tasks.changed` so executor-driven changes show up live.
     useEffect(() => {
         const unsub = systemEvents.on('scheduled_tasks.changed', () => { refresh(); });
         return () => { unsub(); };

@@ -48,10 +48,6 @@ func NewAutoDeleteService(s store.Store, frontendURL string) *AutoDeleteService 
 	}
 }
 
-// SetInterval lets tests run the loop on a shorter cadence. Production callers
-// just use the default 24h.
-func (s *AutoDeleteService) SetInterval(d time.Duration) { s.interval = d }
-
 func (s *AutoDeleteService) Start(ctx context.Context) {
 	log.Printf("Auto-delete service started (interval: %s)", s.interval)
 	// First tick on startup so a freshly-deployed Core processes the queue

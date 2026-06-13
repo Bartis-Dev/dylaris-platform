@@ -127,7 +127,7 @@ type SetupServerRequest struct {
 		URL       string `json:"url"`       // for import via URL OR .mrpack url for modpack
 		Path      string `json:"path"`      // for library selection
 		Structure string `json:"structure"` // "direct" or "subfolder" (for upload-zip)
-		// Phase 12 — modpack reference; sub-server boots from a Modrinth
+		// Modpack reference; sub-server boots from a Modrinth
 		// modpack and we remember which project+version so the panel can
 		// later check Modrinth for newer versions and offer one-click update.
 		ModrinthProjectID   string `json:"modrinthProjectId,omitempty"`
@@ -175,7 +175,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 		servers = []models.Server{}
 	}
 
-	// Phase 1 — region filter. Admins + all-regions users pass through;
+	// Region filter. Admins + all-regions users pass through;
 	// explicit-regions users only see servers in their allowed set.
 	perms := LoadEffectivePermissions(h.state, userID)
 	servers = FilterServersByRegion(servers, perms)
@@ -459,7 +459,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"url":       req.Installer.URL,
 			"path":      req.Installer.Path,
 			"structure": req.Installer.Structure,
-			// Phase 12 — modpack metadata forwarded to the node installer.
+			// Modpack metadata forwarded to the node installer.
 			"modrinthProjectId":   req.Installer.ModrinthProjectID,
 			"modrinthVersionId":   req.Installer.ModrinthVersionID,
 			"modrinthProjectSlug": req.Installer.ModrinthProjectSlug,
@@ -932,7 +932,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Phase 1 — capability gate. Admins always pass; non-admins need the
+	// Capability gate. Admins always pass; non-admins need the
 	// can_change_resources flag set by an admin in the user-settings UI.
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
@@ -1166,7 +1166,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Phase 1 — capability gate. Admins always pass; non-admins need the
+	// Capability gate. Admins always pass; non-admins need the
 	// can_delete_servers flag. This is in addition to the ownership check
 	// that already exists further down — both gates must be open.
 	userID, _ := r.Context().Value("userID").(string)

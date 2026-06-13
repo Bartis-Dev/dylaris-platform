@@ -10,7 +10,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     (async () => {
-      // Phase 17 — Fresh-Install means no users exist at all, so login
+      // Fresh-Install means no users exist at all, so login
       // would 503. Redirect to /setup. Lost-Admin mode still lets
       // non-admin users log in normally — no redirect for that case.
       const status = await getSetupStatus();

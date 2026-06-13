@@ -43,7 +43,7 @@ export default function TicketDetailPage() {
     const [replyIsInternal, setReplyIsInternal] = useState(false);
     const [sending, setSending] = useState(false);
 
-    // Phase 3 — attachments + canned responses
+    // attachments + canned responses
     const [attachments, setAttachments] = useState<TicketAttachment[]>([]);
     const [uploading, setUploading] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement | null>(null);

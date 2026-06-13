@@ -1,6 +1,6 @@
 package main
 
-// Phase 9 — minimal RCON client. Valve-spec source-engine RCON, 4-byte LE
+// Minimal RCON client. Valve-spec source-engine RCON, 4-byte LE
 // header (request_id, type, length), null-terminated payload + 1 byte pad.
 // We support exactly two packet types: SERVERDATA_AUTH (3) and
 // SERVERDATA_EXECCOMMAND (2). Response types are SERVERDATA_AUTH_RESPONSE

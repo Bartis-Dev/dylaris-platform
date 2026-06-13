@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 10 — install / list / uninstall Modrinth-sourced mods per server.
+// Install / list / uninstall Modrinth-sourced mods per server.
 // We dispatch download work to the node via the existing Queue (mailbox)
 // pipeline so the node-side worker can lift its own implementation when
 // it picks up the command — no new proto round trip needed for V1.

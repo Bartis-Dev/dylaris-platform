@@ -67,15 +67,3 @@ export function serializeProperties(doc: PropertiesDoc, updates: Record<string, 
 
     return lines.join('\n');
 }
-
-/** Compute the patch object that needs to flow back to the server. */
-export function diffValues(
-    original: Record<string, string>,
-    edited: Record<string, string>,
-): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const k of Object.keys(edited)) {
-        if (edited[k] !== original[k]) out[k] = edited[k];
-    }
-    return out;
-}

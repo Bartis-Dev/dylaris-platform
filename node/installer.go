@@ -32,7 +32,7 @@ type InstallerConfig struct {
 	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback / modpack .mrpack)
 	Path      string `json:"path"`      // Local library file path (for "library" type)
 	Structure string `json:"structure"` // "direct" or "subfolder" (for "upload-zip")
-	// Phase 12 — modpack metadata. Type="modpack" expects URL to be a
+	// modpack metadata. Type="modpack" expects URL to be a
 	// .mrpack hosted on cdn.modrinth.com; the handler downloads, extracts
 	// overrides, fans out every listed mod, then chains into the underlying
 	// loader install (paper/fabric/forge/neoforge) using Loader+Version

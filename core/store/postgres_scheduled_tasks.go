@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Scheduled-tasks queries kept in a dedicated file so Phase 8 changes don't
+// Scheduled-tasks queries kept in a dedicated file so changes don't
 // churn the main postgres.go. All methods return sql.ErrNoRows-equivalent
 // errors via errors.New("not found") so callers can compare without importing
 // database/sql.

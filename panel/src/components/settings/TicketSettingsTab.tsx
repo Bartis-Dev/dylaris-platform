@@ -102,7 +102,7 @@ export default function TicketSettingsTab() {
                     <p className="text-xs text-(--base-06) leading-tight">0 = unlimited. Range 0–3650.</p>
                 </div>
 
-                {/* Phase 3 — attachment quotas. 0 = unlimited per axis. */}
+                {/* Attachment quotas. 0 = unlimited per axis. */}
                 <div className="pt-4 border-t border-(--base-03) space-y-3">
                     <h4 className="mono-label flex items-center gap-1.5">Attachment quotas (MB)</h4>
                     <p className="text-xs text-(--base-06)">Set 0 on any axis to disable that limit. File quota gates a single upload; ticket quota caps the total per ticket; user quota caps the total a single user has stored across all their tickets.</p>
@@ -128,7 +128,7 @@ export default function TicketSettingsTab() {
                     </div>
                 </div>
 
-                {/* Phase 3 — auto-close */}
+                {/* Auto-close */}
                 <div className="pt-4 border-t border-(--base-03) space-y-3">
                     <Toggle
                         label="Auto-close resolved tickets"

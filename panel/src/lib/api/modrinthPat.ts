@@ -1,4 +1,4 @@
-// Phase 14 — Modrinth PAT management client. Plaintext is sent on Set but
+// Modrinth PAT management client. Plaintext is sent on Set but
 // never returned; reads only expose connection state + username.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';

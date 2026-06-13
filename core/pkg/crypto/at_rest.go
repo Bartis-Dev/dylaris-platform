@@ -1,5 +1,6 @@
-// Package crypto provides at-rest encryption for small platform secrets
-// (Phase 14: Modrinth PAT; future: SMTP password, S3 keys, etc.).
+// Package crypto provides at-rest encryption for small platform secrets.
+// Used today for: Modrinth PAT. Designed to be reused for future at-rest
+// secrets (SMTP password, S3 keys).
 //
 // AES-256-GCM with a 32-byte key derived from the platform's CLUSTER_SECRET
 // + a per-purpose salt. Ciphertext is hex-encoded with a 12-byte nonce

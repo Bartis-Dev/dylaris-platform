@@ -56,7 +56,7 @@ export async function resendVerification(email: string) {
     } catch (err) { return handleError(err); }
 }
 
-// Password reset (Phase 0a.4) — all public, enumeration-safe at the API layer.
+// Password reset — all public, enumeration-safe at the API layer.
 
 export async function forgotPassword(email: string) {
     try {

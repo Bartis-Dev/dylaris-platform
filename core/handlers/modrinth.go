@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Phase 10 — Modrinth API proxy. Mods/plugins browse, version metadata,
+// Modrinth API proxy. Mods/plugins browse, version metadata,
 // project details. Cached in Redis to keep panel browse traffic off
 // Modrinth's rate limit and to make the UI feel instant.
 //

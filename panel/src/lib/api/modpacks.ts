@@ -1,4 +1,4 @@
-// Phase 14 — panel client for the modpack-authoring surface: per-user
+// panel client for the modpack-authoring surface: per-user
 // modpacks, their versions, and the mods that make up each version.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
@@ -29,7 +29,7 @@ export interface ModpackVersion {
     modrinthVersionId: string;
     createdAt: string;
     publishedAt?: string;
-    // Phase 16 / Wave A — version becomes frozen after the first publish or
+    // version becomes frozen after the first publish or
     // export. Once frozen, the mods list is immutable; the only way to "edit"
     // is to create a new version.
     frozen?: boolean;
@@ -88,17 +88,6 @@ export async function createModpack(input: CreateModpackInput): Promise<{ succes
         });
         return handleResponse(res) as any;
     } catch (err) { return handleError(err) as any; }
-}
-
-export async function updateModpack(id: number, input: Partial<CreateModpackInput>): Promise<{ success: boolean; message?: string }> {
-    try {
-        const res = await fetch(`${API_URL}/modpacks/${id}`, {
-            method: 'PATCH',
-            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify(input),
-        });
-        return handleResponse(res);
-    } catch (err) { return handleError(err); }
 }
 
 export async function deleteModpack(id: number): Promise<{ success: boolean; message?: string }> {

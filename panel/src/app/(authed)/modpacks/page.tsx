@@ -11,7 +11,7 @@ import { listModpacks, createModpack, deleteModpack, type Modpack } from '@/lib/
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
 
-// Phase 14 — top-level Modpacks list. Per-user authored modpacks. The
+// top-level Modpacks list. Per-user authored modpacks. The
 // builder UI lives at /modpacks/<id>; this page covers create + list +
 // delete + jump-to-detail.
 

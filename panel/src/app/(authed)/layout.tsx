@@ -61,7 +61,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
 
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
-            {/* Phase 1 — global maintenance banner. Renders nothing when off. */}
+            {/* Global maintenance banner. Renders nothing when off. */}
             <MaintenanceBanner />
             {/* Top Navbar */}
             <div className="relative z-30 shrink-0">
@@ -123,7 +123,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 >
                                     <Package size={20} className="mr-3" /> Modrinth
                                 </GuardedLink>
-                                {/* Phase 16 — hide the Modpacks entry for non-admins when the
+                                {/* Hide the Modpacks entry for non-admins when the
                                     feature is killed platform-wide. Admins keep the link so they
                                     can still inspect / clean up while the toggle is off. */}
                                 {(featureFlags.modpacks || user.isAdmin) && (
@@ -171,7 +171,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
     const router = useRouter();
     const [tokenChecked, setTokenChecked] = useState(false);
 
-    // Phase 17 + auth check. Setup status is read first because in
+    // Auth check. Setup status is read first because in
     // Fresh-Install or Lost-Admin mode the API would either 503 every
     // /api/* route or be missing admins — sending the user to /login in
     // either case is wrong. Token presence is the second gate; full token

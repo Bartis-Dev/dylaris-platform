@@ -1,4 +1,4 @@
-// Phase 11 — panel client for Spark profile history. Profile start/stop
+// panel client for Spark profile history. Profile start/stop
 // itself goes through the existing /console/command endpoint; this file
 // only covers the persistent history list + record-completion.
 

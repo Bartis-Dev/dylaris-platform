@@ -16,7 +16,7 @@ import {
 import { getFileContent } from '@/lib/api';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 
-// Phase 9 — Player Management. All operations are RCON underneath. Online
+// Player Management. All operations are RCON underneath. Online
 // list is polled every 10s. Bans/whitelist/ops are sourced from the JSON
 // files in the active sub-server dir (banned-players.json / whitelist.json /
 // ops.json) read via the FileBrowser endpoint — RCON is used to mutate, the

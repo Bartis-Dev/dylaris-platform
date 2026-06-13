@@ -1,4 +1,4 @@
-// Phase 13 — per-server custom Tabs. CRUD client + types.
+// per-server custom Tabs. CRUD client + types.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 

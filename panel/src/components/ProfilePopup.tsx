@@ -555,7 +555,7 @@ function DeveloperPanel() {
 }
 
 // ─────────────────────────────────────────────
-// Regenerate Backup Codes Wizard (Phase 0a.3)
+// Regenerate Backup Codes Wizard
 // ─────────────────────────────────────────────
 // Two-stage: password+TOTP gate → show fresh codes once → done.
 // The gate is identical to DisableWizard; we reuse the same defense-in-depth
@@ -686,7 +686,7 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
 }
 
 // ─────────────────────────────────────────────
-// Security Questions Section (Phase 0a.5)
+// Security Questions Section
 // ─────────────────────────────────────────────
 // Self-contained: probes the pool endpoint on mount; if security questions
 // are disabled by policy, the section renders nothing at all (zero footprint

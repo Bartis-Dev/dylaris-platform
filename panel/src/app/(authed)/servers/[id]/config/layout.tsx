@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useAppData } from '@/lib/AppDataContext';
 import { Settings2, Image as ImageIcon, Activity, Clock, LayoutGrid, Network as NetworkIcon } from 'lucide-react';
 
-// Phase 8 — Configuration sub-tab strip. Each sub-tab is a nested route under
+// Configuration sub-tab strip. Each sub-tab is a nested route under
 // /servers/{id}/config/<slug>; the strip lives in this layout so every page
 // inherits it without duplicating the nav code. Proxy sub-tab is conditional
 // — only appears when the server is a proxy type.

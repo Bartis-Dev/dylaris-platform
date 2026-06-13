@@ -31,7 +31,6 @@ func (h *MemberHandler) checkMembersAccess(w http.ResponseWriter, r *http.Reques
 		return true
 	}
 
-	// Check if invited user has members permission
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
@@ -59,14 +58,13 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 		return perms // no cap for owner/admin
 	}
 
-	// Get inviter's own permissions
 	userID, _ := r.Context().Value("userID").(string)
 	invite, err := h.state.Store.GetInvite(serverID, userID)
 	if err != nil {
 		return perms
 	}
 
-	// Cap each permission: invited user can only grant permissions they themselves have
+	// An invited user can only grant permissions they themselves hold.
 	inviterPerms := map[string]bool{
 		"console":  invite.Permissions.Console,
 		"files":    invite.Permissions.Files,
@@ -158,26 +156,23 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the target user
 	targetUser, err := h.state.Store.GetUserByUsername(req.Username)
 	if err != nil {
 		sendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	// Cannot invite the server owner
 	if targetUser.Username == srv.OwnerName {
 		sendJSONError(w, "Cannot invite the server owner", http.StatusBadRequest)
 		return
 	}
 
-	// Get inviter's user ID
 	inviterID := ""
 	if id, ok := r.Context().Value("userID").(string); ok {
 		inviterID = id
 	}
 
-	// Default permissions: all true except members
+	// Default shape grants everything except member management.
 	if req.Permissions == nil {
 		req.Permissions = map[string]bool{
 			"console": true, "files": true,
@@ -186,7 +181,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cap permissions: invited users can only grant what they have
+	// Cap to what the inviter themselves holds.
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
 	if err := h.state.Store.CreateInvite(serverID, targetUser.ID, inviterID, req.Permissions); err != nil {
@@ -194,8 +189,8 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Phase 4 — first member invite flips audit_enabled on. Cheap no-op
-	// when already on. The audit row for the invite is written right after.
+	// First member invite flips audit_enabled on. Cheap no-op when
+	// already on. The audit row for the invite is written right after.
 	EnableServerAuditIfNeeded(h.state, serverID)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
 		"username":    targetUser.Username,
@@ -235,7 +230,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Cap permissions: invited users can only grant what they have
+	// Cap to what the inviter themselves holds.
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
 	if err := h.state.Store.UpdateInvitePermissions(serverID, targetUserID, req.Permissions); err != nil {

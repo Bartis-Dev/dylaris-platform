@@ -67,11 +67,10 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   const [collapsedProxies, setCollapsedProxies] = useState<Set<number>>(new Set());
 
   const isAdmin = currentUser?.isAdmin ?? false;
-  // Phase 1 introduced the tab; Phase 2 wires the real fetch. Admins see the
-  // same tab to validate their own permission flags + the data path.
+  // Admins see the same tab so their own permission flags + the data path are exercised.
   const isSupport = currentUser?.role === 'support' || isAdmin;
 
-  // Phase 2 — servers reachable via active tickets assigned to me. Polled
+  // servers reachable via active tickets assigned to me. Polled
   // on tab focus only; not refreshed automatically since the ticket list
   // itself is the live source of truth. Disabled when the platform-wide
   // tickets toggle is off.

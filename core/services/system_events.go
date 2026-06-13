@@ -1,4 +1,4 @@
-// Package-level helper for the Phase 7 system-events Pub/Sub channel.
+// Package-level helper for the system-events Pub/Sub channel.
 //
 // The channel `dylaris:system:events` carries small JSON events that the panel
 // consumes via SSE (GET /api/system/events) to refresh cached config without

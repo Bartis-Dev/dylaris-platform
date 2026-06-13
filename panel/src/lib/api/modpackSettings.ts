@@ -1,4 +1,4 @@
-// Phase 16 — typed client for /api/admin/settings/modpacks. GET omits the S3
+// typed client for /api/admin/settings/modpacks. GET omits the S3
 // secret value (returns "") but exposes secretSet so the UI can render
 // "(unchanged — leave empty)" vs "(not set yet)".
 

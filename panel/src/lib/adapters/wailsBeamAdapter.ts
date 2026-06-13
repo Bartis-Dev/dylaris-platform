@@ -180,13 +180,6 @@ export async function ensureWailsConnection(
     }
 }
 
-// resetWailsConnectionCache invalidates the lastConnectedServer memo so
-// the next ensureWailsConnection call re-dials. Used by callers that
-// know the tunnel is stale (e.g. logout, server switch, explicit retry).
-export function resetWailsConnectionCache(): void {
-    lastConnectedServer = '';
-}
-
 // connectWailsToServer is the best-effort pre-warm used on navigation:
 // it opens the tunnel ahead of time but only logs failures — the actual
 // file op (e.g. upload) re-checks via ensureWailsConnection and surfaces

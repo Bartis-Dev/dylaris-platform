@@ -16,7 +16,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 14.3 — Modrinth publish flow.
+// Modrinth publish flow.
 //
 // POST /api/modpacks/{id}/versions/{versionId}/publish
 //

@@ -26,7 +26,7 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 }
 
 // IssueToken signs a standard 24h session JWT for the given user. Extracted
-// from the login handler so other handlers (Phase 17 setup wizard, future
+// from the login handler so other handlers (the setup wizard, future
 // admin-impersonation flows) can mint tokens without duplicating the signing
 // + claim shape.
 func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) {
@@ -42,10 +42,10 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) 
 
 // ... Structs LoginRequest, Claims, UpdateRequest etc. kept as-is ...
 // Claims.Purpose distinguishes normal sessions ("" / "session") from
-// short-lived special-purpose tokens. Phase 0a.3 introduces "2fa_setup":
-// a token issued at login when the policy demands 2FA and the user
-// hasn't configured it yet — accepted only by /auth/2fa/setup and
-// /auth/2fa/verify so the user can finish enrollment, nothing else.
+// short-lived special-purpose tokens. "2fa_setup" is a token issued at
+// login when the policy demands 2FA and the user hasn't configured it
+// yet — accepted only by /auth/2fa/setup and /auth/2fa/verify so the
+// user can finish enrollment, nothing else.
 type Claims struct {
 	Username string `json:"username"`
 	IsAdmin  bool   `json:"isAdmin"`
@@ -183,7 +183,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Email-verify gate (Phase 0a.2): if the server requires verification and
+	// Email-verify gate: if the server requires verification and
 	// this user hasn't verified yet, block login with a distinctive flag so
 	// the UI can offer a "resend verification email" button instead of a
 	// generic auth error. Admins still get to log in even when unverified —
@@ -200,7 +200,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2FA enforcement gate (Phase 0a.3): if the policy requires 2FA for this
+	// 2FA enforcement gate: if the policy requires 2FA for this
 	// user (admin or everyone) and they haven't enrolled, issue a *setup token*
 	// — a short-lived JWT scoped exclusively to the 2FA setup endpoints —
 	// instead of a normal session. Forces enrollment before they can use the
@@ -272,7 +272,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("login: UpdateLastLoginAt for userID=%s failed: %v", user.ID, err)
 	}
 
-	// Auto-rescue (Phase 0a.6): if the user was already in pending_deletion
+	// Auto-rescue: if the user was already in pending_deletion
 	// state, cancel the scheduled deletion silently. The fact that they
 	// logged in is the strongest possible signal that the account is alive.
 	if user.DeletionStatus == "pending_deletion" {
@@ -403,9 +403,8 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		user.MinecraftUsername = *req.MinecraftUsername
 	}
 
-	// Save via Store. Note: user.Username is already the new name if a rename happened,
-	// so this call is idempotent w.r.t. the username column — RenameUser already wrote
-	// it (and the history row + last_username_change) in its own transaction.
+	// Username column is idempotent here — RenameUser already wrote it (plus
+	// history row + last_username_change) in its own transaction.
 	if err := h.state.Store.UpdateUser(user); err != nil {
 		sendJSONError(w, "Update failed", 500)
 		return

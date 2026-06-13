@@ -453,7 +453,7 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Phase 3 — fan-out notifications. Internal notes only notify staff
+	// Fan-out notifications. Internal notes only notify staff
 	// (assignee + any support watchers), public replies notify everyone
 	// involved minus the actor.
 	link := "/tickets/" + strconv.Itoa(id)
@@ -662,7 +662,7 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 		Metadata:    meta,
 	})
 
-	// Phase 3 — notify the new assignee (if any and not self-assign).
+	// Notify the new assignee (if any and not self-assign).
 	if req.AssignedUserID != nil && *req.AssignedUserID != userID {
 		link := "/tickets/" + strconv.Itoa(id)
 		EmitTicketNotification(h.state, []string{*req.AssignedUserID},
@@ -750,7 +750,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	// Phase 3 — notify the user being CC'd, unless they added themselves.
+	// Notify the user being CC'd, unless they added themselves.
 	if target != userID {
 		link := "/tickets/" + strconv.Itoa(id)
 		EmitTicketNotification(h.state, []string{target},
@@ -803,7 +803,7 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListMyServersViaTickets GET /api/me/servers/via-tickets
-// Drives the Phase-1 sidebar tab. Empty for non-support users.
+// Drives the sidebar tab. Empty for non-support users.
 func (h *TicketsHandler) ListMyServersViaTickets(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {

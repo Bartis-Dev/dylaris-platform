@@ -12,7 +12,7 @@ import (
 	"dylaris-core/pkg/crypto"
 )
 
-// Phase 14 — Modrinth PAT management endpoints. The plaintext PAT only ever
+// Modrinth PAT management endpoints. The plaintext PAT only ever
 // crosses three boundaries:
 //   1. POST from the user (set)
 //   2. internal calls to Modrinth API (publish, validate)

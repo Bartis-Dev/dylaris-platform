@@ -15,7 +15,7 @@ import {
 import { DynamicIcon } from '@/lib/icons';
 import { SkeletonList } from '@/components/Skeleton';
 
-// Phase 13 — Custom Tabs management. Each tab points at a URL; in the
+// Custom Tabs management. Each tab points at a URL; in the
 // Server Detail nav strip the tab renders either as an iframe inside the
 // panel (openInPanel=true) or as a popout link (false). Common use:
 // minimap viewers (squaremap, BlueMap), per-server status pages, custom

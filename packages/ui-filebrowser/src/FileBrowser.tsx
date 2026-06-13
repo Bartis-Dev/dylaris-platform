@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import JSZip from 'jszip';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown, ChevronRight, ChevronDown } from 'lucide-react';
-import type { FileEntry, FileBrowserAdapter, FileBrowserProps } from './types';
+import type { FileEntry, FileBrowserProps } from './types';
 import { formatBytes, validFilenameRegex, editableExtensions, getCopyName } from './utils';
 
 // Lazy-load the CodeMirror bundle — only pulled in when an edit modal opens.
@@ -498,8 +498,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }
   };
   
-  // Editor scroll + jump-to-match is owned by CodeMirror now; we only
-  // recompute the match counter for the search UI badge.
+  // CodeMirror owns scroll/jump-to-match; we only track the match index for the search badge.
 
   const handleDeleteClick = (e: React.MouseEvent, file: FileEntry) => {
     e.stopPropagation();
@@ -870,7 +869,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               {renderFileRepresentation(file)}
               <div>
                   <span className="text-lg">{file.name}</span>
-                  {/* CHANGED: Fixed typo from getTruncATEDPath to getTruncatedPath */}
                   {file.path && file.path !== file.name && <span className="text-xs text-(--base-07) block">{getTruncatedPath(file.path)}</span>}
               </div>
             </span>

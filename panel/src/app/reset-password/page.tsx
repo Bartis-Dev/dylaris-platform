@@ -19,7 +19,7 @@ function ResetPasswordInner() {
     const [minLength, setMinLength] = useState(12);
     const [error, setError] = useState('');
     const triggered = useRef(false);
-    // Phase 0a.5 — security questions integration. Questions and answers
+    // security questions integration. Questions and answers
     // live alongside the password fields; the page submits everything in
     // one go and the backend verifies before consuming the token.
     const [questions, setQuestions] = useState<string[]>([]);

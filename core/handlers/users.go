@@ -55,7 +55,7 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 // add registration-specific fields in 0a.2+ without polluting the model.
 type createUserRequest struct {
 	models.User
-	// Region access (Phase 0a.1). If the caller omits both fields, the new
+	// Region access. If the caller omits both fields, the new
 	// user defaults to all-regions access — matches the grandfather behavior
 	// applied to existing users at migration time, and avoids creating users
 	// who can see nothing.

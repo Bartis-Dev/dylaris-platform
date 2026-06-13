@@ -9,7 +9,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey } from '@/lib/api/apiKeys';
 import { SkeletonList } from '@/components/Skeleton';
 
-// Phase 9 — per-user API key management. Lives under /account/ because
+// per-user API key management. Lives under /account/ because
 // keys are owned by users, not the admin platform. Plaintext is shown
 // exactly once on creation; subsequent listings only carry metadata.
 

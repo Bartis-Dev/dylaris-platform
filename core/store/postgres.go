@@ -32,7 +32,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 // RawDB exposes the underlying *sql.DB so handlers that need explicit
-// transaction control (Phase 5 restore) can use it without the Store
+// transaction control (e.g. backup restore) can use it without the Store
 // interface having to grow first-class TX methods. Use sparingly — most
 // callers should stick to the interface methods.
 func (s *PostgresStore) RawDB() *sql.DB { return s.db }
@@ -43,11 +43,11 @@ func (s *PostgresStore) RawDB() *sql.DB { return s.db }
 
 // userSelectCols is the canonical column list for User reads. Includes
 // totp_secret + totp_backup_codes which are needed for 2FA verification —
-// scrubbed from JSON via the json:"-" tag on the model. Phase 0a.1 added
-// region-access flag, verification/reset tokens and deletion lifecycle columns;
+// scrubbed from JSON via the json:"-" tag on the model. Region-access flag,
+// verification/reset tokens and deletion lifecycle columns are included here;
 // the sensitive ones (tokens) are also json:"-" on the model.
-// Phase 15 (Wave A) flipped users.id to UUID and dropped public_id, and
-// added last_username_change.
+// users.id is a UUID (public_id was dropped), and last_username_change is
+// tracked here.
 const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(minecraft_username, ''),
 	is_admin, COALESCE(is_2fa_enabled, FALSE), COALESCE(totp_secret, ''), COALESCE(totp_backup_codes::text, '[]'),
 	COALESCE(permissions, ''), created_at,
@@ -132,7 +132,7 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 	// added via migration without the JSONB default actually being applied to
 	// freshly inserted rows in some Postgres versions. Writing the values
 	// explicitly avoids relying on the schema default at all.
-	// Phase 15 (Wave A): users.id is UUID — let the DB DEFAULT gen_random_uuid()
+	// users.id is UUID — let the DB DEFAULT gen_random_uuid()
 	// fire by omitting id from the column list; RETURNING id pulls the value back.
 	// can_create_modpacks is intentionally not in the column list — the
 	// DB DEFAULT TRUE from applyPhase16Schema covers new users so callers
@@ -147,7 +147,7 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 }
 
 // UpdateUser rewrites the user row. NOTE: any username change made via this
-// path bypasses the Phase 15 audit trail (user_username_history) and the
+// path bypasses the username audit trail (user_username_history) and the
 // cooldown policy. Callers MUST route user-initiated and admin-initiated
 // rename flows through RenameUser instead; this method is for non-username
 // field updates.
@@ -220,7 +220,7 @@ func (s *PostgresStore) DisableUserTOTP(id string) error {
 }
 
 // ==========================================
-// ROLES + PERMISSIONS (Phase 1)
+// ROLES + PERMISSIONS
 // ==========================================
 
 // SetUserRole writes the role and keeps is_admin in sync. is_admin is the
@@ -1120,7 +1120,7 @@ func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
 }
 
 // ==========================================
-// REGIONS (Phase 0a.1)
+// REGIONS
 // ==========================================
 
 func scanRegion(scan func(dest ...interface{}) error) (*models.Region, error) {
@@ -1203,7 +1203,7 @@ func (s *PostgresStore) CountNodesInRegion(regionID string) (int, error) {
 }
 
 // ==========================================
-// USER <-> REGION M:N (Phase 0a.1)
+// USER <-> REGION M:N
 // ==========================================
 
 func (s *PostgresStore) GetUserRegionIDs(userID string) ([]string, error) {
@@ -1260,7 +1260,7 @@ func (s *PostgresStore) GetUserAllRegionsAccess(userID string) (bool, error) {
 }
 
 // ==========================================
-// IDENTITY AUDIT (Phase 0a.1, append-only)
+// IDENTITY AUDIT (append-only)
 // ==========================================
 
 func (s *PostgresStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
@@ -1352,7 +1352,7 @@ func (s *PostgresStore) SetSettingBy(key, value string, updatedBy string) error 
 }
 
 // ==========================================
-// EMAIL VERIFICATION + LOGIN TRACKING (Phase 0a.2)
+// EMAIL VERIFICATION + LOGIN TRACKING
 // ==========================================
 
 func (s *PostgresStore) GetUserByEmail(email string) (*models.User, error) {
@@ -1400,7 +1400,7 @@ func (s *PostgresStore) UpdateLastLoginAt(userID string) error {
 }
 
 // ==========================================
-// PASSWORD RESET (Phase 0a.4)
+// PASSWORD RESET
 // ==========================================
 
 // GetUserByPasswordResetToken returns the user row whose reset token matches
@@ -1432,7 +1432,7 @@ func (s *PostgresStore) ClearPasswordResetToken(userID string) error {
 }
 
 // ==========================================
-// SECURITY QUESTIONS (Phase 0a.5)
+// SECURITY QUESTIONS
 // ==========================================
 
 // securityQAStored mirrors the on-disk shape: one entry per question, hashed
@@ -1478,12 +1478,13 @@ func (s *PostgresStore) SetUserSecurityQuestions(userID string, qaJSON string) e
 }
 
 // ==========================================
-// AUTO-DELETE INACTIVE USERS (Phase 0a.6)
+// AUTO-DELETE INACTIVE USERS
 // ==========================================
 
 func (s *PostgresStore) ListInactiveCandidates(idleSince time.Time) ([]InactiveCandidate, error) {
-	// "history" today = owns or is invited to any server. Ticket ownership is
-	// not folded in here yet (would be EXISTS(SELECT 1 FROM tickets WHERE user_id=u.id)).
+	// "history" today = owns or is invited to any server. Tickets are
+	// intentionally NOT counted as history — a stale support ticket should not
+	// block auto-delete.
 	query := `
 		SELECT u.id, u.username, COALESCE(u.email, ''), u.last_login_at,
 		       EXISTS (SELECT 1 FROM servers       WHERE owner_id = u.id)

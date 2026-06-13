@@ -26,7 +26,6 @@ func NewServerAuditRetentionService(s store.Store) *ServerAuditRetentionService 
 }
 
 func (s *ServerAuditRetentionService) SetLeader(l leader.Election) { s.leader = l }
-func (s *ServerAuditRetentionService) SetInterval(d time.Duration) { s.interval = d }
 
 func (s *ServerAuditRetentionService) Start(ctx context.Context) {
 	log.Printf("Server audit retention service started (interval: %s)", s.interval)

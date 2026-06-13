@@ -18,7 +18,7 @@ import {
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 
-// Phase 14.1 — Modpack detail. Shows pack metadata + version history with
+// Modpack detail. Shows pack metadata + version history with
 // channel badges (draft/beta/release). Version → mods builder UI lands in
 // P14.2; for now each version row links to its (future) builder page and
 // supports delete.

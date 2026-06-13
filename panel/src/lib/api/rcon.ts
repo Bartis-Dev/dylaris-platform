@@ -1,4 +1,4 @@
-// Phase 9 — panel client for RCON exec + config + the Players-tab actions
+// panel client for RCON exec + config + the Players-tab actions
 // (ban/kick/op/whitelist/list) which all funnel into the same RCON pipeline.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';

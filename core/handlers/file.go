@@ -156,7 +156,6 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for error response
 	if errResp := resp.GetError(); errResp != nil {
 		if errResp.Code == 403 {
 			sendJSONError(w, errResp.Message, http.StatusForbidden)

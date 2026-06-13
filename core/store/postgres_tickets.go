@@ -10,9 +10,9 @@ import (
 )
 
 // ==========================================
-// TICKETS (Phase 2)
+// TICKETS
 // ==========================================
-// All Phase-2 implementations live here so postgres.go stays at a manageable
+// All implementations live here so postgres.go stays at a manageable
 // size. The patterns mirror the older code: COALESCE on nullable columns at
 // SELECT time, NULLIF on empty strings at INSERT time, JSONB round-tripped
 // via []byte + json.Marshal/Unmarshal.
@@ -474,7 +474,7 @@ func (s *PostgresStore) ListTicketAudit(ticketID int) ([]models.TicketAuditEvent
 
 // ListServersViaActiveTickets returns servers attached to active tickets
 // (open/in_progress/waiting_user) that the given support user is assigned
-// to. Drives the "Via tickets" sidebar tab introduced in Phase 1.
+// to. Drives the "Via tickets" sidebar tab.
 func (s *PostgresStore) ListServersViaActiveTickets(supportUserID string) ([]models.Server, error) {
 	query := `
 		SELECT DISTINCT
@@ -819,7 +819,7 @@ func (s *PostgresStore) ListResolvedTicketsOlderThan(cutoff time.Time) ([]int, e
 }
 
 // ==========================================
-// MIGRATION + BACKUP (Phase 5)
+// MIGRATION + BACKUP
 // ==========================================
 
 // allowedTicketTables is the strict whitelist for any table-named operation
@@ -896,7 +896,7 @@ func (s *PostgresStore) DumpTicketTable(table string) ([]map[string]interface{},
 }
 
 // ==========================================
-// SERVER AUDIT (Phase 4)
+// SERVER AUDIT
 // ==========================================
 
 func (s *PostgresStore) InsertServerAudit(ev *models.ServerAuditEvent) error {

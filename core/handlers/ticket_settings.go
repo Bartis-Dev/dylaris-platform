@@ -18,12 +18,12 @@ type TicketSettings struct {
 	AllowUsersToAddWatchers  bool `json:"allowUsersToAddWatchers"`
 	AuditRetentionDays       int  `json:"auditRetentionDays"`
 
-	// Phase 3 — attachment quotas (megabytes). 0 = unlimited.
+	// Attachment quotas (megabytes). 0 = unlimited.
 	MaxFileSizeMB   int `json:"maxFileSizeMb"`
 	MaxTicketSizeMB int `json:"maxTicketSizeMb"`
 	MaxUserSizeMB   int `json:"maxUserSizeMb"`
 
-	// Phase 3 — auto-close. When enabled, resolved tickets get closed by
+	// Auto-close. When enabled, resolved tickets get closed by
 	// the background job after AutoCloseDaysAfterResolved days of no activity.
 	AutoCloseEnabled           bool `json:"autoCloseEnabled"`
 	AutoCloseDaysAfterResolved int  `json:"autoCloseDaysAfterResolved"`

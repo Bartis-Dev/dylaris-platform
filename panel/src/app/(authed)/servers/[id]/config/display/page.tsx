@@ -9,7 +9,7 @@ import { uploadFiles } from '@/lib/api/files';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
 
-// Phase 8 — Display sub-tab. Surgically edits motd= in server.properties so
+// Display sub-tab. Surgically edits motd= in server.properties so
 // the user gets a friendly multi-line editor without touching the rest of the
 // file, and uploads server-icon.png to the active sub-server dir.
 //

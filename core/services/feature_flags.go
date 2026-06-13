@@ -40,8 +40,7 @@ func NewFeatureFlags(st settingsReader) *FeatureFlags {
 
 // Get returns the boolean value for key, defaulting to defaultV when the
 // setting is missing or unparseable.
-func (f *FeatureFlags) Get(ctx context.Context, key string, defaultV bool) bool {
-	_ = ctx // accepted for future-proofing; current impl is sync
+func (f *FeatureFlags) Get(_ context.Context, key string, defaultV bool) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if cf, ok := f.cache[key]; ok && time.Since(cf.at) < f.cacheTTL {

@@ -45,9 +45,9 @@ type registerRequest struct {
 // RegistrationStatus GET /api/auth/registration-status — public.
 // Tells the login page whether to render the "Register" link and what the
 // password policy is (so the registration form can show the requirement
-// before the user submits and gets a 400). Phase 0a.5 added the
-// security-questions flags so the register page can render the picker
-// step inline instead of forcing the user through a second visit.
+// before the user submits and gets a 400). The security-questions flags let
+// the register page render the picker step inline instead of forcing the user
+// through a second visit.
 func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.Request) {
 	p := LoadAuthPolicy(h.state)
 	out := map[string]interface{}{
@@ -146,7 +146,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		log.Printf("registration: SetUserRegions failed for userID=%s: %v", user.ID, err)
 	}
 
-	// Security questions (Phase 0a.5). When required at signup, the user
+	// Security questions. When required at signup, the user
 	// MUST have submitted a valid set. When optional, we accept them if
 	// provided but don't require them.
 	if policy.SecurityQuestionsEnabled {

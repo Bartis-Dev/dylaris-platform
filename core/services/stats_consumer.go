@@ -98,7 +98,7 @@ func (s *StatsConsumerService) consumeStream(streamKey string) {
 	group := "dylaris-core-stats"
 	consumer := s.coreID
 
-	// Create consumer group (ignore error if already exists)
+	// XGroupCreateMkStream is idempotent — error on re-create is expected and ignored.
 	s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0").Err()
 
 	log.Printf("Stats consumer started for stream %s", streamKey)

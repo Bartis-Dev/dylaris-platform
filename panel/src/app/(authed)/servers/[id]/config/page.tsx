@@ -3,8 +3,7 @@
 import React, { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-// /config — landing page redirects to /config/properties. Keeps inbound links
-// to /servers/{id}/config working post Phase 8 sub-tab split.
+// /config has no own UI — redirect to /config/properties so old /servers/{id}/config links keep working.
 export default function ServerConfigPage() {
     const params = useParams();
     const router = useRouter();

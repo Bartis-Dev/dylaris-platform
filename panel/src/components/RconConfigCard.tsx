@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon } from '@/lib/api/rcon';
 
-// Phase 9 — RCON enable/password card. Lives at the top of the existing
+// RCON enable/password card. Lives at the top of the existing
 // Network top-level tab. Generates a 24-byte hex password on first enable,
 // supports manual override + regenerate, and ships a "Test command" mini-
 // console so the operator can verify connectivity without leaving the tab.

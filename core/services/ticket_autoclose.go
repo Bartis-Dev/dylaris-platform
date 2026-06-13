@@ -28,7 +28,6 @@ func NewTicketAutoCloseService(s store.Store) *TicketAutoCloseService {
 }
 
 func (s *TicketAutoCloseService) SetLeader(l leader.Election) { s.leader = l }
-func (s *TicketAutoCloseService) SetInterval(d time.Duration) { s.interval = d }
 
 func (s *TicketAutoCloseService) Start(ctx context.Context) {
 	log.Printf("Ticket auto-close service started (interval: %s)", s.interval)

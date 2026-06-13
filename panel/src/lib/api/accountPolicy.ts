@@ -48,14 +48,3 @@ export async function getUsernameHistory(userId: string): Promise<UsernameHistor
         return (data as any).history || [];
     } catch (err) { handleError(err); return []; }
 }
-
-export async function adminRenameUser(userId: string, username: string): Promise<{ success: boolean; message?: string }> {
-    try {
-        const res = await fetch(`${API_URL}/admin/users/${userId}/username`, {
-            method: 'PATCH',
-            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username }),
-        });
-        return handleResponse(res);
-    } catch (err) { return handleError(err); }
-}

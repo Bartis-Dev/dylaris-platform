@@ -13,7 +13,7 @@ import (
 )
 
 // CoreHeartbeat is written to Redis so Nodes can discover this Core instance.
-// Region (Phase 6) is the operator-configured DYLARIS_REGION env. Nodes can
+// Region is the operator-configured DYLARIS_REGION env. Nodes can
 // use it for region-affinity decisions later; the panel uses it for the
 // "Connected to <region> Core" chip.
 type CoreHeartbeat struct {

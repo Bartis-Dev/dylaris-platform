@@ -16,8 +16,8 @@ export const login = async (username: string, password: string, totpCode?: strin
       if (data.requires2FA) return { success: false, requires2FA: true, message: data.message };
     }
 
-    // 403 covers the policy-driven gates: unverified email (Phase 0a.2) or
-    // missing 2FA-setup when required (Phase 0a.3). Surface the flags so the
+    // 403 covers the policy-driven gates: unverified email or
+    // missing 2FA-setup when required. Surface the flags so the
     // login form can route to the right next step.
     if (res.status === 403) {
       const data = await res.json().catch(() => ({}));
@@ -155,20 +155,9 @@ export const updateProfile = async (data: any) => {
   }
 };
 
-export const getAuthStatus = async () => {
-  try {
-    const res = await fetch(`${API_URL}/status`, {
-      method: 'GET',
-    });
-    return await handleResponse(res);
-  } catch (err) {
-    return handleError(err);
-  }
-};
-
 export const logout = () => {
   if (typeof window !== 'undefined') {
-    // FIX: Also remove both keys on logout for safety
+    // Remove both token keys: login writes 'token' and 'authToken'.
     localStorage.removeItem('token');
     localStorage.removeItem('authToken');
   }

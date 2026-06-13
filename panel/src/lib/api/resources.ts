@@ -20,17 +20,6 @@ export async function createUser(user: Partial<User>) {
     } catch (err) { return handleError(err); }
 }
 
-export async function updateUser(id: string, user: Partial<User>) {
-    try {
-        const res = await fetch(`${API_URL}/users/${id}`, {
-            method: 'PUT',
-            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify(user)
-        });
-        return handleResponse(res);
-    } catch (err) { return handleError(err); }
-}
-
 export async function deleteUser(id: string) {
     try {
         const res = await fetch(`${API_URL}/users/${id}`, { method: 'DELETE', headers: getAuthHeader() });

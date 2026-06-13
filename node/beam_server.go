@@ -789,8 +789,6 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-// extractServerUUID extracts the server UUID from the gRPC context metadata.
-// TODO: This will be populated by the Authenticate interceptor from the ticket claims.
 // extractServerUUID returns the server-UUID that Authenticate stashed for
 // this gRPC peer. One Beam.exe session = one TCP connection from Link to
 // the Node = one stable peer address, so this is reliable for the
@@ -813,6 +811,3 @@ func (s *beamServer) extractServerUUID(ctx context.Context) string {
 }
 
 // copyDir and copyFile are defined in installer.go — reused here.
-
-// Compile-time check
-var _ = time.Now // used for future idle timeout tracking

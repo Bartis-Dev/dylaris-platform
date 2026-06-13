@@ -38,7 +38,7 @@ type SystemStats struct {
 	NetTxSpeed uint64  `json:"net_tx_speed"`
 	NetTotalRx uint64  `json:"net_total_rx"`
 	NetTotalTx uint64  `json:"net_total_tx"`
-	// History is now optional in the struct to save bandwidth
+	// History is omitempty: stat snapshots skip it to keep the Redis/bandwidth payload small.
 	History      []HistoryPoint `json:"history,omitempty"`
 	AutoResetDay int            `json:"auto_reset_day"`
 }
@@ -235,7 +235,6 @@ func (m *Monitor) GetSmartHistory(rangeSeconds int64) []HistoryPoint {
 
 	// 1. Filter: Only take points within the requested range
 	var filtered []HistoryPoint
-	// Optimization: Find start index binary-search style or just iterate (iterate is fine for now)
 	for _, p := range m.data.History {
 		if p.Timestamp >= cutoff {
 			filtered = append(filtered, p)
@@ -248,7 +247,7 @@ func (m *Monitor) GetSmartHistory(rangeSeconds int64) []HistoryPoint {
 	}
 
 	// 2. Downsample: If we have too many points, average them.
-	// Target Max Points = 300. This makes the graph super fast.
+	// Cap at 300 points: chart render/payload budget for the frontend.
 	maxPoints := 300
 	if count <= maxPoints {
 		return filtered
@@ -258,14 +257,12 @@ func (m *Monitor) GetSmartHistory(rangeSeconds int64) []HistoryPoint {
 	var result []HistoryPoint
 
 	for i := 0; i < count; i += step {
-		// Calculate average for this chunk
 		end := i + step
 		if end > count {
 			end = count
 		}
 
 		var sumCPU, sumRAM float64
-		// FIX: Removed unused variables maxRx, maxTx
 		var sumRx, sumTx uint64
 
 		chunkSize := float64(end - i)

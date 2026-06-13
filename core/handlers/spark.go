@@ -3,8 +3,6 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -14,7 +12,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Phase 11 — Spark profiler integration. Backend surface is intentionally
+// Spark profiler integration. Backend surface is intentionally
 // small: store + list profile-completion records. Profile start/stop runs
 // through the existing /console/command endpoint (panel-driven). URL
 // detection happens in the panel too, watching the console SSE stream — when
@@ -205,8 +203,3 @@ func (h *SparkHandler) dbFromState() *sql.DB {
 	}
 	return provider.RawDB()
 }
-
-// guard against future drift between Record's "spark URL accepted" prefix
-// and any client-side regex — single source of truth on the server.
-var _ = errors.New
-var _ = fmt.Sprint

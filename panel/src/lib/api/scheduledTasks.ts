@@ -1,4 +1,4 @@
-// Phase 8 — panel API client for per-server scheduled tasks (cron jobs).
+// panel API client for per-server scheduled tasks (cron jobs).
 //
 // V1 task types:
 //   - "restart" — payload unused, dispatches the same pipeline as the Restart power button

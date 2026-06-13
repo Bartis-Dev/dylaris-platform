@@ -1,4 +1,4 @@
-// Package-level service for Phase 8 Scheduled Tasks. Leader-gated tick reads
+// Package-level service for Scheduled Tasks. Leader-gated tick reads
 // due rows, dispatches the underlying action (Queue SendCommand for restart,
 // console-stdin RPush for say) and stamps next_run forward via robfig/cron's
 // standard 5-field parser.

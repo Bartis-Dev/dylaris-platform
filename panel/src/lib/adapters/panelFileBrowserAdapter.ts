@@ -28,7 +28,7 @@ export function createPanelAdapter(): FileBrowserAdapter {
     // the onProgress to mirror progress into the global UploadManager so
     // the navbar widget tracks browser uploads just like native ones.
     // Cancel-from-widget isn't wired here because the underlying api.ts
-    // uploadFiles doesn't expose an AbortSignal — Phase 2 work to add it.
+    // uploadFiles doesn't expose an AbortSignal yet.
     uploadFiles: async (path, files, onProgress, strategy, mergeConflict, serverUuid) => {
       const file = files?.[0];
       const uploadID =

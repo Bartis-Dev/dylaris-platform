@@ -8,7 +8,7 @@ import (
 	"dylaris-core/services"
 )
 
-// SystemEventsHandler exposes the SSE side of the Phase 7 events channel.
+// SystemEventsHandler exposes the SSE side of the system events channel.
 // One handler per Core process — the panel opens one stream per session and
 // receives broadcasts about regions/modules/features/maintenance/server-list
 // changes so it can refresh cached state without polling.

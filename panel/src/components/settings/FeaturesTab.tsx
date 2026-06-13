@@ -170,8 +170,7 @@ export default function FeaturesTab() {
                 </div>
             </div>
 
-            {/* Phase 18 — Anonymous telemetry. Saves on click (single boolean,
-                no Save bar). Independent from FeatureSettings + handleSave. */}
+            {/* Anonymous telemetry. Saves on click (single boolean). */}
             <div className="card p-5">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">

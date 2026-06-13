@@ -33,7 +33,7 @@ export default function InboxPage() {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [categories, setCategories] = useState<TicketCategory[]>([]);
     const [loading, setLoading] = useState(true);
-    // Phase 6 — client-side region multi-select. The list endpoint returns
+    // client-side region multi-select. The list endpoint returns
     // every ticket the user can see; we trim by region locally so the
     // filter is instant and doesn't need a server round-trip.
     const [regionFilter, setRegionFilter] = useState<Set<string>>(new Set());

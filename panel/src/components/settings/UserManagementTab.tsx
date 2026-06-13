@@ -19,13 +19,6 @@ const ENCRYPTION_OPTIONS = [
     { value: 'none', label: 'None — plaintext (private network only)' },
 ];
 
-// Skeleton entries for sub-phases that haven't shipped yet. Kept here so the
-// information architecture stays consistent — admins see what's coming.
-// All sub-phase sections now ship. Kept as an empty list so the file's
-// rendering loop still works without conditional logic; deleting the
-// component is one follow-up cleanup.
-const PLACEHOLDER_SECTIONS: { icon: typeof Trash2; title: string; sub: string; items: string[] }[] = [];
-
 export default function UserManagementTab() {
     return (
         <div className="space-y-8 max-w-3xl">
@@ -34,7 +27,7 @@ export default function UserManagementTab() {
                     <Users size={18} className="text-(--accent-light)" /> User Management
                 </h2>
                 <p className="text-sm text-(--base-06) mt-1">
-                    Registration, authentication, password reset and lifecycle policies. Sections light up as the matching sub-phases land.
+                    Registration, authentication, password reset and lifecycle policies.
                 </p>
             </header>
 
@@ -43,35 +36,6 @@ export default function UserManagementTab() {
             <AutoDeleteSection />
             <AuditPolicySection />
             <SMTPSection />
-
-            {PLACEHOLDER_SECTIONS.length > 0 && (
-            <div className="space-y-3">
-                <h3 className="mono-label">Coming in later sub-phases</h3>
-                {PLACEHOLDER_SECTIONS.map(sec => {
-                    const Icon = sec.icon;
-                    return (
-                        <div key={sec.title} className="card p-4 border border-(--base-03)">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-start gap-3">
-                                    <Icon size={16} className="text-(--accent-light) mt-0.5 shrink-0" />
-                                    <div>
-                                        <h4 className="font-medium">{sec.title}</h4>
-                                        <ul className="mt-2 space-y-0.5 text-sm text-(--base-06)">
-                                            {sec.items.map(it => (
-                                                <li key={it} className="font-mono text-xs">— {it}</li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                </div>
-                                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1.5 py-0.5 rounded-sm shrink-0">
-                                    Phase {sec.sub}
-                                </span>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-            )}
         </div>
     );
 }
@@ -134,7 +98,7 @@ function AuthPolicySection() {
         <section className="card p-5 border border-(--base-03) space-y-6 relative">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><Mail size={14} /> Authentication policy</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Phase 0a.2 / 0a.3</span>
+                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
             </header>
 
             <div className="space-y-4">
@@ -335,7 +299,7 @@ function SMTPSection() {
         <section className="card p-5 border border-(--base-03) space-y-4 relative">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><Send size={14} /> SMTP — Outgoing Email</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Phase 0a.2</span>
+                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
             </header>
             <p className="text-xs text-(--base-06)">
                 The default SMTP profile is used for verification, password reset and ticket notifications. Per-purpose
@@ -479,7 +443,7 @@ function AutoDeleteSection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><Trash2 size={14} /> Auto-delete inactive users</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Phase 0a.6</span>
+                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
             </header>
             <p className="text-xs text-(--base-06)">
                 Daily job that warns dormant accounts by email and then removes them. Admins are never affected. Users with server history get an additional grace window. Signing in at any point cancels the scheduled deletion automatically.
@@ -565,7 +529,7 @@ function AutoDeleteSection() {
     );
 }
 
-// ── Audit retention section (Phase 4) ─────────────────────────────────
+// ── Audit retention section ───────────────────────────────────────────
 // Platform-wide server-audit retention. Per-server audit toggles live on
 // each server's Audit tab so admins can flip them in context.
 
@@ -617,7 +581,7 @@ function AuditPolicySection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><FileText size={14} /> Server audit retention</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Phase 4</span>
+                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
             </header>
             <p className="text-xs text-(--base-06)">
                 How long server-audit events are kept before the daily sweep deletes them. Set to 0 to keep them forever.
@@ -734,7 +698,7 @@ function SecurityQuestionsPoolSection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Phase 0a.5</span>
+                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
             </header>
             <p className="text-xs text-(--base-06)">
                 The list of questions users can choose from. Removing a question doesn&apos;t affect users who already picked it — their chosen wording is stored inline.
