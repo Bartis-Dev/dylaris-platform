@@ -363,10 +363,13 @@ func main() {
 
 	// --- Modrinth proxy + per-server mod install (Phase 10) ---
 	// Browse + project metadata are cached in Redis (5 min / 1 h). All authed.
-	api.HandleFunc("/modrinth/search", authHandler.AuthMiddleware(modrinthHandler.Search)).Methods("GET")
-	api.HandleFunc("/modrinth/project/{slug}", authHandler.AuthMiddleware(modrinthHandler.Project)).Methods("GET")
-	api.HandleFunc("/modrinth/project/{slug}/versions", authHandler.AuthMiddleware(modrinthHandler.ProjectVersions)).Methods("GET")
-	api.HandleFunc("/modrinth/version/{id}", authHandler.AuthMiddleware(modrinthHandler.Version)).Methods("GET")
+	// Per-IP rate limit on the Modrinth proxy: each distinct query is a cache
+	// miss that both hits Modrinth and grows the Redis cache, so cap volume.
+	modrinthLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/modrinth/search", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Search))).Methods("GET")
+	api.HandleFunc("/modrinth/project/{slug}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Project))).Methods("GET")
+	api.HandleFunc("/modrinth/project/{slug}/versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.ProjectVersions))).Methods("GET")
+	api.HandleFunc("/modrinth/version/{id}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Version))).Methods("GET")
 	// Per-server installed mods + install/uninstall dispatch.
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.List)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.Install)).Methods("POST")

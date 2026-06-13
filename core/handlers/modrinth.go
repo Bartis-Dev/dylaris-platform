@@ -105,6 +105,9 @@ func (h *ModrinthHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	values := url.Values{}
 	if v := strings.TrimSpace(q.Get("query")); v != "" {
+		if len(v) > 200 { // bound the cache-key / upstream query size
+			v = v[:200]
+		}
 		values.Set("query", v)
 	}
 	if v := q.Get("limit"); v != "" {

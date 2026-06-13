@@ -167,7 +167,14 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := h.state.Store.SetUserSecurityQuestions(user.ID, hashedJSON); err != nil {
 				log.Printf("registration: SetUserSecurityQuestions failed for userID=%s: %v", user.ID, err)
-				// Non-fatal: account exists, user can set questions in profile.
+				if policy.SecurityQuestionsRequiredAtSignup {
+					// Required by policy — don't leave a half-created account
+					// without the questions it must have; roll back instead.
+					_ = h.state.Store.DeleteUser(user.ID)
+					sendJSONError(w, "Failed to save security questions", http.StatusInternalServerError)
+					return
+				}
+				// Optional: account exists, user can set questions in profile.
 			}
 		}
 	}
