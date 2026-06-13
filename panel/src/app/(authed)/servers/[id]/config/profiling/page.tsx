@@ -11,7 +11,7 @@ import { systemEvents } from '@/lib/systemEvents';
 import { sendConsoleCommand } from '@/lib/api';
 import { listInstalledMods } from '@/lib/api/modrinth';
 import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE, type SparkProfile } from '@/lib/api/spark';
-import { API_URL } from '@/lib/api/core';
+import { createEventSource } from '@/lib/sse';
 
 // Spark profiler integration. UX:
 //   * "Not installed" → prompts user to add `spark` from the Content tab
@@ -97,38 +97,38 @@ export default function ServerConfigProfilingPage() {
             esRef.current = null;
             return;
         }
-        const token = typeof window !== 'undefined'
-            ? (localStorage.getItem('authToken') || localStorage.getItem('token'))
-            : null;
-        if (!token) return;
-        const url = `${API_URL}/servers/${serverId}/console/stream?token=${encodeURIComponent(token)}`;
-        const es = new EventSource(url);
-        esRef.current = es;
-        es.onmessage = (e) => {
-            const m = e.data && SPARK_URL_RE.exec(e.data);
-            if (m && active) {
-                const captured = m[0];
-                const startedISO = new Date(active.startedAt).toISOString();
-                recordSparkProfile(serverId, captured, startedISO).then(res => {
-                    if (res.success) {
-                        showToast('Profile URL captured.', true);
-                        refresh();
-                    }
-                });
-                // First URL ends the active run; spark may print the URL on
-                // its own timeout OR when we issued `stop`.
-                setActive(null);
-                es.close();
+        let es: EventSource | null = null;
+        let cancelled = false;
+        (async () => {
+            es = await createEventSource(`/servers/${serverId}/console/stream`);
+            if (cancelled) { es.close(); return; }
+            esRef.current = es;
+            es.onmessage = (e) => {
+                const m = e.data && SPARK_URL_RE.exec(e.data);
+                if (m && active) {
+                    const captured = m[0];
+                    const startedISO = new Date(active.startedAt).toISOString();
+                    recordSparkProfile(serverId, captured, startedISO).then(res => {
+                        if (res.success) {
+                            showToast('Profile URL captured.', true);
+                            refresh();
+                        }
+                    });
+                    // First URL ends the active run; spark may print the URL on
+                    // its own timeout OR when we issued `stop`.
+                    setActive(null);
+                    es!.close();
+                    esRef.current = null;
+                }
+            };
+            es.onerror = () => {
+                // Console stream blip — don't kill the active profile, just
+                // let the next render reattach.
+                es!.close();
                 esRef.current = null;
-            }
-        };
-        es.onerror = () => {
-            // Console stream blip — don't kill the active profile, just
-            // let the next render reattach.
-            es.close();
-            esRef.current = null;
-        };
-        return () => { es.close(); esRef.current = null; };
+            };
+        })().catch(() => { /* ticket mint failed — next render reattaches */ });
+        return () => { cancelled = true; es?.close(); esRef.current = null; };
     }, [active, serverId, refresh, showToast]);
 
     // ----- Start / stop -----

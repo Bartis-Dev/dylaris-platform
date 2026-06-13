@@ -80,6 +80,44 @@ type UpdateRequest struct {
 func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
+		// SSE auth ticket: EventSource cannot set an Authorization header, so
+		// the panel mints a short-lived random ticket (POST /api/sse-ticket)
+		// and carries it in the URL instead of the session JWT — the JWT must
+		// never appear in URLs (access logs / Referer). Confined to GET. A
+		// valid ticket resolves to a username in Redis, and we re-derive the
+		// full identity (incl. isAdmin) from the DB so nothing here is
+		// client-supplied. The ticket TTL is refreshed on every accepted
+		// request, giving a sliding window so native EventSource reconnects
+		// keep working with the same ?ticket=.
+		if authHeader == "" && r.Method == http.MethodGet && h.state.Redis != nil {
+			if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+				key := "sse:ticket:" + ticket
+				if username, err := h.state.Redis.Get(r.Context(), key).Result(); err == nil && username != "" {
+					w.Header().Set("Referrer-Policy", "no-referrer")
+					w.Header().Set("Cache-Control", "no-store")
+					// Sliding window: keep long-lived streams alive.
+					h.state.Redis.Expire(r.Context(), key, sseTicketTTL)
+
+					isAdmin := false
+					var userID interface{}
+					if h.state.Store != nil {
+						if user, err := h.state.Store.GetUserByUsername(username); err == nil && user != nil {
+							isAdmin = user.IsAdmin
+							userID = user.ID
+						}
+					}
+					ctx := context.WithValue(r.Context(), "username", username)
+					ctx = context.WithValue(ctx, "isAdmin", isAdmin)
+					if userID != nil {
+						ctx = context.WithValue(ctx, "userID", userID)
+					}
+					next(w, r.WithContext(ctx))
+					return
+				}
+				// Invalid/expired ticket: fall through to the logic below,
+				// which 401s (no Authorization header, no ?token=).
+			}
+		}
 		// Fallback: EventSource (SSE) cannot send custom headers, so accept a
 		// ?token= query param. Confine it to GET (SSE + downloads) — a mutating
 		// verb never legitimately authenticates via the URL — and when used,

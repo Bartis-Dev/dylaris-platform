@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
+import { createEventSource } from '@/lib/sse';
 import { Power, Send, Cpu, MemoryStick } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
@@ -81,13 +82,16 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   // Stats stream (was passed as prop from Dashboard previously)
   useEffect(() => {
     setLiveStats(null);
-    const token = localStorage.getItem('token') || localStorage.getItem('authToken') || '';
-    const url = `${API_URL}/servers/${server.id}/stats/stream?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    es.onmessage = (e) => {
-      try { setLiveStats(JSON.parse(e.data) as ServerStats); } catch { /* ignore */ }
-    };
-    return () => { es.close(); };
+    let es: EventSource | null = null;
+    let cancelled = false;
+    (async () => {
+      es = await createEventSource(`/servers/${server.id}/stats/stream`);
+      if (cancelled) { es.close(); return; }
+      es.onmessage = (e) => {
+        try { setLiveStats(JSON.parse(e.data) as ServerStats); } catch { /* ignore */ }
+      };
+    })().catch(() => { /* ticket mint failed — leave stats empty */ });
+    return () => { cancelled = true; es?.close(); };
   }, [server.id]);
 
   useEffect(() => {
@@ -97,17 +101,20 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     const pendingLines: string[] = [];
     let historyLoaded = false;
 
-    const subParam = activeSubServer ? `&sub_server=${encodeURIComponent(activeSubServer)}` : '';
-    const url = `${API_URL}/servers/${server.id}/console/stream?token=${encodeURIComponent(token)}${subParam}`;
-    const es = new EventSource(url);
-
-    es.onmessage = (e) => {
-      if (!historyLoaded) {
-        pendingLines.push(e.data);
-      } else {
-        setLines(prev => [...prev.slice(-999), e.data]);
-      }
-    };
+    const subParam = activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : '';
+    let es: EventSource | null = null;
+    let cancelled = false;
+    (async () => {
+      es = await createEventSource(`/servers/${server.id}/console/stream${subParam}`);
+      if (cancelled) { es.close(); return; }
+      es.onmessage = (e) => {
+        if (!historyLoaded) {
+          pendingLines.push(e.data);
+        } else {
+          setLines(prev => [...prev.slice(-999), e.data]);
+        }
+      };
+    })().catch(() => { /* ticket mint failed — history still loads below */ });
 
     const historyUrl = `${API_URL}/servers/${server.id}/console/history${activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : ''}`;
     fetch(historyUrl, {
@@ -125,7 +132,8 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
       });
 
     return () => {
-      es.close();
+      cancelled = true;
+      es?.close();
     };
   }, [server.id, activeSubServer]);
 

@@ -331,6 +331,9 @@ func main() {
 	// subscribes once on boot and refreshes its caches reactively. Auth via
 	// ?token= query param since EventSource can't set Authorization headers.
 	api.HandleFunc("/system/events", authHandler.AuthMiddleware(systemEventsHandler.StreamEvents)).Methods("GET")
+	// Mint a short-lived SSE auth ticket so EventSource streams carry a
+	// disposable ?ticket= in the URL instead of the long-lived session JWT.
+	api.HandleFunc("/sse-ticket", authHandler.AuthMiddleware(authHandler.MintSSETicket)).Methods("POST")
 
 	// Setup wizard. Open routes; /api/setup/* is also exempt from
 	// the setup-lock middleware so they remain reachable in Fresh-Install

@@ -9,7 +9,7 @@
 // is usually omitted — listeners just re-fetch their cached list when their
 // event fires.
 
-import { API_URL } from '@/lib/api/core';
+import { createEventSource } from '@/lib/sse';
 
 export interface SystemEvent {
     type: string;
@@ -61,34 +61,39 @@ class SystemEventsClient {
 
     private connect(): void {
         if (this.stopped) return;
-        const token = typeof window !== 'undefined'
-            ? (localStorage.getItem('authToken') || localStorage.getItem('token'))
-            : null;
-        if (!token) {
-            this.scheduleReconnect();
-            return;
-        }
-        const url = `${API_URL}/system/events?token=${encodeURIComponent(token)}`;
-        const es = new EventSource(url);
-        this.es = es;
+        // Ticket mint is async (it POSTs for a short-lived SSE ticket). Kick
+        // it off and guard against stop()/reconnect racing it: if we got
+        // stopped (or a newer connect() already attached an es) before the
+        // ticket resolves, close the freshly-opened stream and bail.
+        createEventSource('/system/events').then((es) => {
+            if (this.stopped || this.es) {
+                es.close();
+                return;
+            }
+            this.es = es;
 
-        es.onmessage = (e) => {
-            try {
-                const evt: SystemEvent = JSON.parse(e.data);
-                if (evt && typeof evt.type === 'string') {
-                    this.dispatch(evt);
-                    // First good message resets backoff so a flaky network
-                    // doesn't compound delays across multiple reconnects.
-                    this.reconnectDelay = INITIAL_RECONNECT_MS;
-                }
-            } catch { /* malformed frames are silently dropped */ }
-        };
+            es.onmessage = (e) => {
+                try {
+                    const evt: SystemEvent = JSON.parse(e.data);
+                    if (evt && typeof evt.type === 'string') {
+                        this.dispatch(evt);
+                        // First good message resets backoff so a flaky network
+                        // doesn't compound delays across multiple reconnects.
+                        this.reconnectDelay = INITIAL_RECONNECT_MS;
+                    }
+                } catch { /* malformed frames are silently dropped */ }
+            };
 
-        es.onerror = () => {
-            es.close();
-            this.es = null;
+            es.onerror = () => {
+                es.close();
+                this.es = null;
+                this.scheduleReconnect();
+            };
+        }).catch(() => {
+            // Mint failed (no token, network blip, Core down) — behave like a
+            // connection failure and let the existing backoff retry fire.
             this.scheduleReconnect();
-        };
+        });
     }
 
     private scheduleReconnect(): void {

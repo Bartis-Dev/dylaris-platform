@@ -6,7 +6,7 @@ import {
   Server, ServerStats, DiskUsage, BackupConfig, BackupUsage,
   getStatsHistory, getDiskUsage, getBackupConfig, getBackupUsage,
 } from '@/lib/api';
-import { API_URL } from '@/lib/api/core';
+import { createEventSource } from '@/lib/sse';
 
 import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive } from 'lucide-react';
 
@@ -76,19 +76,22 @@ export default function OverviewView({ server }: OverviewViewProps) {
   useEffect(() => {
     setLiveData([]);
 
-    const token = localStorage.getItem('token') || localStorage.getItem('authToken') || '';
-    const url = `${API_URL}/servers/${server.id}/stats/stream?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    esRef.current = es;
+    let es: EventSource | null = null;
+    let cancelled = false;
+    (async () => {
+      es = await createEventSource(`/servers/${server.id}/stats/stream`);
+      if (cancelled) { es.close(); return; }
+      esRef.current = es;
 
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data) as ServerStats;
-        setLiveData(prev => [...prev.slice(-59), data]);
-      } catch { /* ignore */ }
-    };
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as ServerStats;
+          setLiveData(prev => [...prev.slice(-59), data]);
+        } catch { /* ignore */ }
+      };
+    })().catch(() => { /* ticket mint failed — leave live data empty */ });
 
-    return () => { es.close(); };
+    return () => { cancelled = true; es?.close(); };
   }, [server.id]);
 
   useEffect(() => {
