@@ -167,7 +167,7 @@ func main() {
 		redisClient.Set(context.Background(), "dylaris:file_access_mode", fileMode, 0)
 	}
 
-	// Handler initialisieren
+	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(appState, cfg.JWTSecret)
 	serverHandler := handlers.NewServerHandler(appState)
 	nodeHandler := handlers.NewNodeHandler(appState)
@@ -280,7 +280,7 @@ func main() {
 	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.
 	services.StartSetupRecoveryLoop(context.Background(), pgStore, cfg.FrontendURL)
 
-	// Router & API Endpunkte einrichten
+	// Set up router and API endpoints
 	r := mux.NewRouter()
 
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -641,7 +641,7 @@ func main() {
 	api.HandleFunc("/files/download/selective", authHandler.AuthMiddleware(fileHandler.SelectiveDownloadHandler)).Methods("GET")
 	api.HandleFunc("/files/upload", authHandler.AuthMiddleware(fileHandler.UploadFileHandler)).Methods("POST")
 
-	// Library Endpunkte
+	// Library endpoints
 	api.HandleFunc("/library", authHandler.AuthMiddleware(libraryHandler.GetLibraryHandler)).Methods("GET")
 	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(libraryHandler.DeleteLibraryHandler)).Methods("POST")
 	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(libraryHandler.MkdirLibraryHandler)).Methods("POST")
@@ -649,7 +649,7 @@ func main() {
 	api.HandleFunc("/library/download", authHandler.AuthMiddleware(libraryHandler.DownloadLibraryHandler)).Methods("GET")
 	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(libraryHandler.ToggleLibraryPathHandler)).Methods("POST")
 
-	// Settings Endpunkte
+	// Settings endpoints
 	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(settingsHandler.GetLibrarySettings)).Methods("GET")
 	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(settingsHandler.SaveLibrarySettings)).Methods("POST")
 	api.HandleFunc("/settings/library/test", authHandler.AuthMiddleware(settingsHandler.TestLibraryConnection)).Methods("GET")

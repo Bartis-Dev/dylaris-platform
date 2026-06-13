@@ -343,7 +343,7 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 			orphaned = append(orphaned, orphanedEntry{UUID: u})
 		}
 	}
-	// Heartbeat-Safety: missing list nur bei online Node berechnen
+	// Heartbeat safety: only compute the missing list for an online node
 	if nodeOnline {
 		for u, srv := range dbByUUID {
 			if !diskUUIDs[u] {
