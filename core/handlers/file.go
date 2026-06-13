@@ -681,7 +681,9 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) {
 	uploadLimit := h.getTransferLimit(r, "upload")
 	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit)
-	if err := r.ParseMultipartForm(uploadLimit); err != nil {
+	// 32MiB in memory; anything larger spills to a temp file on disk. Passing
+	// uploadLimit here would buffer the whole (up to multi-GB) upload in RAM.
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		sendJSONError(w, "File is too large or exceeds your upload limit", http.StatusBadRequest)
 		return
 	}

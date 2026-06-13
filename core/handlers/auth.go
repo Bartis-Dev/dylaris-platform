@@ -5,6 +5,7 @@ import (
 	"database/sql" // Import Models
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -261,7 +262,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// active vs dormant users — a stale value here is harmless.
 	if err := h.state.Store.UpdateLastLoginAt(user.ID); err != nil {
 		// Non-fatal — log and continue so a slow DB write never blocks login.
-		_ = err
+		log.Printf("login: UpdateLastLoginAt for userID=%s failed: %v", user.ID, err)
 	}
 
 	// Auto-rescue (Phase 0a.6): if the user was already in pending_deletion

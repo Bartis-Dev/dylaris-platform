@@ -30,6 +30,7 @@ type Config struct {
 	DBUser     string
 	DBPassword string
 	DBName     string
+	DBSSLMode  string
 
 	// Core Redis
 	RedisAddr string
@@ -73,6 +74,9 @@ func LoadConfig() (Config, error) {
 		DBUser:     getEnv("DB_USER", "postgres"),
 		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "dylaris"),
+		// Defaults to disable to preserve existing internal-Docker setups; set
+		// DB_SSLMODE=require (or verify-full) when Postgres is remote.
+		DBSSLMode: getEnv("DB_SSLMODE", "disable"),
 
 		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisUser: getEnv("REDIS_USER", ""),

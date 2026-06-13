@@ -372,10 +372,14 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check install cooldown (30s between installs, admins bypass)
+	// Atomically claim the install cooldown (30s, admins bypass). SetNX closes
+	// the race where two concurrent requests both saw an expired TTL and both
+	// enqueued a setup.
 	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
 	if !isAdmin {
-		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
+		acquired, err := h.state.Redis.SetNX(context.Background(), cooldownKey, "1", 30*time.Second).Result()
+		if err == nil && !acquired {
+			ttl, _ := h.state.Redis.TTL(context.Background(), cooldownKey).Result()
 			sendJSONError(w, fmt.Sprintf("Please wait %d seconds before installing again", int(ttl.Seconds())), 429)
 			return
 		}
@@ -532,10 +536,13 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check install cooldown (30s, admins bypass)
+	// Atomically claim the install cooldown (30s, admins bypass) — SetNX closes
+	// the concurrent-request race.
 	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
 	if !isAdmin {
-		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
+		acquired, err := h.state.Redis.SetNX(context.Background(), cooldownKey, "1", 30*time.Second).Result()
+		if err == nil && !acquired {
+			ttl, _ := h.state.Redis.TTL(context.Background(), cooldownKey).Result()
 			sendJSONError(w, fmt.Sprintf("Please wait %d seconds before reinstalling", int(ttl.Seconds())), 429)
 			return
 		}

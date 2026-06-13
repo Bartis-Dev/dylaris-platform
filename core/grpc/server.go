@@ -57,6 +57,15 @@ func NewServer(registry *Registry, lookup NodeLookup, coreID string) *Server {
 }
 
 // NodeConnect handles a bidirectional stream from a Node.
+// tokenPrefix returns up to the first 8 chars of a token for logging, without
+// panicking on short/invalid tokens (e.g. a misconfigured node or a probe).
+func tokenPrefix(t string) string {
+	if len(t) > 8 {
+		return t[:8]
+	}
+	return t
+}
+
 // Flow: Node connects → sends NodeAuth → Core validates → stream stays open.
 func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	// Step 1: Wait for auth message (first message must be NodeAuth)
@@ -83,7 +92,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				AuthResult: &pb.AuthResult{Ok: false, Message: "invalid node token"},
 			},
 		})
-		return fmt.Errorf("auth failed for token %s: %w", auth.NodeToken[:8], err)
+		return fmt.Errorf("auth failed for token %s: %w", tokenPrefix(auth.NodeToken), err)
 	}
 
 	// Step 3: Send auth result
@@ -97,7 +106,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 
 	// Step 4: Register connection
 	conn := s.registry.Register(node.ID, auth.NodeToken, stream)
-	log.Printf("gRPC: Node %d connected (token=%s...)", node.ID, auth.NodeToken[:8])
+	log.Printf("gRPC: Node %d connected (token=%s...)", node.ID, tokenPrefix(auth.NodeToken))
 
 	defer func() {
 		s.registry.Unregister(node.ID)

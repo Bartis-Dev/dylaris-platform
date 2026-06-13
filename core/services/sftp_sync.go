@@ -66,7 +66,9 @@ func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[stri
 func (s *SFTPSyncService) sync() {
 	ctx := context.Background()
 
-	// 1. Publish auth hashes for all users (no TTL — hash only changes on password change)
+	// 1. Publish auth hashes for all users. Refreshed every tick (60s) with a
+	// 5min TTL so the hashes self-expire if this sync ever stops, bounding the
+	// exposure window if Redis read access leaks.
 	users, err := s.store.ListUsers()
 	if err != nil {
 		log.Printf("SFTPSync: failed to list users: %v", err)
@@ -77,7 +79,7 @@ func (s *SFTPSyncService) sync() {
 	for _, u := range users {
 		if u.Password != "" {
 			key := "sftp:auth:" + u.Username
-			pipe.Set(ctx, key, u.Password, 0)
+			pipe.Set(ctx, key, u.Password, 5*time.Minute)
 			valid[key] = true
 		}
 	}

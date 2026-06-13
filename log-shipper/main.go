@@ -236,8 +236,10 @@ func forwardInput(ctx context.Context, rdb *redis.Client, inputKey string, stdin
 			continue
 		}
 		if len(result) >= 2 {
-			cmd := result[1] + "\n"
-			if _, err := fmt.Fprint(stdin, cmd); err != nil {
+			// Strip embedded CR/LF so one queue entry can't smuggle extra
+			// console commands into the server stdin (newline injection).
+			line := strings.ReplaceAll(strings.ReplaceAll(result[1], "\r", ""), "\n", "")
+			if _, err := fmt.Fprint(stdin, line+"\n"); err != nil {
 				log.Printf("log-shipper: stdin write error: %v", err)
 				return
 			}

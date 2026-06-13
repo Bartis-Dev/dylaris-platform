@@ -244,7 +244,9 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := r.ParseMultipartForm(2 << 30); err != nil { // 2GB
+	// 32MiB in memory; larger files spill to a temp file on disk. Passing 2GiB
+	// here would buffer the whole upload in RAM.
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		sendJSONError(w, "File too large", http.StatusBadRequest)
 		return
 	}
@@ -252,6 +254,10 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 	path := r.FormValue("path")
 	if path == "" {
 		path = "/"
+	}
+	if strings.Contains(path, "..") {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
 	}
 
 	files := r.MultipartForm.File["files"]

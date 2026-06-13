@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -656,6 +657,10 @@ func applyTicketSchema(db *sql.DB) error {
 	return nil
 }
 
+// safeColumnName matches a plain SQL identifier — used to reject crafted
+// column names from a restored backup before they reach an INSERT.
+var safeColumnName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
 // bulkInsertRows inserts a slice of maps into the given table. Skips rows
 // whose PK already exists (ON CONFLICT DO NOTHING) so re-running migration
 // is safe. Returns (inserted, skipped, error).
@@ -675,6 +680,13 @@ func bulkInsertRows(db *sql.DB, table string, rows []map[string]interface{}) (in
 			cols = append(cols, k)
 		}
 		sort.Strings(cols) // deterministic placeholder positions
+		// Column names are interpolated into the INSERT, so they must be plain
+		// SQL identifiers — a backup file with a crafted key must not inject.
+		for _, c := range cols {
+			if !safeColumnName.MatchString(c) {
+				return inserted, skipped, fmt.Errorf("bulkInsertRows: unsafe column name %q for table %s", c, table)
+			}
+		}
 		placeholders := make([]string, len(cols))
 		args := make([]interface{}, len(cols))
 		for i, c := range cols {

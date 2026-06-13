@@ -83,6 +83,18 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.ScheduleCron = strings.TrimSpace(req.ScheduleCron)
 	req.Payload = strings.TrimSpace(req.Payload)
+	// Strip CR/LF so a "say" payload can't smuggle extra console commands via
+	// newline injection once the Node forwards it to the server stdin, and cap
+	// lengths so a task row can't carry an unbounded blob.
+	req.Payload = strings.ReplaceAll(strings.ReplaceAll(req.Payload, "\r", ""), "\n", "")
+	if len(req.Name) > 128 {
+		sendJSONError(w, "Name too long (max 128 characters)", http.StatusBadRequest)
+		return
+	}
+	if len(req.Payload) > 512 {
+		sendJSONError(w, "Payload too long (max 512 characters)", http.StatusBadRequest)
+		return
+	}
 	if !validTaskTypes[req.TaskType] {
 		sendJSONError(w, "Unsupported task type", http.StatusBadRequest)
 		return

@@ -127,13 +127,13 @@ func (s *StatsConsumerService) consumeStream(streamKey string) {
 			for _, msg := range stream.Messages {
 				data, ok := msg.Values["data"].(string)
 				if !ok {
-					ackIDs = append(ackIDs, msg.ID)
+					s.redis.XAck(ctx, streamKey, group, msg.ID) // undeliverable: ack now
 					continue
 				}
 
 				var batch statsBatchPayload
 				if err := json.Unmarshal([]byte(data), &batch); err != nil {
-					ackIDs = append(ackIDs, msg.ID)
+					s.redis.XAck(ctx, streamKey, group, msg.ID) // undeliverable: ack now
 					continue
 				}
 
