@@ -277,16 +277,24 @@ export default function ServerPropertiesView() {
         setExternalChange(null);
     }, [externalChange]);
 
+    // Mirror the latest doc into a ref so two inline edits fired before a
+    // re-render both merge onto the newest state instead of a stale closure
+    // (which dropped the earlier edit).
+    const docRef = useRef(doc);
+    useEffect(() => { docRef.current = doc; }, [doc]);
+
     const inlineSave = useCallback(async (key: string, newRaw: string) => {
-        if (!doc || !serverUuid) return;
+        const cur = docRef.current;
+        if (!cur || !serverUuid) return;
         const def = VANILLA_SCHEMA.find(d => d.key === key);
         // Optimistic update — keeps the UI responsive between keystrokes.
-        const nextValues = { ...doc.values, [key]: newRaw };
-        const nextOrder = doc.order.includes(key) ? doc.order : [...doc.order, key];
-        const nextDoc: PropertiesDoc = { ...doc, values: nextValues, order: nextOrder };
+        const nextValues = { ...cur.values, [key]: newRaw };
+        const nextOrder = cur.order.includes(key) ? cur.order : [...cur.order, key];
+        const nextDoc: PropertiesDoc = { ...cur, values: nextValues, order: nextOrder };
+        docRef.current = nextDoc; // keep the ref current for a rapid follow-up edit
         setDoc(nextDoc);
 
-        const fileText = serializeProperties(doc, { [key]: newRaw });
+        const fileText = serializeProperties(nextDoc, { [key]: newRaw });
         try {
             const res = await saveFile(filePath, fileText, serverUuid);
             if (res?.success === false) {
@@ -305,7 +313,7 @@ export default function ServerPropertiesView() {
         } catch {
             showToast('Network error', false);
         }
-    }, [doc, serverUuid, filePath, showToast]);
+    }, [serverUuid, filePath, showToast]);
 
     const saveAdvanced = useCallback(async () => {
         if (!serverUuid) return;
