@@ -299,16 +299,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         setIsWindowDragging(false);
     };
 
+    const handleDragOver = (e: DragEvent) => e.preventDefault();
     window.addEventListener('dragenter', handleDragEnter);
     window.addEventListener('dragleave', handleDragLeave);
     window.addEventListener('drop', handleDrop);
-    window.addEventListener('dragover', (e) => e.preventDefault());
-
+    window.addEventListener('dragover', handleDragOver);
 
     return () => {
         window.removeEventListener('dragenter', handleDragEnter);
         window.removeEventListener('dragleave', handleDragLeave);
         window.removeEventListener('drop', handleDrop);
+        window.removeEventListener('dragover', handleDragOver);
     };
   }, []);
   
@@ -330,18 +331,22 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [closeAllPopups]);
   
-    const handleRecursiveSearch = useCallback(async (path: string, term: string) => {
+    // Cap depth + result count so a broad global search can't fan out into an
+    // unbounded client-driven crawl of the whole tree.
+    const handleRecursiveSearch = useCallback(async (path: string, term: string, depth = 0): Promise<FileEntry[]> => {
         let results: FileEntry[] = [];
+        if (depth > 6) return results;
         const response = await adapter.getFiles(path, serverUuid);
 
         if (response.success) {
             for (const file of response.files) {
+                if (results.length >= 500) break;
                 const fullPath = path ? `${path}/${file.name}` : file.name;
                 if (file.name.toLowerCase().includes(term.toLowerCase())) {
                     results.push({ ...file, path: fullPath });
                 }
                 if (file.is_dir) {
-                    const subResults = await handleRecursiveSearch(fullPath, term);
+                    const subResults = await handleRecursiveSearch(fullPath, term, depth + 1);
                     results = results.concat(subResults);
                 }
             }
@@ -355,7 +360,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         // results of a newer search started after the term or path changed.
         const gen = ++searchGenRef.current;
         const search = async () => {
-            if (globalSearchTerm) {
+            // Require >=2 chars so a single keystroke can't trigger a full-tree crawl.
+            if (globalSearchTerm.length >= 2) {
                 setIsSearching(true);
                 const results = await handleRecursiveSearch(currentPath, globalSearchTerm);
                 if (gen !== searchGenRef.current) return;
