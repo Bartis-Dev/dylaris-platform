@@ -423,6 +423,14 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     } else {
       const isEditable = editableExtensions.some(ext => name.endsWith(ext));
       if (isEditable) {
+        // Refuse to open very large files in the in-memory editor; they freeze
+        // the tab. The list entry already carries the size.
+        const entry = files.find(f => f.name === name);
+        const EDIT_MAX_BYTES = 5 * 1024 * 1024;
+        if (entry && entry.size > EDIT_MAX_BYTES) {
+          showToast("File is too large to open in the editor.", 'error');
+          return;
+        }
         setIsEditorLoading(true);
         setEditingFile(name);
         setShowEditPopup(true);
