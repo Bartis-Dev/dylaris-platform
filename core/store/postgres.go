@@ -1,14 +1,27 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"dylaris-core/models"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"time"
 )
+
+// hashAuthToken returns the at-rest storage form of an emailed auth token
+// (password-reset, email-verification). Only the hash is persisted, so a DB
+// read can't recover a usable token, and lookups compare a fixed-length hash
+// (constant-bucket index probe) rather than the raw secret. Mirrors the
+// sha256-hex form used for API keys. 32-byte tokens hash to 64 hex chars,
+// which fits the VARCHAR(64) columns.
+func hashAuthToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
 
 type PostgresStore struct {
 	db *sql.DB
@@ -1351,7 +1364,7 @@ func (s *PostgresStore) GetUserByEmail(email string) (*models.User, error) {
 
 func (s *PostgresStore) GetUserByEmailVerificationToken(token string) (*models.User, error) {
 	query := `SELECT ` + userSelectCols + ` FROM users WHERE email_verification_token = $1 AND email_verification_token IS NOT NULL`
-	return scanUser(s.db.QueryRow(query, token).Scan)
+	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
 }
 
 // SetEmailVerificationToken stores a freshly generated token + sent timestamp.
@@ -1366,7 +1379,7 @@ func (s *PostgresStore) SetEmailVerificationToken(userID string, token string) e
 	}
 	_, err := s.db.Exec(
 		`UPDATE users SET email_verification_token = $1, email_verification_sent_at = NOW() WHERE id = $2`,
-		token, userID,
+		hashAuthToken(token), userID,
 	)
 	return err
 }
@@ -1399,13 +1412,13 @@ func (s *PostgresStore) GetUserByPasswordResetToken(token string) (*models.User,
 		WHERE password_reset_token = $1
 		  AND password_reset_token IS NOT NULL
 		  AND (password_reset_expires_at IS NULL OR password_reset_expires_at > NOW())`
-	return scanUser(s.db.QueryRow(query, token).Scan)
+	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
 }
 
 func (s *PostgresStore) SetPasswordResetToken(userID string, token string, expiresAt time.Time) error {
 	_, err := s.db.Exec(
 		`UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2 WHERE id = $3`,
-		token, expiresAt, userID,
+		hashAuthToken(token), expiresAt, userID,
 	)
 	return err
 }

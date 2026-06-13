@@ -80,10 +80,17 @@ type UpdateRequest struct {
 func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
-		// Fallback: EventSource (SSE) cannot send custom headers, so accept ?token= query param
+		// Fallback: EventSource (SSE) cannot send custom headers, so accept a
+		// ?token= query param. Confine it to GET (SSE + downloads) — a mutating
+		// verb never legitimately authenticates via the URL — and when used,
+		// stop the token from leaking onward: no-referrer keeps it out of the
+		// Referer header if the page navigates away, no-store keeps it out of
+		// shared caches/proxies.
 		if authHeader == "" {
-			if qToken := r.URL.Query().Get("token"); qToken != "" {
+			if qToken := r.URL.Query().Get("token"); qToken != "" && r.Method == http.MethodGet {
 				authHeader = "Bearer " + qToken
+				w.Header().Set("Referrer-Policy", "no-referrer")
+				w.Header().Set("Cache-Control", "no-store")
 			}
 		}
 		if authHeader == "" {
