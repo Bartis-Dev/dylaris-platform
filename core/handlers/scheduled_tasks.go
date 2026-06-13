@@ -34,8 +34,7 @@ type scheduledTaskRequest struct {
 	Enabled      *bool  `json:"enabled,omitempty"`
 }
 
-// validTaskTypes pins V1 to the documented two. P9 will extend with "rcon"
-// (run a single rcon command on a schedule).
+// validTaskTypes pins the supported scheduled-task types.
 var validTaskTypes = map[string]bool{"restart": true, "say": true}
 
 func (h *ScheduledTasksHandler) canAccess(r *http.Request, serverID int) (*models.Server, bool) {

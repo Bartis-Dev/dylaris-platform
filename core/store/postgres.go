@@ -1469,8 +1469,8 @@ func (s *PostgresStore) SetUserSecurityQuestions(userID string, qaJSON string) e
 // ==========================================
 
 func (s *PostgresStore) ListInactiveCandidates(idleSince time.Time) ([]InactiveCandidate, error) {
-	// "history" today = owns or is invited to any server. When tickets land
-	// in Phase 2 we'll OR in EXISTS(SELECT 1 FROM tickets WHERE user_id=u.id).
+	// "history" today = owns or is invited to any server. Ticket ownership is
+	// not folded in here yet (would be EXISTS(SELECT 1 FROM tickets WHERE user_id=u.id)).
 	query := `
 		SELECT u.id, u.username, COALESCE(u.email, ''), u.last_login_at,
 		       EXISTS (SELECT 1 FROM servers       WHERE owner_id = u.id)
