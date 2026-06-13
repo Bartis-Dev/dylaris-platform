@@ -13,7 +13,8 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
     "@lezer/highlight": "^1.2.1",
-    "@uiw/react-codemirror": "^4.25.9"
+    "@uiw/react-codemirror": "^4.25.9",
+    "jszip": "^3.10.1"
   },
   "peerDependencies": {
     "lucide-react": ">=0.400",

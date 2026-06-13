@@ -1,15 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
+import JSZip from 'jszip';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown, ChevronRight, ChevronDown } from 'lucide-react';
 import type { FileEntry, FileBrowserAdapter, FileBrowserProps } from './types';
 import { formatBytes, validFilenameRegex, editableExtensions, getCopyName } from './utils';
 
 // Lazy-load the CodeMirror bundle — only pulled in when an edit modal opens.
 const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
-
-// We load JSZip from a CDN, so no import is needed here.
-declare const JSZip: any;
 
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
@@ -99,23 +97,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const [selectiveLoading, setSelectiveLoading] = useState(false);
   const [selectiveDownloading, setSelectiveDownloading] = useState(false);
 
-  // Load the JSZip library + fetch transfer limits
+  // JSZip is now a bundled dependency (no CDN/SRI/StrictMode concerns); just
+  // fetch the transfer limits up front.
   useEffect(() => {
-    const jszipScript = document.createElement('script');
-    jszipScript.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-    jszipScript.async = true;
-    document.body.appendChild(jszipScript);
-
     adapter.getUserLimits().then(res => {
       if (res.success) {
         setUploadLimit(res.uploadLimit);
         setDownloadLimit(res.downloadLimit);
       }
     });
-
-    return () => {
-        document.body.removeChild(jszipScript);
-    }
   }, []);
 
 
@@ -590,25 +580,36 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     const firstItem = filesToUpload[0];
     const isFolder = firstItem.webkitGetAsEntry?.()?.isDirectory || (firstItem.webkitRelativePath && firstItem.webkitRelativePath.includes('/'));
     
+    // For folders we must keep the original entries (webkitGetAsEntry /
+    // createReader only work on the live drop items). For single files we
+    // materialize the File NOW: getAsFile() on a DataTransferItem is only
+    // reliable during the drop event, so deferring it to executeUpload (after
+    // React re-renders) can return null and yield a broken `new File([null])`.
     let originalName = '';
+    let itemsForUpload: any[] = filesToUpload;
     if (isFolder) {
       originalName = firstItem.webkitRelativePath ? firstItem.webkitRelativePath.split('/')[0] : firstItem.webkitGetAsEntry().name;
     } else {
-       const fileObjects = await Promise.all(
-          Array.from(filesToUpload).map(async (item: any) => item.kind === 'file' ? item.getAsFile() : item)
-        );
-      if(fileObjects.length > 1) {
+      const fileObjects = await Promise.all(
+        Array.from(filesToUpload).map(async (item: any) => item.kind === 'file' ? item.getAsFile() : item)
+      );
+      if (fileObjects.length > 1) {
         setPopupError("For simplicity, please upload multiple files as a single zip archive.");
         return;
       }
+      if (!fileObjects[0]) {
+        setPopupError("Could not read the dropped file. Please pick it again.");
+        return;
+      }
       originalName = fileObjects[0].name;
+      itemsForUpload = fileObjects;
     }
-    
+
     const finalName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
     // Check upload size limit
     if (uploadLimit > 0) {
-      const totalSize = Array.from(filesToUpload).reduce((sum: number, f: any) => sum + (f.size || 0), 0);
+      const totalSize = Array.from(itemsForUpload).reduce((sum: number, f: any) => sum + (f.size || 0), 0);
       if (totalSize > uploadLimit) {
         const limitStr = uploadLimit >= 1024 * 1024 * 1024
           ? `${(uploadLimit / (1024 * 1024 * 1024)).toFixed(1)} GB`
@@ -619,9 +620,9 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }
 
     // Save items for potential retries from conflict resolution
-    setUploadItems({ items: filesToUpload, isFolder, name: finalName });
+    setUploadItems({ items: itemsForUpload, isFolder, name: finalName });
 
-    executeUpload(finalName, filesToUpload, isFolder);
+    executeUpload(finalName, itemsForUpload, isFolder);
   };
 
   const executeUpload = async (finalName: string, items: any[], isFolder: boolean, strategy: 'check' | 'replace' | 'merge' = 'check', mergeConflictStrategy? : 'replace' | 'ignore') => {
@@ -653,7 +654,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     };
     
     try {
-      if (typeof JSZip === 'undefined') throw new Error('Zip library not loaded.');
       let filesToActuallyUpload: File[];
 
       if (isFolder) {
@@ -711,10 +711,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         });
         filesToActuallyUpload = [new File([content], `${finalName}.zip`)];
       } else {
-        filesToActuallyUpload = await Promise.all(items.map(async (item: any) => {
-             const file = item.kind === 'file' ? await item.getAsFile() : item;
-             return new File([file], finalName, {type: file.type});
-        }));
+        // items are already materialized File objects (startUploadProcess
+        // calls getAsFile during the drop event), so just re-wrap with the
+        // sanitized name.
+        filesToActuallyUpload = items.map((file: any) => new File([file], finalName, { type: file.type }));
       }
 
       setUploadStatus('Uploading...');
@@ -887,8 +887,11 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               <button title="Copy" onClick={(e) => { e.stopPropagation(); setActionTarget(file); setNewName(getCopyName(file.name, file.is_dir, files)); setPopupMode('copy'); setPopupError(''); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
                 <Copy size={18} />
               </button>
-              <button title="Download" onClick={async (e) => {
+              <button title="Download" disabled={!!downloadProgress} onClick={async (e) => {
                 e.stopPropagation();
+                // Single-flight: ignore clicks while a download is already
+                // running so a double-click can't launch overlapping downloads.
+                if (downloadProgress) return;
                 if (downloadLimit > 0 && file.size > downloadLimit) {
                   const limitStr = downloadLimit >= 1024 * 1024 * 1024 ? `${(downloadLimit / (1024 * 1024 * 1024)).toFixed(1)} GB` : `${Math.round(downloadLimit / (1024 * 1024))} MB`;
                   setToastMessage({ message: `File size exceeds download limit of ${limitStr}.`, type: 'error' }); return;
@@ -908,7 +911,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                   }
                   setDownloadProgress(null);
                 }
-              }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+              }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                 <Download size={18} />
               </button>
               <button title="Delete" onClick={(e) => handleDeleteClick(e, file)} className="p-2 flex items-center justify-center text-(--error) rounded-md transition-colors hover:bg-(--error) hover:text-white">
