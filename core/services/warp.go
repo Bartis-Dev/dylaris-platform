@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/hkdf"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"dylaris-core/store"
@@ -46,12 +48,21 @@ func (s *WarpService) LeaderPublicKey() (string, error) {
 	return DeriveLeaderPublicKey(s.clusterSecret, s.leaderID)
 }
 
+// leaderKeyHKDFSalt is the fixed domain-separation salt for the leader-key
+// derivation. MUST stay byte-identical to gateway/warp/keys.go.
+const leaderKeyHKDFSalt = "dylaris/warp/leader-key/v1"
+
 // DeriveLeaderPublicKey reproduces the gateway warp DeriveLeaderKey derivation
-// so Core knows the leader's pubkey without a heartbeat. MUST stay byte-identical
-// to gateway/warp/keys.go DeriveLeaderKey.
+// so Core knows the leader's pubkey without a heartbeat. It expands the cluster
+// secret with HKDF-SHA256 (fixed salt + leader ID as info). MUST stay
+// byte-identical to gateway/warp/keys.go DeriveLeaderKey.
 func DeriveLeaderPublicKey(clusterSecret, leaderID string) (string, error) {
-	sum := sha256.Sum256([]byte("warp-leader:" + clusterSecret + ":" + leaderID))
-	k, err := wgtypes.NewKey(sum[:])
+	var km [32]byte
+	r := hkdf.New(sha256.New, []byte(clusterSecret), []byte(leaderKeyHKDFSalt), []byte(leaderID))
+	if _, err := io.ReadFull(r, km[:]); err != nil {
+		return "", fmt.Errorf("hkdf expand: %w", err)
+	}
+	k, err := wgtypes.NewKey(km[:])
 	if err != nil {
 		return "", fmt.Errorf("derive leader key: %w", err)
 	}
