@@ -13,6 +13,17 @@ export const validFilenameRegex = /^[a-zA-Z0-9._-]+$/;
 
 export const editableExtensions = ['.txt', '.yml', '.properties', '.config', '.log', '.json', '.yaml', '.cfg'];
 
+// Shorten a deep path for display: keep first + last segment, elide the
+// middle. Used for the secondary path line on global-search result rows.
+export function getTruncatedPath(fullPath: string): string {
+  if (!fullPath) return '';
+  const parts = fullPath.split('/');
+  if (parts.length <= 3) {
+    return `/${fullPath}`;
+  }
+  return `/${parts[0]}/.../${parts[parts.length - 1]}`;
+}
+
 export function getCopyName(name: string, isDir: boolean, existingFiles: FileEntry[]): string {
   const existingNames = new Set(existingFiles.map(f => f.name));
   const lastDot = isDir ? -1 : name.lastIndexOf('.');

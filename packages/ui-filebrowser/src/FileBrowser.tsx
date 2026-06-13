@@ -2,32 +2,20 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import JSZip from 'jszip';
-import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown, ChevronRight, ChevronDown } from 'lucide-react';
+import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import type { FileEntry, FileBrowserProps } from './types';
-import { formatBytes, validFilenameRegex, editableExtensions, getCopyName } from './utils';
+import { formatBytes, validFilenameRegex, editableExtensions, getCopyName, getTruncatedPath } from './utils';
+import { useDelayedFlag } from './useDelayedFlag';
+import Toast from './Toast';
+import Breadcrumbs from './Breadcrumbs';
+import DownloadProgress from './DownloadProgress';
+import SelectiveDownloadModal from './SelectiveDownloadModal';
 
 // Lazy-load the CodeMirror bundle — only pulled in when an edit modal opens.
 const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
 
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
-
-// useDelayedFlag mirrors `active`, but only flips on once it has stayed
-// true for `delayMs`. A fast operation (folder switch that resolves in
-// well under the delay) never trips it — so the "Loading…" line doesn't
-// flash on every quick navigation, only on genuinely slow loads.
-function useDelayedFlag(active: boolean, delayMs: number): boolean {
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    if (!active) {
-      setShown(false);
-      return;
-    }
-    const t = setTimeout(() => setShown(true), delayMs);
-    return () => clearTimeout(t);
-  }, [active, delayMs]);
-  return shown;
-}
 
 const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter }) => {
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -193,41 +181,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }
     setDownloadProgress(null);
     setSelectiveDownloading(false);
-  };
-
-  const renderSelectiveTree = (parentPath: string, depth: number): React.ReactNode => {
-    const entries = selectiveTree[parentPath];
-    if (!entries) return null;
-
-    return entries.map(entry => {
-      const entryPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
-      const isExpanded = selectiveExpanded.has(entryPath);
-      const isChecked = selectiveAll || selectiveChecked.has(entryPath);
-
-      return (
-        <div key={entryPath}>
-          <div className="flex items-center gap-1.5 py-1 px-2 hover:bg-(--base-02) rounded-sm" style={{ paddingLeft: `${depth * 20 + 8}px` }}>
-            {entry.is_dir ? (
-              <button onClick={() => toggleSelectiveExpand(entryPath)} className="p-0.5 text-(--base-06) hover:text-(--base-09)">
-                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
-            ) : (
-              <span className="w-[18px]" />
-            )}
-            <input
-              type="checkbox"
-              checked={isChecked}
-              onChange={() => toggleSelectiveCheck(entryPath)}
-              className="accent-(--accent) w-3.5 h-3.5"
-            />
-            {entry.is_dir ? <Folder size={14} className="text-(--primary-light) shrink-0" /> : <FileIcon size={14} className="text-(--base-06) shrink-0" />}
-            <span className="text-sm text-(--base-09) truncate">{entry.name}</span>
-            <span className="text-xs text-(--base-06) ml-auto shrink-0">{formatBytes(entry.size)}</span>
-          </div>
-          {entry.is_dir && isExpanded && renderSelectiveTree(entryPath, depth + 1)}
-        </div>
-      );
-    });
   };
 
   useEffect(() => {
@@ -753,30 +706,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   };
 
 
-  const renderBreadcrumbs = () => {
-    const pathSegments = currentPath.split('/').filter((p: string) => p);
-    const breadcrumbs = [{ name: 'servers', path: '' }];
-    let cumulativePath = '';
-    for (const segment of pathSegments) {
-      cumulativePath = cumulativePath ? `${cumulativePath}/${segment}` : segment;
-      breadcrumbs.push({ name: segment, path: cumulativePath });
-    }
-    return (
-      <div className="flex items-center text-xl text-(--base-09) flex-wrap">
-        {breadcrumbs.map((crumb, index) => (
-          <React.Fragment key={crumb.path}>
-            {index > 0 && <span className="mx-2 text-(--base-07)">/</span>}
-            {index < breadcrumbs.length - 1 ? (
-              <button onClick={() => fetchFiles(crumb.path)} className="hover:text-(--primary-light) transition-colors">{crumb.name}</button>
-            ) : (
-              <span className="text-(--base-07)">{crumb.name}</span>
-            )}
-          </React.Fragment>
-        ))}
-      </div>
-    );
-  };
-
   const getPopupTitle = () => {
     switch (popupMode) {
       case 'create': return 'Create New';
@@ -809,15 +738,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     return <FileIcon size={36} className="mr-3 text-(--primary-light)" />;
   }
   
-  const getTruncatedPath = (fullPath: string) => {
-    if(!fullPath) return '';
-    const parts = fullPath.split('/');
-    if (parts.length <= 3) {
-      return `/${fullPath}`;
-    }
-    return `/${parts[0]}/.../${parts[parts.length - 1]}`;
-  }
-
 
   return (
     <div className="p-6 card">
@@ -830,7 +750,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         .animate-toast { animation: slide-in-and-fade-out 3s ease-in-out forwards; }
       `}</style>
       <div className="flex items-center gap-3 mb-4">
-        <div className="flex-1 min-w-0">{renderBreadcrumbs()}</div>
+        <div className="flex-1 min-w-0"><Breadcrumbs currentPath={currentPath} onNavigate={fetchFiles} /></div>
         <label className="flex items-center gap-2 bg-(--base-03) border border-(--base-04) rounded-md px-3 w-56 h-[37px] shrink-0 cursor-text transition-[border-color,box-shadow] focus-within:border-(--accent) focus-within:shadow-[0_0_0_3px_rgba(112,72,200,0.15)]">
             <Search size={16} className="text-(--base-07) shrink-0" />
             <input
@@ -1158,87 +1078,29 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       
       {/* Selective Download Popup */}
       {selectiveDownloadTarget && (
-        <div className="modal-overlay animate-fade-in">
-          <div className="modal-panel w-full max-w-lg">
-            <div className="modal-header">
-              <h2 className="modal-title">Download: {selectiveDownloadTarget.name}/</h2>
-              <button onClick={() => setSelectiveDownloadTarget(null)} className="text-(--base-06) hover:text-(--base-09)"><X size={18} /></button>
-            </div>
-            <div className="modal-body">
-              <div className="flex items-center gap-2 mb-3 pb-2 border-b border-(--base-03)">
-                <input
-                  type="checkbox"
-                  checked={selectiveAll}
-                  onChange={() => {
-                    setSelectiveAll(!selectiveAll);
-                    if (!selectiveAll) setSelectiveChecked(new Set());
-                  }}
-                  className="accent-(--accent) w-3.5 h-3.5"
-                />
-                <span className="text-sm font-medium text-(--base-09)">Select All</span>
-              </div>
-              <div className="max-h-80 overflow-y-auto">
-                {selectiveLoading ? (
-                  <div className="flex items-center justify-center py-8 text-(--base-06)">Loading...</div>
-                ) : (
-                  renderSelectiveTree('', 0)
-                )}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 p-4 border-t border-(--base-03)">
-              <button onClick={() => setSelectiveDownloadTarget(null)} className="btn btn-secondary px-4 py-2 text-sm">Cancel</button>
-              <button
-                onClick={handleSelectiveDownload}
-                disabled={selectiveDownloading || (!selectiveAll && selectiveChecked.size === 0)}
-                className="btn btn-primary px-4 py-2 text-sm disabled:opacity-50"
-              >
-                <Download size={14} />
-                {selectiveDownloading ? 'Downloading...' : 'Download .zip'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <SelectiveDownloadModal
+          target={selectiveDownloadTarget}
+          tree={selectiveTree}
+          expanded={selectiveExpanded}
+          checked={selectiveChecked}
+          selectAll={selectiveAll}
+          loading={selectiveLoading}
+          downloading={selectiveDownloading}
+          onClose={() => setSelectiveDownloadTarget(null)}
+          onToggleSelectAll={() => {
+            setSelectiveAll(!selectiveAll);
+            if (!selectiveAll) setSelectiveChecked(new Set());
+          }}
+          onToggleExpand={toggleSelectiveExpand}
+          onToggleCheck={toggleSelectiveCheck}
+          onDownload={handleSelectiveDownload}
+        />
       )}
 
       {/* Download Progress */}
-      {downloadProgress && (
-        <div className="fixed bottom-4 right-4 z-50 w-68 bg-(--base-01) border border-(--base-04) rounded-lg shadow-xl p-3 animate-fade-in">
-          <div className="flex items-center gap-2 mb-2">
-            <Download size={13} className="text-(--accent) shrink-0" />
-            <span className="text-xs text-(--base-08) truncate font-mono flex-1">{downloadProgress.filename}</span>
-            <span className="text-[10px] text-(--base-05) font-mono shrink-0">
-              {downloadProgress.total > 0
-                ? `${Math.round((downloadProgress.loaded / downloadProgress.total) * 100)}%`
-                : formatBytes(downloadProgress.loaded)}
-            </span>
-          </div>
-          <div className="w-full h-1 bg-(--base-03) rounded-full overflow-hidden">
-            {downloadProgress.total > 0 ? (
-              <div
-                className="h-full bg-(--accent) rounded-full transition-all duration-100"
-                style={{ width: `${Math.min(100, (downloadProgress.loaded / downloadProgress.total) * 100)}%` }}
-              />
-            ) : (
-              <div className="h-full bg-(--accent) rounded-full w-1/3 animate-pulse" />
-            )}
-          </div>
-          {downloadProgress.total > 0 && (
-            <div className="flex justify-between text-[10px] text-(--base-05) font-mono mt-1.5">
-              <span>{formatBytes(downloadProgress.loaded)}</span>
-              <span>{formatBytes(downloadProgress.total)}</span>
-            </div>
-          )}
-        </div>
-      )}
+      {downloadProgress && <DownloadProgress progress={downloadProgress} />}
 
-      {toastMessage && (
-        <div className="toast-container" style={{ left: '50%', right: 'auto', transform: 'translateX(-50%)' }}>
-          <div className="toast animate-toast">
-            <div className={`toast-bar ${toastMessage.type === 'error' ? 'bg-(--error)' : 'bg-(--accent)'}`}></div>
-            <span className="text-sm text-(--base-09)">{toastMessage.message}</span>
-          </div>
-        </div>
-      )}
+      {toastMessage && <Toast message={toastMessage.message} type={toastMessage.type} />}
     </div>
   );
 };
