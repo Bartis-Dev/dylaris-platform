@@ -308,10 +308,14 @@ func installPaper(dir, version string) error {
 		return fmt.Errorf("failed to query PaperMC API: %v", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("PaperMC API returned HTTP %d for version %s", resp.StatusCode, version)
+	}
 
 	var result struct {
 		Builds []struct {
-			Build     int `json:"build"`
+			Build     int    `json:"build"`
+			Channel   string `json:"channel"`
 			Downloads struct {
 				Application struct {
 					Name string `json:"name"`
@@ -326,7 +330,15 @@ func installPaper(dir, version string) error {
 		return fmt.Errorf("no builds found for Paper %s", version)
 	}
 
+	// Prefer the newest "default" (stable) build; fall back to the newest of
+	// any channel if Paper only published experimental builds for this version.
 	latest := result.Builds[len(result.Builds)-1]
+	for i := len(result.Builds) - 1; i >= 0; i-- {
+		if result.Builds[i].Channel == "default" {
+			latest = result.Builds[i]
+			break
+		}
+	}
 	fileName := latest.Downloads.Application.Name
 	downloadURL := fmt.Sprintf(
 		"https://api.papermc.io/v2/projects/paper/versions/%s/builds/%d/downloads/%s",

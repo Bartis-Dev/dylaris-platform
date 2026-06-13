@@ -87,14 +87,35 @@ func (s *SFTPServer) authUser(username, password string) (*ssh.Permissions, erro
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
+	// Per-username lockout to blunt brute force: after 10 failures in the
+	// sliding 15min window, reject outright (with a small delay).
+	failKey := "sftp:fail:" + username
+	if n, _ := s.rdb.Get(ctx, failKey).Int(); n >= 10 {
+		time.Sleep(time.Second)
+		return nil, fmt.Errorf("too many failed attempts, try again later")
+	}
+
 	hash, err := s.rdb.Get(ctx, "sftp:auth:"+username).Result()
 	if err != nil {
+		s.recordAuthFail(ctx, failKey)
 		return nil, fmt.Errorf("user not found")
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+		s.recordAuthFail(ctx, failKey)
+		time.Sleep(500 * time.Millisecond) // slow down credential stuffing
 		return nil, fmt.Errorf("invalid password")
 	}
+	s.rdb.Del(ctx, failKey) // success clears the counter
 	return &ssh.Permissions{Extensions: map[string]string{"username": username}}, nil
+}
+
+// recordAuthFail bumps the per-username failure counter and (re)arms its
+// sliding 15min TTL in one round-trip.
+func (s *SFTPServer) recordAuthFail(ctx context.Context, key string) {
+	pipe := s.rdb.Pipeline()
+	pipe.Incr(ctx, key)
+	pipe.Expire(ctx, key, 15*time.Minute)
+	_, _ = pipe.Exec(ctx)
 }
 
 func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig) {
