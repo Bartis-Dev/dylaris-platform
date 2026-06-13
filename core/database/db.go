@@ -1102,7 +1102,7 @@ func createGatewayTables(db *sql.DB) error {
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMPTZ,
-			CONSTRAINT idx_domain_port UNIQUE (domain, target_port)
+			CONSTRAINT idx_route_domain UNIQUE (domain)
 		)`,
 		// Route limits (still managed by Core raw SQL)
 		`CREATE TABLE IF NOT EXISTS gateway_route_limits (
@@ -1157,13 +1157,6 @@ func createGatewayTables(db *sql.DB) error {
 			IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='gateway_links_token_key' AND conrelid='gateway_links'::regclass)
 			AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uni_gateway_links_token' AND conrelid='gateway_links'::regclass) THEN
 				ALTER TABLE gateway_links RENAME CONSTRAINT gateway_links_token_key TO uni_gateway_links_token;
-			END IF;
-		END $$`,
-		// Same idea for gateway_routes domain+target_port composite unique.
-		`DO $$ BEGIN
-			IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='gateway_routes_domain_target_port_key' AND conrelid='gateway_routes'::regclass)
-			AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='idx_domain_port' AND conrelid='gateway_routes'::regclass) THEN
-				ALTER TABLE gateway_routes RENAME CONSTRAINT gateway_routes_domain_target_port_key TO idx_domain_port;
 			END IF;
 		END $$`,
 	}
