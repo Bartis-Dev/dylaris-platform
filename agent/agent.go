@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -420,6 +421,20 @@ func (m *Monitor) saveDataLocked() {
 	if m.dataFile == "" {
 		return
 	}
-	data, _ := json.Marshal(m.data)
-	os.WriteFile(m.dataFile, data, 0644)
+	data, err := json.Marshal(m.data)
+	if err != nil {
+		log.Printf("agent: marshal monitor data: %v", err)
+		return
+	}
+	// Atomic write: stage to a temp file then rename over the target so a crash
+	// mid-write can't leave a truncated/corrupt data file.
+	tmp := m.dataFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		log.Printf("agent: write monitor data: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, m.dataFile); err != nil {
+		log.Printf("agent: rename monitor data: %v", err)
+		os.Remove(tmp)
+	}
 }

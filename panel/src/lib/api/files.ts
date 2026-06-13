@@ -101,8 +101,12 @@ export function uploadFiles(path: string, files: FileList, onProgress: (p: numbe
 
         xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
         xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-            else resolve({ success: false, message: 'Upload failed' });
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try { resolve(JSON.parse(xhr.responseText)); }
+                catch { resolve({ success: false, message: 'Bad upload response' }); }
+            } else {
+                resolve({ success: false, message: 'Upload failed' });
+            }
         };
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
 
@@ -122,8 +126,12 @@ export function uploadLibraryFiles(path: string, files: FileList, onProgress: (p
 
         xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
         xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-            else resolve({ success: false, message: 'Upload failed' });
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try { resolve(JSON.parse(xhr.responseText)); }
+                catch { resolve({ success: false, message: 'Bad upload response' }); }
+            } else {
+                resolve({ success: false, message: 'Upload failed' });
+            }
         };
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
 
