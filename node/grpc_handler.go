@@ -125,7 +125,10 @@ func (h *StreamHandler) validatePath(reqPath, serverUUID string) (string, error)
 	fullPath := filepath.Join(dataPath, reqPath)
 	cleanPath := filepath.Clean(fullPath)
 
-	if !strings.HasPrefix(cleanPath, filepath.Clean(dataPath)) {
+	// Compare with a trailing separator so a sibling dir that merely shares the
+	// prefix (e.g. dataPath+"-evil") cannot pass the containment check.
+	cleanData := filepath.Clean(dataPath)
+	if cleanPath != cleanData && !strings.HasPrefix(cleanPath, cleanData+string(os.PathSeparator)) {
 		return "", fmt.Errorf("access denied: path traversal")
 	}
 	return cleanPath, nil

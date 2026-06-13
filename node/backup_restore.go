@@ -132,8 +132,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			}
 			f.Close()
 			extracted++
-		case tar.TypeSymlink:
-			os.Symlink(hdr.Linkname, cleanPath)
+		case tar.TypeSymlink, tar.TypeLink:
+			// Skip links: an unvalidated link target could point outside the
+			// staging dir and escape on later access. MC server backups don't
+			// rely on links.
+			log.Printf("restore: skipping link entry %q -> %q", hdr.Name, hdr.Linkname)
 		default:
 			// Skip block/char devices etc.
 		}

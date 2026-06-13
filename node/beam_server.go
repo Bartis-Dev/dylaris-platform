@@ -337,7 +337,10 @@ func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string,
 	fullPath := filepath.Join(dataPath, reqPath)
 	cleanPath := filepath.Clean(fullPath)
 
-	if !strings.HasPrefix(cleanPath, filepath.Clean(dataPath)) {
+	// Trailing-separator containment so a sibling dir sharing the prefix
+	// (dataPath+"-evil") cannot pass.
+	cleanData := filepath.Clean(dataPath)
+	if cleanPath != cleanData && !strings.HasPrefix(cleanPath, cleanData+string(os.PathSeparator)) {
 		return "", fmt.Errorf("access denied: path traversal")
 	}
 	if op == "write" && isPlatformReservedName(filepath.Base(cleanPath)) {

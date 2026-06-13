@@ -52,11 +52,8 @@ func ValidateBeamTicket(secret, token string) (*BeamClaims, error) {
 	}
 	var c BeamClaims
 	tk, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (interface{}, error) {
-		if t.Method.Alg() != "HS256" {
-			return nil, errors.New("auth: unexpected signing method")
-		}
 		return []byte(secret), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}
