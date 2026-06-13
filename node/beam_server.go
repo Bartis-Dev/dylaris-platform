@@ -333,15 +333,12 @@ func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string,
 		return "", fmt.Errorf("server_uuid required")
 	}
 
-	dataPath := s.storageMgr.GetServerDir(serverUUID)
-	fullPath := filepath.Join(dataPath, reqPath)
-	cleanPath := filepath.Clean(fullPath)
-
-	// Trailing-separator containment so a sibling dir sharing the prefix
-	// (dataPath+"-evil") cannot pass.
-	cleanData := filepath.Clean(dataPath)
-	if cleanPath != cleanData && !strings.HasPrefix(cleanPath, cleanData+string(os.PathSeparator)) {
-		return "", fmt.Errorf("access denied: path traversal")
+	// Shared traversal guard (trailing-separator containment) — see
+	// resolveWithinDir in grpc_handler.go. Beam layers its write-time
+	// reserved-name check on top.
+	cleanPath, err := resolveWithinDir(s.storageMgr.GetServerDir(serverUUID), reqPath)
+	if err != nil {
+		return "", err
 	}
 	if op == "write" && isPlatformReservedName(filepath.Base(cleanPath)) {
 		return "", fmt.Errorf("access denied: %q is platform-managed and cannot be overwritten", filepath.Base(cleanPath))

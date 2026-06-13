@@ -231,7 +231,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// prefix for display, but on-disk we collapse it to the leaf
 		// filename — the directory is server-scoped already so the prefix
 		// adds no information.
-		dir := filepath.Join(resolveServerRoot(sm, serverUUID), nodeLocalBackupDir)
+		dir := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create node-local backup dir: %w", err)
 		}
@@ -266,12 +266,6 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 	}
 }
 
-// nodeLocalBackupDir is the hidden subdirectory used by the node-local
-// storage mode. Keeping it as a constant alongside the worker means
-// grpc_backup.go and backup_worker.go agree on the location without
-// either importing the other.
-const nodeLocalBackupDir = ".dylaris-backups"
-
 // nodeLocalArchiveName collapses a storage key into its leaf filename so
 // archives land directly under .dylaris-backups/ regardless of how Core
 // chose to encode the key (job-N/, server-uuid/, etc.).
@@ -294,7 +288,7 @@ func deleteBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		os.Remove(filepath.Join(cfg.BasePath, filepath.Clean("/"+key)))
 	case "node-local":
 		archive := nodeLocalArchiveName(key)
-		os.Remove(filepath.Join(resolveServerRoot(sm, serverUUID), nodeLocalBackupDir, archive))
+		os.Remove(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive))
 	case "s3":
 		client, bucket, err := buildS3Client(ctx, info.Config)
 		if err != nil {

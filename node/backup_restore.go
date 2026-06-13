@@ -202,7 +202,7 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 
 	case "node-local":
 		archive := nodeLocalArchiveName(key)
-		full := filepath.Join(resolveServerRoot(sm, serverUUID), nodeLocalBackupDir, archive)
+		full := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive)
 		return os.Open(full)
 
 	case "s3":

@@ -15,6 +15,9 @@ import (
 // existing file-browser write guard (validateBeamPath in beam_server.go)
 // reject any attempt to write through it; this file only ever resolves
 // paths *into* that directory for the dedicated backup RPCs.
+//
+// Single source of truth for the directory name across the package —
+// grpc_backup.go, backup_worker.go and backup_restore.go all reference it.
 const backupDirName = ".dylaris-backups"
 
 // resolveBackupDir returns the absolute path of the .dylaris-backups

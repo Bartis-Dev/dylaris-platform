@@ -427,22 +427,6 @@ func (dm *DockerManager) PullImage(image string) {
 	reader.Close()
 }
 
-// ContainerProxyIP returns the container's IP inside the given proxy network
-// (empty when not attached / container missing). Used by the panel to display
-// the private endpoint a proxy should target.
-func (dm *DockerManager) ContainerProxyIP(containerUUID, proxyUUID string) string {
-	containerName := fmt.Sprintf("mc_%s", containerUUID)
-	netName := proxyNetworkName(proxyUUID)
-	inspect, err := dm.cli.ContainerInspect(dm.ctx, containerName)
-	if err != nil || inspect.NetworkSettings == nil {
-		return ""
-	}
-	if attached, ok := inspect.NetworkSettings.Networks[netName]; ok && attached != nil {
-		return attached.IPAddress
-	}
-	return ""
-}
-
 // CreateServerPodStopped creates a container without starting it (Step 1 - pending_setup).
 // No image pull, no EULA - just directory + stopped container.
 func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
@@ -499,23 +483,6 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	}
 
 	log.Printf("Container %s created (stopped, awaiting setup)", containerName)
-	return nil
-}
-
-// CreateServerPod creates a container with start command and starts it (after setup).
-func (dm *DockerManager) CreateServerPod(config ServerConfig) error {
-	log.Printf("Starting Server Container for: %s", config.UUID)
-
-	netID, err := dm.ensureGlobalNetwork()
-	if err != nil {
-		return err
-	}
-
-	_, err = dm.startMinecraftContainer(config, netID)
-	if err != nil {
-		return err
-	}
-	log.Printf("MC Container %s running", config.UUID)
 	return nil
 }
 

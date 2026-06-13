@@ -85,6 +85,14 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// uuidRegex / subServerRegex validate the env vars that get interpolated into
+// Redis keys. Only Node sets these today, but unvalidated input could collide
+// key namespaces (e.g. SUB_SERVER=foo:logs) or inject separators.
+var (
+	uuidRegex      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	subServerRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+)
+
 func connectRedis() *redis.Client {
 	addr := getEnv("REDIS_ADDR", "localhost:6379")
 	user := getEnv("REDIS_USER", "")
@@ -138,8 +146,16 @@ func applyCarriageReturns(line string) string {
 // scanLines reads from r line by line and sends each line to ch.
 func scanLines(r io.Reader, ch chan<- string) {
 	scanner := bufio.NewScanner(r)
+	// Default scanner buffer is 64KB; a single oversized log line trips
+	// bufio.ErrTooLong, the goroutine returns, and the console freezes with
+	// no diagnostic. Raise the cap to 1MB and surface the error.
+	scanner.Buffer(make([]byte, 64*1024), 1<<20)
 	for scanner.Scan() {
 		ch <- applyCarriageReturns(scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("log-shipper: scanner error (line >1MB or read failure): %v", err)
+		ch <- "[log-shipper: a log line exceeded 1MB and was dropped]"
 	}
 }
 
@@ -158,20 +174,24 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 		if len(buf) == 0 {
 			return
 		}
-		pipe := rdb.Pipeline()
-		for _, line := range buf {
-			pipe.XAdd(ctx, &redis.XAddArgs{
-				Stream: streamKey,
-				MaxLen: maxStreamLen,
-				Approx: true,
-				Values: map[string]interface{}{"line": line},
-			})
+		buildPipe := func() redis.Pipeliner {
+			pipe := rdb.Pipeline()
+			for _, line := range buf {
+				pipe.XAdd(ctx, &redis.XAddArgs{
+					Stream: streamKey,
+					MaxLen: maxStreamLen,
+					Approx: true,
+					Values: map[string]interface{}{"line": line},
+				})
+			}
+			return pipe
 		}
-		_, err := pipe.Exec(ctx)
+		_, err := buildPipe().Exec(ctx)
 		if err != nil && ctx.Err() == nil {
-			// 1x Retry
-			_, retryErr := pipe.Exec(ctx)
-			if retryErr != nil {
+			// 1x Retry on a fresh pipeline: go-redis resets a pipeline after
+			// Exec, so re-running the same object would send nothing and
+			// silently drop the batch.
+			if _, retryErr := buildPipe().Exec(ctx); retryErr != nil {
 				log.Printf("log-shipper: Redis write failed (dropping %d lines): %v", len(buf), retryErr)
 			}
 		}
@@ -239,6 +259,10 @@ func forwardInput(ctx context.Context, rdb *redis.Client, inputKey string, stdin
 			// Strip embedded CR/LF so one queue entry can't smuggle extra
 			// console commands into the server stdin (newline injection).
 			line := strings.ReplaceAll(strings.ReplaceAll(result[1], "\r", ""), "\n", "")
+			// Cap at 1KB: a single console command is never legitimately larger.
+			if len(line) > 1024 {
+				line = line[:1024]
+			}
 			if _, err := fmt.Fprint(stdin, line+"\n"); err != nil {
 				log.Printf("log-shipper: stdin write error: %v", err)
 				return
@@ -256,8 +280,14 @@ func main() {
 	if serverUUID == "" {
 		log.Fatal("log-shipper: SERVER_UUID environment variable is required")
 	}
+	if !uuidRegex.MatchString(serverUUID) {
+		log.Fatalf("log-shipper: SERVER_UUID %q is not a valid UUID", serverUUID)
+	}
 
 	subServer := getEnv("SUB_SERVER", "")
+	if subServer != "" && !subServerRegex.MatchString(subServer) {
+		log.Fatalf("log-shipper: SUB_SERVER %q must match [A-Za-z0-9_-]{1,64}", subServer)
+	}
 	streamKey := fmt.Sprintf("dylaris:server:%s:logs", serverUUID)
 	if subServer != "" {
 		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", serverUUID, subServer)

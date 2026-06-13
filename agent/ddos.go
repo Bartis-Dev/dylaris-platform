@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -187,6 +188,20 @@ func (d *DDoSDetector) saveDataLocked() {
 		Thresholds:    d.thresholds,
 		RecentAttacks: d.recentAttacks,
 	}
-	data, _ := json.Marshal(pd)
-	os.WriteFile(d.dataFile, data, 0644)
+	data, err := json.Marshal(pd)
+	if err != nil {
+		log.Printf("agent: marshal ddos data: %v", err)
+		return
+	}
+	// Atomic write: stage to a temp file then rename over the target so a crash
+	// mid-write can't leave a truncated/corrupt data file.
+	tmp := d.dataFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		log.Printf("agent: write ddos data: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, d.dataFile); err != nil {
+		log.Printf("agent: rename ddos data: %v", err)
+		os.Remove(tmp)
+	}
 }

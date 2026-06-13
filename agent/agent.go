@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -88,6 +89,11 @@ func NewMonitor(cfg MonitorConfig) (*Monitor, error) {
 	netStats, err := net.IOCounters(false)
 	if err != nil {
 		return nil, err
+	}
+	// Guard the [0] indexing below: gopsutil can return an empty aggregate on
+	// hosts/containers with no usable interface. Fail cleanly instead of panicking.
+	if len(netStats) == 0 {
+		return nil, fmt.Errorf("no network interfaces reported")
 	}
 
 	m := &Monitor{
@@ -296,8 +302,8 @@ func (m *Monitor) Shutdown() {
 	currentNetStats, err := net.IOCounters(false)
 	if err == nil && len(currentNetStats) > 0 {
 		current := currentNetStats[0]
-		sessionRx := current.BytesRecv - m.bootRx
-		sessionTx := current.BytesSent - m.bootTx
+		sessionRx := subClamp(current.BytesRecv, m.bootRx)
+		sessionTx := subClamp(current.BytesSent, m.bootTx)
 		m.data.TotalRxOffset += sessionRx
 		m.data.TotalTxOffset += sessionTx
 		m.bootRx = current.BytesRecv
@@ -409,8 +415,13 @@ func (m *Monitor) ResetAll() {
 
 func (m *Monitor) loadData() {
 	file, err := os.ReadFile(m.dataFile)
-	if err == nil {
-		json.Unmarshal(file, &m.data)
+	if err != nil {
+		return
+	}
+	// Log a corrupt/truncated data file instead of silently resetting all
+	// traffic offsets and history to zero with no signal.
+	if err := json.Unmarshal(file, &m.data); err != nil {
+		log.Printf("agent: corrupt monitor data file %q, ignoring: %v", m.dataFile, err)
 	}
 }
 

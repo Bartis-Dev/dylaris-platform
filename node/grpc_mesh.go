@@ -411,24 +411,8 @@ func getNodeIPs() NodeIPInfo {
 		info.Public, _ = os.Hostname()
 	}
 
-	// Private IPs
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return info
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() {
-			continue
-		}
-		ip := ipNet.IP.To4()
-		if ip == nil {
-			continue
-		}
-		if ip[0] == 10 || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) || (ip[0] == 192 && ip[1] == 168) {
-			info.Private = append(info.Private, ip.String())
-		}
-	}
+	// Private IPs — shared RFC1918 enumeration (privateIPv4s in main.go).
+	info.Private = privateIPv4s()
 
 	return info
 }

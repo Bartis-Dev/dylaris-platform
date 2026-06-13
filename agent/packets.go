@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -102,8 +103,10 @@ func (pc *PacketCollector) Collect() {
 	netStats, err := net.IOCounters(false)
 	if err == nil && len(netStats) > 0 {
 		current := netStats[0]
-		recvDiff := current.PacketsRecv - pc.lastPacketsRecv
-		sentDiff := current.PacketsSent - pc.lastPacketsSent
+		// Clamp: packet counters reset on interface/host reboot; raw unsigned
+		// subtraction would underflow to a near-2^64 pps spike.
+		recvDiff := subClamp(current.PacketsRecv, pc.lastPacketsRecv)
+		sentDiff := subClamp(current.PacketsSent, pc.lastPacketsSent)
 
 		pc.currentPpsIn = uint64(float64(recvDiff) / duration)
 		pc.currentPpsOut = uint64(float64(sentDiff) / duration)
@@ -276,12 +279,29 @@ func (pc *PacketCollector) ResetHistory() {
 
 func (pc *PacketCollector) loadData() {
 	file, err := os.ReadFile(pc.dataFile)
-	if err == nil {
-		json.Unmarshal(file, &pc.data)
+	if err != nil {
+		return
+	}
+	if err := json.Unmarshal(file, &pc.data); err != nil {
+		log.Printf("agent: corrupt packet data file %q, ignoring: %v", pc.dataFile, err)
 	}
 }
 
 func (pc *PacketCollector) saveDataLocked() {
-	data, _ := json.Marshal(pc.data)
-	os.WriteFile(pc.dataFile, data, 0644)
+	data, err := json.Marshal(pc.data)
+	if err != nil {
+		log.Printf("agent: marshal packet data: %v", err)
+		return
+	}
+	// Atomic write: stage to a temp file then rename over the target so a crash
+	// mid-write can't leave a truncated/corrupt data file.
+	tmp := pc.dataFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		log.Printf("agent: write packet data: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, pc.dataFile); err != nil {
+		log.Printf("agent: rename packet data: %v", err)
+		os.Remove(tmp)
+	}
 }

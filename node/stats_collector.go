@@ -53,6 +53,21 @@ const (
 	watchCacheDuration    = 2 * time.Second
 )
 
+// statsWriteProtectedStatuses are statuses the stats collector must NOT
+// overwrite when it writes "stopped"/"restarting" for a vanished container.
+// This is intentionally NARROWER than reconciler.go's package-level
+// protectedStatuses (no "starting"/"suspended"): the collector only guards
+// against clobbering an in-flight install/setup/shutdown or a disk-full
+// hold, whereas the reconciler additionally protects transient lifecycle
+// states it manages directly. Named distinctly so the difference is explicit
+// rather than an accidental shadow of the same identifier.
+var statsWriteProtectedStatuses = map[string]bool{
+	"installing":    true,
+	"pending_setup": true,
+	"stopping":      true,
+	"disk_full":     true,
+}
+
 // containerSnapshot holds the latest stats for a container (used for batching).
 type containerSnapshot struct {
 	mu       sync.Mutex
@@ -146,8 +161,7 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				// Check desired state before reporting status — but don't overwrite protected statuses
 				statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
 				currentStatus, _ := rdb.Get(ctx, statusKey).Result()
-				scanProtected := map[string]bool{"installing": true, "pending_setup": true, "stopping": true, "disk_full": true}
-				if !scanProtected[currentStatus] {
+				if !statsWriteProtectedStatuses[currentStatus] {
 					desiredKey := fmt.Sprintf("dylaris:server:%s:desired_state", uuid)
 					desired, _ := rdb.Get(ctx, desiredKey).Result()
 					if desired == "online" {
@@ -225,7 +239,6 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	// Cache status to avoid Redis roundtrips every 2s
 	var lastWrittenStatus string
 	var statusCacheTime time.Time
-	protectedStatuses := map[string]bool{"installing": true, "pending_setup": true, "stopping": true, "disk_full": true}
 
 	isWatching := func() bool {
 		if time.Since(watchCacheTime) < watchCacheDuration {
@@ -237,9 +250,11 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		return watchCache
 	}
 
-	// Initial ping
+	// Initial ping. Use the admin-configurable global container port (default
+	// 25565) so the ping target stays in sync with the port MC actually
+	// listens on inside the container.
 	go func() {
-		resp, err := PingMinecraftServer(fmt.Sprintf("%s:25565", containerName), pingTimeout)
+		resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, containerPort), pingTimeout)
 		if err == nil {
 			pingMu.Lock()
 			lastPing = resp
@@ -337,7 +352,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		if newStatus != lastWrittenStatus || time.Since(statusCacheTime) > 15*time.Second {
 			// Check protected statuses before overwriting
 			currentStatus, _ := rdb.Get(ctx, statusKey).Result()
-			if !protectedStatuses[currentStatus] {
+			if !statsWriteProtectedStatuses[currentStatus] {
 				rdb.Set(ctx, statusKey, newStatus, 30*time.Second)
 				lastWrittenStatus = newStatus
 			}
@@ -354,7 +369,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			collectAndPublish()
 		case <-pingTicker.C:
 			go func() {
-				resp, err := PingMinecraftServer(fmt.Sprintf("%s:25565", containerName), pingTimeout)
+				resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, containerPort), pingTimeout)
 				if err == nil {
 					pingMu.Lock()
 					lastPing = resp

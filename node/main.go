@@ -470,7 +470,11 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, reg
 	}
 }
 
-func getPrivateIPs() []string {
+// privateIPv4s walks the host's interfaces and returns every non-loopback
+// IPv4 address in an RFC1918 range (10/8, 172.16/12, 192.168/16). Single
+// source of truth for private-IP enumeration shared by getPrivateIPs (the
+// heartbeat) and getNodeIPs (grpc_mesh auth).
+func privateIPv4s() []string {
 	var ips []string
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -490,6 +494,10 @@ func getPrivateIPs() []string {
 		}
 	}
 	return ips
+}
+
+func getPrivateIPs() []string {
+	return privateIPv4s()
 }
 
 // scanSubServers lists the immediate sub-directories of serverDir (skipping

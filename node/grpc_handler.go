@@ -108,6 +108,23 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 	h.streamFile(msg.RequestId, filePath, sendFn)
 }
 
+// resolveWithinDir joins reqPath under dataPath and guarantees the result
+// stays inside dataPath. It is the single source of truth for the
+// path-traversal guard shared by the gRPC file handler (validatePath), the
+// selective-zip download path, and the Beam server (validateBeamPathOp).
+//
+// Containment is checked with a trailing separator so a sibling directory that
+// merely shares the prefix (e.g. dataPath+"-evil") cannot pass — without it,
+// reqPath "../<base>-evil/secret" would resolve to a sibling and slip through.
+func resolveWithinDir(dataPath, reqPath string) (string, error) {
+	cleanPath := filepath.Clean(filepath.Join(dataPath, reqPath))
+	cleanData := filepath.Clean(dataPath)
+	if cleanPath != cleanData && !strings.HasPrefix(cleanPath, cleanData+string(os.PathSeparator)) {
+		return "", fmt.Errorf("access denied: path traversal")
+	}
+	return cleanPath, nil
+}
+
 // validatePath ensures the path stays within the server's data directory.
 func (h *StreamHandler) validatePath(reqPath, serverUUID string) (string, error) {
 	if serverUUID == "" {
@@ -122,16 +139,7 @@ func (h *StreamHandler) validatePath(reqPath, serverUUID string) (string, error)
 		dataPath = filepath.Join(h.baseDir, "dylaris_data", "servers", serverUUID)
 	}
 
-	fullPath := filepath.Join(dataPath, reqPath)
-	cleanPath := filepath.Clean(fullPath)
-
-	// Compare with a trailing separator so a sibling dir that merely shares the
-	// prefix (e.g. dataPath+"-evil") cannot pass the containment check.
-	cleanData := filepath.Clean(dataPath)
-	if cleanPath != cleanData && !strings.HasPrefix(cleanPath, cleanData+string(os.PathSeparator)) {
-		return "", fmt.Errorf("access denied: path traversal")
-	}
-	return cleanPath, nil
+	return resolveWithinDir(dataPath, reqPath)
 }
 
 func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesReq) *pb.NodeMessage {
@@ -402,9 +410,10 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 		var walkErr error
 
 		for _, sel := range req.Selected {
-			selPath := filepath.Join(basePath, filepath.Clean(sel))
-			// Security: ensure path stays within basePath
-			if !strings.HasPrefix(filepath.Clean(selPath), filepath.Clean(basePath)) {
+			// Security: ensure each selected entry stays within basePath
+			// (trailing-separator containment, shared with validatePath).
+			selPath, err := resolveWithinDir(basePath, sel)
+			if err != nil {
 				continue
 			}
 
@@ -535,19 +544,6 @@ func (h *StreamHandler) handleWrite(reqID, serverUUID string, req *pb.WriteFileR
 		RequestId: reqID,
 		Payload:   &pb.NodeMessage_Result{Result: &pb.OpResult{Message: "ready for chunks"}},
 	}
-}
-
-// WriteChunksToFile writes incoming data chunks to a file. Called by the mesh manager.
-func (h *StreamHandler) WriteChunksToFile(serverUUID, path string, data []byte) error {
-	filePath, err := h.validatePath(path, serverUUID)
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(filePath)
-	os.MkdirAll(dir, 0755)
-
-	return os.WriteFile(filePath, data, 0644)
 }
 
 // resolveFinalPath validates and returns the absolute path for a file write.
