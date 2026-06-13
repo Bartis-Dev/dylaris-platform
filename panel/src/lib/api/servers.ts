@@ -12,7 +12,7 @@ export async function createServer(data: any) {
     } catch (err) { return handleError(err); }
 }
 
-// NEU: Server abrufen
+// Fetch servers
 export async function getServers() {
     try {
         const res = await fetch(`${API_URL}/servers`, { headers: getAuthHeader() });

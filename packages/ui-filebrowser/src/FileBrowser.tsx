@@ -99,7 +99,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const [selectiveLoading, setSelectiveLoading] = useState(false);
   const [selectiveDownloading, setSelectiveDownloading] = useState(false);
 
-  // JSZip-Bibliothek laden + Transfer Limits abrufen
+  // Load the JSZip library + fetch transfer limits
   useEffect(() => {
     const jszipScript = document.createElement('script');
     jszipScript.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
