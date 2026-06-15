@@ -606,12 +606,14 @@ func main() {
 
 	// --- Gateway Endpoints ---
 	gatewayHandler := handlers.NewGatewayHandler(appState)
+	dnsHandler := handlers.NewDNSHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 
 	// Admin endpoints
 	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(gatewayHandler.GetLinks)).Methods("GET")
 	api.HandleFunc("/gateway/edges", authHandler.AuthMiddleware(gatewayHandler.GetEdges)).Methods("GET")
 	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(gatewayHandler.GetAllRoutes)).Methods("GET")
+	api.HandleFunc("/gateway/dns-check", authHandler.AuthMiddleware(dnsHandler.CheckDNS)).Methods("GET")
 	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(gatewayHandler.GetRouteSuffixes)).Methods("GET")
 	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(gatewayHandler.BulkDeleteRoutesBySuffix)).Methods("POST")
 	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.AdminDeleteRoute)).Methods("DELETE")

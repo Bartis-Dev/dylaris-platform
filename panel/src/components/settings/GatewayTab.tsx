@@ -7,10 +7,11 @@ import {
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield } from 'lucide-react';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
+import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
+import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -469,6 +470,235 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
 }
 
 // ─────────────────────────────────────────────
+// DNS & Domains check card
+// ─────────────────────────────────────────────
+
+// Plain-language, one-line explanation per record category. Shown under the
+// record name so a non-expert operator knows what each row is for.
+const DNS_CATEGORY_BLURB: Record<DnsRecordCategory, string> = {
+    player: 'Player base domain — the address customers connect to.',
+    wildcard: 'Wildcard so every server subdomain resolves automatically — you never touch DNS per customer.',
+    cname: 'Custom-domain target — where customers point a CNAME for their own domain.',
+    panel: 'Panel domain — where this admin/web interface is served.',
+};
+
+const DNS_CATEGORY_LABEL: Record<DnsRecordCategory, string> = {
+    player: 'Player base',
+    wildcard: 'Wildcard',
+    cname: 'Custom CNAME',
+    panel: 'Panel',
+};
+
+// Map the check verdict onto the shared .badge-* utilities + a label.
+const DNS_STATUS_BADGE: Record<DnsRecordStatus, { cls: string; label: string }> = {
+    ok: { cls: 'badge-success', label: 'OK' },
+    mismatch: { cls: 'badge-warning', label: 'Mismatch' },
+    missing: { cls: 'badge-error', label: 'Missing' },
+    unresolved: { cls: 'badge-error', label: 'Unresolved' },
+};
+
+// One copyable record value (the expected DNS target). Shows a transient
+// check mark on copy, matching the api-keys / Warp copy pattern.
+function CopyValue({ value }: { value: string }) {
+    const [copied, setCopied] = useState(false);
+    const copy = () => {
+        navigator.clipboard.writeText(value).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        }).catch(() => { /* clipboard blocked — silent, value is still visible */ });
+    };
+    return (
+        <div className="flex items-center gap-1.5">
+            <code className="font-mono text-xs text-(--base-09) bg-(--base-03) px-1.5 py-0.5 rounded break-all">{value}</code>
+            <button
+                type="button"
+                onClick={copy}
+                className="text-(--base-06) hover:text-(--accent-light) transition-colors shrink-0"
+                title="Copy value"
+                aria-label={`Copy ${value}`}
+            >
+                {copied ? <Check size={12} className="text-(--success-light)" /> : <Copy size={12} />}
+            </button>
+        </div>
+    );
+}
+
+function DnsCheckCard() {
+    // The records table is populated by the check itself (the backend computes
+    // the required records from the operator's config). null = before first
+    // check, [] only happens once a check returns with zero records.
+    const [result, setResult] = useState<DnsCheckResult | null>(null);
+    const [checking, setChecking] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const runCheck = async () => {
+        setChecking(true);
+        setError(null);
+        const res = await checkDns();
+        if (res.success) {
+            setResult(res);
+        } else {
+            setError(res.message || 'DNS check failed. Try again.');
+        }
+        setChecking(false);
+    };
+
+    const checked = result && !checking;
+
+    return (
+        <div className="card p-5 space-y-5">
+            <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <Network size={18} className="text-(--accent-light)" />
+                    </div>
+                    <div>
+                        <div className="font-medium text-sm text-(--base-09)">DNS &amp; Domains</div>
+                        <div className="text-xs text-(--base-06)">The records to create at your DNS provider — then verify they resolve and the ingress is reachable</div>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    onClick={runCheck}
+                    disabled={checking}
+                    className="btn btn-primary btn-sm shrink-0 disabled:opacity-40"
+                >
+                    {checking ? <><Spinner size="xs" /> Checking…</> : <><Search size={13} /> Check DNS</>}
+                </button>
+            </div>
+
+            {/* Error state */}
+            {error && (
+                <div className="alert alert-error text-xs">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            {/* Checking state — skeleton (lookups can take a few seconds) */}
+            {checking && !result && (
+                <div className="space-y-3">
+                    <SkeletonTable rows={4} cols={4} />
+                </div>
+            )}
+
+            {/* Empty state — before the first check */}
+            {!checking && !result && !error && (
+                <div className="flex flex-col items-center gap-2 px-4 py-8 rounded-md bg-(--base-02) border border-(--base-03) text-center">
+                    <Network size={22} className="text-(--base-05)" />
+                    <p className="text-sm text-(--base-08)">Run a check to see your required DNS records</p>
+                    <p className="text-xs text-(--base-06) max-w-md">
+                        The records are computed from your configured hoster domains, custom-domain CNAME target and panel URL. Each is resolved against a public resolver and the ingress is dialled for reachability.
+                    </p>
+                </div>
+            )}
+
+            {/* Results — records table + reachability */}
+            {result && (
+                <div className={`space-y-5 transition-opacity ${checking ? 'opacity-50' : 'opacity-100'}`}>
+                    {result.records.length === 0 ? (
+                        <div className="flex items-start gap-2 p-3 rounded-md bg-(--base-02) border border-(--base-03) text-xs text-(--base-07)">
+                            <AlertTriangle size={14} className="text-(--warning-light) mt-0.5 shrink-0" />
+                            <span>No DNS records to verify. Configure at least one hoster domain above (and the panel URL via <span className="font-mono">FRONTEND_URL</span>) to populate this table.</span>
+                        </div>
+                    ) : (
+                        <div>
+                            <h3 className="mono-label mb-3">Required Records</h3>
+                            <div className="border border-(--base-03) rounded-md overflow-hidden">
+                                {/* Header */}
+                                <div className="hidden md:grid grid-cols-[auto_1fr_auto] gap-4 px-4 py-2.5 bg-(--base-02) border-b border-(--base-03)">
+                                    <span className="mono-label">Type</span>
+                                    <span className="mono-label">Name &amp; expected target</span>
+                                    <span className="mono-label text-right">{checked ? 'Status' : ''}</span>
+                                </div>
+                                {result.records.map((rec, idx) => (
+                                    <DnsRecordRow key={`${rec.name}-${rec.type}-${idx}`} rec={rec} checked={!!checked} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Reachability */}
+                    {result.reachability.length > 0 && (
+                        <div>
+                            <h3 className="mono-label mb-3">Reachability</h3>
+                            <div className="space-y-2">
+                                {result.reachability.map((r, idx) => (
+                                    <div key={`${r.target}-${idx}`} className="flex items-start justify-between gap-4 p-3 rounded-md bg-(--base-02)">
+                                        <div className="min-w-0">
+                                            <code className="font-mono text-xs text-(--base-09) break-all">{r.target}</code>
+                                            {r.hint && <p className="text-xs text-(--base-06) mt-0.5">{r.hint}</p>}
+                                        </div>
+                                        <span className={`badge ${r.ok ? 'badge-success' : 'badge-error'} shrink-0`}>
+                                            {r.ok ? <><CircleCheck size={11} /> Reachable</> : <><CircleAlert size={11} /> Unreachable</>}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {result.checkedAt && (
+                        <p className="text-[11px] font-mono text-(--base-05)">
+                            Last checked {new Date(result.checkedAt).toLocaleString()}
+                        </p>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// One record row — name + expected target(s) with copy buttons + a category
+// blurb. After a check, the actual resolved value(s), a status badge and the
+// hint are shown. Before the first check the row only carries the expected
+// config (status badge withheld).
+function DnsRecordRow({ rec, checked }: { rec: DnsRecord; checked: boolean }) {
+    const badge = DNS_STATUS_BADGE[rec.status];
+    const showStatus = checked && badge;
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] gap-2 md:gap-4 px-4 py-3 border-b border-(--base-03) last:border-b-0 items-start">
+            <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-(--base-03) text-(--base-07) w-fit h-fit mt-0.5">{rec.type}</span>
+
+            <div className="min-w-0 space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                    <code className="font-mono text-xs text-(--base-09) break-all">{rec.name}</code>
+                    <span className="badge badge-neutral">{DNS_CATEGORY_LABEL[rec.category]}</span>
+                </div>
+                <p className="text-xs text-(--base-06)">{DNS_CATEGORY_BLURB[rec.category]}</p>
+
+                {/* Expected targets — copyable */}
+                {rec.expected.length > 0 && (
+                    <div className="flex flex-col gap-1 pt-0.5">
+                        <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Expected</span>
+                        {rec.expected.map((v, i) => <CopyValue key={i} value={v} />)}
+                    </div>
+                )}
+
+                {/* Actual resolved values + hint (post-check) */}
+                {checked && (
+                    <div className="flex flex-col gap-1 pt-0.5">
+                        <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Resolved</span>
+                        {rec.actual.length > 0 ? (
+                            rec.actual.map((v, i) => (
+                                <code key={i} className="font-mono text-xs text-(--base-08) break-all">{v}</code>
+                            ))
+                        ) : (
+                            <code className="font-mono text-xs text-(--base-06) italic">no answer</code>
+                        )}
+                        {rec.hint && <p className="text-xs text-(--base-06) mt-0.5">{rec.hint}</p>}
+                    </div>
+                )}
+            </div>
+
+            <div className="md:text-right">
+                {showStatus && <span className={`badge ${badge.cls}`}>{badge.label}</span>}
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
 // Gateway panel
 // ─────────────────────────────────────────────
 
@@ -841,6 +1071,10 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     )}
                 </div>
             </div>
+
+            {/* DNS & Domains check — verify the records derived from the
+                hoster domains / CNAME target / panel URL configured above. */}
+            <DnsCheckCard />
 
             {/* Route Limits */}
             <div className="card p-5 space-y-5">
