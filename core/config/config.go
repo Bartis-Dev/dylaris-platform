@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -62,8 +63,8 @@ func LoadConfig() (Config, error) {
 	cfg := Config{
 		APIPort:       getEnv("API_PORT", "25500"),
 		FrontendURL:   getEnv("FRONTEND_URL", "http://localhost:25510"),
-		JWTSecret:     getEnv("JWT_SECRET", "change-this-secret"),
-		ClusterSecret: getEnv("CLUSTER_SECRET", "dylaris-cluster-secret"),
+		JWTSecret:     getSecret("JWT_SECRET", "change-this-secret"),
+		ClusterSecret: getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
 		CoreID:        coreID,
 		GRPCPort:      grpcPort,
 		Region:        getEnv("DYLARIS_REGION", "default"),
@@ -71,7 +72,7 @@ func LoadConfig() (Config, error) {
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnv("DB_PORT", "5432"),
 		DBUser:     getEnv("DB_USER", "postgres"),
-		DBPassword: getEnv("DB_PASSWORD", ""),
+		DBPassword: getSecret("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "dylaris"),
 		// Defaults to disable to preserve existing internal-Docker setups; set
 		// DB_SSLMODE=require (or verify-full) when Postgres is remote.
@@ -79,7 +80,7 @@ func LoadConfig() (Config, error) {
 
 		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisUser: getEnv("REDIS_USER", ""),
-		RedisPass: getEnv("REDIS_PASSWORD", ""),
+		RedisPass: getSecret("REDIS_PASSWORD", ""),
 		RedisDB:   redisDB,
 
 		ExternalTicketDBURL: getEnv("EXTERNAL_TICKET_DB_URL", ""),
@@ -99,6 +100,30 @@ func LoadConfig() (Config, error) {
 }
 
 func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
+// getSecret resolves a secret with Docker/Portainer secrets support. Precedence:
+//  1. contents of the file named by "<key>_FILE" (trimmed) - the docker-secret /
+//     *_FILE convention, so the value never has to live in plain env;
+//  2. the plain "<key>" env value;
+//  3. the fallback.
+// An unreadable or empty *_FILE logs and falls through to the env/fallback so a
+// misconfigured secret path doesn't silently boot with a blank credential.
+func getSecret(key, fallback string) string {
+	if path, ok := os.LookupEnv(key + "_FILE"); ok && path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return v
+			}
+			log.Printf("config: %s_FILE (%s) is empty; falling back to %s", key, path, key)
+		} else {
+			log.Printf("config: failed to read %s_FILE (%s): %v; falling back to %s", key, path, err, key)
+		}
+	}
 	if value, exists := os.LookupEnv(key); exists {
 		return value
 	}

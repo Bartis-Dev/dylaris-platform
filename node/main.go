@@ -211,7 +211,7 @@ func main() {
 	// BEAM_JWT_SECRET must match the gateway's beam-relay so tickets that
 	// the relay validated also pass the node-side Authenticate gate.
 	beamThrottle := NewBeamThrottle(ctx, rdb)
-	beamJWTSecret := os.Getenv("BEAM_JWT_SECRET")
+	beamJWTSecret := getSecretEnv("BEAM_JWT_SECRET")
 	if beamJWTSecret == "" {
 		log.Printf("BEAM_JWT_SECRET unset — Beam authentication will reject all tickets")
 	}
@@ -227,6 +227,24 @@ func main() {
 	log.Println("Shutting down node gracefully...")
 }
 
+// getSecretEnv resolves a secret with Docker/Portainer secrets support.
+// Precedence: contents of "<key>_FILE" (trimmed) -> plain "<key>" -> "". This
+// lets operators mount a secret at a path instead of putting it in plain env.
+// An unreadable/empty *_FILE logs and falls through to the env value.
+func getSecretEnv(key string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return v
+			}
+			log.Printf("config: %s_FILE (%s) is empty; falling back to %s", key, path, key)
+		} else {
+			log.Printf("config: failed to read %s_FILE (%s): %v; falling back to %s", key, path, err, key)
+		}
+	}
+	return os.Getenv(key)
+}
+
 func parseConfig() {
 	if _, err := os.Stat(".env"); os.IsNotExist(err) {
 		log.Println("No .env file found. Using system environment variables.")
@@ -236,7 +254,7 @@ func parseConfig() {
 
 	// 1. Node Basics
 	nodeID = os.Getenv("NODE_ID")
-	clusterSecret = os.Getenv("CLUSTER_SECRET")
+	clusterSecret = getSecretEnv("CLUSTER_SECRET")
 	nodeTags = os.Getenv("NODE_TAGS")
 	nodeExternal = os.Getenv("NODE_EXTERNAL") == "true" || hasTag(nodeTags, "external")
 	if nodeExternal {
@@ -259,7 +277,7 @@ func parseConfig() {
 	// 2. Node Redis
 	redisAddr = os.Getenv("REDIS_ADDR")
 	redisUser = os.Getenv("REDIS_USER")
-	redisPass = os.Getenv("REDIS_PASSWORD")
+	redisPass = getSecretEnv("REDIS_PASSWORD")
 	redisDB = 0
 	if dbStr := os.Getenv("REDIS_DB"); dbStr != "" {
 		if db, err := strconv.Atoi(dbStr); err == nil {
@@ -280,7 +298,7 @@ func parseConfig() {
 	if mcRedisUser == "" {
 		mcRedisUser = redisUser
 	}
-	mcRedisPass = os.Getenv("SIDECAR_REDIS_PASSWORD")
+	mcRedisPass = getSecretEnv("SIDECAR_REDIS_PASSWORD")
 	if mcRedisPass == "" {
 		mcRedisPass = redisPass
 	}

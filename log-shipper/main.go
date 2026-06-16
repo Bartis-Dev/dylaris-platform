@@ -85,6 +85,23 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// getSecret resolves a secret with Docker/Portainer secrets support: contents of
+// "<key>_FILE" (trimmed) -> plain "<key>" -> fallback. Lets operators mount a
+// secret at a path instead of passing it in plain env.
+func getSecret(key, fallback string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return v
+			}
+			log.Printf("config: %s_FILE (%s) is empty; falling back to %s", key, path, key)
+		} else {
+			log.Printf("config: failed to read %s_FILE (%s): %v; falling back to %s", key, path, err, key)
+		}
+	}
+	return getEnv(key, fallback)
+}
+
 // uuidRegex / subServerRegex validate the env vars that get interpolated into
 // Redis keys. Only Node sets these today, but unvalidated input could collide
 // key namespaces (e.g. SUB_SERVER=foo:logs) or inject separators.
@@ -96,7 +113,7 @@ var (
 func connectRedis() *redis.Client {
 	addr := getEnv("REDIS_ADDR", "localhost:6379")
 	user := getEnv("REDIS_USER", "")
-	pass := getEnv("REDIS_PASS", "")
+	pass := getSecret("REDIS_PASS", "")
 	dbStr := getEnv("REDIS_DB", "0")
 	db, _ := strconv.Atoi(dbStr)
 
