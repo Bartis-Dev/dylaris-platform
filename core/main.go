@@ -151,6 +151,15 @@ func main() {
 	// Routing migration service for batch redeployment when mode changes
 	appState.RoutingMigration = services.NewRoutingMigrationService(pgStore, appState.Queue, redisClient)
 
+	// Migration orchestrator — leader-gated consumer of the node-to-node
+	// migration (auto-move) queue. Manual + (Wave 4) rebalance moves enqueue
+	// requests; only the elected Core runs the step machine. Exposed on
+	// AppState so the manual-move endpoint can EnqueueMigration.
+	migrationOrchestrator := services.NewMigrationOrchestrator(pgStore, redisClient, appState.Queue, appState.Gateway, cfg.ClusterSecret)
+	migrationOrchestrator.SetLeader(coreLeader)
+	migrationOrchestrator.Start(context.Background())
+	appState.Migration = migrationOrchestrator
+
 	// Publish routing modes to Redis on startup so Nodes pick them up immediately.
 	// Always write (even defaults) so stale Redis values from a previous install don't persist.
 	{
@@ -679,6 +688,8 @@ func main() {
 
 	// Server auto-move toggle — gated on the feature flag AND active gateway.
 	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove))).Methods("PATCH")
+	// Manual node-to-node move (admin) — gateway-only; enqueues onto the orchestrator.
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.MoveServer))).Methods("POST")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.GetServerSettings)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")

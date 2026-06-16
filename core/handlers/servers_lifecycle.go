@@ -927,6 +927,60 @@ func (h *ServerHandler) SetServerAutoMove(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// MoveServer (admin) queues a manual node-to-node migration of a server to a
+// target node. Async: it only enqueues; the leader-elected Core runs the
+// migration step machine and the panel polls the orchestration status key.
+// The route is gateway-gated (migration is gateway-only) via RequireGatewayEnabled.
+func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Migration == nil {
+		sendJSONError(w, "Migration orchestrator not available", 503)
+		return
+	}
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	isAdmin := r.Context().Value("isAdmin").(bool)
+	if !isAdmin {
+		sendJSONError(w, "Admin only", 403)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	var req struct {
+		TargetNodeID int `json:"targetNodeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	if req.TargetNodeID == srv.NodeID {
+		sendJSONError(w, "Target node equals current node", 400)
+		return
+	}
+	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
+	if err != nil {
+		sendJSONError(w, "Target node not found", 404)
+		return
+	}
+	if target.Status != "online" {
+		sendJSONError(w, "Target node is not online", 409)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	if err := h.state.Migration.EnqueueMigration(r.Context(), serverID, req.TargetNodeID, "manual", username); err != nil {
+		sendJSONError(w, "Failed to queue migration", 500)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "migration queued"})
+}
+
 // DeleteSubServer: Delete a single sub-server
 func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {

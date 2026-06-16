@@ -32,4 +32,8 @@ type AppState struct {
 	// FeatureFlags is the cached platform feature toggle reader.
 	// Read by the modpack route gates; flipped via /admin/settings/modpacks.
 	FeatureFlags *services.FeatureFlags
+
+	// Migration is the leader-driven node-to-node migration orchestrator.
+	// The manual-move endpoint only ENQUEUES onto it; the elected Core executes.
+	Migration *services.MigrationOrchestrator
 }
