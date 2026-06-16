@@ -648,6 +648,25 @@ export const setNodePlacement = (nodeId: number, data: { cpuOvercommitRatio: num
 export const setServerAutoMove = (serverId: number, enabled: boolean) =>
     fetchAPI(`/servers/${serverId}/automove`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
+// Manual node-to-node migration (admin). Async — the Core enqueues onto the
+// orchestrator and returns 202; progress is polled via getMigrationStatus.
+export const moveServer = (serverId: number, targetNodeId: number) =>
+    fetchAPI(`/admin/servers/${serverId}/move`, { method: 'POST', body: JSON.stringify({ targetNodeId }) });
+
+// Orchestrator progress record. `phase` is "none" when no migration is active.
+// Terminal phases: done, failed, failed_post_cutover, aborted_players, none.
+export interface MigrationStatus {
+    phase: string;
+    error?: string;
+    sourceNodeID?: number;
+    targetNodeID?: number;
+    reason?: string;
+    startedAt?: number;
+    updatedAt?: number;
+}
+export const getMigrationStatus = (serverId: number): Promise<{ success: boolean; status?: MigrationStatus; message?: string }> =>
+    fetchAPI(`/servers/${serverId}/migration-status`);
+
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');
 export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing-migration');

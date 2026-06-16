@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
 )
 
 // CreateServer (Step 1): Creates container with resources, status=pending_setup
@@ -979,6 +980,52 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "migration queued"})
+}
+
+// GetMigrationStatus GET /api/servers/{id}/migration-status
+// Returns the orchestrator-owned progress record the migration worker writes
+// to dylaris:migration:<uuid>:orchestration, so the panel can poll it while a
+// move is in flight. When the key is absent (no migration has ever run, or its
+// TTL expired) we return {phase:"none"} so the caller has a stable terminal
+// shape to stop polling on. Read-only; owner-or-admin like SetServerAutoMove.
+func (h *ServerHandler) GetMigrationStatus(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	username := r.Context().Value("username").(string)
+	isAdmin := r.Context().Value("isAdmin").(bool)
+	if !isAdmin && srv.OwnerName != username {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	if h.state.Redis == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": map[string]string{"phase": "none"}})
+		return
+	}
+	key := fmt.Sprintf("dylaris:migration:%s:orchestration", srv.UUID)
+	raw, err := h.state.Redis.Get(context.Background(), key).Result()
+	if err == redis.Nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": map[string]string{"phase": "none"}})
+		return
+	}
+	if err != nil {
+		sendJSONError(w, "Failed to read migration status", 500)
+		return
+	}
+	var status map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		sendJSONError(w, "Failed to parse migration status", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})
 }
 
 // DeleteSubServer: Delete a single sub-server

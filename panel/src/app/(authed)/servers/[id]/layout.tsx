@@ -11,9 +11,10 @@ import { DynamicIcon } from '@/lib/icons';
 import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
-    getInstallCooldown,
+    getInstallCooldown, moveServer, getMigrationStatus, type MigrationStatus, type Node,
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
+import { getNodes } from '@/lib/api/resources';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
 import RegionBadge from '@/components/RegionBadge';
@@ -26,7 +27,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const params = useParams();
     const pathname = usePathname();
     const router = useRouter();
-    const { servers, user, refreshServers, gatewayEnabled, routingMode } = useAppData();
+    const { servers, user, refreshServers, gatewayEnabled, routingMode, featureFlags } = useAppData();
 
     const serverId = Number(params?.id);
     const selectedServer = servers.find(s => s.id === serverId);
@@ -46,6 +47,15 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [editHostPort, setEditHostPort] = useState(0);
     const [editContainerPort, setEditContainerPort] = useState(25565);
     const [editAutoMove, setEditAutoMove] = useState(false);
+
+    // Manual move-to-node (admin only). Node list is loaded lazily when the
+    // Edit Resources modal opens. migrationStatus is polled while a move is
+    // in flight (server status === 'migrating' or right after a manual move).
+    const [moveNodes, setMoveNodes] = useState<Node[]>([]);
+    const [moveTargetNodeId, setMoveTargetNodeId] = useState<number>(0);
+    const [moveBusy, setMoveBusy] = useState(false);
+    const [moveMsg, setMoveMsg] = useState('');
+    const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
 
     const [storageCurrentPath, setStorageCurrentPath] = useState('');
     const [storagePaths, setStoragePaths] = useState<StoragePathInfo[]>([]);
@@ -112,6 +122,36 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         const timeout = setTimeout(() => setWaitingForStatus(null), 60000);
         return () => clearTimeout(timeout);
     }, [waitingForStatus]);
+
+    // Migration status poll. Runs while the server DB status is `migrating`
+    // (set by the orchestrator during a move) so the status line keeps current
+    // even on page-reload mid-move. A manual Move kicks it off optimistically
+    // by seeding migrationStatus with phase 'starting'. Polling stops on any
+    // terminal phase so we don't spin forever on a finished/failed move.
+    const TERMINAL_PHASES = ['done', 'failed', 'failed_post_cutover', 'aborted_players', 'none'];
+    useEffect(() => {
+        const active = selectedServer?.status === 'migrating' ||
+            (migrationStatus !== null && !TERMINAL_PHASES.includes(migrationStatus.phase));
+        if (!selectedServer || !active) return;
+        let cancelled = false;
+        const poll = async () => {
+            const res = await getMigrationStatus(selectedServer.id);
+            if (cancelled) return;
+            if (res.success && res.status) {
+                setMigrationStatus(res.status);
+                if (TERMINAL_PHASES.includes(res.status.phase)) {
+                    clearInterval(timer);
+                    // A finished/failed move flips node assignment + status — pull
+                    // fresh server state so the UI reflects the new home node.
+                    refreshServers();
+                }
+            }
+        };
+        poll();
+        const timer = setInterval(poll, 4000);
+        return () => { cancelled = true; clearInterval(timer); };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedServer?.id, selectedServer?.status, migrationStatus?.phase]);
 
     // Post-install cooldown. The node sets a Redis key with 30s TTL on
     // setup/reinstall; the core PowerAction handler gates start/stop/
@@ -221,6 +261,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         setStoragePaths([]);
         setStorageMigrateTarget('');
         setStorageMigrateMsg('');
+        setMoveMsg('');
+        setMoveTargetNodeId(0);
         setShowEditResourcesPopup(true);
 
         if (user?.isAdmin) {
@@ -234,7 +276,40 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     if (others.length > 0) setStorageMigrateTarget(others[0].path);
                 }
             } catch { /* ignore */ }
+            // Node list for the manual move picker — only ONLINE nodes other
+            // than the one this server currently lives on.
+            try {
+                const res = await getNodes();
+                if (res.success && Array.isArray(res.nodes)) {
+                    const targets: Node[] = res.nodes.filter(
+                        (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
+                    );
+                    setMoveNodes(targets);
+                    if (targets.length > 0) setMoveTargetNodeId(targets[0].id);
+                }
+            } catch { /* ignore */ }
         }
+    };
+
+    // Manual node-to-node move (admin). Async on the backend; we seed the
+    // migration status optimistically so the poll picks up and the status line
+    // shows progress without waiting a full tick.
+    const handleMoveServer = async () => {
+        if (!moveTargetNodeId || moveBusy) return;
+        setMoveBusy(true);
+        setMoveMsg('');
+        try {
+            const res: any = await moveServer(selectedServer.id, moveTargetNodeId);
+            if (res && (res.success === false || res.error)) {
+                setMoveMsg(res.error || res.message || 'Move failed.');
+            } else {
+                setMoveMsg(res?.message || 'Migration queued.');
+                setMigrationStatus({ phase: 'starting' });
+            }
+        } catch {
+            setMoveMsg('Move request failed.');
+        }
+        setMoveBusy(false);
     };
     const handleSaveResources = async () => {
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
@@ -313,6 +388,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
 
     const isOwner = selectedServer.role !== 'invited' && selectedServer.role !== 'inherited';
     const perms = selectedServer.permissions;
+
+    // Auto-move opt-in gating. The backend gates the PATCH on BOTH the platform
+    // feature flag AND active gateway routing (503 otherwise), so we mirror both
+    // here and surface the matching reason.
+    const autoMoveDisabled = !featureFlags.autoMove || routingMode === 'ip_port';
+    const autoMoveReason = !featureFlags.autoMove
+        ? 'Auto-Move is disabled platform-wide. An admin can enable it in Settings → Features.'
+        : 'Requires gateway routing. Auto-Move is unavailable while Game Traffic is on IP:Port.';
     const tabDisabled = (perm: keyof TabPermissions) => isPendingSetup || (!isOwner && !!perms && !perms[perm]);
     const canPower = isOwner || (perms?.power ?? false);
 
@@ -761,26 +844,86 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 <p className="text-xs text-(--base-06)">0 = unlimited</p>
                             </div>
 
-                            <div className="border-t border-(--base-03) pt-4 flex items-center justify-between gap-4">
-                                <div className="flex items-start gap-2.5 min-w-0">
-                                    <Move size={14} className={`shrink-0 mt-0.5 ${editAutoMove ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
-                                    <div className="min-w-0">
-                                        <div className="text-sm font-medium text-(--base-09)">Auto-Move</div>
-                                        <p className="text-xs text-(--base-06)">
-                                            Let the rebalance worker migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle.
-                                        </p>
+                            {/* Auto-move opt-in. Disabled when the platform feature
+                                is off or routing is on IP:Port (gateway off) — the
+                                backend would 503 either way. */}
+                            <div className={`border-t border-(--base-03) pt-4 ${autoMoveDisabled ? 'opacity-60' : ''}`}>
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="flex items-start gap-2.5 min-w-0">
+                                        <Move size={14} className={`shrink-0 mt-0.5 ${editAutoMove && !autoMoveDisabled ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                        <div className="min-w-0">
+                                            <div className="text-sm font-medium text-(--base-09)">Auto-Move</div>
+                                            <p className="text-xs text-(--base-06)">
+                                                Let the rebalance worker migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle.
+                                            </p>
+                                        </div>
                                     </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={editAutoMove}
+                                        disabled={autoMoveDisabled}
+                                        onClick={() => setEditAutoMove(v => !v)}
+                                        className={`shrink-0 toggle-track ${editAutoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+                                    >
+                                        <span className={`toggle-knob ${editAutoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                    </button>
                                 </div>
-                                <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={editAutoMove}
-                                    onClick={() => setEditAutoMove(v => !v)}
-                                    className={`shrink-0 toggle-track ${editAutoMove ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                >
-                                    <span className={`toggle-knob ${editAutoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                </button>
+                                {autoMoveDisabled && (
+                                    <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-2">
+                                        <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
+                                        <span>{autoMoveReason}</span>
+                                    </p>
+                                )}
                             </div>
+
+                            {/* Manual move (admin). Migration is gateway-only — hide
+                                the control entirely on IP:Port instead of dangling a
+                                disabled picker. */}
+                            {user?.isAdmin && routingMode !== 'ip_port' && (
+                                <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <Move size={14} className="text-(--accent-light)" />
+                                        <span className="input-label mb-0">Move to Node</span>
+                                    </div>
+                                    {moveNodes.length === 0 ? (
+                                        <p className="text-xs text-(--base-05) italic">No other online nodes available to move to.</p>
+                                    ) : (
+                                        <>
+                                            <div className="flex gap-2 items-end">
+                                                <div className="flex flex-col gap-[5px] flex-1 min-w-0">
+                                                    <label className="mono-label">Target Node</label>
+                                                    <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
+                                                        {moveNodes.map(n => (
+                                                            <option key={n.id} value={n.id}>{n.name}{n.region ? ` — ${n.region}` : ''}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <button type="button" onClick={handleMoveServer} disabled={moveBusy || !moveTargetNodeId} className="btn btn-secondary btn-sm shrink-0">
+                                                    {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Move</>}
+                                                </button>
+                                            </div>
+                                            <p className="text-xs text-(--base-06)">Live migration to another node. The gateway keeps the player address stable; the server is moved while idle.</p>
+                                        </>
+                                    )}
+                                    {moveMsg && (
+                                        <p className={`text-xs ${/queued|migration/i.test(moveMsg) ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{moveMsg}</p>
+                                    )}
+                                    {migrationStatus && migrationStatus.phase !== 'none' && (
+                                        <div className="flex items-start gap-2 text-xs">
+                                            {!TERMINAL_PHASES.includes(migrationStatus.phase)
+                                                ? <RefreshCw size={13} className="animate-spin text-(--accent-light) mt-0.5 shrink-0" />
+                                                : migrationStatus.phase === 'done'
+                                                    ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
+                                                    : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
+                                            <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
+                                                Migration: {migrationStatus.phase.replace(/_/g, ' ')}
+                                                {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             {user?.isAdmin && (
                                 <div className="border-t border-(--base-03) pt-4 grid grid-cols-2 gap-3">

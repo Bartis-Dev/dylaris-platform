@@ -4,11 +4,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
 import { getTelemetrySettings, setTelemetrySettings } from '@/lib/api/telemetry';
 import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload } from '@/lib/api/featureFlags';
-import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package } from 'lucide-react';
+import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { useAppData } from '@/lib/AppDataContext';
 
 export default function FeaturesTab() {
+    // Auto-move is gateway-only — gate its toggle on the live routing mode.
+    // ip_port means the gateway is off, so enabling auto-move would 409 on the
+    // backend; we disable the control instead of letting that happen.
+    const { routingMode } = useAppData();
+    const gatewayOff = routingMode === 'ip_port';
+
     const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: true });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -24,7 +31,7 @@ export default function FeaturesTab() {
     // /api/admin/settings/features and save-on-click independently of the
     // proxy/gateway settings above. Each flip persists immediately so the
     // admin doesn't have to remember a Save bar for a dangerous gate.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
     // Snapshot of last-saved settings for dirty detection.
@@ -250,6 +257,41 @@ export default function FeaturesTab() {
                         <span className={`toggle-knob ${platformFlags.modpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
+            </div>
+
+            {/* Auto-Move — gateway-only. Greyed + the toggle is hard-disabled
+                while routing is on IP:Port, since enabling it then would 409
+                on the backend (gateway_required). */}
+            <div className={`card p-5 ${gatewayOff ? 'opacity-60' : ''}`}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Move size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">Auto-Move</div>
+                            <div className="text-xs text-(--base-06)">
+                                Lets the rebalance worker migrate opted-in servers to a less-loaded node when their current node is overloaded. Per-server opt-in lives in each server&apos;s resource settings. Migration is gateway-only — the route keeps the player address stable across the node change.
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={platformFlags.autoMove}
+                        disabled={platformSaving !== null || gatewayOff}
+                        onClick={() => savePlatformFlag('autoMove', !platformFlags.autoMove)}
+                        className={`toggle-track ${platformFlags.autoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+                    >
+                        <span className={`toggle-knob ${platformFlags.autoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+                {gatewayOff && (
+                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
+                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                        <span>Requires gateway routing. Switch Game Traffic to Gateway or Both first.</span>
+                    </p>
+                )}
             </div>
 
             {/* Toast */}

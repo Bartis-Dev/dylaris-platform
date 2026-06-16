@@ -697,6 +697,8 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove))).Methods("PATCH")
 	// Manual node-to-node move (admin) — gateway-only; enqueues onto the orchestrator.
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.MoveServer))).Methods("POST")
+	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
+	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(serverHandler.GetMigrationStatus)).Methods("GET")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.GetServerSettings)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")
