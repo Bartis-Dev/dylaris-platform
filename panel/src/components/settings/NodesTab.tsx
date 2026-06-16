@@ -431,6 +431,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         rebalanceThreshold: 90,
         portMode: 'sequential',
         containerPort: 25565,
+        pidsLimit: 0,
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -523,6 +524,25 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                             <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
                         </div>
                         <p className="text-xs text-(--base-06)">Reserved free space the scheduler must leave on every node, on top of the server&apos;s own disk request.</p>
+                    </div>
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5">
+                    <h3 className="mono-label mb-3">Process Limit (anti fork-bomb)</h3>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Max processes / threads per server</label>
+                        <div className="relative w-32">
+                            <input
+                                type="number"
+                                min={0}
+                                value={settings.pidsLimit}
+                                onChange={e => setSettings(s => ({ ...s, pidsLimit: Math.max(0, Number(e.target.value)) }))}
+                                className="input-field input-mono w-full text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                        </div>
+                        <p className="text-xs text-(--base-06)">
+                            Caps the cgroup PID count per server container (applies on next (re)start). <span className="font-mono">0</span> = unlimited. This counts <strong>threads too</strong>, so set it generously (e.g. <span className="font-mono">4096</span>) — a value too low will throttle or crash heavy modded servers.
+                        </p>
                     </div>
                 </div>
 

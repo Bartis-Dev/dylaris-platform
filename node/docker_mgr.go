@@ -468,6 +468,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		Binds:         []string{fmt.Sprintf("%s:/data", hostServerPath)},
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
+	applyPidsLimit(hc)
 
 	nc := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
@@ -484,6 +485,20 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 
 	log.Printf("Container %s created (stopped, awaiting setup)", containerName)
 	return nil
+}
+
+// applyPidsLimit sets the cgroup pids cap (anti fork-bomb / process exhaustion)
+// on the container when a positive platform limit is configured via
+// dylaris:placement:pids_limit. 0 = unlimited, so the field stays nil and Docker
+// imposes no cap. Applied at both container-build sites, so every path (create /
+// setup / start / recreate / migration restart) is covered. The cgroup pids
+// controller counts threads too, so the configured value must be generous enough
+// for heavy modded (many-thread) servers.
+func applyPidsLimit(hc *container.HostConfig) {
+	if pidsLimit > 0 {
+		pl := pidsLimit
+		hc.Resources.PidsLimit = &pl
+	}
 }
 
 // RecreateWithCommand stops + removes + creates a container with a new sub-server command.
@@ -569,6 +584,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 		Binds:         binds,
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
+	applyPidsLimit(hc)
 
 	// Port binding: only in direct port mode (routing_mode != "gateway").
 	// Reuse an already-allocated port if one exists, otherwise allocate a new one.

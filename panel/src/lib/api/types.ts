@@ -648,6 +648,8 @@ export interface PlacementSettings {
     rebalanceThreshold: number;
     portMode: 'sequential' | 'random';
     containerPort: number;
+    // Per-container process/thread cap (cgroup pids). 0 = unlimited.
+    pidsLimit: number;
 }
 export interface NodeCandidate {
     nodeId: number;

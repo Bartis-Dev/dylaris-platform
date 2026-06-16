@@ -488,6 +488,11 @@ type PlacementSettings struct {
 	RebalanceThreshold   int     `json:"rebalanceThreshold"` // % at which a node is considered overloaded
 	PortMode             string  `json:"portMode"`           // "sequential" | "random" — host-port allocation strategy
 	ContainerPort        int     `json:"containerPort"`      // default MC port inside the container (usually 25565)
+	// PidsLimit caps the process/thread count per server container (cgroup pids
+	// controller) as an anti fork-bomb guard. 0 = unlimited (default). Counts
+	// threads too, so set it generously (e.g. 4096) — too low throttles heavy
+	// modded servers.
+	PidsLimit int64 `json:"pidsLimit"`
 }
 
 var defaultPlacementSettings = PlacementSettings{
@@ -498,6 +503,7 @@ var defaultPlacementSettings = PlacementSettings{
 	RebalanceThreshold:   90,
 	PortMode:             "sequential",
 	ContainerPort:        25565,
+	PidsLimit:            0, // unlimited by default — opt-in anti fork-bomb cap
 }
 
 // GetPlacementSettings GET /api/settings/placement
@@ -543,6 +549,9 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 	if req.ContainerPort <= 0 || req.ContainerPort > 65535 {
 		req.ContainerPort = 25565
 	}
+	if req.PidsLimit < 0 {
+		req.PidsLimit = 0
+	}
 
 	pairs := []struct{ k, v string }{
 		{"placement.cpu_overcommit_default", fmt.Sprintf("%g", req.CPUOvercommitDefault)},
@@ -552,6 +561,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		{"placement.rebalance_threshold", fmt.Sprintf("%d", req.RebalanceThreshold)},
 		{"placement.port_mode", req.PortMode},
 		{"placement.container_port", fmt.Sprintf("%d", req.ContainerPort)},
+		{"placement.pids_limit", fmt.Sprintf("%d", req.PidsLimit)},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -566,6 +576,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		ctx := r.Context()
 		h.state.Redis.Set(ctx, "dylaris:placement:port_mode", req.PortMode, 0)
 		h.state.Redis.Set(ctx, "dylaris:placement:container_port", fmt.Sprintf("%d", req.ContainerPort), 0)
+		h.state.Redis.Set(ctx, "dylaris:placement:pids_limit", fmt.Sprintf("%d", req.PidsLimit), 0)
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -611,6 +622,12 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 && n <= 65535 {
 			s.ContainerPort = n
+		}
+	}
+	if v := getStr("placement.pids_limit"); v != "" {
+		var n int64
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+			s.PidsLimit = n
 		}
 	}
 	return s

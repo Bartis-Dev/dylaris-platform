@@ -58,6 +58,12 @@ var (
 	// Dynamic routing modes — loaded from Redis, refreshed every 30s
 	routingMode    string // "ip_port" | "both" | "gateway"
 	fileAccessMode string // "sftp" | "both" | "beam"
+
+	// pidsLimit is the per-container process/thread cap (cgroup pids controller),
+	// loaded from Redis (dylaris:placement:pids_limit) and refreshed every 30s.
+	// 0 = unlimited (default). Anti fork-bomb / process-exhaustion guard. Note it
+	// counts threads too, so a too-low value would throttle heavy modded servers.
+	pidsLimit int64
 )
 
 // nodeExternal is set at startup: an external/home node forces gateway+beam
@@ -428,6 +434,13 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 	if v, err := rdb.Get(ctx, "dylaris:placement:container_port").Result(); err == nil && v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
 			containerPort = n
+		}
+	}
+	// Per-container pids cap (anti fork-bomb). Missing key / parse error / negative
+	// leaves it at 0 = unlimited.
+	if v, err := rdb.Get(ctx, "dylaris:placement:pids_limit").Result(); err == nil && v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			pidsLimit = n
 		}
 	}
 	routingMode, fileAccessMode = applyExternalOverride(routingMode, fileAccessMode, nodeExternal)
