@@ -70,6 +70,12 @@ type Store interface {
 	UpdateServerProxyID(id int, proxyID *int) error
 	UpdateServerOwner(id int, ownerID *string) error
 	SetServerAutoMove(id int, enabled bool) error
+	// UpdateServerNode reassigns a server to a different node. Used by the
+	// auto-move migration flow (later wave) to flip the FK after transport.
+	UpdateServerNode(serverID int, newNodeID int) error
+	// ResetAllAutoMove clears the auto_move opt-in on every server. Called when
+	// gateway routing is switched off, since auto-move cannot run without it.
+	ResetAllAutoMove() error
 
 	// --- Server Invites ---
 	CreateInvite(serverID int, userID, invitedBy string, permissions map[string]bool) error

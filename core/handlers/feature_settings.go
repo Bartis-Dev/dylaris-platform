@@ -22,6 +22,7 @@ func NewFeatureSettingsHandler(state *AppState) *FeatureSettingsHandler {
 type featureSettingsPayload struct {
 	Tickets  bool `json:"tickets"`
 	Modpacks bool `json:"modpacks"`
+	AutoMove bool `json:"autoMove"`
 }
 
 // Get GET /api/admin/settings/features — current bundle of platform toggles.
@@ -33,6 +34,7 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out := featureSettingsPayload{
 		Tickets:  h.state.FeatureFlags.IsTicketsEnabled(r.Context()),
 		Modpacks: h.state.FeatureFlags.IsModpacksEnabled(r.Context()),
+		AutoMove: h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -54,6 +56,21 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-move only works while the gateway is routing (it's what keeps a
+	// server's address stable across a node change). Refuse the whole PUT
+	// rather than partially apply, so the admin gets a single clear error and
+	// no flag is half-written.
+	if req.AutoMove && !h.state.gatewayEnabled() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "gateway_required",
+			"message": "Auto-move can only be enabled while gateway routing is active.",
+		})
+		return
+	}
+
 	writes := []struct {
 		key      string
 		val      bool
@@ -62,6 +79,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}{
 		{"feature_tickets_enabled", req.Tickets, "feature_tickets_enabled", "tickets"},
 		{"feature_modpacks_enabled", req.Modpacks, "feature_modpacks_enabled", "modpacks"},
+		{"feature_auto_move_enabled", req.AutoMove, "feature_auto_move_enabled", "autoMove"},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.key, boolStr(kv.val)); err != nil {

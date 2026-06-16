@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -1063,6 +1064,19 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	h.state.Redis.Set(ctx, "dylaris:routing_mode", req.Mode, 0)
 	h.state.Redis.Set(ctx, "dylaris:file_access_mode", req.FileMode, 0)
+
+	// Gateway off => auto-move cannot run (a moved server would lose its
+	// stable address), so disable the feature and clear every per-server
+	// opt-in. Best-effort: a failure here must not abort the routing switch.
+	if req.Mode == "ip_port" {
+		if err := h.state.Store.SetSetting("feature_auto_move_enabled", "false"); err != nil {
+			log.Printf("routing-mode: failed to disable auto-move feature flag: %v", err)
+		}
+		h.state.FeatureFlags.Invalidate("feature_auto_move_enabled")
+		if err := h.state.Store.ResetAllAutoMove(); err != nil {
+			log.Printf("routing-mode: failed to reset per-server auto-move opt-ins: %v", err)
+		}
+	}
 
 	// Kick off migration
 	queued := 0

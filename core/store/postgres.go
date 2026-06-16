@@ -443,6 +443,18 @@ func (s *PostgresStore) SetServerAutoMove(id int, enabled bool) error {
 	return err
 }
 
+// UpdateServerNode reassigns a server to a different node (auto-move target).
+func (s *PostgresStore) UpdateServerNode(serverID int, newNodeID int) error {
+	_, err := s.db.Exec("UPDATE servers SET node_id = $1 WHERE id = $2", newNodeID, serverID)
+	return err
+}
+
+// ResetAllAutoMove clears every per-server auto-move opt-in in one statement.
+func (s *PostgresStore) ResetAllAutoMove() error {
+	_, err := s.db.Exec("UPDATE servers SET auto_move = false")
+	return err
+}
+
 // SumAllocatedByNode returns the total memory (MB) and cpu_limit (cores)
 // allocated across every server on a node, regardless of running state.
 // Used by the scheduler to enforce capacity * overcommit_ratio.

@@ -677,8 +677,8 @@ func main() {
 	api.HandleFunc("/placement/regions", authHandler.AuthMiddleware(placementHandler.AvailableRegionsHandler)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(placementHandler.SetNodePlacement)).Methods("PUT")
 
-	// Server auto-move toggle
-	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(serverHandler.SetServerAutoMove)).Methods("PATCH")
+	// Server auto-move toggle — gated on the feature flag AND active gateway.
+	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove))).Methods("PATCH")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.GetServerSettings)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")

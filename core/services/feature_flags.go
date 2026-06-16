@@ -71,6 +71,14 @@ func (f *FeatureFlags) IsTicketsEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_tickets_enabled", false)
 }
 
+// IsAutoMoveEnabled gates the gateway-only auto-move (server migration between
+// nodes) feature. Default = false (opt-in, and only meaningful while gateway
+// routing is active — the gateway is what lets a server keep its address after
+// it changes node). The handler layer ANDs this with the live routing mode.
+func (f *FeatureFlags) IsAutoMoveEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_auto_move_enabled", false)
+}
+
 // Invalidate drops the cached entry for a key so the next Get re-reads from
 // the store. Called by settings PUT handlers after a write.
 func (f *FeatureFlags) Invalidate(key string) {
