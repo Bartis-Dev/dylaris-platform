@@ -13,6 +13,7 @@ import (
 	"dylaris-core/store"
 
 	"dylaris-pkg/migration"
+	"dylaris-pkg/queue"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -37,9 +38,19 @@ type MigrationOrchestrator struct {
 	clusterSecret string
 }
 
-// migrationQueueKey is the Redis list the manual endpoint (and Wave 4 worker)
-// RPush requests onto; the leader BLPOPs them.
-const migrationQueueKey = "dylaris:migration:queue"
+// migrationStreamKey is the durable Redis Stream the manual endpoint (and the
+// rebalance worker) publish requests onto; the elected leader consumes them via
+// a consumer group. New suffix avoids a WRONGTYPE collision with the old
+// `dylaris:migration:queue` list.
+const migrationStreamKey = "dylaris:migration:stream"
+
+// migrationGroup / migrationConsumer name the single logical consumer. The
+// consumer name is fixed (not per-instance) so when leadership moves to another
+// Core, that Core's consumer recovers the previous leader's pending entries.
+const (
+	migrationGroup    = "migration"
+	migrationConsumer = "migration-worker"
+)
 
 // MigrationRequest is the JSON payload on the migration queue.
 type MigrationRequest struct {
@@ -107,23 +118,42 @@ func (o *MigrationOrchestrator) EnqueueMigration(ctx context.Context, serverID, 
 	if err != nil {
 		return fmt.Errorf("marshal migration request: %w", err)
 	}
-	if err := o.redis.RPush(ctx, migrationQueueKey, data).Err(); err != nil {
+	if _, err := queue.Publish(ctx, o.redis, migrationStreamKey, data); err != nil {
 		return fmt.Errorf("enqueue migration request: %w", err)
 	}
 	return nil
 }
 
-// consume is the leader-gated loop. When not leader it idles on a short timer so
-// a follower that becomes leader picks up pending requests quickly without
-// hot-spinning. When leader it BLPOPs requests and processes them one at a time.
+// consume is the leader-gated durable-queue loop. When not leader it idles on a
+// short timer so a follower that becomes leader picks up pending requests
+// quickly without hot-spinning. When leader it runs a consumer-group reader
+// (Concurrency 1 = one migration at a time) until leadership is lost.
+//
+// Durability: a request is ACKed only after Migrate returns, so a leader crash
+// mid-migration leaves the request pending; the next leader recovers it (same
+// fixed consumer name) and re-runs Migrate. The per-server lock makes the
+// re-run safe — a stale lock from the dead leader makes the retry bail until the
+// lock TTL expires, after which it proceeds. Source data is never deleted before
+// cutover, so there is no data-loss window.
 func (o *MigrationOrchestrator) consume(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
+	consumer := queue.NewConsumer(o.redis, migrationStreamKey, migrationGroup, migrationConsumer)
+	consumer.Concurrency = 1 // migrations are serialized
 
+	handler := func(hctx context.Context, data []byte) error {
+		var req MigrationRequest
+		if err := json.Unmarshal(data, &req); err != nil {
+			log.Printf("migration: bad request payload, dropping: %v", err)
+			return nil // ack + drop malformed
+		}
+		o.Migrate(hctx, req)
+		return nil // ack: Migrate records its own status/rollback
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		// Only the elected leader consumes; followers idle.
 		if o.leader != nil && !o.leader.IsLeader() {
 			select {
 			case <-ctx.Done():
@@ -132,38 +162,33 @@ func (o *MigrationOrchestrator) consume(ctx context.Context) {
 			}
 			continue
 		}
+		// Run until this Core loses leadership (leaderCtx cancelled) or shutdown.
+		leaderCtx, cancel := context.WithCancel(ctx)
+		go o.watchLeadership(leaderCtx, cancel)
+		_ = consumer.Run(leaderCtx, handler)
+		cancel()
+	}
+}
 
-		// BLPOP blocks up to the timeout, then returns redis.Nil. The bounded
-		// block keeps us responsive to leadership changes + ctx cancellation
-		// without a tight poll loop.
-		res, err := o.redis.BLPop(ctx, migrationQueueBlockTimeout, migrationQueueKey).Result()
-		if err == redis.Nil {
-			continue // timed out, no work
-		}
-		if err != nil {
-			if ctx.Err() != nil {
+// watchLeadership cancels leaderCtx as soon as this Core stops being the leader,
+// so the migration consumer stops reading (only the leader migrates). A nil
+// leader (single-Core dev mode) means run unconditionally.
+func (o *MigrationOrchestrator) watchLeadership(ctx context.Context, cancel context.CancelFunc) {
+	if o.leader == nil {
+		return
+	}
+	t := time.NewTicker(migrationQueueBlockTimeout)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !o.leader.IsLeader() {
+				cancel()
 				return
 			}
-			log.Printf("migration: BLPOP error: %v", err)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(migrationQueueBlockTimeout):
-			}
-			continue
 		}
-		// res = [key, value]
-		if len(res) != 2 {
-			continue
-		}
-
-		var req MigrationRequest
-		if err := json.Unmarshal([]byte(res[1]), &req); err != nil {
-			log.Printf("migration: bad request payload, dropping: %v", err)
-			continue
-		}
-
-		o.Migrate(ctx, req)
 	}
 }
 
