@@ -13,7 +13,7 @@
 
 services:
   core:
-    image: ghcr.io/callmebartis/dylaris/core:latest
+    image: ghcr.io/bartis-dev/dylaris-platform-core:latest
     restart: unless-stopped
     depends_on:
       timescaledb:
@@ -32,7 +32,6 @@ services:
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME}"
       REDIS_ADDR: "redis:6379"
-      GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
@@ -40,7 +39,7 @@ services:
       - dylaris_net
 
   node:
-    image: ghcr.io/callmebartis/dylaris/node:latest
+    image: ghcr.io/bartis-dev/dylaris-platform-node:latest
     restart: unless-stopped
     depends_on:
       - redis
@@ -50,7 +49,6 @@ services:
       NODE_TAGS: "${NODE_TAGS:-}"
       NODE_REGION: "${NODE_REGION:-}"
       REDIS_ADDR: "redis:6379"
-      GATEWAY_ENABLED: "${GATEWAY_ENABLED:-false}"
       PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
       PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
     volumes:
@@ -66,7 +64,7 @@ services:
       - dylaris_net
 
   panel:
-    image: ghcr.io/callmebartis/dylaris/panel:latest
+    image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
     restart: unless-stopped
     environment:
       # Browser-reachable Core API URL (NOT the internal service name).

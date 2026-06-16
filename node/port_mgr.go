@@ -12,7 +12,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// PortManager handles host-port allocation for servers when GATEWAY_ENABLED=false.
+// PortManager handles host-port allocation for servers in ip_port / both
+// routing modes (i.e. when servers are reachable by a published host port).
 // Ports are persisted in Redis under dylaris:node:{nodeID}:port:{serverUUID} so
 // allocations survive node restarts and are visible to Core.
 type PortManager struct {

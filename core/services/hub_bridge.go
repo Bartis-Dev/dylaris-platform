@@ -92,7 +92,7 @@ type GatewayProvider interface {
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 }
 
-// --- RedisGateway (GATEWAY_ENABLED=true) ---
+// --- RedisGateway (active in gateway / both routing modes) ---
 
 type RedisGateway struct {
 	redis         *redis.Client
