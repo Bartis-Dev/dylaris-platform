@@ -417,8 +417,7 @@ export interface BackupRestore {
 export const listBackupRestores = (serverId: number): Promise<{ success: boolean; restores?: BackupRestore[] }> =>
     fetchAPI(`/servers/${serverId}/backup-restores`);
 export const backupDownloadUrl = (runId: number) => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
-    return `${API_URL}/backup-runs/${runId}/download`;
+    return `${API_BASE}/backup-runs/${runId}/download`;
 };
 
 export interface ProxyEndpoint {

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     getUsers, User, createServer, getNodes, Node,
     getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
+    API_URL,
 } from '../lib/api';
 import { regionLabel, regionFlag } from '../lib/regions';
 import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin } from 'lucide-react';
@@ -19,7 +20,6 @@ interface StoragePathInfo {
 async function fetchNodeStorage(nodeId: number): Promise<StoragePathInfo[]> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
         const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`, {
             headers: { Authorization: `Bearer ${token}` },
         });

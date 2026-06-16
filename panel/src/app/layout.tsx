@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 import { Syne, Instrument_Sans, DM_Mono, VT323 } from "next/font/google";
@@ -39,6 +40,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${syne.variable} ${instrumentSans.variable} ${dmMono.variable} ${vt323.variable}`}>
+      {/* Runtime config shim (public/config.js). beforeInteractive guarantees
+          window.__DYLARIS_CONFIG__ is set before the app bundle resolves the
+          API URL, so self-hosters can override it without a rebuild. */}
+      <Script src="/config.js" strategy="beforeInteractive" />
       <body>{children}</body>
     </html>
   );

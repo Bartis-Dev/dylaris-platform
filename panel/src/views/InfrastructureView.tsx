@@ -6,7 +6,7 @@ import {
   Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield, Activity,
   Users, Link2, HardDrive
 } from 'lucide-react';
-import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats } from '@/lib/api';
+import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import RoutesPanel from './infrastructure/RoutesPanel';
 import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
 
@@ -22,7 +22,6 @@ interface StorageInfo {
 async function fetchNodeStorage(nodeId: number): Promise<StorageInfo[]> {
   try {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
     const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`, {
       headers: { Authorization: `Bearer ${token}` },
     });

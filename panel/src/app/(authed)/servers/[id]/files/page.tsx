@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Terminal, Globe, FolderOpen, Copy, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { API_URL } from '@/lib/api';
 import FileBrowserView from '@/views/FileBrowserView';
 
 // Platform slugs match gateway/beam/relay/binaries.go validPlatforms.
@@ -46,7 +47,6 @@ export default function ServerFilesPage() {
 
     if (!server) return null;
 
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
     const beamEnabled = (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.enabled !== false;
 
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;

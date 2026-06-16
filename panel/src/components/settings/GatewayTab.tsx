@@ -6,6 +6,7 @@ import {
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
+    API_URL,
 } from '@/lib/api';
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
@@ -63,7 +64,6 @@ function displayToBw(value: number, unit: string): number {
 async function getBeamSettings(): Promise<{ success: boolean; settings?: BeamSettings }> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
         const res = await fetch(`${API_URL}/settings/beam`, {
             headers: { Authorization: `Bearer ${token}` },
         });
@@ -76,7 +76,6 @@ async function getBeamSettings(): Promise<{ success: boolean; settings?: BeamSet
 async function saveBeamSettings(settings: BeamSettings): Promise<{ success: boolean; message?: string }> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
         const res = await fetch(`${API_URL}/settings/beam`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -1429,7 +1428,6 @@ const XDP_DEFAULTS: XDPConfig = {
 async function getXDPConfig(): Promise<{ success: boolean; config?: XDPConfig; present?: boolean }> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
         const res = await fetch(`${API_URL}/admin/xdp/config`, {
             headers: { Authorization: `Bearer ${token}` },
         });
@@ -1442,7 +1440,6 @@ async function getXDPConfig(): Promise<{ success: boolean; config?: XDPConfig; p
 async function saveXDPConfig(cfg: XDPConfig): Promise<{ success: boolean; message?: string }> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
         const res = await fetch(`${API_URL}/admin/xdp/config`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

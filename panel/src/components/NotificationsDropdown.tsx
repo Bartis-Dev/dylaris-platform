@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { API_URL } from '@/lib/api';
 import { listNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, Notification as InboxNotification } from '@/lib/api/notifications';
 
 // ---------------------------------------------------------------------------
@@ -27,7 +28,6 @@ interface Notification {
 async function checkBeamRelayMissing(): Promise<Notification | null> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:25500/api';
         const res = await fetch(`${API_URL}/settings/beam`, {
             headers: { Authorization: `Bearer ${token}` },
         });
