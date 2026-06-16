@@ -54,6 +54,15 @@ func pingWithRetry(db *sql.DB, attempts int, delay time.Duration) error {
 	return err
 }
 
+// EnsureSchema provisions the full schema on an arbitrary database. It is the
+// exported entry point used by the in-panel DB migration to create every table
+// on a fresh TARGET database before the generic row copy. useTimescale controls
+// whether server_stats is created as a TimescaleDB hypertable (target backend)
+// or a plain table. It is idempotent, like ensureSchema.
+func EnsureSchema(db *sql.DB, useTimescale bool) error {
+	return ensureSchema(db, useTimescale)
+}
+
 // ensureSchema creates every table, applies column migrations and seeds
 // the baseline rows. Every statement is idempotent (CREATE/ALTER ... IF
 // NOT EXISTS, conditional inserts), so it is safe to run repeatedly.
