@@ -213,6 +213,7 @@ Set these in `.env` (single-host) or your shell/secret store (swarm). See [`.env
 | `API_PORT` | `25500` | Core REST API port. |
 | `DB_HOST` / `DB_PORT` | `timescaledb` / `5432` | Postgres host/port. |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | — | **Required.** Postgres credentials/database. |
+| `DB_SSLMODE` | `disable` | Postgres TLS mode. Set `require`/`verify-full` for a remote DB. |
 | `REDIS_ADDR` | `redis:6379` | Redis/Valkey address. |
 | `DYLARIS_REGION` | `default` | Region label for this Core. |
 | `FRONTEND_URL` | `http://panel:25510` | Internal panel URL (CORS / links). |
@@ -247,7 +248,7 @@ Set these in `.env` (single-host) or your shell/secret store (swarm). See [`.env
 | `25521` | node | Beam gRPC (overlay-only, JWT-gated) |
 | `25600–30000` | node | MC server host ports (`ip_port`/`both` routing) |
 
-> The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`51820/udp`) — see the `dylaris-gateway` repo.
+> The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`25599/udp`) — see the `dylaris-gateway` repo.
 
 ## Scalability
 

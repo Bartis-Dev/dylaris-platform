@@ -5,15 +5,18 @@ Dylaris ist ein Monorepo, das aus einer serviceorientierten Golang-Backend-Archi
 Das Repository nutzt einen Go-Workspace (`go.work`) für die Backends und separate NPM-Projekte für die Frontends.
 
 ### Backend-Services (Golang)
+Workspace-Member laut `go.work`: `core`, `node`, `agent`, `log-shipper`, `pkg`, `proto`.
 - `/core`: Haupt-API, Datenbank-Modelle (Postgres/Redis), Handler und zentrale Services.
 - `/node`: Node-Service für die Zielserver (inkl. Docker-Management).
-- `/gate`: Gate (TCP/HTTP/Minecraft-Ingress mit TLS-Handling).
-- `/hub`, `/dns/backend`, `/agent`, `/link`, `/nexus`, `/license`: Weitere spezialisierte Microservices.
+- `/agent`: Host-Stats- & DDoS-Monitoring-Agent (CPU/RAM/Netz).
+- `/log-shipper`: Log-Versand-Service.
+- `/pkg`, `/proto`: Geteilte Libraries (beam, errlog, protocol, xdp) bzw. gRPC-Protos.
+
+Hinweis: Ingress-/Gateway-Microservices (edge, hub, link, beam-relay, warp) liegen im
+**separaten** `gateway/`-Repo, nicht unter `platform/`.
 
 ### Frontends (Next.js + Tailwind v4)
 - `/panel`: Haupt-Webinterface (Panel für Server- & User-Management).
-- `/website`: Öffentliche Landingpage.
-- `/hub/web` & `/dns/web`: Spezifische Web-UIs für Hub und DNS.
 
 ## Entwicklungs-Befehle
 - **Backend**: Im jeweiligen Service-Ordner `go run main.go` oder im Root `go work sync`. Tests via `go test ./...`.
@@ -38,12 +41,11 @@ Das Repository nutzt einen Go-Workspace (`go.work`) für die Backends und separa
 - Nutze moderne CSS-Variablen für das Styling.
 
 ### 4. Embedded Frontends (Go + `//go:embed`)
-Einige Microservices betten ihr Frontend per `//go:embed` direkt in das Go-Binary ein. **Nach jeder Änderung an Frontend-Dateien eines solchen Services MUSS zwingend ein Frontend-Build ausgeführt werden**, damit die Änderungen beim nächsten Start des Go-Backends auch tatsächlich enthalten sind.
+Einige Binaries betten ihr Frontend per `//go:embed` direkt ein. **Nach jeder Änderung an Frontend-Dateien eines solchen Services MUSS zwingend ein Frontend-Build ausgeführt werden**, damit die Änderungen beim nächsten Start des Go-Backends auch tatsächlich enthalten sind.
 
-| Service | Frontend-Ordner | Build-Command | Output-Verzeichnis |
-|---------|----------------|---------------|---------------------|
-| **Hub** | `hub/web/` | `cd hub/web && npm run build` | `hub/cmd/standalone/dist/` |
-| **Agent** | `agent/cmd/standalone/frontend/` | Kein Build nötig (einzelne HTML-Datei) | – |
+Kein `platform/`-Service nutzt dieses Pattern aktuell (keine `//go:embed`-Frontends unter
+`platform/`). Im separaten `gateway/`-Repo betrifft es die Beam-Desktop-App
+(`gateway/beam/app`, embedet `frontend/dist`, Wails-Build) — Details dort dokumentiert.
 
 - **Wichtig**: Wird der Build vergessen, enthält das Go-Binary noch den alten Frontend-Stand – Fehler werden dann fälschlicherweise im Backend gesucht.
 - Neue Services mit diesem Pattern hier ergänzen.
