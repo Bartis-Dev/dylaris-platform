@@ -259,7 +259,7 @@ func createLibraryDisabledTable(db *sql.DB) error {
 	return err
 }
 
-func createServerStatsTable(db *sql.DB) error {
+func createServerStatsTable(db *sql.DB, useTimescale bool) error {
 	query := `CREATE TABLE IF NOT EXISTS server_stats (
 		time TIMESTAMPTZ NOT NULL,
 		server_uuid TEXT NOT NULL,
@@ -276,10 +276,20 @@ func createServerStatsTable(db *sql.DB) error {
 
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_server_stats_uuid_time ON server_stats (server_uuid, time DESC)`)
 
-	// Attempt TimescaleDB hypertable conversion (non-fatal if TimescaleDB not installed)
+	// Plain-PostgreSQL mode (DB_TYPE=postgres): keep server_stats a regular
+	// table. Retention is enforced by the hourly sweep in main.go, so we skip
+	// the TimescaleDB calls entirely — no failing hypertable attempt, clean logs.
+	if !useTimescale {
+		log.Println("DB_TYPE=postgres: server_stats is a plain table (retention via hourly sweep)")
+		return nil
+	}
+
+	// TimescaleDB mode: promote to a hypertable with native retention. Still
+	// non-fatal if the extension happens to be missing (we fall back to the
+	// plain table + the hourly sweep), so a mislabelled DB never blocks boot.
 	_, err := db.Exec(`SELECT create_hypertable('server_stats', 'time', if_not_exists => TRUE)`)
 	if err != nil {
-		log.Printf("TimescaleDB hypertable not created (extension may not be installed): %v", err)
+		log.Printf("TimescaleDB hypertable not created (extension may not be installed; falling back to plain table + hourly sweep): %v", err)
 	} else {
 		log.Println("TimescaleDB hypertable 'server_stats' ready")
 		// Attempt retention policy

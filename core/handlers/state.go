@@ -36,4 +36,9 @@ type AppState struct {
 	// Migration is the leader-driven node-to-node migration orchestrator.
 	// The manual-move endpoint only ENQUEUES onto it; the elected Core executes.
 	Migration *services.MigrationOrchestrator
+
+	// DBType is the normalized database backend ("timescaledb" or "postgres"),
+	// set from config at boot. The status page uses it to distinguish an
+	// intended plain-postgres deployment from a misconfigured timescale one.
+	DBType string
 }

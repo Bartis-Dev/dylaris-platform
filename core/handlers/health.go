@@ -117,7 +117,7 @@ func (h *HealthHandler) databaseComponent(ctx context.Context, up *bool) healthC
 // is the "DB green, but history features limited because TimescaleDB is
 // missing" signal: it never marks the platform down, only degraded.
 func (h *HealthHandler) metricsComponent(ctx context.Context, dbUp bool) healthComponent {
-	comp := healthComponent{Key: "metrics", Name: "Metrics history (TimescaleDB)"}
+	comp := healthComponent{Key: "metrics", Name: "Metrics history (time-series)"}
 	if !dbUp {
 		comp.Status = "degraded"
 		comp.Detail = "Unknown"
@@ -134,11 +134,20 @@ func (h *HealthHandler) metricsComponent(ctx context.Context, dbUp bool) healthC
 		comp.Reason = "extension check failed: " + err.Error()
 	case enabled:
 		comp.Status = "up"
-		comp.Detail = "Hypertable active (24h retention)"
+		comp.Detail = "TimescaleDB hypertable active (native 24h retention)"
+	case h.state.DBType == "postgres":
+		// Intended plain-PostgreSQL deployment (DB_TYPE=postgres): server_stats
+		// is a regular table and retention is enforced by the hourly sweep. This
+		// is a supported configuration, not a fault.
+		comp.Status = "up"
+		comp.Detail = "Plain PostgreSQL (server_stats table, 24h retention via hourly sweep)"
 	default:
+		// DB_TYPE=timescaledb was requested but the extension isn't loaded — a
+		// real misconfiguration. The platform still works (plain table + sweep),
+		// so it's degraded, not down.
 		comp.Status = "degraded"
-		comp.Detail = "Extension not installed"
-		comp.Reason = "server_stats runs as a plain Postgres table: no automatic retention and long-range CPU/RAM history graphs are unoptimized. Live stats still flow; only historical charts are affected."
+		comp.Detail = "TimescaleDB requested but extension not installed"
+		comp.Reason = "DB_TYPE=timescaledb but the timescaledb extension is not loaded. server_stats falls back to a plain table with the hourly retention sweep, so live + recent stats work; only TimescaleDB's hypertable optimizations are missing. Set DB_TYPE=postgres to silence this, or load the extension."
 	}
 	return comp
 }

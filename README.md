@@ -526,6 +526,7 @@ secrets:
 | `DB_HOST` | `localhost` | No (set in compose: `timescaledb`) | Postgres host. |
 | `DB_PORT` | `5432` | No | Postgres port. |
 | `DB_SSLMODE` | `disable` | No | Postgres TLS mode (`disable`/`require`/`verify-full`). Set `require`/`verify-full` for a remote DB. |
+| `DB_TYPE` | `timescaledb` | No | Time-series backend for `server_stats`: `timescaledb` (hypertable + native retention, best for larger fleets) or `postgres` (plain table, retention via the hourly sweep — fine for small/medium setups, no extension needed). |
 | `API_PORT` | `25500` | No | Core REST API port. |
 | `DYLARIS_GRPC_PORT` | `25501` | No | Core gRPC mesh port (Core ↔ Node). |
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |

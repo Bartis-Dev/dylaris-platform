@@ -69,6 +69,7 @@ func main() {
 		FrontendURL:         cfg.FrontendURL,
 		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
 		FeatureFlags:        services.NewFeatureFlags(pgStore),
+		DBType:              cfg.DBType,
 	}
 
 	redisClient, err := database.InitRedis(cfg)

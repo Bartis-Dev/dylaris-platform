@@ -32,6 +32,12 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	DBSSLMode  string
+	// DBType selects the storage backend for time-series data (server_stats):
+	// "timescaledb" promotes it to a hypertable with native retention (best for
+	// larger fleets); "postgres" keeps it a plain table with retention enforced
+	// by the hourly sweep (fine for small/medium setups, no extension required).
+	// Normalized to exactly "timescaledb" or "postgres".
+	DBType string
 
 	// Core Redis
 	RedisAddr string
@@ -77,6 +83,9 @@ func LoadConfig() (Config, error) {
 		// Defaults to disable to preserve existing internal-Docker setups; set
 		// DB_SSLMODE=require (or verify-full) when Postgres is remote.
 		DBSSLMode: getEnv("DB_SSLMODE", "disable"),
+		// Defaults to timescaledb (the bundled image). Set DB_TYPE=postgres to
+		// run on plain PostgreSQL with no TimescaleDB extension.
+		DBType: NormalizeDBType(getEnv("DB_TYPE", "timescaledb")),
 
 		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisUser: getEnv("REDIS_USER", ""),
@@ -104,6 +113,28 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// NormalizeDBType maps the various spellings operators might use to the two
+// canonical values: "timescaledb" or "postgres". Anything timescale-ish (incl.
+// the empty string falling through the default) resolves to "timescaledb"; any
+// plain-postgres spelling resolves to "postgres". Unknown values default to
+// "postgres" (the safer, extension-free backend).
+func NormalizeDBType(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "timescaledb", "timescale", "ts":
+		return "timescaledb"
+	case "postgres", "postgresql", "pg", "plain":
+		return "postgres"
+	default:
+		return "postgres"
+	}
+}
+
+// UsesTimescale reports whether the given (already-normalized or raw) DB type
+// should use TimescaleDB hypertables + native retention.
+func UsesTimescale(dbType string) bool {
+	return NormalizeDBType(dbType) == "timescaledb"
 }
 
 // getSecret resolves a secret with Docker/Portainer secrets support. Precedence:

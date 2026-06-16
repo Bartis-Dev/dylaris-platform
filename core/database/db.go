@@ -31,7 +31,9 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 	}
 	log.Println("Postgres DB connection established.")
 
-	if err := ensureSchema(db); err != nil {
+	useTimescale := config.UsesTimescale(cfg.DBType)
+	log.Printf("DB_TYPE=%s (server_stats: %s)", cfg.DBType, map[bool]string{true: "TimescaleDB hypertable + native retention", false: "plain table + hourly retention sweep"}[useTimescale])
+	if err := ensureSchema(db, useTimescale); err != nil {
 		return nil, err
 	}
 
@@ -55,7 +57,7 @@ func pingWithRetry(db *sql.DB, attempts int, delay time.Duration) error {
 // ensureSchema creates every table, applies column migrations and seeds
 // the baseline rows. Every statement is idempotent (CREATE/ALTER ... IF
 // NOT EXISTS, conditional inserts), so it is safe to run repeatedly.
-func ensureSchema(db *sql.DB) error {
+func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createUsersTable(db); err != nil {
 		return err
 	}
@@ -74,7 +76,7 @@ func ensureSchema(db *sql.DB) error {
 	if err := createServerInvitesTable(db); err != nil {
 		return err
 	}
-	if err := createServerStatsTable(db); err != nil {
+	if err := createServerStatsTable(db, useTimescale); err != nil {
 		return err
 	}
 	if err := createGatewayTables(db); err != nil {
