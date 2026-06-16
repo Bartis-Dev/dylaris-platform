@@ -291,6 +291,8 @@ docker compose down           # stop (keeps volumes)
 
 Multi-host fleet on an **overlay** network with `deploy:` blocks (replicas, placement, restart policy, resource limits). Best for scaling Core/Panel and running Nodes across many machines.
 
+> **Portainer:** paste `docker-stack.yml` into a new Stack and set the variables in the stack's **environment** editor (and secrets via the `*_FILE` pattern above) — the CLI `set -a; . ./.env` step below is only for `docker stack deploy` from a shell.
+
 ```yaml
 # ─────────────────────────────────────────────────────────────────────────────
 # DYLARIS — DOCKER SWARM deployment
@@ -482,7 +484,35 @@ Notable details:
 
 ## Configuration reference
 
-Set these in `.env` (single-host) or your shell/secret store (swarm). Every variable below maps to a real env read in the code; nothing is invented. Core **refuses to boot** if `JWT_SECRET` or `CLUSTER_SECRET` is empty or left at its placeholder.
+All configuration is passed as **Docker environment variables** — set them in the service's `environment:` block (compose), the **stack environment** in Portainer, or `docker service ... --env` (Swarm). There are no CLI flags. A `.env` file is only a convenience for local `docker compose` (interpolated into `${VAR}`) and for local dev (the Go services also auto-load a `.env` via godotenv); production / Portainer deployments set env vars in the orchestrator, not a file on disk.
+
+Every variable below maps to a real env read in the code; nothing is invented. Core **refuses to boot** if `JWT_SECRET` or `CLUSTER_SECRET` is empty or left at its placeholder.
+
+### Secrets (Docker / Portainer secrets via `*_FILE`)
+
+Every secret can be supplied from a **file** instead of a plain env value by setting `<NAME>_FILE` to a readable path. The service reads the file (whitespace-trimmed), so you can use Docker/Swarm secrets (`/run/secrets/...`) or Portainer secrets without ever putting the value in the environment. Precedence per secret: `<NAME>_FILE` → `<NAME>` → default; an unreadable or empty `*_FILE` logs and falls back rather than booting blank.
+
+Supported:
+
+- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`
+- **Node:** `CLUSTER_SECRET_FILE`, `REDIS_PASSWORD_FILE`, `SIDECAR_REDIS_PASSWORD_FILE`, `BEAM_JWT_SECRET_FILE`
+- **Log shipper:** `REDIS_PASS_FILE`
+
+Example (Swarm / Portainer with external secrets):
+
+```yaml
+services:
+  core:
+    environment:
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      CLUSTER_SECRET_FILE: /run/secrets/cluster_secret
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [jwt_secret, cluster_secret, db_password]
+secrets:
+  jwt_secret:     { external: true }
+  cluster_secret: { external: true }
+  db_password:    { external: true }
+```
 
 ### Core
 
@@ -500,7 +530,7 @@ Set these in `.env` (single-host) or your shell/secret store (swarm). Every vari
 | `DYLARIS_GRPC_PORT` | `25501` | No | Core gRPC mesh port (Core ↔ Node). |
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
-| `FRONTEND_URL` | `http://localhost:25510` (compose: `http://panel:25510`) | No | Internal panel URL (CORS / links). |
+| `FRONTEND_URL` | `http://localhost:25510` (compose: `http://panel:25510`) | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config — kept as env. |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
 | `REDIS_PASSWORD` | *(empty)* | No | Redis/Valkey password. |
@@ -541,7 +571,14 @@ Set these in `.env` (single-host) or your shell/secret store (swarm). Every vari
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `PANEL_API_URL` → `NEXT_PUBLIC_API_URL` | `http://localhost:25500` | Recommended | **Browser-reachable** Core API base URL. The compose maps `PANEL_API_URL` into the container's `NEXT_PUBLIC_API_URL`. Set to your public URL in production. |
+| `PANEL_API_URL` → `NEXT_PUBLIC_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL (build-time; the compose maps `PANEL_API_URL` into `NEXT_PUBLIC_API_URL`). If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`) — the usual reverse-proxy layout where `/api` is routed to Core. Override at runtime (no rebuild) via the shim below. |
+
+The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). The runtime value lives in **`/config.js`** (served from the panel image's `public/`), so a self-hoster can point a prebuilt image at a different API host by editing or bind-mounting that one file — no rebuild needed. Leave `apiUrl` empty for same-origin:
+
+```js
+// config.js (bind-mount to override)
+window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com" };
+```
 
 ### Log Shipper (inside the MC container)
 
@@ -568,6 +605,54 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25600–30000` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`25599/udp`) — see the `dylaris-gateway` repo.
+
+## Reverse proxy and TLS
+
+Keep Core, the Panel, Nodes, Postgres and Redis on a private network and put **one reverse proxy** in front for public TLS. Two layouts:
+
+**Same-origin (recommended).** The proxy serves the Panel at `https://panel.example.com` and routes `/api` (and `/api/system/events` for SSE) on that same host to `core:25500`. The Panel then talks to its own origin (`/api`) — no `NEXT_PUBLIC_API_URL`, no `config.js`, and **no CORS** to configure. Auth is Bearer-token, so there is no cookie/CSRF surface to widen.
+
+**Cross-origin.** Panel and API on different hostnames (e.g. `panel.example.com` + `api.example.com`). Then point the Panel at the API (`config.js` `apiUrl` or build-time `NEXT_PUBLIC_API_URL`) **and** set Core's `FRONTEND_URL` to the panel origin so CORS accepts it.
+
+TLS is terminated at the proxy (Let's Encrypt). Core and the Panel speak plain HTTP behind it. For a remote database set `DB_SSLMODE=require` (or `verify-full`).
+
+### Nginx Proxy Manager (the reference production setup)
+
+Add a **Proxy Host** for `panel.example.com` → `panel:25510`, request a Let's Encrypt cert, then under **Custom locations** add `/api` → `core:25500`. Enable **Websockets support** on the host: the Panel uses Server-Sent Events (system events, live console) which must not be buffered or short-timed out. In NPM's *Advanced* tab:
+
+```nginx
+location /api/ {
+    proxy_pass http://core:25500;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;          # required for SSE (events, console stream)
+    proxy_read_timeout 1h;        # keep long-lived SSE connections open
+}
+```
+
+### Traefik (alternative)
+
+Terminate TLS with a cert resolver and route by host/path. Example labels on the Core/Panel services:
+
+```yaml
+labels:
+  - "traefik.enable=true"
+  # Panel
+  - "traefik.http.routers.dylaris-panel.rule=Host(`panel.example.com`)"
+  - "traefik.http.routers.dylaris-panel.tls.certresolver=le"
+  - "traefik.http.services.dylaris-panel.loadbalancer.server.port=25510"
+  # API on the same host under /api (same-origin)
+  - "traefik.http.routers.dylaris-api.rule=Host(`panel.example.com`) && PathPrefix(`/api`)"
+  - "traefik.http.routers.dylaris-api.tls.certresolver=le"
+  - "traefik.http.services.dylaris-api.loadbalancer.server.port=25500"
+```
+
+Traefik streams responses by default (no extra SSE buffering tweak needed).
+
+### Gateway ingress
+
+Minecraft and gateway-routed HTTP go through the separate **Gateway** stack, not this proxy: the Edge maps public `80`/`443`/`25565` to `25561`/`25562`/Edge. If you front the Edge with a reverse proxy, point it at `Edge:25561` (HTTP) / `Edge:25562` (HTTPS) — see the `dylaris-gateway` repo.
 
 ## Scalability
 
