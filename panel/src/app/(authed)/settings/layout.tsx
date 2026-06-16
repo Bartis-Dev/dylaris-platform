@@ -11,6 +11,7 @@ import {
 } from '@/components/settings/UnsavedChanges';
 
 const ALL_TABS = [
+    { slug: 'status', label: 'Status', always: true },
     { slug: 'modules', label: 'Modules', always: true },
     { slug: 'users', label: 'Users', always: true },
     { slug: 'user-management', label: 'User Management', always: true },

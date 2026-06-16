@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"dylaris-core/models"
 	"time"
 )
@@ -126,6 +127,18 @@ type Store interface {
 	// --- Settings ---
 	GetSetting(key string) (string, error)
 	SetSetting(key, value string) error
+
+	// --- Health ---
+	// Ping verifies the underlying database connection is alive. Backed by
+	// sql.DB.PingContext so the status endpoint can report DB liveness without
+	// running a real query.
+	Ping(ctx context.Context) error
+	// TimescaleEnabled reports whether the TimescaleDB extension is installed.
+	// server_stats is created as a hypertable only when the extension is present;
+	// without it the table still works as plain Postgres but loses automatic
+	// retention and fast long-range history queries, which the status endpoint
+	// surfaces as a degraded (not failed) component.
+	TimescaleEnabled(ctx context.Context) (bool, error)
 
 	// --- Warp ---
 	CreateWarpAPIKey(k WarpAPIKey) (int, error)

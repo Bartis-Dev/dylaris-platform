@@ -182,6 +182,33 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     return {};
 }
 
+// --- PLATFORM HEALTH (admin Status page) ---
+export type HealthStatus = 'up' | 'degraded' | 'down' | 'disabled';
+
+export interface HealthItem {
+    name: string;
+    status: HealthStatus;
+    detail?: string;
+}
+
+export interface HealthComponent {
+    key: string;
+    name: string;
+    status: HealthStatus;
+    detail?: string;
+    reason?: string;
+    items?: HealthItem[];
+}
+
+export interface SystemHealth {
+    overall: 'healthy' | 'degraded' | 'down';
+    components: HealthComponent[];
+    checkedAt: string;
+}
+
+export const getSystemHealth = (): Promise<{ success: boolean; health: SystemHealth }> =>
+    fetchAPI('/admin/health');
+
 // --- MODULES ---
 export const getModules = () => fetchAPI('/modules');
 export const createModule = (data: Partial<AppModule>) => fetchAPI('/modules', { method: 'POST', body: JSON.stringify(data) });

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"dylaris-core/models"
@@ -36,6 +37,23 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 // interface having to grow first-class TX methods. Use sparingly — most
 // callers should stick to the interface methods.
 func (s *PostgresStore) RawDB() *sql.DB { return s.db }
+
+// Ping verifies the database connection is alive for the status endpoint.
+func (s *PostgresStore) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
+// TimescaleEnabled reports whether the TimescaleDB extension is installed in
+// the current database. server_stats is promoted to a hypertable only when
+// present; the status endpoint reports its absence as a degraded metrics
+// component rather than a hard failure.
+func (s *PostgresStore) TimescaleEnabled(ctx context.Context) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')`,
+	).Scan(&exists)
+	return exists, err
+}
 
 // ==========================================
 // USERS
