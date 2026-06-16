@@ -468,6 +468,7 @@ func main() {
 	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.GetMigration)).Methods("GET")
 	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.StartMigration)).Methods("POST")
 	api.HandleFunc("/admin/db/migration/test-connection", authHandler.AuthMiddleware(dbMigrationHandler.TestConnection)).Methods("POST")
+	api.HandleFunc("/admin/db/migration/verify", authHandler.AuthMiddleware(dbMigrationHandler.VerifyMigration)).Methods("POST")
 	// --- Telemetry settings ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")

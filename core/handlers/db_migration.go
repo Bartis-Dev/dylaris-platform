@@ -152,6 +152,37 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// VerifyMigration POST /api/admin/db/migration/verify — run the source-vs-target
+// comparison on demand (the manual "Verify / Test" button). Read-only on both
+// sides: checks every table exists on both and that row counts match, returning a
+// per-table report plus a human-readable log.
+func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	if h.state.DBMigration == nil {
+		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
+		return
+	}
+	var req dbTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// COUNT(*) over large tables can take a while; allow a generous budget.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	report, err := h.state.DBMigration.VerifyTarget(ctx, req.toParams())
+	if err != nil {
+		sendJSONError(w, "Verify failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "report": report})
+}
+
 // resolveUsername best-effort maps a user UUID to a display name.
 func (h *DBMigrationHandler) resolveUsername(id string) string {
 	if id == "" {
