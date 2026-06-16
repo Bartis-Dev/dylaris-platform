@@ -30,6 +30,7 @@ const ALL_TABS = [
     { slug: 'warp', label: 'Warp', always: true },
     { slug: 'backups', label: 'Backups', always: true },
     { slug: 'maintenance', label: 'Maintenance', always: true },
+    { slug: 'database', label: 'Database', always: true },
     { slug: 'ticket-categories', label: 'Ticket Categories', always: true },
     { slug: 'canned-responses', label: 'Canned Responses', always: true },
     { slug: 'tickets', label: 'Ticket Settings', always: true },
