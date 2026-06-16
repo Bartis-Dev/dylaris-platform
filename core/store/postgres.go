@@ -55,6 +55,46 @@ func (s *PostgresStore) TimescaleEnabled(ctx context.Context) (bool, error) {
 	return exists, err
 }
 
+// IsServerStatsHypertable reports whether server_stats is already a hypertable.
+// timescaledb_information.hypertables only exists when the extension is present,
+// so callers should gate on TimescaleEnabled first.
+func (s *PostgresStore) IsServerStatsHypertable(ctx context.Context) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_name = 'server_stats')`,
+	).Scan(&ok)
+	return ok, err
+}
+
+// ConvertServerStatsToHypertable promotes an existing plain server_stats table to
+// a hypertable in place. The legacy positional signature matches
+// createServerStatsTable in db_tables.go for compatibility with whichever
+// TimescaleDB version the operator runs; migrate_data rewrites existing rows.
+func (s *PostgresStore) ConvertServerStatsToHypertable(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx,
+		`SELECT create_hypertable('server_stats', 'time', migrate_data => TRUE, if_not_exists => TRUE)`,
+	); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`SELECT add_retention_policy('server_stats', INTERVAL '24 hours', if_not_exists => TRUE)`)
+	return err
+}
+
+// EstimateServerStatsRows returns the planner's row estimate for server_stats.
+// reltuples is approximate (refreshed by ANALYZE/autovacuum) but instant, which
+// is what the "consider TimescaleDB" recommendation heuristic needs.
+func (s *PostgresStore) EstimateServerStatsRows(ctx context.Context) (int64, error) {
+	var n float64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(reltuples, 0) FROM pg_class WHERE relname = 'server_stats'`,
+	).Scan(&n)
+	if n < 0 {
+		n = 0 // reltuples is -1 before the first ANALYZE
+	}
+	return int64(n), err
+}
+
 // ==========================================
 // USERS
 // ==========================================

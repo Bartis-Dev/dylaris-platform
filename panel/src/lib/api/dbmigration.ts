@@ -74,6 +74,36 @@ export function dbMigrationInProgress(phase?: DBMigrationPhase): boolean {
     return phase === 'preparing' || phase === 'schema' || phase === 'copying' || phase === 'verifying';
 }
 
+export interface HypertableStatus {
+    dbType: string;
+    timescaleInstalled: boolean;
+    isHypertable: boolean;
+    eligibleForConversion: boolean;
+    serverStatsRowsEstimate: number;
+    recommendTimescale: boolean;
+    recommendThreshold: number;
+}
+
+// GET current backend state: timescale extension, hypertable status, and whether
+// we recommend switching to TimescaleDB.
+export async function getHypertableStatus() {
+    try {
+        const res = await fetch(`${API_URL}/admin/db/hypertable`, { headers: getAuthHeader() });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+// POST convert the existing plain server_stats table to a hypertable in place.
+export async function convertHypertable() {
+    try {
+        const res = await fetch(`${API_URL}/admin/db/hypertable/convert`, {
+            method: 'POST',
+            headers: getAuthHeader(),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
 // GET shared job status (any admin sees the same live job).
 export async function getDBMigration() {
     try {

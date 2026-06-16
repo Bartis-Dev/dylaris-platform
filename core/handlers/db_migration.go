@@ -183,6 +183,86 @@ func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "report": report})
 }
 
+// timescaleRecommendRows is the server_stats row estimate above which the panel
+// recommends switching a plain-PostgreSQL deployment to TimescaleDB. Conservative
+// on purpose: this is advisory, never blocking.
+const timescaleRecommendRows = 5_000_000
+
+// HypertableStatus GET /api/admin/db/hypertable — reports the current backend
+// state: whether the timescaledb extension is present, whether server_stats is
+// already a hypertable, whether an in-place conversion is possible, and whether
+// we recommend switching to TimescaleDB for performance.
+func (h *DBMigrationHandler) HypertableStatus(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	tsInstalled, _ := h.state.Store.TimescaleEnabled(ctx)
+	isHyper := false
+	if tsInstalled {
+		isHyper, _ = h.state.Store.IsServerStatsHypertable(ctx)
+	}
+	rows, _ := h.state.Store.EstimateServerStatsRows(ctx)
+
+	// Running plain when DB_TYPE is postgres, or when timescale was requested but
+	// the extension is missing (server_stats is a plain table either way).
+	plain := h.state.DBType == "postgres" || !tsInstalled
+	recommend := plain && rows >= timescaleRecommendRows
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":                 true,
+		"dbType":                  h.state.DBType,
+		"timescaleInstalled":      tsInstalled,
+		"isHypertable":            isHyper,
+		"eligibleForConversion":   tsInstalled && !isHyper,
+		"serverStatsRowsEstimate": rows,
+		"recommendTimescale":      recommend,
+		"recommendThreshold":      timescaleRecommendRows,
+	})
+}
+
+// ConvertHypertable POST /api/admin/db/hypertable/convert — promote the existing
+// plain server_stats table to a TimescaleDB hypertable IN PLACE (same database).
+// For the case where the operator swapped a plain-Postgres image for a TimescaleDB
+// one on the same volume.
+func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	// migrate_data rewrites the table; on a large server_stats this can take a while.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	defer cancel()
+
+	tsInstalled, err := h.state.Store.TimescaleEnabled(ctx)
+	if err != nil {
+		sendJSONError(w, "Failed to check TimescaleDB: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !tsInstalled {
+		sendJSONError(w, "The TimescaleDB extension is not installed in this database. Switch to a TimescaleDB image first.", http.StatusBadRequest)
+		return
+	}
+	if isHyper, _ := h.state.Store.IsServerStatsHypertable(ctx); isHyper {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "alreadyHypertable": true})
+		return
+	}
+
+	if err := h.state.Store.ConvertServerStatsToHypertable(ctx); err != nil {
+		sendJSONError(w, "Conversion failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+		"action": "server_stats_hypertable_convert",
+	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "converted": true})
+}
+
 // resolveUsername best-effort maps a user UUID to a display name.
 func (h *DBMigrationHandler) resolveUsername(id string) string {
 	if id == "" {

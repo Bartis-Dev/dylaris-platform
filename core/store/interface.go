@@ -142,6 +142,16 @@ type Store interface {
 	// retention and fast long-range history queries, which the status endpoint
 	// surfaces as a degraded (not failed) component.
 	TimescaleEnabled(ctx context.Context) (bool, error)
+	// IsServerStatsHypertable reports whether server_stats is already a TimescaleDB
+	// hypertable. Only meaningful when the timescaledb extension is installed.
+	IsServerStatsHypertable(ctx context.Context) (bool, error)
+	// ConvertServerStatsToHypertable promotes the existing plain server_stats table
+	// to a hypertable IN PLACE (migrate_data) and (re)applies the retention policy.
+	// Used after swapping a plain-Postgres image for a TimescaleDB one on the same DB.
+	ConvertServerStatsToHypertable(ctx context.Context) error
+	// EstimateServerStatsRows returns the planner's row-count estimate for
+	// server_stats (pg_class.reltuples) - instant, unlike COUNT(*) on a huge table.
+	EstimateServerStatsRows(ctx context.Context) (int64, error)
 
 	// --- Warp ---
 	CreateWarpAPIKey(k WarpAPIKey) (int, error)

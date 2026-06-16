@@ -4,12 +4,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
     Database, Loader2, CircleCheck, CircleAlert, Play, ServerCog,
-    ShieldAlert, RefreshCw, ListChecks,
+    ShieldAlert, RefreshCw, ListChecks, Gauge, Zap, TrendingUp,
 } from 'lucide-react';
 import {
     getDBMigration, startDBMigration, testDBMigrationConnection, verifyDBMigration,
+    getHypertableStatus, convertHypertable,
     dbMigrationInProgress,
-    DBMigrationJob, DBTargetForm, VerifyReport, DBMigrationPhase,
+    DBMigrationJob, DBTargetForm, VerifyReport, DBMigrationPhase, HypertableStatus,
 } from '@/lib/api/dbmigration';
 import { systemEvents } from '@/lib/systemEvents';
 
@@ -42,6 +43,10 @@ export default function DatabaseTab() {
     const [confirmStart, setConfirmStart] = useState(false);
     const [starting, setStarting] = useState(false);
 
+    const [hyper, setHyper] = useState<HypertableStatus | null>(null);
+    const [converting, setConverting] = useState(false);
+    const [confirmConvert, setConfirmConvert] = useState(false);
+
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const flash = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -57,7 +62,22 @@ export default function DatabaseTab() {
         setLoading(false);
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    const loadHyper = useCallback(async () => {
+        const res = await getHypertableStatus();
+        if (res.success) {
+            setHyper({
+                dbType: res.dbType,
+                timescaleInstalled: res.timescaleInstalled,
+                isHypertable: res.isHypertable,
+                eligibleForConversion: res.eligibleForConversion,
+                serverStatsRowsEstimate: res.serverStatsRowsEstimate,
+                recommendTimescale: res.recommendTimescale,
+                recommendThreshold: res.recommendThreshold,
+            });
+        }
+    }, []);
+
+    useEffect(() => { load(); loadHyper(); }, [load, loadHyper]);
 
     // Live refresh: subscribe to the shared event + poll while a job runs.
     useEffect(() => {
@@ -115,6 +135,19 @@ export default function DatabaseTab() {
         }
     };
 
+    const doConvert = async () => {
+        setConverting(true);
+        const res = await convertHypertable();
+        setConverting(false);
+        setConfirmConvert(false);
+        if (res.success) {
+            flash(res.alreadyHypertable ? 'server_stats is already a hypertable' : 'Converted server_stats to a hypertable');
+            loadHyper();
+        } else {
+            flash(res.message || 'Conversion failed', false);
+        }
+    };
+
     const tsMismatch = !!testResult && form.dbType === 'timescaledb' && !testResult.timescaleInstalled;
 
     return (
@@ -143,6 +176,55 @@ export default function DatabaseTab() {
                     <li>After it finishes and verifies, restart Core with the new <code className="font-mono text-xs">DB_*</code> (and <code className="font-mono text-xs">DB_TYPE</code>) env vars, then turn maintenance off.</li>
                 </ul>
             </div>
+
+            {/* Current backend status + in-place hypertable upgrade + recommendation */}
+            {hyper && (
+                <div className="card p-5 space-y-3">
+                    <div className="mono-label flex items-center gap-2"><Gauge size={13} /> Current backend</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Stat label="DB_TYPE" value={hyper.dbType} />
+                        <Stat label="TimescaleDB ext" value={hyper.timescaleInstalled ? 'installed' : 'absent'} />
+                        <Stat label="server_stats" value={hyper.isHypertable ? 'hypertable' : 'plain table'} />
+                        <Stat label="rows (est.)" value={fmtNum(hyper.serverStatsRowsEstimate)} />
+                    </div>
+
+                    {hyper.recommendTimescale && (
+                        <div className="flex items-start gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md p-3 text-xs">
+                            <TrendingUp size={14} className="text-(--warning-light) mt-0.5 shrink-0" />
+                            <div className="text-(--base-07) space-y-0.5">
+                                <div className="text-(--warning-light) font-medium">Consider switching to TimescaleDB</div>
+                                Your metrics history has grown large ({fmtNum(hyper.serverStatsRowsEstimate)} rows). On plain
+                                PostgreSQL, time-series queries and the hourly retention sweep can slow down as this grows.
+                                TimescaleDB stores server_stats as a hypertable with native retention. Migrate to a TimescaleDB
+                                target below, or switch the image and convert in place.
+                            </div>
+                        </div>
+                    )}
+
+                    {hyper.eligibleForConversion && (
+                        <div className="space-y-2">
+                            <p className="text-xs text-(--base-06)">
+                                The TimescaleDB extension is present but server_stats is still a plain table (e.g. you swapped a
+                                plain-Postgres image for a TimescaleDB one on the same database). Convert it in place to a hypertable.
+                            </p>
+                            {!confirmConvert ? (
+                                <button className="btn btn-secondary" onClick={() => setConfirmConvert(true)} disabled={busy}>
+                                    <Zap size={14} /> Convert metrics table to hypertable
+                                </button>
+                            ) : (
+                                <div className="flex flex-wrap items-center gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2">
+                                    <ShieldAlert size={14} className="text-(--warning-light)" />
+                                    <span className="text-xs text-(--base-07)">Rewrites server_stats in place and briefly locks it. On a large table, enable maintenance first. Continue?</span>
+                                    <button className="btn btn-primary btn-sm" onClick={doConvert} disabled={converting}>
+                                        {converting ? <Loader2 size={14} className="animate-spin" /> : null} Convert
+                                    </button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setConfirmConvert(false)} disabled={converting}>Cancel</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Target connection form */}
             <div className="card p-5 space-y-4">
@@ -186,7 +268,7 @@ export default function DatabaseTab() {
 
                 {/* Test result */}
                 {testResult && (
-                    <div className="text-xs font-mono text-(--base-06) bg-(--base-01) border border-(--base-03) rounded-(--radius-md) p-3 space-y-1">
+                    <div className="text-xs font-mono text-(--base-06) bg-(--base-01) border border-(--base-03) rounded-md p-3 space-y-1">
                         <div className="text-(--success-light)">{testResult.version}</div>
                         <div>timescaledb extension on target: {testResult.timescaleInstalled ? 'installed' : 'not installed'}</div>
                         {tsMismatch && (
@@ -210,7 +292,7 @@ export default function DatabaseTab() {
                             <Play size={14} /> Start migration
                         </button>
                     ) : (
-                        <div className="flex items-center gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-(--radius-md) px-3 py-2">
+                        <div className="flex items-center gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2">
                             <ShieldAlert size={14} className="text-(--warning-light)" />
                             <span className="text-xs text-(--base-07)">This enables maintenance mode and overwrites the target. Continue?</span>
                             <button className="btn btn-primary btn-sm" onClick={doStart} disabled={starting}>
@@ -272,7 +354,7 @@ function TypeChoice({ active, onClick, title, sub }: { active: boolean; onClick:
         <button
             type="button"
             onClick={onClick}
-            className={`text-left rounded-(--radius-md) border p-3 transition-colors ${active
+            className={`text-left rounded-md border p-3 transition-colors ${active
                 ? 'border-(--accent) bg-(--accent-ghost)'
                 : 'border-(--base-04) bg-(--base-03) hover:border-(--base-05)'}`}
         >
@@ -326,18 +408,18 @@ function JobPanel({ job, report }: { job: DBMigrationJob; report: VerifyReport |
             )}
 
             {job.error && (
-                <div className="text-xs text-(--error-light) bg-(--error-ghost) border border-(--error-border) rounded-(--radius-md) p-3">
+                <div className="text-xs text-(--error-light) bg-(--error-ghost) border border-(--error-border) rounded-md p-3">
                     {job.error}
                 </div>
             )}
 
             {job.phase === 'done' && effectiveVerify && !effectiveVerify.ok && (
-                <div className="text-xs text-(--error-light) bg-(--error-ghost) border border-(--error-border) rounded-(--radius-md) p-3">
+                <div className="text-xs text-(--error-light) bg-(--error-ghost) border border-(--error-border) rounded-md p-3">
                     Copy finished but verification found differences. Do NOT switch yet — review below.
                 </div>
             )}
             {job.phase === 'done' && effectiveVerify && effectiveVerify.ok && (
-                <div className="text-xs text-(--success-light) bg-(--success-ghost) border border-(--success-border) rounded-(--radius-md) p-3 space-y-1">
+                <div className="text-xs text-(--success-light) bg-(--success-ghost) border border-(--success-border) rounded-md p-3 space-y-1">
                     <div className="flex items-center gap-1"><CircleCheck size={12} /> Migration complete and verified.</div>
                     <div className="text-(--base-07)">Next: restart Core with the new DB_* (+ DB_TYPE) env vars, then turn off maintenance.</div>
                 </div>
@@ -353,7 +435,7 @@ function JobPanel({ job, report }: { job: DBMigrationJob; report: VerifyReport |
             {job.log?.length > 0 && (
                 <details className="text-xs" open={inProgress}>
                     <summary className="cursor-pointer text-(--base-06) mono-label">Log ({job.log.length})</summary>
-                    <pre className="mt-2 max-h-64 overflow-auto bg-(--base-01) border border-(--base-03) rounded-(--radius-md) p-3 font-mono text-[11px] text-(--base-06) whitespace-pre-wrap">
+                    <pre className="mt-2 max-h-64 overflow-auto bg-(--base-01) border border-(--base-03) rounded-md p-3 font-mono text-[11px] text-(--base-06) whitespace-pre-wrap">
 {job.log.join('\n')}
                     </pre>
                 </details>
@@ -411,6 +493,20 @@ function PhaseBadge({ phase, stale }: { phase: DBMigrationPhase; stale: boolean 
             {PHASE_LABEL[phase]}
         </span>
     );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="bg-(--base-01) border border-(--base-03) rounded-md p-2.5">
+            <div className="input-label">{label}</div>
+            <div className="text-sm font-mono text-(--base-08) mt-0.5 break-all">{value}</div>
+        </div>
+    );
+}
+
+function fmtNum(n: number): string {
+    if (!isFinite(n)) return '0';
+    return new Intl.NumberFormat().format(Math.round(n));
 }
 
 function fmtTime(iso: string): string {

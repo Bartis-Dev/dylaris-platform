@@ -469,6 +469,9 @@ func main() {
 	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.StartMigration)).Methods("POST")
 	api.HandleFunc("/admin/db/migration/test-connection", authHandler.AuthMiddleware(dbMigrationHandler.TestConnection)).Methods("POST")
 	api.HandleFunc("/admin/db/migration/verify", authHandler.AuthMiddleware(dbMigrationHandler.VerifyMigration)).Methods("POST")
+	// In-place hypertable upgrade + TimescaleDB recommendation (same database).
+	api.HandleFunc("/admin/db/hypertable", authHandler.AuthMiddleware(dbMigrationHandler.HypertableStatus)).Methods("GET")
+	api.HandleFunc("/admin/db/hypertable/convert", authHandler.AuthMiddleware(dbMigrationHandler.ConvertHypertable)).Methods("POST")
 	// --- Telemetry settings ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")
