@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -183,6 +184,102 @@ func TestCopyTableText(t *testing.T) {
 	}
 	if err := dstMock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("dst unmet: %v", err)
+	}
+}
+
+func verifyTime() time.Time { return time.Unix(1_700_000_000, 0).UTC() }
+
+func TestVerifyCopy_AllMatch(t *testing.T) {
+	srcDB, srcMock, _ := sqlmock.New()
+	defer srcDB.Close()
+	dstDB, dstMock, _ := sqlmock.New()
+	defer dstDB.Close()
+
+	srcMock.ExpectQuery("FROM pg_tables").WillReturnRows(
+		sqlmock.NewRows([]string{"tablename"}).AddRow("servers").AddRow("users"))
+	dstMock.ExpectQuery("FROM pg_tables").WillReturnRows(
+		sqlmock.NewRows([]string{"tablename"}).AddRow("servers").AddRow("users"))
+
+	// Union sorted = [servers, users]; per table: source count then target count.
+	srcMock.ExpectQuery(`FROM "servers"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
+	dstMock.ExpectQuery(`FROM "servers"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
+	srcMock.ExpectQuery(`FROM "users"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(2))
+	dstMock.ExpectQuery(`FROM "users"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(2))
+
+	rep, err := VerifyCopy(context.Background(), srcDB, dstDB, verifyTime())
+	if err != nil {
+		t.Fatalf("VerifyCopy: %v", err)
+	}
+	if !rep.OK {
+		t.Fatalf("expected OK, got log: %v", rep.Log)
+	}
+	if len(rep.Tables) != 2 {
+		t.Fatalf("expected 2 tables, got %d", len(rep.Tables))
+	}
+	if err := srcMock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("src unmet: %v", err)
+	}
+	if err := dstMock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("dst unmet: %v", err)
+	}
+}
+
+func TestVerifyCopy_RowCountMismatch(t *testing.T) {
+	srcDB, srcMock, _ := sqlmock.New()
+	defer srcDB.Close()
+	dstDB, dstMock, _ := sqlmock.New()
+	defer dstDB.Close()
+
+	srcMock.ExpectQuery("FROM pg_tables").WillReturnRows(
+		sqlmock.NewRows([]string{"tablename"}).AddRow("servers"))
+	dstMock.ExpectQuery("FROM pg_tables").WillReturnRows(
+		sqlmock.NewRows([]string{"tablename"}).AddRow("servers"))
+	srcMock.ExpectQuery(`FROM "servers"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
+	dstMock.ExpectQuery(`FROM "servers"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(4))
+
+	rep, err := VerifyCopy(context.Background(), srcDB, dstDB, verifyTime())
+	if err != nil {
+		t.Fatalf("VerifyCopy: %v", err)
+	}
+	if rep.OK {
+		t.Fatalf("expected NOT OK on row mismatch")
+	}
+	if rep.Tables[0].OK {
+		t.Fatalf("servers should be flagged not-ok")
+	}
+}
+
+func TestVerifyCopy_MissingOnTarget(t *testing.T) {
+	srcDB, srcMock, _ := sqlmock.New()
+	defer srcDB.Close()
+	dstDB, dstMock, _ := sqlmock.New()
+	defer dstDB.Close()
+
+	srcMock.ExpectQuery("FROM pg_tables").WillReturnRows(
+		sqlmock.NewRows([]string{"tablename"}).AddRow("servers").AddRow("users"))
+	dstMock.ExpectQuery("FROM pg_tables").WillReturnRows(
+		sqlmock.NewRows([]string{"tablename"}).AddRow("users"))
+
+	// servers exists only on source -> source count queried, no target count.
+	srcMock.ExpectQuery(`FROM "servers"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(3))
+	srcMock.ExpectQuery(`FROM "users"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(2))
+	dstMock.ExpectQuery(`FROM "users"`).WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(2))
+
+	rep, err := VerifyCopy(context.Background(), srcDB, dstDB, verifyTime())
+	if err != nil {
+		t.Fatalf("VerifyCopy: %v", err)
+	}
+	if rep.OK {
+		t.Fatalf("expected NOT OK when a table is missing on target")
+	}
+	var serversTV *TableVerify
+	for i := range rep.Tables {
+		if rep.Tables[i].Table == "servers" {
+			serversTV = &rep.Tables[i]
+		}
+	}
+	if serversTV == nil || serversTV.TargetExists {
+		t.Fatalf("servers should be present-on-source, missing-on-target: %+v", serversTV)
 	}
 }
 

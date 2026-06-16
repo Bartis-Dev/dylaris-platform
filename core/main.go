@@ -80,6 +80,18 @@ func main() {
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
 
+	// In-panel cross-database migration. The source is THIS Core's live DB,
+	// re-opened read-only as the copy source; the target is supplied per-request.
+	appState.DBMigration = services.NewDBMigrationService(redisClient, pgStore, services.DBConnParams{
+		Host:     cfg.DBHost,
+		Port:     cfg.DBPort,
+		User:     cfg.DBUser,
+		Password: cfg.DBPassword,
+		DBName:   cfg.DBName,
+		SSLMode:  cfg.DBSSLMode,
+		DBType:   cfg.DBType,
+	})
+
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a
 	// single Redis Pub/Sub channel; panels subscribe via SSE so they refresh
@@ -247,6 +259,7 @@ func main() {
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
+	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -449,6 +462,12 @@ func main() {
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
 	// --- Platform status / health (admin Status page) ---
 	api.HandleFunc("/admin/health", authHandler.AuthMiddleware(healthHandler.GetStatus)).Methods("GET")
+
+	// In-panel cross-database migration (admin-only). Shared job is pollable by
+	// every admin; the copy runs under maintenance mode on whichever Core started it.
+	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.GetMigration)).Methods("GET")
+	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.StartMigration)).Methods("POST")
+	api.HandleFunc("/admin/db/migration/test-connection", authHandler.AuthMiddleware(dbMigrationHandler.TestConnection)).Methods("POST")
 	// --- Telemetry settings ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")

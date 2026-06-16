@@ -37,6 +37,11 @@ type AppState struct {
 	// The manual-move endpoint only ENQUEUES onto it; the elected Core executes.
 	Migration *services.MigrationOrchestrator
 
+	// DBMigration drives the in-panel cross-database migration (copy the whole
+	// DB onto a new target under maintenance mode). Shared job state lives in
+	// Redis so every admin sees the same live status.
+	DBMigration *services.DBMigrationService
+
 	// DBType is the normalized database backend ("timescaledb" or "postgres"),
 	// set from config at boot. The status page uses it to distinguish an
 	// intended plain-postgres deployment from a misconfigured timescale one.
