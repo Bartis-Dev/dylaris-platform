@@ -561,6 +561,7 @@ secrets:
 | `PORT_RANGE_END` | `30000` | No | End of host port range for MC servers. Ignored if `PORT_RANGE` is set. |
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
+| `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a CLUSTER_SECRET-derived HMAC token. |
 | `BEAM_JWT_SECRET` | *(empty — Beam rejects all tickets)* | No (required for Beam) | Must match the gateway beam-relay's JWT secret so relay-validated tickets pass the node-side gate. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
 | `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). |
@@ -602,6 +603,7 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25510` | panel | Web UI |
 | `25520` | node | SFTP (`SFTP_PORT`; file access = `sftp`/`both`) |
 | `25521` | node | Beam gRPC (`BEAM_GRPC_PORT`; overlay-only, JWT-gated) |
+| `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; CLUSTER_SECRET-HMAC) |
 | `25600–30000` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`25599/udp`) — see the `dylaris-gateway` repo.
