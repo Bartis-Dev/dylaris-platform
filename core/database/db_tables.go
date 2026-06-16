@@ -156,6 +156,13 @@ func migrateSchema(db *sql.DB) error {
 		// orthogonal to tags — tags describe capability/tier, region the
 		// physical location for latency-based placement.
 		{"nodes", "region", "TEXT DEFAULT ''"},
+		// Admin adoption flag. FALSE = node config (name/tags/region) is driven by
+		// the heartbeat ENV (automation path); the discovery scan keeps the DB row
+		// in sync with the node's env on every beat. TRUE = an admin configured the
+		// node via the panel, so the DB values win and the heartbeat env no longer
+		// overwrites name/tags/region. Operational fields (status, address, IPs,
+		// capacity) always follow the heartbeat regardless.
+		{"nodes", "configured", "BOOLEAN NOT NULL DEFAULT FALSE"},
 		// Security questions — JSON array of
 		// {question, answer_hash} pairs; answer_hash is bcrypt.
 		{"users", "security_questions", "JSONB DEFAULT '[]'"},

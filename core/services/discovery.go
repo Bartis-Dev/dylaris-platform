@@ -186,14 +186,19 @@ func (s *DiscoveryService) scanNodes() {
 				s.store.SetNodeStatus(node.ID, "online")
 			}
 
-			if hb.Name != "" && node.Name != hb.Name {
-				log.Printf("Node Name updated: %s → %s", node.Name, hb.Name)
-				s.store.SetNodeName(node.ID, hb.Name)
-			}
+			// Name + tags are config fields: only let the heartbeat env drive them
+			// while the node hasn't been adopted by an admin. Once configured=true
+			// the panel-set values win and the env is ignored (DB precedence).
+			if !node.Configured {
+				if hb.Name != "" && node.Name != hb.Name {
+					log.Printf("Node Name updated: %s → %s", node.Name, hb.Name)
+					s.store.SetNodeName(node.ID, hb.Name)
+				}
 
-			if node.Tags != hb.Tags && hb.Tags != "" {
-				log.Printf("Node Tags updated for %s: %s", node.Name, hb.Tags)
-				s.store.SetNodeTags(node.ID, hb.Tags)
+				if node.Tags != hb.Tags && hb.Tags != "" {
+					log.Printf("Node Tags updated for %s: %s", node.Name, hb.Tags)
+					s.store.SetNodeTags(node.ID, hb.Tags)
+				}
 			}
 
 			if hb.IP != "auto" && hb.IP != "" && node.Address != hb.IP {
@@ -218,9 +223,10 @@ func (s *DiscoveryService) scanNodes() {
 				s.store.UpdateNodeCapacity(node.ID, cpu, totalRAMMB)
 			}
 
-			// Region — only update when the heartbeat actually carries one.
-			// Nodes that don't broadcast DYLARIS_REGION keep whatever the admin set.
-			if hb.Region != "" && hb.Region != node.Region {
+			// Region — only update when the heartbeat carries one AND the node has
+			// not been adopted by an admin. Configured nodes (and nodes that don't
+			// broadcast DYLARIS_REGION) keep whatever the admin set.
+			if !node.Configured && hb.Region != "" && hb.Region != node.Region {
 				log.Printf("Node region updated for %s: %q → %q", node.Name, node.Region, hb.Region)
 				s.store.SetNodeRegion(node.ID, hb.Region)
 			}

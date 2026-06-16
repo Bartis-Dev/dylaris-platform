@@ -291,6 +291,15 @@ type Node struct {
 	// the panel a short machine-readable cause. Empty/false = node is usable.
 	Unusable       bool   `json:"unusable,omitempty"`
 	UnusableReason string `json:"unusableReason,omitempty"`
+
+	// Configured marks that an admin has adopted this node via the panel.
+	// While false, the heartbeat env keeps name/tags/region in sync; once true
+	// the DB values win and the env no longer overwrites them.
+	Configured bool `json:"configured"`
+	// NeedsConfiguration is a derived (not persisted) flag set at API-response
+	// time: true when the node has no region assigned (booted with only a
+	// CLUSTER_SECRET, no DYLARIS_REGION), so an admin should configure it.
+	NeedsConfiguration bool `json:"needsConfiguration,omitempty"`
 }
 
 // IsExternal reports whether this node is an external/home node (tag "external").

@@ -71,6 +71,11 @@ export interface Node {
     cpuUsage?: number;
     ramFree?: number;
     ramTotal?: number;
+    // Adoption state. configured=true once an admin set name/region/tags in the
+    // panel (DB then wins over the heartbeat env). needsConfiguration=true when
+    // the node has no region yet (booted with only a CLUSTER_SECRET).
+    configured?: boolean;
+    needsConfiguration?: boolean;
 }
 
 export interface TabPermissions {
@@ -248,6 +253,10 @@ export const getNodes = () => fetchAPI('/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
 export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { method: 'DELETE' });
+// Adopt an auto-discovered node: persist name/region/tags to the DB. After this
+// the heartbeat env no longer overwrites them.
+export const configureNode = (id: number, data: { name?: string; region: string; tags?: string }) =>
+    fetchAPI(`/nodes/${id}/config`, { method: 'PATCH', body: JSON.stringify(data) });
 
 // --- SERVERS ---
 export const getServers = () => fetchAPI('/servers');

@@ -4,14 +4,14 @@ import React, { useState, useEffect } from 'react';
 import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
-    setNodePlacement,
+    setNodePlacement, configureNode, Region,
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    CircleCheck, CircleAlert, Pencil, X, AlertTriangle,
+    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal,
 } from 'lucide-react';
 
 type SubTab = 'nodes' | 'placement';
@@ -81,12 +81,13 @@ function isExternalNode(node: Node): boolean {
 
 function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
     // Applied routing mode from the shared app context (same source WarpTab
-    // gates on) — no extra fetch, no new store.
-    const { routingMode } = useAppData();
+    // gates on) — no extra fetch, no new store. regions feed the config picker.
+    const { routingMode, regions } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
     const [nodes, setNodes] = useState<Node[]>([]);
     const [editingPlacement, setEditingPlacement] = useState<number | null>(null);
+    const [editingConfig, setEditingConfig] = useState<number | null>(null);
 
     useEffect(() => {
         loadNodes();
@@ -125,11 +126,16 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
                             <NodeCard
                                 key={node.id}
                                 node={node}
+                                regions={regions}
                                 gatewayRequired={isExternalNode(node) && gatewayOff}
                                 isEditing={editingPlacement === node.id}
-                                onEdit={() => setEditingPlacement(node.id)}
+                                isConfiguring={editingConfig === node.id}
+                                onEdit={() => { setEditingConfig(null); setEditingPlacement(node.id); }}
                                 onCancel={() => setEditingPlacement(null)}
                                 onSaved={() => { setEditingPlacement(null); loadNodes(); showToast('Placement updated'); }}
+                                onConfigure={() => { setEditingPlacement(null); setEditingConfig(node.id); }}
+                                onConfigCancel={() => setEditingConfig(null)}
+                                onConfigSaved={() => { setEditingConfig(null); loadNodes(); showToast('Node configured'); }}
                                 onError={msg => showToast(msg, false)}
                             />
                         ))
@@ -142,17 +148,22 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 
 interface NodeCardProps {
     node: Node;
+    regions: Region[];
     // External node + gateway not active — its servers can't receive player
     // traffic or file access until routing mode is switched to Gateway/Both.
     gatewayRequired: boolean;
     isEditing: boolean;
+    isConfiguring: boolean;
     onEdit: () => void;
     onCancel: () => void;
     onSaved: () => void;
+    onConfigure: () => void;
+    onConfigCancel: () => void;
+    onConfigSaved: () => void;
     onError: (msg: string) => void;
 }
 
-function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onError }: NodeCardProps) {
+function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onError }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -213,6 +224,15 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     {node.tags && node.tags.split(',').map(t => t.trim()).includes('external') && (
                         <span className="badge badge-accent" title="External / home node — forces gateway+beam">external</span>
                     )}
+                    {node.needsConfiguration && (
+                        <span
+                            className="badge badge-warning inline-flex items-center gap-1"
+                            title="This node booted with only a cluster secret and has no region. Configure its name, region and tags so it can be used for placement."
+                        >
+                            <AlertTriangle size={11} />
+                            Needs configuration
+                        </span>
+                    )}
                     {gatewayRequired && (
                         <span
                             className="badge badge-warning inline-flex items-center gap-1"
@@ -221,6 +241,20 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                             <AlertTriangle size={11} />
                             Requires gateway
                         </span>
+                    )}
+                    {!isConfiguring && (
+                        <button
+                            onClick={onConfigure}
+                            className={`text-xs inline-flex items-center gap-1 transition-colors ${
+                                node.needsConfiguration
+                                    ? 'text-(--accent-light) hover:text-(--accent)'
+                                    : 'text-(--base-06) hover:text-(--accent-light)'
+                            }`}
+                            title="Configure name, region and tags"
+                        >
+                            <SlidersHorizontal size={11} />
+                            Configure
+                        </button>
                     )}
                     {!isEditing && (
                         <button
@@ -234,6 +268,17 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     )}
                 </div>
             </div>
+
+            {/* Configuration editor (name / region / tags) */}
+            {isConfiguring && (
+                <NodeConfigForm
+                    node={node}
+                    regions={regions}
+                    onSaved={onConfigSaved}
+                    onCancel={onConfigCancel}
+                    onError={onError}
+                />
+            )}
 
             {/* Placement summary / editor */}
             <div className="mt-3 pt-3 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
@@ -283,6 +328,83 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     </button>
                 </div>
             )}
+        </div>
+    );
+}
+
+// NodeConfigForm lets an admin adopt an auto-discovered node by setting its
+// display name, region and tags. Saving persists to the DB (PATCH
+// /nodes/{id}/config); from then on the node's heartbeat env no longer
+// overwrites these fields.
+function NodeConfigForm({
+    node, regions, onSaved, onCancel, onError,
+}: {
+    node: Node;
+    regions: Region[];
+    onSaved: () => void;
+    onCancel: () => void;
+    onError: (msg: string) => void;
+}) {
+    const [name, setName] = useState(node.name || node.token || '');
+    const [region, setRegion] = useState(node.region || '');
+    const [tags, setTags] = useState(node.tags && node.tags !== 'auto-discovered' ? node.tags : '');
+    const [saving, setSaving] = useState(false);
+
+    const handleSave = async () => {
+        if (!region) { onError('Please select a region'); return; }
+        setSaving(true);
+        const res = await configureNode(node.id, { name: name.trim(), region, tags: tags.trim() });
+        setSaving(false);
+        if (res.success) onSaved();
+        else onError(res.message || res.error || 'Save failed');
+    };
+
+    return (
+        <div className="mt-3 pt-3 border-t border-(--base-03) space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Display Name</label>
+                    <input
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                        className="input-field text-sm"
+                        placeholder={node.token}
+                    />
+                </div>
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Region</label>
+                    <select
+                        value={region}
+                        onChange={e => setRegion(e.target.value)}
+                        className="input-field text-sm"
+                    >
+                        <option value="">Select region…</option>
+                        {regions.map(rg => (
+                            <option key={rg.id} value={rg.id}>{rg.displayName}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Tags</label>
+                    <input
+                        value={tags}
+                        onChange={e => setTags(e.target.value)}
+                        className="input-field text-sm"
+                        placeholder="e.g. premium, ssd"
+                    />
+                </div>
+            </div>
+            <p className="text-xs text-(--base-06)">
+                Saving adopts this node: its name, region and tags are managed here from now on and the node&apos;s env values no longer overwrite them. Keep the <code className="font-mono bg-(--base-03) px-1 py-0.5 rounded text-(--base-08)">external</code> tag if this is a home/Warp node.
+            </p>
+            <div className="flex items-center gap-2 justify-end">
+                <button onClick={onCancel} className="btn btn-secondary btn-sm">
+                    <X size={12} /> Cancel
+                </button>
+                <button onClick={handleSave} disabled={saving} className="btn btn-primary btn-sm disabled:opacity-40">
+                    <Save size={12} /> {saving ? 'Saving…' : 'Save'}
+                </button>
+            </div>
         </div>
     );
 }
