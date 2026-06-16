@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"dylaris-pkg/queue"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -17,6 +19,15 @@ func NewQueueService(r *redis.Client) *QueueService {
 	return &QueueService{redis: r}
 }
 
+// nodeCmdStream is the per-node command stream key. It is a Redis Stream
+// (durable, consumer-group based via dylaris-pkg/queue), replacing the old
+// RPUSH/BLPOP list `dylaris:node:%s:queue` which lost commands if the node
+// crashed mid-processing. The new suffix avoids a WRONGTYPE collision with any
+// leftover list at the old key.
+func nodeCmdStream(nodeToken string) string {
+	return fmt.Sprintf("dylaris:node:%s:cmds", nodeToken)
+}
+
 // NodeCommand is the exact structure the Node expects
 type NodeCommand struct {
 	Action    string      `json:"action"`
@@ -27,7 +38,7 @@ type NodeCommand struct {
 // SendCommand pushes a command into the Node's queue (mailbox).
 // Even if the Node is offline, the command remains in Redis until it comes back online.
 func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action string, config interface{}, installer interface{}) error {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	stream := nodeCmdStream(nodeToken)
 
 	cmd := NodeCommand{
 		Action:    action,
@@ -40,10 +51,10 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 		return fmt.Errorf("failed to marshal command: %w", err)
 	}
 
-	// RPush appends the JSON payload to the end of the queue
-	err = q.redis.RPush(ctx, queueKey, jsonData).Err()
-	if err != nil {
-		return fmt.Errorf("failed to push to redis queue: %w", err)
+	// XADD appends the JSON payload to the node's command stream. Even if the
+	// Node is offline, the command persists until it reads + ACKs it.
+	if _, err = queue.Publish(ctx, q.redis, stream, jsonData); err != nil {
+		return fmt.Errorf("failed to push to node command stream: %w", err)
 	}
 
 	return nil
@@ -54,7 +65,7 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 // can be empty. For connect/disconnect, serverUUID is the game-server
 // container and proxyUUID is the proxy whose network it should join/leave.
 func (q *QueueService) SendProxyNetworkCommand(ctx context.Context, nodeToken, action, serverUUID, proxyUUID string) error {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	stream := nodeCmdStream(nodeToken)
 	type proxyNetCmd struct {
 		Action    string                 `json:"action"`
 		Config    map[string]interface{} `json:"config"`
@@ -69,12 +80,13 @@ func (q *QueueService) SendProxyNetworkCommand(ctx context.Context, nodeToken, a
 	if err != nil {
 		return fmt.Errorf("failed to marshal proxy_network command: %w", err)
 	}
-	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
 }
 
 // SendMigrateCommand queues a migrate_storage command for the given server.
 func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, serverUUID, targetPath string) error {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	stream := nodeCmdStream(nodeToken)
 
 	type migrateCmd struct {
 		Action     string                 `json:"action"`
@@ -93,7 +105,8 @@ func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, server
 		return fmt.Errorf("failed to marshal migrate command: %w", err)
 	}
 
-	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
 }
 
 // SendMigrateOutCommand queues a migrate_out (auto-move) command. The source
@@ -101,7 +114,7 @@ func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, server
 // hash to Redis. Distinct from migrate_storage above, which moves between local
 // storage paths on the same node.
 func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, serverUUID string) error {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	stream := nodeCmdStream(nodeToken)
 
 	type migrateOutCmd struct {
 		Action string                 `json:"action"`
@@ -116,7 +129,8 @@ func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, ser
 	if err != nil {
 		return fmt.Errorf("failed to marshal migrate_out command: %w", err)
 	}
-	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
 }
 
 // SendMigrateInCommand queues a migrate_in (auto-move) command. The target node
@@ -124,7 +138,7 @@ func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, ser
 // expectedSha256, and extracts it. The move parameters ride as top-level fields
 // (matching the node's NodeCommand shape), not inside Config.
 func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string) error {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	stream := nodeCmdStream(nodeToken)
 
 	type migrateInCmd struct {
 		Action         string                 `json:"action"`
@@ -145,14 +159,15 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 	if err != nil {
 		return fmt.Errorf("failed to marshal migrate_in command: %w", err)
 	}
-	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
 }
 
 // SendMigrateCleanupCommand queues a migrate_cleanup (auto-move) command. The
 // source node deletes the staged archive and the original server directory.
 // Sent only after the target confirms transfer; the orchestrator owns ordering.
 func (q *QueueService) SendMigrateCleanupCommand(ctx context.Context, nodeToken, serverUUID string) error {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+	stream := nodeCmdStream(nodeToken)
 
 	type migrateCleanupCmd struct {
 		Action string                 `json:"action"`
@@ -167,5 +182,6 @@ func (q *QueueService) SendMigrateCleanupCommand(ctx context.Context, nodeToken,
 	if err != nil {
 		return fmt.Errorf("failed to marshal migrate_cleanup command: %w", err)
 	}
-	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
 }

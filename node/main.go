@@ -18,6 +18,7 @@ import (
 	"time"
 
 	agent "dylaris-agent"
+	"dylaris-pkg/queue"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/joho/godotenv"
@@ -375,8 +376,8 @@ func parseConfig() {
 			}
 		}
 	}
-	portMode = "sequential"     // default until loadModesFromRedis overrides
-	containerPort = 25565        // default MC port; admin can change globally in Settings → Nodes → Placement
+	portMode = "sequential" // default until loadModesFromRedis overrides
+	containerPort = 25565   // default MC port; admin can change globally in Settings → Nodes → Placement
 	log.Printf("Port config: range=%d-%d (mode/container_port load from settings)", portRangeStart, portRangeEnd)
 
 	sftpPort = os.Getenv("SFTP_PORT")
@@ -588,553 +589,554 @@ func refreshServerMetadata(serverDir, uuid, name, image string, ramMB int, cpu f
 }
 
 func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaProvider, storage *StorageManager) {
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", id)
-	log.Printf("Listening for core commands on queue: %s", queueKey)
+	stream := fmt.Sprintf("dylaris:node:%s:cmds", id)
+	log.Printf("Listening for core commands on stream: %s", stream)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			result, err := rdb.BLPop(ctx, 0, queueKey).Result()
-			if err != nil {
-				log.Printf("Queue connection error: %v", err)
-				time.Sleep(2 * time.Second)
-				continue
-			}
+	consumer := queue.NewConsumer(rdb, stream, "node", id)
+	// Independent per-server commands may run in parallel; the durable queue
+	// ACKs each only after its handler returns, so a crash redelivers in-flight
+	// work on restart instead of losing it (the old RPUSH/BLPOP list lost it).
+	consumer.Concurrency = 8
 
-			payload := result[1]
-
-			go func(payloadStr string) {
-				var cmd NodeCommand
-				if err := json.Unmarshal([]byte(payloadStr), &cmd); err != nil {
-					log.Printf("Invalid command payload: %v", err)
-					return
-				}
-
-				log.Printf("Pulled command from queue: '%s'", cmd.Action)
-
-				// Apply node-level default cpuset if not set by core
-				if cmd.Config.Docker.CpusetCpus == "" && defaultCpusetCpus != "" {
-					cmd.Config.Docker.CpusetCpus = defaultCpusetCpus
-				}
-
-				switch cmd.Action {
-
-				case "create":
-					// Step 1: create a stopped container slot with no software installed.
-					log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
-
-					// Assign storage path (auto-balances by free space)
-					storagePath, err := storage.SelectStoragePath(cmd.Config.UUID, "")
-					if err != nil {
-						log.Printf("Failed to select storage path for %s: %v", cmd.Config.UUID, err)
-						return
-					}
-					serverPath := filepath.Join(storagePath, cmd.Config.UUID)
-					if err := os.MkdirAll(serverPath, 0755); err != nil {
-						log.Printf("Failed to create directory for %s: %v", cmd.Config.UUID, err)
-						return
-					}
-
-					if quota != nil {
-						if err := quota.AssignQuota(cmd.Config.UUID); err != nil {
-							log.Printf("Quota assign warning for %s: %v", cmd.Config.UUID, err)
-						}
-						if cmd.Config.Docker.DiskLimit > 0 {
-							if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
-								log.Printf("Quota limit warning for %s: %v", cmd.Config.UUID, err)
-							}
-						}
-					}
-
-					if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
-						log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
-					} else {
-						log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
-						saveNodeConfig(serverPath, cmd.Config)
-						refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, "")
-					}
-
-				case "setup":
-					// Step 2: install software into a named sub-server directory, then start.
-					subName := cmd.Config.ActiveSubServer
-					if subName == "" {
-						subName = "server"
-					}
-					log.Printf("Setting up server %s (sub-server: %s)...", cmd.Config.UUID, subName)
-
-					// Set install-start timestamp for cooldown tracking
-					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
-
-					serverPath := storage.GetServerDir(cmd.Config.UUID)
-
-					// Forge / NeoForge installers need to run inside a Java
-					// container; copy the Java image + container UUID from
-					// the setup config so the installer has everything it
-					// needs without an extra round-trip.
-					installerCfg := cmd.Installer
-					installerCfg.JavaImage = cmd.Config.Docker.Image
-					installerCfg.ServerUUID = cmd.Config.UUID
-
-					if err := InstallServer(serverPath, subName, installerCfg); err != nil {
-						log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-						return
-					}
-
-					// Always write eula.txt automatically
-					eulaPath := filepath.Join(serverPath, subName, "eula.txt")
-					if err := os.WriteFile(eulaPath, []byte("eula=true\n"), 0644); err != nil {
-						log.Printf("Failed to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
-					}
-
-					// Build the start command via buildStartCommand (type-aware: jar or argfile form).
-					// ExtraJvmFlags is passed directly from Core as a dedicated field (Aikar flags
-					// and any server-specific custom flags, already combined and trimmed).
-					subServerDir := filepath.Join(serverPath, subName)
-					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
-					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
-					if err != nil {
-						log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-						return
-					}
-					cmd.Config.Docker.Command = startCmd
-
-					// Track the active sub-server on disk
-					activeFile := filepath.Join(serverPath, ".active_server")
-					if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
-						log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
-					}
-
-					// Recreate container with start command pointing to the sub-server
-					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
-						log.Printf("Failed to start server pod %s: %v", cmd.Config.UUID, err)
-					} else {
-						log.Printf("Server %s/%s deployed and running!", cmd.Config.UUID, subName)
-						saveNodeConfig(serverPath, cmd.Config)
-					}
-					// Best-effort metadata refresh regardless of RecreateWithCommand result
-					// (installation succeeded; the sub-server directory is valid).
-					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
-
-					// Notify Core that installation is complete
-					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-
-				case "switch_server":
-					// Update active sub-server on disk, then recreate container with new command.
-					subName := cmd.Config.ActiveSubServer
-					if subName == "" {
-						log.Printf("switch_server for %s: ActiveSubServer is empty, aborting", cmd.Config.UUID)
-						return
-					}
-					log.Printf("Switching server %s to sub-server: %s", cmd.Config.UUID, subName)
-
-					serverPath := storage.GetServerDir(cmd.Config.UUID)
-					activeFile := filepath.Join(serverPath, ".active_server")
-
-					// Build the start command for the target sub-server.
-					// ExtraJvmFlags is passed directly from Core as a dedicated field.
-					switchSubDir := filepath.Join(serverPath, subName)
-					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
-					startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
-					if err != nil {
-						log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-						return
-					}
-					cmd.Config.Docker.Command = startCmd
-
-					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
-						log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
-					} else {
-						if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
-							log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
-						}
-						log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
-						saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
-						refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
-					}
-
-				case "start":
-					log.Printf("Power Action 'start' for Server %s ...", cmd.Config.UUID)
-					dm.PullContainerImage(cmd.Config.UUID)
-					if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
-						log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
-					} else {
-						log.Printf("Server %s started", cmd.Config.UUID)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "starting", 30*time.Second)
-					}
-
-				case "stop":
-					log.Printf("Graceful stop for Server %s ...", cmd.Config.UUID)
-					gracefulStop(rdb, cmd.Config.UUID, dm)
-					log.Printf("Server %s stopped", cmd.Config.UUID)
-					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-
-				case "kill":
-					log.Printf("Force kill for Server %s ...", cmd.Config.UUID)
-					if err := dm.PowerAction(cmd.Config.UUID, "kill"); err != nil {
-						log.Printf("Failed to kill server %s: %v", cmd.Config.UUID, err)
-					} else {
-						log.Printf("Server %s killed", cmd.Config.UUID)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-					}
-
-				case "restart":
-					log.Printf("Graceful restart for Server %s ...", cmd.Config.UUID)
-					gracefulStop(rdb, cmd.Config.UUID, dm)
-					// Clean up stop-requested key to prevent race with new log-shipper instance
-					rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
-					time.Sleep(2 * time.Second)
-					// Recreate container (more reliable than ContainerStart on exited container)
-					if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
-						log.Printf("Failed to restart server %s: %v", cmd.Config.UUID, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-					} else {
-						log.Printf("Server %s restarted", cmd.Config.UUID)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "starting", 30*time.Second)
-					}
-
-				case "update_resources":
-					log.Printf("Updating resources for Server %s ...", cmd.Config.UUID)
-					if err := dm.UpdateResources(cmd.Config); err != nil {
-						log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
-					} else {
-						log.Printf("Server %s resources updated and restarted", cmd.Config.UUID)
-						resServerPath := storage.GetServerDir(cmd.Config.UUID)
-						saveNodeConfig(resServerPath, cmd.Config)
-						resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
-						refreshServerMetadata(resServerPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
-					}
-					if quota != nil {
-						if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
-							log.Printf("Quota limit update warning for %s: %v", cmd.Config.UUID, err)
-						}
-					}
-
-				case "delete":
-					log.Printf("Deleting Server %s ...", cmd.Config.UUID)
-					dm.PowerAction(cmd.Config.UUID, "delete")
-
-					if quota != nil {
-						quota.RemoveQuota(cmd.Config.UUID)
-					}
-
-					serverPath := storage.GetServerDir(cmd.Config.UUID)
-					os.RemoveAll(serverPath)
-					storage.RemoveServerPath(cmd.Config.UUID)
-					log.Printf("Server %s data fully deleted", cmd.Config.UUID)
-
-				case "delete_sub_server":
-					subName := cmd.Config.ActiveSubServer
-					if subName == "" {
-						log.Printf("delete_sub_server for %s: sub-server name is empty, aborting", cmd.Config.UUID)
-						return
-					}
-					log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
-
-					// Tear down the container fully before touching the
-					// filesystem. The container's bind is rooted at the
-					// server dir (not the sub-server dir), so even an
-					// inactive sub-server can show up busy if the kernel
-					// hasn't released the overlay mount yet. Steps:
-					//   1) SIGKILL the JVM (cheap, non-blocking)
-					//   2) Wait for Docker to actually report the
-					//      container stopped — ContainerKill returns
-					//      after sending the signal, not after exit
-					//   3) Remove the container so the bind goes away
-					// Earlier we relied on PowerAction("kill") alone and
-					// then immediately RemoveAll'd, which lost a race
-					// to a still-held bind and looked to the user like
-					// "the delete button does nothing".
-					mcName := fmt.Sprintf("mc_%s", cmd.Config.UUID)
-					killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
-					if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
-						log.Printf("delete_sub_server %s: ContainerKill: %v (probably already stopped — continuing)", cmd.Config.UUID, killErr)
-					}
-					statusCh, errCh := dm.cli.ContainerWait(killCtx, mcName, container.WaitConditionNotRunning)
-					select {
-					case <-statusCh:
-					case waitErr := <-errCh:
-						if waitErr != nil {
-							log.Printf("delete_sub_server %s: container wait: %v", cmd.Config.UUID, waitErr)
-						}
-					case <-killCtx.Done():
-						log.Printf("delete_sub_server %s: kill wait timed out, proceeding anyway", cmd.Config.UUID)
-					}
-					killCancel()
-					if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
-						log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
-					}
-
-					// Drop the per-sub-server log stream. The console
-					// keeps its history per (server, sub-server), so a
-					// deleted sub-server's logs would otherwise linger
-					// in Redis forever -- and reappear in the browser
-					// if someone created a new sub-server with the
-					// same name. Browser-side clearing happens for
-					// free: ConsoleView's effect depends on activeSub
-					// and re-fetches when that flips.
-					logKey := fmt.Sprintf("dylaris:server:%s:logs:%s", cmd.Config.UUID, subName)
-					if delErr := rdb.Del(ctx, logKey).Err(); delErr != nil {
-						log.Printf("delete_sub_server %s/%s: log stream delete: %v", cmd.Config.UUID, subName, delErr)
-					}
-
-					serverPath := storage.GetServerDir(cmd.Config.UUID)
-					subServerPath := filepath.Join(serverPath, subName)
-
-					// Two-phase delete to survive busy filesystems.
-					//
-					// Phase 1 (sync): atomic rename to a hidden
-					// `.pending-delete-<name>-<ns>` sibling. Rename only
-					// changes the inode-to-name mapping in the parent
-					// dir, which works even if the kernel still holds
-					// the original dir open via a bind. Once the rename
-					// returns success, the sub-server name is gone from
-					// every listing (file browser, scanSubServers, etc.)
-					// so the user sees the deletion as instant.
-					//
-					// Phase 2 (async): RemoveAll the tombstone in the
-					// background with retries. If it fails the
-					// tombstone stays on disk (hidden) until a future
-					// node start sweeps it up; the user-facing state
-					// is already correct.
-					//
-					// Previous attempts called RemoveAll directly and
-					// aborted the entire command on dir-still-present,
-					// which left .dylaris.json untouched and the empty
-					// dir visible -- exactly the symptom the user
-					// reported.
-					pendingPath := filepath.Join(serverPath, fmt.Sprintf(".pending-delete-%s-%d", subName, time.Now().UnixNano()))
-					removed := false
-					if renameErr := os.Rename(subServerPath, pendingPath); renameErr == nil {
-						removed = true
-						go func(p string) {
-							for attempt := 0; attempt < 12; attempt++ {
-								if err := os.RemoveAll(p); err == nil {
-									return
-								}
-								time.Sleep(time.Duration(attempt+1) * time.Second)
-							}
-							log.Printf("delete_sub_server: background cleanup of %s gave up after retries (will retry on next node start)", p)
-						}(pendingPath)
-					} else {
-						// Rename failed (typically EXDEV across filesystems
-						// or ENOENT race) -- fall back to in-place
-						// RemoveAll with stat-verified retries.
-						log.Printf("delete_sub_server %s/%s: rename to tombstone failed (%v) -- falling back to in-place RemoveAll", cmd.Config.UUID, subName, renameErr)
-						var removeErr error
-						for attempt := 1; attempt <= 4; attempt++ {
-							removeErr = os.RemoveAll(subServerPath)
-							if removeErr == nil {
-								if _, statErr := os.Stat(subServerPath); os.IsNotExist(statErr) {
-									removed = true
-									break
-								}
-								removeErr = fmt.Errorf("dir still present after RemoveAll")
-							}
-							log.Printf("delete_sub_server %s/%s: remove attempt %d: %v", cmd.Config.UUID, subName, attempt, removeErr)
-							time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-						}
-						if !removed {
-							log.Printf("Failed to delete sub-server directory %s after retries: %v", subServerPath, removeErr)
-							return
-						}
-					}
-
-					// Check if this was the active sub-server
-					activeFile := filepath.Join(serverPath, ".active_server")
-					activeBytes, _ := os.ReadFile(activeFile)
-					delFinalActive := strings.TrimSpace(string(activeBytes))
-					if delFinalActive == subName {
-						// Find another sub-server to activate
-						entries, _ := os.ReadDir(serverPath)
-						newActive := ""
-						for _, e := range entries {
-							if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-								newActive = e.Name()
-								break
-							}
-						}
-						if newActive != "" {
-							os.WriteFile(activeFile, []byte(newActive), 0644)
-							log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
-							delFinalActive = newActive
-						} else {
-							os.Remove(activeFile)
-							log.Printf("No sub-servers remaining for %s, pending_setup", cmd.Config.UUID)
-							delFinalActive = ""
-						}
-					}
-					// Reflect the post-delete reality in Redis-status so
-					// the panel doesn't keep showing "online" / "stopped"
-					// for a server that no longer has anything to run.
-					// Core resets the DB row optimistically when the
-					// active sub-server is deleted, but if the user just
-					// dropped the last *inactive* one we still need to
-					// notice that nothing's left -- and the stats
-					// collector won't fire for a non-existent container.
-					statusKey := fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID)
-					if delFinalActive == "" {
-						rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
-					} else {
-						rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
-					}
-					log.Printf("Sub-server %s/%s deleted", cmd.Config.UUID, subName)
-					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, delFinalActive)
-
-				case "reinstall":
-					// Reinstall: stop container, clean JARs, re-install, restart
-					subName := cmd.Config.ActiveSubServer
-					if subName == "" {
-						subName = "server"
-					}
-					log.Printf("Reinstalling server %s (sub-server: %s)...", cmd.Config.UUID, subName)
-
-					// Set install-start for cooldown
-					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
-
-					// Stop the container first
-					dm.PowerAction(cmd.Config.UUID, "stop")
-					time.Sleep(3 * time.Second)
-
-					serverPath := storage.GetServerDir(cmd.Config.UUID)
-					subServerDir := filepath.Join(serverPath, subName)
-
-					// Clean old JARs and generated directories
-					if err := CleanServerJars(subServerDir); err != nil {
-						log.Printf("Clean failed for %s/%s: %v", cmd.Config.UUID, subName, err)
-					}
-
-					// Re-install with new config (Forge/NeoForge need the
-					// Java image to spin up a one-shot installer container).
-					installerCfg := cmd.Installer
-					installerCfg.JavaImage = cmd.Config.Docker.Image
-					installerCfg.ServerUUID = cmd.Config.UUID
-
-					if err := InstallServer(serverPath, subName, installerCfg); err != nil {
-						log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-						return
-					}
-
-					// Build the start command after reinstall (type-aware).
-					// ExtraJvmFlags is passed directly from Core as a dedicated field.
-					extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
-					startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
-					if err != nil {
-						log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-						return
-					}
-					cmd.Config.Docker.Command = startCmd
-
-					// Recreate container with start command
-					if err := dm.RecreateWithCommand(cmd.Config); err != nil {
-						log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-					} else {
-						log.Printf("Server %s/%s reinstalled and running!", cmd.Config.UUID, subName)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-					}
-					// Best-effort metadata refresh regardless of RecreateWithCommand result
-					// (reinstall succeeded; the sub-server directory has new software).
-					refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
-
-				case "migrate_storage":
-					targetPath := cmd.TargetPath
-					if targetPath == "" {
-						log.Printf("migrate_storage for %s: TargetPath is empty, aborting", cmd.Config.UUID)
-						return
-					}
-					log.Printf("Migrating storage for server %s → %s", cmd.Config.UUID, targetPath)
-
-					// Stop the server first
-					gracefulStop(rdb, cmd.Config.UUID, dm)
-
-					if err := storage.MigrateServerPath(cmd.Config.UUID, targetPath); err != nil {
-						log.Printf("Storage migration failed for %s: %v", cmd.Config.UUID, err)
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-						return
-					}
-
-					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-					log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
-
-				case "migrate_out":
-					// Source side: stage the (already-stopped) server dir as a zip.
-					handleMigrateOut(ctx, rdb, storage, cmd.Config.UUID)
-
-				case "migrate_in":
-					// Target side: pull the staged archive and extract it. No
-					// container start here — the orchestrator sends start next.
-					handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256)
-
-				case "migrate_cleanup":
-					// Source side: drop the staged archive + original dir.
-					handleMigrateCleanup(ctx, rdb, storage, cmd.Config.UUID)
-
-				case "proxy_network_create":
-					// config.UUID identifies the proxy server. Idempotent.
-					if _, err := dm.EnsureProxyNetwork(cmd.Config.UUID); err != nil {
-						log.Printf("proxy_network_create failed for %s: %v", cmd.Config.UUID, err)
-					}
-
-				case "proxy_network_destroy":
-					if err := dm.RemoveProxyNetwork(cmd.Config.UUID); err != nil {
-						log.Printf("proxy_network_destroy failed for %s: %v", cmd.Config.UUID, err)
-					}
-
-				case "proxy_network_connect":
-					// config.UUID = game-server container, ProxyUUID = proxy whose
-					// network the container should attach to (hot, no restart).
-					ip, err := dm.ConnectToProxyNetwork(cmd.Config.UUID, cmd.ProxyUUID)
-					if err != nil {
-						log.Printf("proxy_network_connect failed (%s → %s): %v", cmd.Config.UUID, cmd.ProxyUUID, err)
-					} else {
-						log.Printf("Connected %s to proxy %s (private IP %s)", cmd.Config.UUID, cmd.ProxyUUID, ip)
-						// Publish so the panel can read it without re-inspecting.
-						rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID), ip, 0)
-					}
-
-				case "proxy_network_disconnect":
-					if err := dm.DisconnectFromProxyNetwork(cmd.Config.UUID, cmd.ProxyUUID); err != nil {
-						log.Printf("proxy_network_disconnect failed (%s → %s): %v", cmd.Config.UUID, cmd.ProxyUUID, err)
-					}
-					rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID))
-
-				case "backup_run":
-					// Re-decode the full payload — BackupRunCommand has many fields
-					// the generic NodeCommand struct doesn't carry.
-					var bcmd BackupRunCommand
-					if err := json.Unmarshal([]byte(payload), &bcmd); err != nil {
-						log.Printf("backup_run: decode failed: %v", err)
-						return
-					}
-					log.Printf("backup_run: starting run=%d job=%d server=%s sub=%s", bcmd.RunID, bcmd.JobID, bcmd.ServerUUID, bcmd.SubServer)
-					RunBackup(ctx, rdb, storage, bcmd)
-
-				case "backup_restore":
-					var rcmd BackupRestoreCommand
-					if err := json.Unmarshal([]byte(payload), &rcmd); err != nil {
-						log.Printf("backup_restore: decode failed: %v", err)
-						return
-					}
-					log.Printf("backup_restore: starting run=%d server=%s sub=%s", rcmd.RunID, rcmd.ServerUUID, rcmd.SubServer)
-					RunRestore(ctx, rdb, storage, dm, rcmd)
-
-				case "install_mod":
-					runInstallMod(storage, payload)
-				case "remove_mod":
-					runRemoveMod(storage, payload)
-
-				default:
-					log.Printf("Unknown action: %s", cmd.Action)
-				}
-			}(payload)
+	err := consumer.Run(ctx, func(ctx context.Context, payloadBytes []byte) error {
+		var cmd NodeCommand
+		if err := json.Unmarshal(payloadBytes, &cmd); err != nil {
+			log.Printf("Invalid command payload, dropping: %v", err)
+			return nil // ack + drop malformed (same as the old loop's skip)
 		}
+		processCommand(ctx, cmd, string(payloadBytes), rdb, dm, id, quota, storage)
+		return nil
+	})
+	if err != nil && ctx.Err() == nil {
+		log.Printf("listenForCommands: consumer stopped: %v", err)
+	}
+}
+
+// processCommand runs one node command. It is invoked by the durable-queue
+// consumer; returning normally lets the queue ACK the message. Handler errors
+// are logged (preserving the previous behaviour) rather than surfaced, since
+// redelivery is driven by crash-before-return, not per-command logical failure.
+func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaProvider, storage *StorageManager) {
+	log.Printf("Pulled command from queue: '%s'", cmd.Action)
+
+	// Apply node-level default cpuset if not set by core
+	if cmd.Config.Docker.CpusetCpus == "" && defaultCpusetCpus != "" {
+		cmd.Config.Docker.CpusetCpus = defaultCpusetCpus
+	}
+
+	switch cmd.Action {
+
+	case "create":
+		// Step 1: create a stopped container slot with no software installed.
+		log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
+
+		// Assign storage path (auto-balances by free space)
+		storagePath, err := storage.SelectStoragePath(cmd.Config.UUID, "")
+		if err != nil {
+			log.Printf("Failed to select storage path for %s: %v", cmd.Config.UUID, err)
+			return
+		}
+		serverPath := filepath.Join(storagePath, cmd.Config.UUID)
+		if err := os.MkdirAll(serverPath, 0755); err != nil {
+			log.Printf("Failed to create directory for %s: %v", cmd.Config.UUID, err)
+			return
+		}
+
+		if quota != nil {
+			if err := quota.AssignQuota(cmd.Config.UUID); err != nil {
+				log.Printf("Quota assign warning for %s: %v", cmd.Config.UUID, err)
+			}
+			if cmd.Config.Docker.DiskLimit > 0 {
+				if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
+					log.Printf("Quota limit warning for %s: %v", cmd.Config.UUID, err)
+				}
+			}
+		}
+
+		if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
+			log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
+		} else {
+			log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
+			saveNodeConfig(serverPath, cmd.Config)
+			refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, "")
+		}
+
+	case "setup":
+		// Step 2: install software into a named sub-server directory, then start.
+		subName := cmd.Config.ActiveSubServer
+		if subName == "" {
+			subName = "server"
+		}
+		log.Printf("Setting up server %s (sub-server: %s)...", cmd.Config.UUID, subName)
+
+		// Set install-start timestamp for cooldown tracking
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
+
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+
+		// Forge / NeoForge installers need to run inside a Java
+		// container; copy the Java image + container UUID from
+		// the setup config so the installer has everything it
+		// needs without an extra round-trip.
+		installerCfg := cmd.Installer
+		installerCfg.JavaImage = cmd.Config.Docker.Image
+		installerCfg.ServerUUID = cmd.Config.UUID
+
+		if err := InstallServer(serverPath, subName, installerCfg); err != nil {
+			log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
+
+		// Always write eula.txt automatically
+		eulaPath := filepath.Join(serverPath, subName, "eula.txt")
+		if err := os.WriteFile(eulaPath, []byte("eula=true\n"), 0644); err != nil {
+			log.Printf("Failed to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
+		}
+
+		// Build the start command via buildStartCommand (type-aware: jar or argfile form).
+		// ExtraJvmFlags is passed directly from Core as a dedicated field (Aikar flags
+		// and any server-specific custom flags, already combined and trimmed).
+		subServerDir := filepath.Join(serverPath, subName)
+		extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
+		startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
+		if err != nil {
+			log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
+		cmd.Config.Docker.Command = startCmd
+
+		// Track the active sub-server on disk
+		activeFile := filepath.Join(serverPath, ".active_server")
+		if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+			log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
+		}
+
+		// Recreate container with start command pointing to the sub-server
+		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+			log.Printf("Failed to start server pod %s: %v", cmd.Config.UUID, err)
+		} else {
+			log.Printf("Server %s/%s deployed and running!", cmd.Config.UUID, subName)
+			saveNodeConfig(serverPath, cmd.Config)
+		}
+		// Best-effort metadata refresh regardless of RecreateWithCommand result
+		// (installation succeeded; the sub-server directory is valid).
+		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
+
+		// Notify Core that installation is complete
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+
+	case "switch_server":
+		// Update active sub-server on disk, then recreate container with new command.
+		subName := cmd.Config.ActiveSubServer
+		if subName == "" {
+			log.Printf("switch_server for %s: ActiveSubServer is empty, aborting", cmd.Config.UUID)
+			return
+		}
+		log.Printf("Switching server %s to sub-server: %s", cmd.Config.UUID, subName)
+
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		activeFile := filepath.Join(serverPath, ".active_server")
+
+		// Build the start command for the target sub-server.
+		// ExtraJvmFlags is passed directly from Core as a dedicated field.
+		switchSubDir := filepath.Join(serverPath, subName)
+		extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
+		startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
+		if err != nil {
+			log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
+		cmd.Config.Docker.Command = startCmd
+
+		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
+		} else {
+			if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
+			}
+			log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
+			saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
+			refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
+		}
+
+	case "start":
+		log.Printf("Power Action 'start' for Server %s ...", cmd.Config.UUID)
+		dm.PullContainerImage(cmd.Config.UUID)
+		if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
+			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
+		} else {
+			log.Printf("Server %s started", cmd.Config.UUID)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "starting", 30*time.Second)
+		}
+
+	case "stop":
+		log.Printf("Graceful stop for Server %s ...", cmd.Config.UUID)
+		gracefulStop(rdb, cmd.Config.UUID, dm)
+		log.Printf("Server %s stopped", cmd.Config.UUID)
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+
+	case "kill":
+		log.Printf("Force kill for Server %s ...", cmd.Config.UUID)
+		if err := dm.PowerAction(cmd.Config.UUID, "kill"); err != nil {
+			log.Printf("Failed to kill server %s: %v", cmd.Config.UUID, err)
+		} else {
+			log.Printf("Server %s killed", cmd.Config.UUID)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		}
+
+	case "restart":
+		log.Printf("Graceful restart for Server %s ...", cmd.Config.UUID)
+		gracefulStop(rdb, cmd.Config.UUID, dm)
+		// Clean up stop-requested key to prevent race with new log-shipper instance
+		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
+		time.Sleep(2 * time.Second)
+		// Recreate container (more reliable than ContainerStart on exited container)
+		if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
+			log.Printf("Failed to restart server %s: %v", cmd.Config.UUID, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		} else {
+			log.Printf("Server %s restarted", cmd.Config.UUID)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "starting", 30*time.Second)
+		}
+
+	case "update_resources":
+		log.Printf("Updating resources for Server %s ...", cmd.Config.UUID)
+		if err := dm.UpdateResources(cmd.Config); err != nil {
+			log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
+		} else {
+			log.Printf("Server %s resources updated and restarted", cmd.Config.UUID)
+			resServerPath := storage.GetServerDir(cmd.Config.UUID)
+			saveNodeConfig(resServerPath, cmd.Config)
+			resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
+			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
+		}
+		if quota != nil {
+			if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
+				log.Printf("Quota limit update warning for %s: %v", cmd.Config.UUID, err)
+			}
+		}
+
+	case "delete":
+		log.Printf("Deleting Server %s ...", cmd.Config.UUID)
+		dm.PowerAction(cmd.Config.UUID, "delete")
+
+		if quota != nil {
+			quota.RemoveQuota(cmd.Config.UUID)
+		}
+
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		os.RemoveAll(serverPath)
+		storage.RemoveServerPath(cmd.Config.UUID)
+		log.Printf("Server %s data fully deleted", cmd.Config.UUID)
+
+	case "delete_sub_server":
+		subName := cmd.Config.ActiveSubServer
+		if subName == "" {
+			log.Printf("delete_sub_server for %s: sub-server name is empty, aborting", cmd.Config.UUID)
+			return
+		}
+		log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
+
+		// Tear down the container fully before touching the
+		// filesystem. The container's bind is rooted at the
+		// server dir (not the sub-server dir), so even an
+		// inactive sub-server can show up busy if the kernel
+		// hasn't released the overlay mount yet. Steps:
+		//   1) SIGKILL the JVM (cheap, non-blocking)
+		//   2) Wait for Docker to actually report the
+		//      container stopped — ContainerKill returns
+		//      after sending the signal, not after exit
+		//   3) Remove the container so the bind goes away
+		// Earlier we relied on PowerAction("kill") alone and
+		// then immediately RemoveAll'd, which lost a race
+		// to a still-held bind and looked to the user like
+		// "the delete button does nothing".
+		mcName := fmt.Sprintf("mc_%s", cmd.Config.UUID)
+		killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
+		if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
+			log.Printf("delete_sub_server %s: ContainerKill: %v (probably already stopped — continuing)", cmd.Config.UUID, killErr)
+		}
+		statusCh, errCh := dm.cli.ContainerWait(killCtx, mcName, container.WaitConditionNotRunning)
+		select {
+		case <-statusCh:
+		case waitErr := <-errCh:
+			if waitErr != nil {
+				log.Printf("delete_sub_server %s: container wait: %v", cmd.Config.UUID, waitErr)
+			}
+		case <-killCtx.Done():
+			log.Printf("delete_sub_server %s: kill wait timed out, proceeding anyway", cmd.Config.UUID)
+		}
+		killCancel()
+		if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+			log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
+		}
+
+		// Drop the per-sub-server log stream. The console
+		// keeps its history per (server, sub-server), so a
+		// deleted sub-server's logs would otherwise linger
+		// in Redis forever -- and reappear in the browser
+		// if someone created a new sub-server with the
+		// same name. Browser-side clearing happens for
+		// free: ConsoleView's effect depends on activeSub
+		// and re-fetches when that flips.
+		logKey := fmt.Sprintf("dylaris:server:%s:logs:%s", cmd.Config.UUID, subName)
+		if delErr := rdb.Del(ctx, logKey).Err(); delErr != nil {
+			log.Printf("delete_sub_server %s/%s: log stream delete: %v", cmd.Config.UUID, subName, delErr)
+		}
+
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		subServerPath := filepath.Join(serverPath, subName)
+
+		// Two-phase delete to survive busy filesystems.
+		//
+		// Phase 1 (sync): atomic rename to a hidden
+		// `.pending-delete-<name>-<ns>` sibling. Rename only
+		// changes the inode-to-name mapping in the parent
+		// dir, which works even if the kernel still holds
+		// the original dir open via a bind. Once the rename
+		// returns success, the sub-server name is gone from
+		// every listing (file browser, scanSubServers, etc.)
+		// so the user sees the deletion as instant.
+		//
+		// Phase 2 (async): RemoveAll the tombstone in the
+		// background with retries. If it fails the
+		// tombstone stays on disk (hidden) until a future
+		// node start sweeps it up; the user-facing state
+		// is already correct.
+		//
+		// Previous attempts called RemoveAll directly and
+		// aborted the entire command on dir-still-present,
+		// which left .dylaris.json untouched and the empty
+		// dir visible -- exactly the symptom the user
+		// reported.
+		pendingPath := filepath.Join(serverPath, fmt.Sprintf(".pending-delete-%s-%d", subName, time.Now().UnixNano()))
+		removed := false
+		if renameErr := os.Rename(subServerPath, pendingPath); renameErr == nil {
+			removed = true
+			go func(p string) {
+				for attempt := 0; attempt < 12; attempt++ {
+					if err := os.RemoveAll(p); err == nil {
+						return
+					}
+					time.Sleep(time.Duration(attempt+1) * time.Second)
+				}
+				log.Printf("delete_sub_server: background cleanup of %s gave up after retries (will retry on next node start)", p)
+			}(pendingPath)
+		} else {
+			// Rename failed (typically EXDEV across filesystems
+			// or ENOENT race) -- fall back to in-place
+			// RemoveAll with stat-verified retries.
+			log.Printf("delete_sub_server %s/%s: rename to tombstone failed (%v) -- falling back to in-place RemoveAll", cmd.Config.UUID, subName, renameErr)
+			var removeErr error
+			for attempt := 1; attempt <= 4; attempt++ {
+				removeErr = os.RemoveAll(subServerPath)
+				if removeErr == nil {
+					if _, statErr := os.Stat(subServerPath); os.IsNotExist(statErr) {
+						removed = true
+						break
+					}
+					removeErr = fmt.Errorf("dir still present after RemoveAll")
+				}
+				log.Printf("delete_sub_server %s/%s: remove attempt %d: %v", cmd.Config.UUID, subName, attempt, removeErr)
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			}
+			if !removed {
+				log.Printf("Failed to delete sub-server directory %s after retries: %v", subServerPath, removeErr)
+				return
+			}
+		}
+
+		// Check if this was the active sub-server
+		activeFile := filepath.Join(serverPath, ".active_server")
+		activeBytes, _ := os.ReadFile(activeFile)
+		delFinalActive := strings.TrimSpace(string(activeBytes))
+		if delFinalActive == subName {
+			// Find another sub-server to activate
+			entries, _ := os.ReadDir(serverPath)
+			newActive := ""
+			for _, e := range entries {
+				if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+					newActive = e.Name()
+					break
+				}
+			}
+			if newActive != "" {
+				os.WriteFile(activeFile, []byte(newActive), 0644)
+				log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
+				delFinalActive = newActive
+			} else {
+				os.Remove(activeFile)
+				log.Printf("No sub-servers remaining for %s, pending_setup", cmd.Config.UUID)
+				delFinalActive = ""
+			}
+		}
+		// Reflect the post-delete reality in Redis-status so
+		// the panel doesn't keep showing "online" / "stopped"
+		// for a server that no longer has anything to run.
+		// Core resets the DB row optimistically when the
+		// active sub-server is deleted, but if the user just
+		// dropped the last *inactive* one we still need to
+		// notice that nothing's left -- and the stats
+		// collector won't fire for a non-existent container.
+		statusKey := fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID)
+		if delFinalActive == "" {
+			rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
+		} else {
+			rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		}
+		log.Printf("Sub-server %s/%s deleted", cmd.Config.UUID, subName)
+		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, delFinalActive)
+
+	case "reinstall":
+		// Reinstall: stop container, clean JARs, re-install, restart
+		subName := cmd.Config.ActiveSubServer
+		if subName == "" {
+			subName = "server"
+		}
+		log.Printf("Reinstalling server %s (sub-server: %s)...", cmd.Config.UUID, subName)
+
+		// Set install-start for cooldown
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
+
+		// Stop the container first
+		dm.PowerAction(cmd.Config.UUID, "stop")
+		time.Sleep(3 * time.Second)
+
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		subServerDir := filepath.Join(serverPath, subName)
+
+		// Clean old JARs and generated directories
+		if err := CleanServerJars(subServerDir); err != nil {
+			log.Printf("Clean failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+		}
+
+		// Re-install with new config (Forge/NeoForge need the
+		// Java image to spin up a one-shot installer container).
+		installerCfg := cmd.Installer
+		installerCfg.JavaImage = cmd.Config.Docker.Image
+		installerCfg.ServerUUID = cmd.Config.UUID
+
+		if err := InstallServer(serverPath, subName, installerCfg); err != nil {
+			log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
+
+		// Build the start command after reinstall (type-aware).
+		// ExtraJvmFlags is passed directly from Core as a dedicated field.
+		extraJvmFlags := cmd.Config.Docker.ExtraJvmFlags
+		startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
+		if err != nil {
+			log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
+		cmd.Config.Docker.Command = startCmd
+
+		// Recreate container with start command
+		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+			log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		} else {
+			log.Printf("Server %s/%s reinstalled and running!", cmd.Config.UUID, subName)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		}
+		// Best-effort metadata refresh regardless of RecreateWithCommand result
+		// (reinstall succeeded; the sub-server directory has new software).
+		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
+
+	case "migrate_storage":
+		targetPath := cmd.TargetPath
+		if targetPath == "" {
+			log.Printf("migrate_storage for %s: TargetPath is empty, aborting", cmd.Config.UUID)
+			return
+		}
+		log.Printf("Migrating storage for server %s → %s", cmd.Config.UUID, targetPath)
+
+		// Stop the server first
+		gracefulStop(rdb, cmd.Config.UUID, dm)
+
+		if err := storage.MigrateServerPath(cmd.Config.UUID, targetPath); err != nil {
+			log.Printf("Storage migration failed for %s: %v", cmd.Config.UUID, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
+
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
+
+	case "migrate_out":
+		// Source side: stage the (already-stopped) server dir as a zip.
+		handleMigrateOut(ctx, rdb, storage, cmd.Config.UUID)
+
+	case "migrate_in":
+		// Target side: pull the staged archive and extract it. No
+		// container start here — the orchestrator sends start next.
+		handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256)
+
+	case "migrate_cleanup":
+		// Source side: drop the staged archive + original dir.
+		handleMigrateCleanup(ctx, rdb, storage, cmd.Config.UUID)
+
+	case "proxy_network_create":
+		// config.UUID identifies the proxy server. Idempotent.
+		if _, err := dm.EnsureProxyNetwork(cmd.Config.UUID); err != nil {
+			log.Printf("proxy_network_create failed for %s: %v", cmd.Config.UUID, err)
+		}
+
+	case "proxy_network_destroy":
+		if err := dm.RemoveProxyNetwork(cmd.Config.UUID); err != nil {
+			log.Printf("proxy_network_destroy failed for %s: %v", cmd.Config.UUID, err)
+		}
+
+	case "proxy_network_connect":
+		// config.UUID = game-server container, ProxyUUID = proxy whose
+		// network the container should attach to (hot, no restart).
+		ip, err := dm.ConnectToProxyNetwork(cmd.Config.UUID, cmd.ProxyUUID)
+		if err != nil {
+			log.Printf("proxy_network_connect failed (%s → %s): %v", cmd.Config.UUID, cmd.ProxyUUID, err)
+		} else {
+			log.Printf("Connected %s to proxy %s (private IP %s)", cmd.Config.UUID, cmd.ProxyUUID, ip)
+			// Publish so the panel can read it without re-inspecting.
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID), ip, 0)
+		}
+
+	case "proxy_network_disconnect":
+		if err := dm.DisconnectFromProxyNetwork(cmd.Config.UUID, cmd.ProxyUUID); err != nil {
+			log.Printf("proxy_network_disconnect failed (%s → %s): %v", cmd.Config.UUID, cmd.ProxyUUID, err)
+		}
+		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", cmd.Config.UUID, cmd.ProxyUUID))
+
+	case "backup_run":
+		// Re-decode the full payload — BackupRunCommand has many fields
+		// the generic NodeCommand struct doesn't carry.
+		var bcmd BackupRunCommand
+		if err := json.Unmarshal([]byte(payload), &bcmd); err != nil {
+			log.Printf("backup_run: decode failed: %v", err)
+			return
+		}
+		log.Printf("backup_run: starting run=%d job=%d server=%s sub=%s", bcmd.RunID, bcmd.JobID, bcmd.ServerUUID, bcmd.SubServer)
+		RunBackup(ctx, rdb, storage, bcmd)
+
+	case "backup_restore":
+		var rcmd BackupRestoreCommand
+		if err := json.Unmarshal([]byte(payload), &rcmd); err != nil {
+			log.Printf("backup_restore: decode failed: %v", err)
+			return
+		}
+		log.Printf("backup_restore: starting run=%d server=%s sub=%s", rcmd.RunID, rcmd.ServerUUID, rcmd.SubServer)
+		RunRestore(ctx, rdb, storage, dm, rcmd)
+
+	case "install_mod":
+		runInstallMod(storage, payload)
+	case "remove_mod":
+		runRemoveMod(storage, payload)
+
+	default:
+		log.Printf("Unknown action: %s", cmd.Action)
 	}
 }
 

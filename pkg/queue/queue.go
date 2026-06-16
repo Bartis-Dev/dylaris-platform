@@ -22,6 +22,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -68,6 +69,11 @@ type Consumer struct {
 	// (moved to "<stream>:dead") and ACKed, so a poison message can't wedge the
 	// queue.
 	MaxDeliveries int64
+	// Concurrency is the number of messages processed in parallel. 1 (default)
+	// = strictly sequential. Set higher for independent commands (e.g. node
+	// server commands); keep 1 where ordering/exclusivity matters (e.g. the
+	// migration orchestrator, which serializes via per-server locks).
+	Concurrency int
 }
 
 // NewConsumer builds a Consumer with sane defaults. stream is the Redis key,
@@ -84,6 +90,7 @@ func NewConsumer(rdb *redis.Client, stream, group, name string) *Consumer {
 		ClaimMinIdle:  60 * time.Second,
 		DedupTTL:      24 * time.Hour,
 		MaxDeliveries: 5,
+		Concurrency:   1,
 	}
 }
 
@@ -103,14 +110,48 @@ func (c *Consumer) EnsureGroup(ctx context.Context) error {
 	return nil
 }
 
-// Run blocks until ctx is cancelled, processing messages. On start and whenever
-// the read times out it also reclaims stale pending (XAUTOCLAIM) and reprocesses
-// its own pending entries, so a crash mid-work is recovered.
+// Run blocks until ctx is cancelled, processing messages with up to
+// Concurrency workers. On start and whenever the read times out it also
+// reclaims stale pending (XAUTOCLAIM) and reprocesses its own pending entries,
+// so a crash mid-work is recovered. The worker pool gives natural back-pressure:
+// when all workers are busy, Run stops reading ">" so undelivered entries simply
+// wait durably in the stream.
 func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	if err := c.EnsureGroup(ctx); err != nil {
 		return err
 	}
+
+	workers := c.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	work := make(chan redis.XMessage)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for m := range work {
+				c.handleOne(ctx, m, handler)
+			}
+		}()
+	}
+	defer func() { close(work); wg.Wait() }()
+
+	dispatch := func(msgs []redis.XMessage) bool {
+		for _, m := range msgs {
+			select {
+			case work <- m:
+			case <-ctx.Done():
+				return false
+			}
+		}
+		return true
+	}
+
 	// Recover anything left from a previous life before taking new work.
+	// Recovery is infrequent and processed synchronously (correctness over
+	// parallelism); only live ">" messages flow through the worker pool.
 	c.claimStale(ctx, handler)
 	c.recoverPending(ctx, handler)
 
@@ -127,10 +168,10 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 		}).Result()
 		if err != nil {
 			if errors.Is(err, redis.Nil) || ctx.Err() != nil {
-				// Idle tick: sweep for stragglers, then keep waiting.
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				// Idle tick: sweep for stragglers (orphaned / retryable), then wait.
 				c.claimStale(ctx, handler)
 				c.recoverPending(ctx, handler)
 				continue
@@ -145,8 +186,8 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			continue
 		}
 		for _, st := range res {
-			for _, m := range st.Messages {
-				c.handleOne(ctx, m, handler)
+			if !dispatch(st.Messages) {
+				return ctx.Err()
 			}
 		}
 	}
