@@ -95,3 +95,77 @@ func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, server
 
 	return q.redis.RPush(ctx, queueKey, jsonData).Err()
 }
+
+// SendMigrateOutCommand queues a migrate_out (auto-move) command. The source
+// node stages the (already-stopped) server directory as a zip and publishes its
+// hash to Redis. Distinct from migrate_storage above, which moves between local
+// storage paths on the same node.
+func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, serverUUID string) error {
+	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+
+	type migrateOutCmd struct {
+		Action string                 `json:"action"`
+		Config map[string]interface{} `json:"config"`
+	}
+	cmd := migrateOutCmd{
+		Action: "migrate_out",
+		Config: map[string]interface{}{"uuid": serverUUID},
+	}
+
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrate_out command: %w", err)
+	}
+	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+}
+
+// SendMigrateInCommand queues a migrate_in (auto-move) command. The target node
+// pulls the staged archive from sourceNodeID using token, verifies it against
+// expectedSha256, and extracts it. The move parameters ride as top-level fields
+// (matching the node's NodeCommand shape), not inside Config.
+func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string) error {
+	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+
+	type migrateInCmd struct {
+		Action         string                 `json:"action"`
+		Config         map[string]interface{} `json:"config"`
+		SourceNodeID   string                 `json:"sourceNodeId"`
+		MigrateToken   string                 `json:"migrateToken"`
+		ExpectedSha256 string                 `json:"expectedSha256"`
+	}
+	cmd := migrateInCmd{
+		Action:         "migrate_in",
+		Config:         map[string]interface{}{"uuid": serverUUID},
+		SourceNodeID:   sourceNodeID,
+		MigrateToken:   token,
+		ExpectedSha256: expectedSha256,
+	}
+
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrate_in command: %w", err)
+	}
+	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+}
+
+// SendMigrateCleanupCommand queues a migrate_cleanup (auto-move) command. The
+// source node deletes the staged archive and the original server directory.
+// Sent only after the target confirms transfer; the orchestrator owns ordering.
+func (q *QueueService) SendMigrateCleanupCommand(ctx context.Context, nodeToken, serverUUID string) error {
+	queueKey := fmt.Sprintf("dylaris:node:%s:queue", nodeToken)
+
+	type migrateCleanupCmd struct {
+		Action string                 `json:"action"`
+		Config map[string]interface{} `json:"config"`
+	}
+	cmd := migrateCleanupCmd{
+		Action: "migrate_cleanup",
+		Config: map[string]interface{}{"uuid": serverUUID},
+	}
+
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrate_cleanup command: %w", err)
+	}
+	return q.redis.RPush(ctx, queueKey, jsonData).Err()
+}

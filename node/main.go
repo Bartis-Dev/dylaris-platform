@@ -98,6 +98,13 @@ type NodeCommand struct {
 	Installer  InstallerConfig `json:"installer"`
 	TargetPath string          `json:"targetPath,omitempty"`
 	ProxyUUID  string          `json:"proxyUuid,omitempty"` // used by proxy_network_* commands
+
+	// migrate_in (auto-move) parameters. Carried as top-level fields like
+	// TargetPath/ProxyUUID rather than stuffed into Config, since they describe
+	// the move, not the server.
+	SourceNodeID   string `json:"sourceNodeId,omitempty"`
+	MigrateToken   string `json:"migrateToken,omitempty"`
+	ExpectedSha256 string `json:"expectedSha256,omitempty"`
 }
 
 func main() {
@@ -209,6 +216,10 @@ func main() {
 		log.Printf("BEAM_JWT_SECRET unset — Beam authentication will reject all tickets")
 	}
 	go StartBeamServer(ctx, rdb, storageMgr, beamThrottle, beamJWTSecret, nodeID)
+
+	// Migration (auto-move) pull endpoint (MIGRATION_PORT, default :25522).
+	// archivePathFor serves only a staged archive produced by migrate_out.
+	go StartMigrationServer(ctx, rdb, clusterSecret, nodeID, migrationArchivePathFor(storageMgr))
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -1020,6 +1031,19 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 
 					rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 					log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
+
+				case "migrate_out":
+					// Source side: stage the (already-stopped) server dir as a zip.
+					handleMigrateOut(ctx, rdb, storage, cmd.Config.UUID)
+
+				case "migrate_in":
+					// Target side: pull the staged archive and extract it. No
+					// container start here — the orchestrator sends start next.
+					handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256)
+
+				case "migrate_cleanup":
+					// Source side: drop the staged archive + original dir.
+					handleMigrateCleanup(ctx, rdb, storage, cmd.Config.UUID)
 
 				case "proxy_network_create":
 					// config.UUID identifies the proxy server. Idempotent.
