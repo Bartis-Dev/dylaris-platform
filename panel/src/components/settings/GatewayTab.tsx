@@ -12,6 +12,7 @@ import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skelet
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
+import { useAppData } from '@/lib/AppDataContext';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -231,6 +232,11 @@ function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
 }
 
 function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    // Beam file access is part of the gateway routing stack — meaningless
+    // while Game Traffic is still bound to IP:Port. Gate on the applied mode.
+    const { routingMode } = useAppData();
+    const gatewayOff = routingMode === 'ip_port';
+
     const [settings, setSettings] = useState<BeamSettings>({
         relayAddress: '',
         bwLimit: 0,
@@ -317,6 +323,9 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Beam File Transfer</h2>
                 <p className="text-sm text-(--base-07)">Configure the Beam desktop file transfer service. Users can download the Beam app to manage server files directly.</p>
             </div>
+
+            {gatewayOff && <GatewayDisabledNotice />}
+            <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
 
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
@@ -465,6 +474,8 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                     </div>
                 </div>
             </div>
+
+            </fieldset>
         </div>
     );
 }
@@ -702,6 +713,24 @@ function DnsRecordRow({ rec, checked }: { rec: DnsRecord; checked: boolean }) {
 // Gateway panel
 // ─────────────────────────────────────────────
 
+// Inline notice shown above the operational gateway controls (routes, Beam,
+// XDP) whenever Game Traffic is still on IP:Port. The routing-mode selector
+// itself is never gated — it's the only way to turn the gateway on — so the
+// copy points the operator back at it. `here` = shown on the Gateway sub-tab
+// (selector is right above); otherwise it points back to the Gateway sub-tab.
+function GatewayDisabledNotice({ here = false }: { here?: boolean }) {
+    return (
+        <div className="alert alert-warning text-xs">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            <span>
+                Gateway routing is disabled. Switch <span className="font-medium">Game Traffic</span> to{' '}
+                <span className="font-medium">Gateway</span> or <span className="font-medium">Both</span>{' '}
+                {here ? 'above' : 'in the Gateway sub-tab'} to manage routes, Beam and XDP.
+            </span>
+        </div>
+    );
+}
+
 function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
     const [settings, setSettings] = useState<GatewaySettings>({
         limits: {
@@ -797,6 +826,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     const isUnlimited = (key: LimitKey) => settings.limits[key] === -1;
     const toggleUnlimited = (key: LimitKey) => setLimit(key, isUnlimited(key) ? 0 : -1);
     const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
+
+    // Gate the operational route-management UI on the *applied* routing mode
+    // (origRoutingMode), not the in-progress selection — the controls below
+    // only do anything once Gateway/Both is actually live. The mode selector
+    // above always stays usable.
+    const gatewayOff = origRoutingMode === 'ip_port';
 
     const addHoster = () => {
         setSettings(prev => ({
@@ -978,6 +1013,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     )}
                 </div>
             </div>
+
+            {/* Operational gateway content — only meaningful once Gateway/Both
+                is the applied routing mode. Greyed + disabled otherwise; the
+                mode selector above stays usable to turn it on. */}
+            {gatewayOff && <GatewayDisabledNotice here />}
+            <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
 
             {/* Hoster Domains + Custom Domains */}
             <div className="card p-5 space-y-5">
@@ -1230,6 +1271,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
             </div>
 
+            </fieldset>
+
             {/* Routing confirmation modal */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -1401,6 +1444,11 @@ async function saveXDPConfig(cfg: XDPConfig): Promise<{ success: boolean; messag
 }
 
 function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    // XDP runs on the Edges, which only carry traffic in gateway routing
+    // mode. Gate the config on the applied mode.
+    const { routingMode } = useAppData();
+    const gatewayOff = routingMode === 'ip_port';
+
     const [cfg, setCfg] = useState<XDPConfig>(XDP_DEFAULTS);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -1463,13 +1511,16 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                     by all Edges within ~30 seconds — saving triggers an automatic sidecar recreate (≈1-3s downtime of the
                     XDP shield, the Edge proxy itself stays up).
                 </p>
-                {!present && (
+                {!present && !gatewayOff && (
                     <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--accent)/5 border border-(--accent-border)/40 text-xs text-(--base-08)">
                         <AlertTriangle size={14} className="text-(--accent-light) mt-0.5 shrink-0" />
                         <span>No XDP config in Redis yet — these are the package defaults. Save once to commit them.</span>
                     </div>
                 )}
             </div>
+
+            {gatewayOff && <GatewayDisabledNotice />}
+            <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
 
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
@@ -1609,6 +1660,8 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                     className="input-field font-mono text-xs resize-y"
                 />
             </div>
+
+            </fieldset>
         </div>
     );
 }

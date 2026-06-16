@@ -85,8 +85,13 @@ func newWarpTestHandler(t *testing.T) *WarpHandler {
 	t.Cleanup(mr.Close)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	fs := &warpFakeStore{
-		settings: map[string]string{"warp:leader_endpoint": "vpn.example.com:51820"},
-		peers:    map[string]store.WarpPeer{},
+		// Enrollment now requires gateway routing; set it so the happy-path
+		// test exercises a fully enabled platform.
+		settings: map[string]string{
+			"warp:leader_endpoint": "vpn.example.com:51820",
+			"routing_mode":         "gateway",
+		},
+		peers: map[string]store.WarpPeer{},
 	}
 	svc := services.NewWarpService(fs, rdb, "10.0.99.0/24", "leader-01", "test-secret")
 	state := &AppState{Store: fs, Redis: rdb}

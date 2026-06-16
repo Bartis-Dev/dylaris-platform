@@ -83,6 +83,15 @@ func applyExternalOverride(routing, file string, external bool) (string, string)
 	return routing, file
 }
 
+// beamAdvertiseEnabled reports whether this node should publish its Beam
+// endpoint to Redis: only when Beam is actually reachable (file mode beam/both,
+// or an external node which always forces beam locally). Reads the current
+// package-level mode vars, which the 30s mode-refresh loop keeps in sync, so a
+// runtime switch into/out of beam starts/stops advertising.
+func beamAdvertiseEnabled() bool {
+	return nodeExternal || fileAccessMode == "beam" || fileAccessMode == "both"
+}
+
 type NodeCommand struct {
 	Action     string          `json:"action"`
 	Config     ServerConfig    `json:"config"`

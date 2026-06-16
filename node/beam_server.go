@@ -162,6 +162,15 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID, port st
 	)
 	var lastLoggedIP string
 	publish := func() {
+		// Only advertise when Beam is actually in use: file mode beam/both, or
+		// an external node (which always forces beam locally). The listener
+		// keeps running regardless so a runtime mode switch is cheap — we just
+		// re-check beamAdvertiseEnabled() each tick and start/stop advertising.
+		// fileAccessMode is refreshed from Redis by the 30s mode loop in main.
+		if !beamAdvertiseEnabled() {
+			lastLoggedIP = "" // re-log once when advertising resumes
+			return
+		}
 		ip := overlayIP()
 		if ip == "" {
 			return

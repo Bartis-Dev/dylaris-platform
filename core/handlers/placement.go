@@ -107,10 +107,21 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 	// each node individually inside the loop.
 	heartbeats := services.LoadHeartbeats(ctx, h.state.Redis)
 
+	// External/home nodes only route via gateway+beam. When the platform is
+	// in ip_port mode they have no usable path, so exclude them from placement
+	// entirely — never deploy a new server onto a node we can't reach.
+	// Servers already running on an external node when gateway is later
+	// disabled are intentionally left as-is; the routing migration handles
+	// their redeploy. Only new placements are blocked here.
+	gatewayOn := h.state.gatewayEnabled()
+
 	candidates := make([]NodeCandidate, 0, len(all))
 	for i := range all {
 		n := &all[i]
 		if n.Status != "online" {
+			continue
+		}
+		if n.IsExternal() && !gatewayOn {
 			continue
 		}
 		if req.NodeID > 0 && n.ID != req.NodeID {

@@ -57,6 +57,15 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	// Warp peers are only reachable through the gateway overlay; with platform
+	// routing in ip_port mode there is nothing to enroll into. Refuse here so
+	// home nodes don't enroll into a dormant overlay (matches the panel, which
+	// only offers the mint-key button when routing is gateway+beam).
+	if !h.state.gatewayEnabled() {
+		sendJSONError(w, "Gateway routing is disabled; enable gateway or both mode before enrolling warp peers.", http.StatusConflict)
+		return
+	}
 	var req struct {
 		PublicKey     string   `json:"public_key"`
 		TunnelSubnets []string `json:"tunnel_subnets"`

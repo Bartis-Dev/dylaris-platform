@@ -284,6 +284,13 @@ type Node struct {
 	RAMFree   int64   `json:"ramFree"`
 	RAMTotal  uint64  `json:"ramTotal"`
 	LinkCount int     `json:"linkCount"`
+
+	// Unusable is a derived (not persisted) flag set at API-response time:
+	// true when this node currently has no usable routing path (e.g. an
+	// external node while platform routing is ip_port). UnusableReason gives
+	// the panel a short machine-readable cause. Empty/false = node is usable.
+	Unusable       bool   `json:"unusable,omitempty"`
+	UnusableReason string `json:"unusableReason,omitempty"`
 }
 
 // IsExternal reports whether this node is an external/home node (tag "external").

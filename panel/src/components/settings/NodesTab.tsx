@@ -8,9 +8,10 @@ import {
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
+import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    CircleCheck, CircleAlert, Pencil, X,
+    CircleCheck, CircleAlert, Pencil, X, AlertTriangle,
 } from 'lucide-react';
 
 type SubTab = 'nodes' | 'placement';
@@ -70,7 +71,20 @@ export default function NodesTab() {
 // Nodes list (existing UX + per-node placement edit)
 // ─────────────────────────────────────────────
 
+// A node is "external" (home/Warp node) when its tags carry the `external`
+// marker — same client-side derivation the badge rendering already uses.
+// External nodes can only carry traffic in gateway routing mode, so when
+// Game Traffic is on IP:Port they're shown as unusable.
+function isExternalNode(node: Node): boolean {
+    return !!node.tags && node.tags.split(',').map(t => t.trim()).includes('external');
+}
+
 function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    // Applied routing mode from the shared app context (same source WarpTab
+    // gates on) — no extra fetch, no new store.
+    const { routingMode } = useAppData();
+    const gatewayOff = routingMode === 'ip_port';
+
     const [nodes, setNodes] = useState<Node[]>([]);
     const [editingPlacement, setEditingPlacement] = useState<number | null>(null);
 
@@ -111,6 +125,7 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
                             <NodeCard
                                 key={node.id}
                                 node={node}
+                                gatewayRequired={isExternalNode(node) && gatewayOff}
                                 isEditing={editingPlacement === node.id}
                                 onEdit={() => setEditingPlacement(node.id)}
                                 onCancel={() => setEditingPlacement(null)}
@@ -127,6 +142,9 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 
 interface NodeCardProps {
     node: Node;
+    // External node + gateway not active — its servers can't receive player
+    // traffic or file access until routing mode is switched to Gateway/Both.
+    gatewayRequired: boolean;
     isEditing: boolean;
     onEdit: () => void;
     onCancel: () => void;
@@ -134,7 +152,7 @@ interface NodeCardProps {
     onError: (msg: string) => void;
 }
 
-function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeCardProps) {
+function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onError }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -194,6 +212,15 @@ function NodeCard({ node, isEditing, onEdit, onCancel, onSaved, onError }: NodeC
                     )}
                     {node.tags && node.tags.split(',').map(t => t.trim()).includes('external') && (
                         <span className="badge badge-accent" title="External / home node — forces gateway+beam">external</span>
+                    )}
+                    {gatewayRequired && (
+                        <span
+                            className="badge badge-warning inline-flex items-center gap-1"
+                            title="This external node needs Gateway routing. Switch Game Traffic to Gateway or Both in the Gateway tab — otherwise its servers can't receive player traffic or file access."
+                        >
+                            <AlertTriangle size={11} />
+                            Requires gateway
+                        </span>
                     )}
                     {!isEditing && (
                         <button

@@ -625,7 +625,7 @@ func main() {
 
 	// User endpoints (per-server routes, identified by domain)
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.GetServerRoutes)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.CreateServerRoute)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteServerRoute)).Methods("DELETE")
 
 	// Infrastructure overview + migration status

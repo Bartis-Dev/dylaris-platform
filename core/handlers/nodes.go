@@ -55,6 +55,18 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = []models.Node{}
 	}
 
+	// Derive the unusable flag at response time (no DB column needed): an
+	// external/home node only routes via gateway+beam, so while the platform
+	// is in ip_port mode it has no reachable path. Panel uses this to show a
+	// "requires gateway" badge instead of letting admins place servers there.
+	gatewayOn := h.state.gatewayEnabled()
+	for i := range nodes {
+		if nodes[i].IsExternal() && !gatewayOn {
+			nodes[i].Unusable = true
+			nodes[i].UnusableReason = "requires_gateway"
+		}
+	}
+
 	// FIX: Return as object
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
