@@ -484,12 +484,19 @@ func (o *MigrationOrchestrator) readMeta(ctx context.Context, serverUUID string)
 	return m, nil
 }
 
-// currentPlayerCount reads the latest entry of the per-server stats buffer
+// currentPlayerCount reads the live player count for a server. Thin wrapper
+// over playerCountFromStats so the orchestrator and the rebalance worker share
+// one parser.
+func (o *MigrationOrchestrator) currentPlayerCount(ctx context.Context, serverUUID string) int {
+	return playerCountFromStats(ctx, o.redis, serverUUID)
+}
+
+// playerCountFromStats reads the latest entry of the per-server stats buffer
 // stream and returns the player count, or 0 if unreadable. The buffer entry's
 // "data" field is a JSON StatsPayload with a lowercase "players" field.
-func (o *MigrationOrchestrator) currentPlayerCount(ctx context.Context, serverUUID string) int {
+func playerCountFromStats(ctx context.Context, rdb *redis.Client, serverUUID string) int {
 	key := fmt.Sprintf("dylaris:server:%s:stats:buffer", serverUUID)
-	msgs, err := o.redis.XRevRangeN(ctx, key, "+", "-", 1).Result()
+	msgs, err := rdb.XRevRangeN(ctx, key, "+", "-", 1).Result()
 	if err != nil || len(msgs) == 0 {
 		return 0
 	}

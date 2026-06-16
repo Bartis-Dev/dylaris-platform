@@ -248,15 +248,11 @@ func (h *PlacementHandler) scoreNode(n *models.Node, req PickNodeRequest, hb *se
 		}
 	}
 
-	// Score components (each 0..1, lower is better).
-	ramLoad := 0.0
-	if n.TotalRAMMB > 0 {
-		ramLoad = float64(allocRAM) / (float64(n.TotalRAMMB) * n.RAMOvercommitRatio)
-	}
-	cpuLoad := 0.0
-	if n.TotalCPU > 0 {
-		cpuLoad = allocCPU / (n.TotalCPU * n.CPUOvercommitRatio)
-	}
+	// Score components (each 0..1, lower is better). Load fractions come from
+	// the shared services helpers so the scheduler and the rebalance worker
+	// compute node load identically.
+	ramLoad := services.NodeRAMLoad(allocRAM, n.TotalRAMMB, n.RAMOvercommitRatio)
+	cpuLoad := services.NodeCPULoad(allocCPU, n.TotalCPU, n.CPUOvercommitRatio)
 	countPenalty := float64(serverCount) / 100.0 // mild tiebreaker
 
 	cand.Score = ramLoad + cpuLoad + countPenalty

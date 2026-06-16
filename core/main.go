@@ -160,6 +160,13 @@ func main() {
 	migrationOrchestrator.Start(context.Background())
 	appState.Migration = migrationOrchestrator
 
+	// Rebalance worker — leader-gated ticker that migrates eligible (auto_move,
+	// 0-player) servers off overloaded nodes by enqueuing onto the orchestrator.
+	// No-op unless auto-move is enabled AND gateway routing is active.
+	rebalanceWorker := services.NewRebalanceWorker(pgStore, redisClient, migrationOrchestrator, appState.FeatureFlags)
+	rebalanceWorker.SetLeader(coreLeader)
+	rebalanceWorker.Start(context.Background())
+
 	// Publish routing modes to Redis on startup so Nodes pick them up immediately.
 	// Always write (even defaults) so stale Redis values from a previous install don't persist.
 	{
