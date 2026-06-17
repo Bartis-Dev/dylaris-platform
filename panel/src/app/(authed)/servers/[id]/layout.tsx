@@ -18,6 +18,7 @@ import { getNodes } from '@/lib/api/resources';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
 import RegionBadge from '@/components/RegionBadge';
+import CpuPinningControl from '@/components/CpuPinningControl';
 import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
@@ -43,6 +44,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [editCpuLimit, setEditCpuLimit] = useState(0);
     const [editDiskLimit, setEditDiskLimit] = useState(0);
     const [editCpusetCpus, setEditCpusetCpus] = useState('');
+    const [editCpuMode, setEditCpuMode] = useState<'shared' | 'auto' | 'manual'>('shared');
     const [editResourcesAdvancedOpen, setEditResourcesAdvancedOpen] = useState(false);
     const [editHostPort, setEditHostPort] = useState(0);
     const [editContainerPort, setEditContainerPort] = useState(25565);
@@ -254,7 +256,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         setEditDiskLimit((selectedServer.diskLimit || 0) / 1024);
         setEditHostPort(selectedServer.hostPort || 0);
         setEditContainerPort(selectedServer.containerPort || 25565);
-        setEditCpusetCpus((selectedServer as any).cpusetCpus || '');
+        setEditCpuMode(selectedServer.cpuPinningMode || 'shared');
+        // Manual cpuset comes from the dedicated cpuset field; fall back to the
+        // legacy cpusetCpus so older servers still show their pinning.
+        setEditCpusetCpus(selectedServer.cpuset || (selectedServer as any).cpusetCpus || '');
         setEditAutoMove(!!(selectedServer as any).autoMove);
         setEditResourcesAdvancedOpen(false);
         setStorageCurrentPath('');
@@ -315,7 +320,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
         await updateServerResources(
             selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0,
-            ports, editCpusetCpus || undefined,
+            ports, undefined, { mode: editCpuMode, cpuset: editCpusetCpus },
         );
         // Auto-move is a separate field — flip only when it actually changed.
         if (editAutoMove !== !!(selectedServer as any).autoMove) {
@@ -984,9 +989,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                         Advanced
                                     </button>
                                     {editResourcesAdvancedOpen && (
-                                        <div className="mt-3 flex flex-col gap-[5px]">
-                                            <label className="input-label">CPU Pinning (cpuset)</label>
-                                            <input type="text" value={editCpusetCpus} onChange={e => setEditCpusetCpus(e.target.value)} placeholder="e.g. 0-7 or 0,2,4,6 — empty = no pinning" className="input-mono w-full" />
+                                        <div className="mt-3 flex flex-col gap-2">
+                                            <CpuPinningControl
+                                                nodeId={selectedServer.nodeId}
+                                                mode={editCpuMode}
+                                                cpuset={editCpusetCpus}
+                                                cpuLimit={editCpuLimit}
+                                                onChange={({ mode, cpuset }) => { setEditCpuMode(mode); setEditCpusetCpus(cpuset); }}
+                                            />
                                             <p className="text-xs text-(--base-06)">Pin this container to specific CPU cores (useful for AMD 3D V-Cache). Resets if the server is migrated to a different node.</p>
                                         </div>
                                     )}

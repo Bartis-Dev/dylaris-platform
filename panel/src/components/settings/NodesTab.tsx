@@ -5,6 +5,7 @@ import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement, configureNode, Region,
+    getNodeCpu, type NodeCpuTopology,
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
@@ -167,11 +168,31 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
+    // Best-effort CPU topology for the P/E breakdown chip. Non-fatal: the
+    // cores stat falls back to node.totalCpu when the node hasn't reported.
+    const [cpuTopology, setCpuTopology] = useState<NodeCpuTopology | null>(null);
 
     useEffect(() => {
         setCpuRatio(node.cpuOvercommitRatio ?? 1.0);
         setRamRatio(node.ramOvercommitRatio ?? 1.0);
     }, [node.cpuOvercommitRatio, node.ramOvercommitRatio, isEditing]);
+
+    useEffect(() => {
+        let cancelled = false;
+        getNodeCpu(node.id).then(res => {
+            if (!cancelled && res?.success) setCpuTopology(res.topology ?? null);
+        }).catch(() => { /* non-fatal */ });
+        return () => { cancelled = true; };
+    }, [node.id]);
+
+    // "8P + 8E" when the node reports a hybrid layout, else null.
+    const peBreakdown = cpuTopology?.hybrid
+        ? (() => {
+            const p = cpuTopology.cores.filter(c => c.type === 'P').length;
+            const e = cpuTopology.cores.filter(c => c.type === 'E').length;
+            return `${p}P + ${e}E`;
+        })()
+        : null;
 
     const handleSave = async () => {
         if (cpuRatio <= 0 || ramRatio <= 0) {
@@ -281,8 +302,19 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
             )}
 
             {/* Placement summary / editor */}
-            <div className="mt-3 pt-3 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div className="mt-3 pt-3 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
                 <Stat label="Total CPU" value={node.totalCpu ? `${node.totalCpu.toFixed(1)} cores` : '—'} />
+                <Stat
+                    label="CPU cores"
+                    value={node.totalCpu ? (
+                        <span className="inline-flex items-center gap-1.5">
+                            {Math.round(node.totalCpu)}
+                            {peBreakdown && (
+                                <span className="badge badge-accent text-[9px]" title="Performance + Efficiency cores">{peBreakdown}</span>
+                            )}
+                        </span>
+                    ) : '—'}
+                />
                 <Stat label="Total RAM" value={node.totalRamMb ? `${(node.totalRamMb / 1024).toFixed(1)} GB` : '—'} />
                 <Stat
                     label="CPU Overcommit"

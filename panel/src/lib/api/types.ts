@@ -128,6 +128,8 @@ export interface Server {
     hostPort?: number;
     containerPort?: number;
     cpusetCpus?: string;
+    cpuPinningMode?: 'shared' | 'auto' | 'manual';
+    cpuset?: string;
     nodeAddress?: string;
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;
@@ -249,6 +251,11 @@ export const getUserRouteLimit = (id: string) => fetchAPI(`/users/${id}/route-li
 export const setUserRouteLimit = (id: string, data: { mode: string; maxRoutes: number }) => fetchAPI(`/users/${id}/route-limit`, { method: 'PUT', body: JSON.stringify(data) });
 
 // --- NODES ---
+export interface CpuCore { id: number; type: 'P' | 'E' | 'standard'; sibling: number; }
+export interface NodeCpuTopology { logicalCount: number; physicalCount: number; hybrid: boolean; cores: CpuCore[]; scannedAt: number; }
+// Returns { success, topology: NodeCpuTopology | null, load: { [coreId]: number } }.
+export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
+
 export const getNodes = () => fetchAPI('/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
@@ -295,10 +302,19 @@ export const updateServerResources = (
     cpuLimit: number,
     diskLimit: number,
     ports?: { hostPort?: number; containerPort?: number },
-    cpusetCpus?: string
+    cpusetCpus?: string,
+    // CPU pinning. Omit to leave pinning unchanged. For mode 'manual' the
+    // cpuset is sent; for 'auto'/'shared' the backend ignores it.
+    pinning?: { mode: 'shared' | 'auto' | 'manual'; cpuset?: string },
 ) => fetchAPI(`/servers/${id}/resources`, {
     method: 'PATCH',
-    body: JSON.stringify({ ram, cpuLimit, diskLimit, ...ports, ...(cpusetCpus !== undefined ? { cpusetCpus } : {}) }),
+    body: JSON.stringify({
+        ram, cpuLimit, diskLimit,
+        ...ports,
+        ...(cpusetCpus !== undefined ? { cpusetCpus } : {}),
+        ...(pinning !== undefined ? { cpuPinningMode: pinning.mode } : {}),
+        ...(pinning !== undefined && pinning.cpuset !== undefined ? { cpuset: pinning.cpuset } : {}),
+    }),
 });
 
 export const sendConsoleCommand = (id: number, command: string) =>

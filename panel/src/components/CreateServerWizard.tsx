@@ -4,10 +4,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     getUsers, User, createServer, getNodes, Node,
     getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
-    API_URL,
+    updateServerResources, API_URL,
 } from '../lib/api';
 import { regionLabel, regionFlag } from '../lib/regions';
-import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin } from 'lucide-react';
+import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu } from 'lucide-react';
+import CpuPinningControl from './CpuPinningControl';
 
 interface StoragePathInfo {
     path: string;
@@ -71,6 +72,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [storagePath, setStoragePath] = useState('auto');
     const [storagePaths, setStoragePaths] = useState<StoragePathInfo[]>([]);
     const [autoMove, setAutoMove] = useState(false);
+    const [cpuMode, setCpuMode] = useState<'shared' | 'auto' | 'manual'>('shared');
+    const [cpuset, setCpuset] = useState('');
 
     useEffect(() => {
         if (!isOpen) return;
@@ -80,6 +83,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         setTargetMode('node'); setSelectedTags([]); setTagPreview(null); setTagPreviewReason('');
         setSelectedRegion(''); setAvailableRegions([]);
         setAutoMove(false);
+        setCpuMode('shared'); setCpuset('');
 
         getUsers().then(res => {
             if (res.success && res.users) {
@@ -202,6 +206,15 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
         const result = await createServer(payload);
         if (result.success) {
+            // The create payload never carries pinning. When the user chose a
+            // non-default mode, apply it with a follow-up PATCH using the new
+            // server id from the create response (server_id).
+            if (cpuMode !== 'shared' && result.server_id) {
+                await updateServerResources(
+                    Number(result.server_id), ram, cpuLimit, diskLimit > 0 ? diskLimit * 1024 : 0,
+                    undefined, undefined, { mode: cpuMode, cpuset },
+                );
+            }
             onClose();
         } else {
             alert("Error: " + result.message);
@@ -604,6 +617,22 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             <p className="text-xs text-(--base-06)">Auto distributes servers evenly across storage paths.</p>
                                         </div>
                                     )}
+                                </section>
+
+                                {/* CPU pinning. The node is only known in node-target
+                                    mode; in tag mode the grid is hidden and Shared/Auto
+                                    still work (Manual falls back to a raw cpuset input). */}
+                                <section className="space-y-3">
+                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2 flex items-center gap-2">
+                                        <Cpu size={16} className="text-(--accent-light)" /> CPU Pinning
+                                    </h3>
+                                    <CpuPinningControl
+                                        nodeId={targetMode === 'node' ? Number(nodeId) || undefined : undefined}
+                                        mode={cpuMode}
+                                        cpuset={cpuset}
+                                        cpuLimit={cpuLimit}
+                                        onChange={({ mode, cpuset: cs }) => { setCpuMode(mode); setCpuset(cs); }}
+                                    />
                                 </section>
 
                                 <section className="card p-3 flex items-center justify-between gap-4">
