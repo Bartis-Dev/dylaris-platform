@@ -36,7 +36,13 @@ type MigrationOrchestrator struct {
 	gateway       GatewayProvider
 	leader        leader.Election
 	clusterSecret string
+	// cpuPinning re-resolves a server's CPU pinning for the TARGET node at
+	// cutover (auto recomputed, manual reset when the hardware differs). nil-safe.
+	cpuPinning *CPUPinningService
 }
+
+// SetCPUPinning wires the CPU-pinning service. Call once at boot (optional).
+func (o *MigrationOrchestrator) SetCPUPinning(c *CPUPinningService) { o.cpuPinning = c }
 
 // migrationStreamKey is the durable Redis Stream the manual endpoint (and the
 // rebalance worker) publish requests onto; the elected leader consumes them via
@@ -69,19 +75,19 @@ type orchestrationStatus struct {
 	SourceNodeID int    `json:"sourceNodeID"`
 	TargetNodeID int    `json:"targetNodeID"`
 	Reason       string `json:"reason"`
-	StartedAt    int64  `json:"startedAt"`  // unix seconds
-	UpdatedAt    int64  `json:"updatedAt"`  // unix seconds
+	StartedAt    int64  `json:"startedAt"` // unix seconds
+	UpdatedAt    int64  `json:"updatedAt"` // unix seconds
 }
 
 const (
-	migrationLockTTL          = 10 * time.Minute
-	orchestrationStatusTTL    = time.Hour
-	migrationStopTimeout      = 90 * time.Second
-	migrationStageTimeout     = 5 * time.Minute  // archiving GBs on the source
-	migrationTransferTimeout  = 30 * time.Minute // multi-GB transfer to target
-	migrationStartTimeout     = 90 * time.Second // best-effort online confirm
-	migrationPollInterval     = 2 * time.Second
-	migrationTokenTTL         = 15 * time.Minute
+	migrationLockTTL           = 10 * time.Minute
+	orchestrationStatusTTL     = time.Hour
+	migrationStopTimeout       = 90 * time.Second
+	migrationStageTimeout      = 5 * time.Minute  // archiving GBs on the source
+	migrationTransferTimeout   = 30 * time.Minute // multi-GB transfer to target
+	migrationStartTimeout      = 90 * time.Second // best-effort online confirm
+	migrationPollInterval      = 2 * time.Second
+	migrationTokenTTL          = 15 * time.Minute
 	migrationQueueBlockTimeout = 5 * time.Second // BLPOP timeout; not a hot spin
 )
 
@@ -343,15 +349,41 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 
+	// Re-resolve CPU pinning for the target host. Different hardware (fewer cores,
+	// different P/E or X3D layout) means the source cpuset is no longer valid or
+	// meaningful: auto is recomputed on the target, manual is reset to shared
+	// unless the target is identical hardware. Persisted here; a running pinned
+	// server is recreated with the corrected cpuset below instead of a plain start.
+	effCpuset, pinned := o.reResolvePinningForTarget(ctx, srv, sourceNode, targetNode)
+
 	// --- (i) Start on target if it was running (best-effort) ---
 	if wasRunning {
 		o.store.UpdateServerStatus(srv.ID, "starting")
 		o.store.UpdateServerDesiredState(srv.ID, "online")
 		writeStatus("starting", "")
-		if err := o.queue.SendCommand(ctx, targetNode.Token, "start", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
+		var startErr error
+		if pinned {
+			// Recreate with the corrected cpuset (and current resources) so the
+			// container lands on valid target cores, then it comes up online.
+			startErr = o.queue.SendCommand(ctx, targetNode.Token, "update_resources", map[string]interface{}{
+				"uuid":            srv.UUID,
+				"activeSubServer": srv.ActiveSubServer,
+				"docker": map[string]interface{}{
+					"ram":        srv.Memory,
+					"cpuLimit":   srv.CPULimit,
+					"diskLimit":  srv.DiskLimit,
+					"cpusetCpus": effCpuset,
+					"image":      srv.GameImage,
+					"command":    srv.StartCommand,
+				},
+			}, nil)
+		} else {
+			startErr = o.queue.SendCommand(ctx, targetNode.Token, "start", map[string]interface{}{"uuid": srv.UUID}, nil)
+		}
+		if startErr != nil {
 			// Data is safe on the target; only the auto-start dispatch failed.
-			log.Printf("migration %s: start on target queue failed: %v", srv.UUID, err)
-			writeStatus("failed_post_cutover", "start on target failed: "+err.Error())
+			log.Printf("migration %s: start on target queue failed: %v", srv.UUID, startErr)
+			writeStatus("failed_post_cutover", "start on target failed: "+startErr.Error())
 			// Still send cleanup — the move itself succeeded.
 		} else {
 			// Best-effort confirm; do not fail the migration if start is slow.
@@ -539,6 +571,47 @@ func playerCountFromStats(ctx context.Context, rdb *redis.Client, serverUUID str
 }
 
 // writeStatus writes the orchestration progress record (best-effort).
+// reResolvePinningForTarget re-evaluates a server's CPU pinning for the node it
+// just moved to. auto is recomputed on the target topology; manual is kept only
+// when the target hardware signature matches the source and the cpuset is still
+// valid, otherwise it resets to shared so the operator re-pins intentionally on
+// the new hardware. shared is unchanged. Returns the effective cpuset to apply
+// and whether the server is pinned (so the caller recreates instead of plain start).
+func (o *MigrationOrchestrator) reResolvePinningForTarget(ctx context.Context, srv *models.Server, source, target *models.Node) (string, bool) {
+	if o.cpuPinning == nil {
+		return target.CpusetCpus, false
+	}
+	switch srv.CPUPinningMode {
+	case "auto":
+		cs, _ := o.cpuPinning.AutoCpuset(ctx, target.Token, target.ID, srv.ID, srv.CPULimit, target.CpusetCpus)
+		if err := o.store.UpdateServerCPUPinning(srv.ID, "auto", cs); err != nil {
+			log.Printf("migration %s: persist recomputed auto cpuset failed: %v", srv.UUID, err)
+		}
+		srv.Cpuset = cs
+		if cs == "" {
+			return target.CpusetCpus, false // target has not reported a topology yet
+		}
+		log.Printf("migration %s: auto cpuset recomputed for target %s -> %s", srv.UUID, target.Name, cs)
+		return cs, true
+	case "manual":
+		srcSig, _ := o.redis.Get(ctx, fmt.Sprintf("dylaris:node:%s:cpu:sig", source.Token)).Result()
+		tgtSig, _ := o.redis.Get(ctx, fmt.Sprintf("dylaris:node:%s:cpu:sig", target.Token)).Result()
+		sameHW := srcSig != "" && srcSig == tgtSig
+		if sameHW && o.cpuPinning.ValidateCpuset(ctx, target.Token, srv.Cpuset, target.CpusetCpus) == nil {
+			return srv.Cpuset, true // identical hardware -> keep the explicit pin
+		}
+		if err := o.store.UpdateServerCPUPinning(srv.ID, "shared", ""); err != nil {
+			log.Printf("migration %s: reset manual pinning failed: %v", srv.UUID, err)
+		}
+		srv.CPUPinningMode = "shared"
+		srv.Cpuset = ""
+		log.Printf("migration %s: manual cpuset reset to shared (target %s hardware differs)", srv.UUID, target.Name)
+		return target.CpusetCpus, false
+	default: // shared / empty
+		return target.CpusetCpus, false
+	}
+}
+
 func (o *MigrationOrchestrator) writeStatus(ctx context.Context, serverUUID, phase, errMsg string, sourceNodeID, targetNodeID int, reason string, startedAt time.Time) {
 	st := orchestrationStatus{
 		Phase:        phase,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"runtime"
 	"sort"
@@ -195,6 +196,62 @@ func parseCPUList(s string) []int {
 		} else if n, err := strconv.Atoi(part); err == nil {
 			out = append(out, n)
 		}
+	}
+	return out
+}
+
+// compactCPUList renders sorted ids as a cpuset string, collapsing runs
+// ([0 1 2 3 8] -> "0-3,8"). Inverse of parseCPUList.
+func compactCPUList(ids []int) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	sort.Ints(ids)
+	var parts []string
+	start, prev := ids[0], ids[0]
+	flush := func() {
+		if start == prev {
+			parts = append(parts, strconv.Itoa(start))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d-%d", start, prev))
+		}
+	}
+	for _, id := range ids[1:] {
+		if id == prev+1 {
+			prev = id
+			continue
+		}
+		flush()
+		start, prev = id, id
+	}
+	flush()
+	return strings.Join(parts, ",")
+}
+
+// sanitizeCpusetForHost drops cpuset cores that do not exist on THIS host and
+// returns the compacted valid subset ("" = run unpinned). This is the safety net
+// for a server that moved to a node with fewer or differently-numbered cores: a
+// stale cpuset baked into .node_config.json (or sent by Core) never references a
+// core that is not here, so the container can always start. Logs when it changes.
+func sanitizeCpusetForHost(spec, uuid string) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	topo := getCPUTopology()
+	valid := make(map[int]bool, len(topo.Cores))
+	for _, c := range topo.Cores {
+		valid[c.ID] = true
+	}
+	var kept []int
+	for _, id := range parseCPUList(spec) {
+		if valid[id] {
+			kept = append(kept, id)
+		}
+	}
+	out := compactCPUList(kept)
+	if out != spec {
+		log.Printf("cpuset for %s adjusted to host topology: %q -> %q (host has %d logical cores)", uuid, spec, out, topo.LogicalCount)
 	}
 	return out
 }

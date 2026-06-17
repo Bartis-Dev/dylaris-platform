@@ -463,7 +463,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 			Memory:     bookedRAM + oomPadding,
 			MemorySwap: bookedRAM + oomPadding, // same as Memory = no swap
 			NanoCPUs:   nanoCpus,
-			CpusetCpus: config.Docker.CpusetCpus,
+			CpusetCpus: sanitizeCpusetForHost(config.Docker.CpusetCpus, config.UUID),
 		},
 		Binds:         []string{fmt.Sprintf("%s:/data", hostServerPath)},
 		RestartPolicy: container.RestartPolicy{Name: "no"},
@@ -579,7 +579,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 			Memory:     bookedRAM + oomPadding,
 			MemorySwap: bookedRAM + oomPadding, // same as Memory = no swap
 			NanoCPUs:   nanoCpus,
-			CpusetCpus: config.Docker.CpusetCpus,
+			CpusetCpus: sanitizeCpusetForHost(config.Docker.CpusetCpus, config.UUID),
 		},
 		Binds:         binds,
 		RestartPolicy: container.RestartPolicy{Name: "no"},
@@ -635,7 +635,6 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 
 	return containerName, nil
 }
-
 
 // RestartContainer inspects the existing container to capture its full config,
 // removes the old container, and creates + starts a fresh one with identical settings.
@@ -739,7 +738,6 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 
 	return dm.RecreateWithCommand(config)
 }
-
 
 // PullContainerImage inspects a container to get its image, then pulls the latest version.
 func (dm *DockerManager) PullContainerImage(uuid string) {

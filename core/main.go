@@ -175,6 +175,7 @@ func main() {
 	migrationOrchestrator.SetLeader(coreLeader)
 	migrationOrchestrator.Start(context.Background())
 	appState.Migration = migrationOrchestrator
+	migrationOrchestrator.SetCPUPinning(appState.CPUPinning)
 
 	// Rebalance worker — leader-gated ticker that migrates eligible (auto_move,
 	// 0-player) servers off overloaded nodes by enqueuing onto the orchestrator.
