@@ -497,6 +497,13 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, reg
 		},
 	}
 
+	// BYON: advertise the per-user enroll token so Core can bind this node to its
+	// owner on first discovery. Only present when the operator brought the node
+	// with NODE_ENROLL_TOKEN set; platform nodes omit it.
+	if tok := os.Getenv("NODE_ENROLL_TOKEN"); tok != "" {
+		data["enrollToken"] = tok
+	}
+
 	// Include live CPU/RAM in heartbeat
 	if mon != nil {
 		if snap, err := mon.Snapshot(); err == nil {

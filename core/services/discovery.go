@@ -40,6 +40,10 @@ type NodeHeartbeat struct {
 	RAMTotal      uint64                 `json:"ramTotal"`
 	TotalCPU      float64                `json:"totalCpu"`
 	Storage       []HeartbeatStoragePath `json:"storage"`
+	// EnrollToken is the per-user BYON enroll token (NODE_ENROLL_TOKEN). When a
+	// NEW node presents a valid one, it is bound to that user (owner_id). Empty
+	// for platform nodes.
+	EnrollToken string `json:"enrollToken,omitempty"`
 }
 
 // HeartbeatStoragePath is one storage path reported by the node.
@@ -213,6 +217,18 @@ func (s *DiscoveryService) scanNodes() {
 			}
 			if createErr := s.store.CreateNode(newNode); createErr != nil {
 				log.Printf("Failed to create node '%s': %v", hb.Name, createErr)
+			} else if hb.EnrollToken != "" {
+				// BYON: a new node presenting a valid enroll token is bound to the
+				// token's user (owner_id). Harmless if the feature is later off.
+				if uid, ok, terr := s.store.ResolveNodeEnrollToken(hb.EnrollToken); terr == nil && ok {
+					if created, gerr := s.store.GetNodeByToken(hb.ID); gerr == nil {
+						if serr := s.store.SetNodeOwner(created.ID, &uid); serr != nil {
+							log.Printf("node %s: bind owner failed: %v", hb.Name, serr)
+						} else {
+							log.Printf("Node %s enrolled to user %s (BYON)", hb.Name, uid)
+						}
+					}
+				}
 			}
 			// Gateway link auto-creation is handled by Hub's link discovery loop
 			// (hub:link:discovery:{nodeID} heartbeat from the Link binary)
