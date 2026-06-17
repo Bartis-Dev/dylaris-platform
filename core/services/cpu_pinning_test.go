@@ -55,7 +55,7 @@ func hybrid8() *CPUTopology {
 }
 
 func TestComputeAutoCpuset_PrefersPCores(t *testing.T) {
-	got := computeAutoCpuset(hybrid8(), 2, 1, nil)
+	got := computeAutoCpuset(hybrid8(), 2, 1, nil, nil)
 	if got != "0-1" {
 		t.Fatalf("budget 2 should pick the first two P cores, got %q", got)
 	}
@@ -63,7 +63,7 @@ func TestComputeAutoCpuset_PrefersPCores(t *testing.T) {
 
 func TestComputeAutoCpuset_ReservesHostCore(t *testing.T) {
 	// budget 8 but reserve 1 -> at most 7 cores assignable.
-	got := computeAutoCpuset(hybrid8(), 8, 1, nil)
+	got := computeAutoCpuset(hybrid8(), 8, 1, nil, nil)
 	if got != "0-6" {
 		t.Fatalf("expected 7 cores 0-6 (1 reserved), got %q", got)
 	}
@@ -75,17 +75,41 @@ func TestComputeAutoCpuset_SpreadByLoad(t *testing.T) {
 	topo := &CPUTopology{LogicalCount: 4, PhysicalCount: 4, Cores: []CPUCore{
 		{ID: 0, Type: "P"}, {ID: 1, Type: "P"}, {ID: 2, Type: "P"}, {ID: 3, Type: "P"},
 	}}
-	got := computeAutoCpuset(topo, 2, 1, load)
+	got := computeAutoCpuset(topo, 2, 1, load, nil)
 	if got != "1-2" {
 		t.Fatalf("expected least-loaded cores 1-2, got %q", got)
 	}
 }
 
+func TestComputeAutoCpuset_RestrictedToNodePool(t *testing.T) {
+	// 8 cores but the node pool is only 4-7 (E cores); auto must stay inside it.
+	// No host reserve when a pool is set, so budget 2 -> first two pool cores.
+	allowed := map[int]bool{4: true, 5: true, 6: true, 7: true}
+	got := computeAutoCpuset(hybrid8(), 2, 0, nil, allowed)
+	if got != "4-5" {
+		t.Fatalf("expected cores from the node pool 4-5, got %q", got)
+	}
+}
+
 func TestComputeAutoCpuset_Empty(t *testing.T) {
-	if got := computeAutoCpuset(nil, 2, 1, nil); got != "" {
+	if got := computeAutoCpuset(nil, 2, 1, nil, nil); got != "" {
 		t.Fatalf("nil topology should yield empty, got %q", got)
 	}
-	if got := computeAutoCpuset(&CPUTopology{}, 0, 1, nil); got != "" {
+	if got := computeAutoCpuset(&CPUTopology{}, 0, 1, nil, nil); got != "" {
 		t.Fatalf("zero budget should yield empty, got %q", got)
+	}
+}
+
+func TestTopologySignature_StableExceptHardware(t *testing.T) {
+	a := &CPUTopology{LogicalCount: 8, PhysicalCount: 8, Hybrid: true,
+		Cores: []CPUCore{{ID: 0, Type: "P"}, {ID: 1, Type: "E"}}, ScannedAt: 100}
+	b := &CPUTopology{LogicalCount: 8, PhysicalCount: 8, Hybrid: true,
+		Cores: []CPUCore{{ID: 0, Type: "P"}, {ID: 1, Type: "E"}}, ScannedAt: 999} // different scan time
+	if TopologySignature(a) != TopologySignature(b) {
+		t.Fatal("signature must ignore scannedAt")
+	}
+	c := &CPUTopology{LogicalCount: 4, PhysicalCount: 4, Cores: []CPUCore{{ID: 0, Type: "standard"}}}
+	if TopologySignature(a) == TopologySignature(c) {
+		t.Fatal("different hardware must yield a different signature")
 	}
 }

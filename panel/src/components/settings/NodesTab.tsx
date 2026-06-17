@@ -5,14 +5,15 @@ import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement, configureNode, Region,
-    getNodeCpu, type NodeCpuTopology,
+    getNodeCpu, updateNodeCpuset, type NodeCpuTopology,
 } from '@/lib/api';
+import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal,
+    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu,
 } from 'lucide-react';
 
 type SubTab = 'nodes' | 'placement';
@@ -137,6 +138,7 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
                                 onConfigure={() => { setEditingPlacement(null); setEditingConfig(node.id); }}
                                 onConfigCancel={() => setEditingConfig(null)}
                                 onConfigSaved={() => { setEditingConfig(null); loadNodes(); showToast('Node configured'); }}
+                                onCpuPoolSaved={() => { loadNodes(); showToast('Container CPU pool updated'); }}
                                 onError={msg => showToast(msg, false)}
                             />
                         ))
@@ -161,16 +163,20 @@ interface NodeCardProps {
     onConfigure: () => void;
     onConfigCancel: () => void;
     onConfigSaved: () => void;
+    onCpuPoolSaved: () => void;
     onError: (msg: string) => void;
 }
 
-function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onError }: NodeCardProps) {
+function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
     // Best-effort CPU topology for the P/E breakdown chip. Non-fatal: the
     // cores stat falls back to node.totalCpu when the node hasn't reported.
     const [cpuTopology, setCpuTopology] = useState<NodeCpuTopology | null>(null);
+    // The node's allowed container core pool ("" = all cores). Drives the pool
+    // editor below; refetched whenever the node prop changes (the tab polls).
+    const [nodeCpuset, setNodeCpuset] = useState('');
 
     useEffect(() => {
         setCpuRatio(node.cpuOvercommitRatio ?? 1.0);
@@ -180,7 +186,10 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
     useEffect(() => {
         let cancelled = false;
         getNodeCpu(node.id).then(res => {
-            if (!cancelled && res?.success) setCpuTopology(res.topology ?? null);
+            if (!cancelled && res?.success) {
+                setCpuTopology(res.topology ?? null);
+                setNodeCpuset(res.nodeCpuset ?? '');
+            }
         }).catch(() => { /* non-fatal */ });
         return () => { cancelled = true; };
     }, [node.id]);
@@ -360,6 +369,142 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     </button>
                 </div>
             )}
+
+            <NodeCpuPoolEditor
+                node={node}
+                topology={cpuTopology}
+                nodeCpuset={nodeCpuset}
+                onSaved={onCpuPoolSaved}
+                onError={onError}
+            />
+        </div>
+    );
+}
+
+// NodeCpuPoolEditor lets an admin restrict which host cores this node may place
+// containers on (the node's container CPU pool). Empty pool = all cores allowed.
+// The restricted pool then narrows per-server CPU pinning (see CpuPinningControl).
+function NodeCpuPoolEditor({
+    node, topology, nodeCpuset, onSaved, onError,
+}: {
+    node: Node;
+    topology: NodeCpuTopology | null;
+    nodeCpuset: string;
+    onSaved: () => void;
+    onError: (msg: string) => void;
+}) {
+    // 'all' = no restriction; 'restrict' = pin the node to a subset of cores.
+    const [restrict, setRestrict] = useState(nodeCpuset.trim() !== '');
+    const [selected, setSelected] = useState<Set<number>>(() => new Set(parseCpuset(nodeCpuset)));
+    const [saving, setSaving] = useState(false);
+
+    // Re-sync from the latest server value whenever it changes (the tab polls
+    // every 5s) so a fresh save elsewhere doesn't get clobbered by stale state.
+    useEffect(() => {
+        setRestrict(nodeCpuset.trim() !== '');
+        setSelected(new Set(parseCpuset(nodeCpuset)));
+    }, [nodeCpuset]);
+
+    const toggleCore = (id: number) => {
+        setSelected(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const pendingCpuset = restrict ? compactCpuset([...selected]) : '';
+    const dirty = pendingCpuset !== nodeCpuset.trim();
+
+    const handleSave = async () => {
+        if (restrict && selected.size === 0) {
+            onError('Select at least one core, or choose "All cores".');
+            return;
+        }
+        setSaving(true);
+        const res = await updateNodeCpuset(node.id, pendingCpuset);
+        setSaving(false);
+        if (res?.success !== false && !res?.error) onSaved();
+        else onError(res.message || res.error || 'Save failed');
+    };
+
+    return (
+        <div className="mt-3 pt-3 border-t border-(--base-03) space-y-3">
+            <div className="flex items-center gap-2">
+                <Cpu size={13} className="text-(--base-06)" />
+                <span className="mono-label">Container CPU pool</span>
+            </div>
+
+            <div className="flex bg-(--base-03) p-0.5 rounded-md w-fit">
+                {([
+                    { id: 'all', label: 'All cores' },
+                    { id: 'restrict', label: 'Restrict to cores' },
+                ] as const).map(({ id, label }) => {
+                    const active = (id === 'restrict') === restrict;
+                    return (
+                        <button
+                            key={id}
+                            type="button"
+                            onClick={() => setRestrict(id === 'restrict')}
+                            className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors ${
+                                active ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'
+                            }`}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {!restrict ? (
+                <p className="text-[11px] text-(--base-06)">Containers may use any host core.</p>
+            ) : topology ? (
+                <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap gap-1.5">
+                        {topology.cores.map(core => {
+                            const isSel = selected.has(core.id);
+                            return (
+                                <button
+                                    key={core.id}
+                                    type="button"
+                                    onClick={() => toggleCore(core.id)}
+                                    title={`Core ${core.id}${topology.hybrid ? ` (${core.type === 'P' ? 'Performance' : core.type === 'E' ? 'Efficiency' : 'standard'})` : ''}`}
+                                    className={`w-10 h-10 rounded-md border flex flex-col items-center justify-center transition-colors ${
+                                        isSel
+                                            ? 'border-(--accent) bg-(--accent-ghost) text-(--accent-light)'
+                                            : 'border-(--base-04) text-(--base-07) hover:border-(--base-05) hover:text-(--base-09)'
+                                    }`}
+                                >
+                                    <span className="font-mono text-xs leading-none">{core.id}</span>
+                                    {topology.hybrid && core.type !== 'standard' && (
+                                        <span className={`font-mono text-[8px] leading-none mt-0.5 ${core.type === 'P' ? 'text-(--accent-light)' : 'text-(--base-06)'}`}>
+                                            {core.type}
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <p className="text-[11px] text-(--base-06)">
+                        {selected.size === 0
+                            ? 'No cores selected. Pick at least one.'
+                            : `Pool: ${compactCpuset([...selected])}`}
+                    </p>
+                </div>
+            ) : (
+                <p className="text-[11px] text-(--base-06)">This node has not reported its CPU layout yet.</p>
+            )}
+
+            <div className="flex items-center gap-2 justify-end">
+                <button
+                    onClick={handleSave}
+                    disabled={saving || !dirty}
+                    className="btn btn-secondary btn-sm disabled:opacity-40"
+                >
+                    <Save size={12} /> {saving ? 'Saving…' : 'Save pool'}
+                </button>
+            </div>
         </div>
     );
 }

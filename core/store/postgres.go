@@ -672,6 +672,22 @@ func (s *PostgresStore) UpdateServerCPUPinning(id int, mode, cpuset string) erro
 	return err
 }
 
+// ResetServerCPUPinningByNode clears CPU pinning (back to 'shared', no cpuset)
+// for every server on a node. Used when the node's host CPU topology changes
+// (hardware swap) so stale cpusets do not reference cores that no longer exist.
+// Returns how many rows were reset.
+func (s *PostgresStore) ResetServerCPUPinningByNode(nodeID int) (int64, error) {
+	res, err := s.db.Exec(
+		`UPDATE servers SET cpu_pinning_mode = 'shared', cpuset = ''
+		 WHERE node_id = $1 AND (cpu_pinning_mode <> 'shared' OR COALESCE(cpuset, '') <> '')`,
+		nodeID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ListServerCpusetsByNode returns serverID -> cpuset for every server on the
 // node that has a non-empty cpuset. Used to compute per-core load for the
 // auto-distribution spread.

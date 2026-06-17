@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layers, Wand2, Grid3x3 } from 'lucide-react';
 import { getNodeCpu, type NodeCpuTopology } from '@/lib/api';
+import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 
 interface CpuPinningControlProps {
     nodeId?: number;            // node to fetch topology for; undefined => grid hidden (e.g. tag-targeted create)
@@ -11,49 +12,6 @@ interface CpuPinningControlProps {
     cpuLimit?: number;          // used only for an informational hint
     onChange: (next: { mode: 'shared' | 'auto' | 'manual'; cpuset: string }) => void;
     disabled?: boolean;
-}
-
-// Parse a Linux cpuset list ("0-3,8") into a sorted, de-duplicated number[].
-function parseCpuset(spec: string): number[] {
-    const out = new Set<number>();
-    for (const part of spec.split(',')) {
-        const t = part.trim();
-        if (!t) continue;
-        const dash = t.indexOf('-');
-        if (dash > 0) {
-            const lo = Number(t.slice(0, dash));
-            const hi = Number(t.slice(dash + 1));
-            if (Number.isInteger(lo) && Number.isInteger(hi) && lo <= hi) {
-                for (let i = lo; i <= hi; i++) out.add(i);
-            }
-        } else {
-            const n = Number(t);
-            if (Number.isInteger(n)) out.add(n);
-        }
-    }
-    return [...out].sort((a, b) => a - b);
-}
-
-// Compact a number[] into a Linux cpuset list ("0-3,8"). Inverse of parseCpuset.
-function compactCpuset(ids: number[]): string {
-    const sorted = [...new Set(ids)].sort((a, b) => a - b);
-    const ranges: string[] = [];
-    let start = -1;
-    let prev = -1;
-    for (const id of sorted) {
-        if (start === -1) {
-            start = id;
-            prev = id;
-        } else if (id === prev + 1) {
-            prev = id;
-        } else {
-            ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
-            start = id;
-            prev = id;
-        }
-    }
-    if (start !== -1) ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
-    return ranges.join(',');
 }
 
 const MODES: { id: 'shared' | 'auto' | 'manual'; label: string; icon: React.ElementType; hint: string }[] = [
@@ -65,12 +23,15 @@ const MODES: { id: 'shared' | 'auto' | 'manual'; label: string; icon: React.Elem
 export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onChange, disabled }: CpuPinningControlProps) {
     const [topology, setTopology] = useState<NodeCpuTopology | null>(null);
     const [load, setLoad] = useState<Record<string, number>>({});
+    // The node's allowed core pool. "" means all cores are allowed (no pool).
+    const [nodeCpuset, setNodeCpuset] = useState('');
     const [loaded, setLoaded] = useState(false);
 
     useEffect(() => {
         if (nodeId === undefined) {
             setTopology(null);
             setLoad({});
+            setNodeCpuset('');
             setLoaded(false);
             return;
         }
@@ -81,24 +42,30 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
             if (res?.success) {
                 setTopology(res.topology ?? null);
                 setLoad(res.load ?? {});
+                setNodeCpuset(res.nodeCpuset ?? '');
             } else {
                 setTopology(null);
                 setLoad({});
+                setNodeCpuset('');
             }
             setLoaded(true);
         }).catch(() => {
             if (cancelled) return;
             setTopology(null);
             setLoad({});
+            setNodeCpuset('');
             setLoaded(true);
         });
         return () => { cancelled = true; };
     }, [nodeId]);
 
     const selected = new Set(parseCpuset(cpuset));
+    // Allowed core pool for this node. When empty, every core is selectable.
+    const allowed = nodeCpuset ? new Set(parseCpuset(nodeCpuset)) : null;
 
     const toggleCore = (id: number) => {
         if (disabled) return;
+        if (allowed && !allowed.has(id)) return; // outside the node's core pool
         const next = new Set(selected);
         if (next.has(id)) next.delete(id);
         else next.add(id);
@@ -145,18 +112,23 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
                                 {topology.cores.map(core => {
                                     const isSel = selected.has(core.id);
                                     const coreLoad = load[String(core.id)] ?? 0;
+                                    const inPool = !allowed || allowed.has(core.id);
                                     return (
                                         <button
                                             key={core.id}
                                             type="button"
-                                            disabled={disabled}
+                                            disabled={disabled || !inPool}
                                             onClick={() => toggleCore(core.id)}
-                                            title={`Core ${core.id}${topology.hybrid ? ` (${core.type === 'P' ? 'Performance' : core.type === 'E' ? 'Efficiency' : 'standard'})` : ''}${coreLoad > 0 ? ` · ${coreLoad} pinned` : ''}`}
-                                            className={`relative w-12 h-12 rounded-md border flex flex-col items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                                                isSel
+                                            title={inPool
+                                                ? `Core ${core.id}${topology.hybrid ? ` (${core.type === 'P' ? 'Performance' : core.type === 'E' ? 'Efficiency' : 'standard'})` : ''}${coreLoad > 0 ? ` · ${coreLoad} pinned` : ''}`
+                                                : "Outside this node's core pool"}
+                                            className={`relative w-12 h-12 rounded-md border flex flex-col items-center justify-center transition-colors disabled:cursor-not-allowed ${
+                                                !inPool
+                                                    ? 'border-(--base-04) text-(--base-07) opacity-40 cursor-not-allowed'
+                                                    : isSel
                                                     ? 'border-(--accent) bg-(--accent-ghost) text-(--accent-light)'
                                                     : 'border-(--base-04) text-(--base-07) hover:border-(--base-05) hover:text-(--base-09)'
-                                            }`}
+                                            } disabled:opacity-40`}
                                         >
                                             <span className="font-mono text-sm leading-none">{core.id}</span>
                                             {topology.hybrid && core.type !== 'standard' && (
@@ -181,6 +153,9 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
                                     <span className="ml-1">CPU limit is {cpuLimit} core{cpuLimit === 1 ? '' : 's'}.</span>
                                 )}
                             </p>
+                            {nodeCpuset && (
+                                <p className="text-[11px] text-(--base-06)">Node core pool: {nodeCpuset}</p>
+                            )}
                         </div>
                     ) : loaded ? (
                         <div className="flex flex-col gap-1.5">

@@ -78,9 +78,10 @@ func (s *CPUPinningService) NodeCoreLoad(nodeID, excludeServerID int) (map[int]i
 	return load, nil
 }
 
-// AutoCpuset computes a spread, P-preferred cpuset for a server in auto mode.
+// AutoCpuset computes a spread, P-preferred cpuset for a server in auto mode,
+// restricted to the node's allowed core pool (nodeCpuset; empty = all cores).
 // Returns "" when no topology is available (caller falls back to the node default).
-func (s *CPUPinningService) AutoCpuset(ctx context.Context, nodeToken string, nodeID, excludeServerID int, cpuLimit float64) (string, error) {
+func (s *CPUPinningService) AutoCpuset(ctx context.Context, nodeToken string, nodeID, excludeServerID int, cpuLimit float64, nodeCpuset string) (string, error) {
 	topo, err := s.GetNodeTopology(ctx, nodeToken)
 	if err != nil {
 		return "", err
@@ -96,20 +97,37 @@ func (s *CPUPinningService) AutoCpuset(ctx context.Context, nodeToken string, no
 	if budget < 1 {
 		budget = 1
 	}
-	return computeAutoCpuset(topo, budget, cpuReserveHostCores, load), nil
+	allowed := allowedCoreSet(nodeCpuset)
+	// When the admin has carved out a node pool, they already reserved host cores
+	// by limiting the pool, so do not reserve again inside it.
+	reserve := cpuReserveHostCores
+	if len(allowed) > 0 {
+		reserve = 0
+	}
+	return computeAutoCpuset(topo, budget, reserve, load, allowed), nil
 }
 
-// ValidateCpuset checks a manual cpuset against the node topology: every listed
-// core must exist. If the topology is unavailable it cannot validate, so it
-// accepts the value (best-effort) rather than blocking the operator.
-func (s *CPUPinningService) ValidateCpuset(ctx context.Context, nodeToken, cpuset string) error {
+// ValidateCpuset checks a manual cpuset against the node topology AND the node's
+// allowed core pool: every listed core must exist and (when a pool is set) be
+// within it. If the topology is unavailable it cannot validate, so it accepts the
+// value (best-effort) rather than blocking the operator.
+func (s *CPUPinningService) ValidateCpuset(ctx context.Context, nodeToken, cpuset, nodeCpuset string) error {
 	ids := parseCpusetList(cpuset)
 	if len(ids) == 0 {
 		return fmt.Errorf("cpuset is empty")
 	}
+	allowed := allowedCoreSet(nodeCpuset)
 	topo, err := s.GetNodeTopology(ctx, nodeToken)
 	if err != nil || topo == nil {
-		return nil // cannot validate; accept
+		// Cannot check existence, but still enforce the node pool if one is set.
+		if len(allowed) > 0 {
+			for _, id := range ids {
+				if !allowed[id] {
+					return fmt.Errorf("core %d is outside this node's allowed pool (%s)", id, nodeCpuset)
+				}
+			}
+		}
+		return nil
 	}
 	valid := map[int]bool{}
 	for _, c := range topo.Cores {
@@ -119,18 +137,63 @@ func (s *CPUPinningService) ValidateCpuset(ctx context.Context, nodeToken, cpuse
 		if !valid[id] {
 			return fmt.Errorf("core %d does not exist on this node (logical cores 0-%d)", id, topo.LogicalCount-1)
 		}
+		if len(allowed) > 0 && !allowed[id] {
+			return fmt.Errorf("core %d is outside this node's allowed pool (%s)", id, nodeCpuset)
+		}
 	}
 	return nil
 }
 
+// allowedCoreSet parses a node cpuset into a presence set. Empty cpuset = nil
+// (no restriction; all cores allowed).
+func allowedCoreSet(nodeCpuset string) map[int]bool {
+	ids := parseCpusetList(nodeCpuset)
+	if len(ids) == 0 {
+		return nil
+	}
+	set := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// TopologySignature is a stable fingerprint of the host CPU layout, EXCLUDING the
+// scan timestamp, so it only changes when the actual hardware (core count / ids /
+// P-E classification) changes. Used to detect a hardware change across restarts.
+func TopologySignature(t *CPUTopology) string {
+	if t == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(t.Cores)+1)
+	parts = append(parts, fmt.Sprintf("%d/%d/%t", t.LogicalCount, t.PhysicalCount, t.Hybrid))
+	for _, c := range t.Cores {
+		parts = append(parts, fmt.Sprintf("%d:%s", c.ID, c.Type))
+	}
+	return strings.Join(parts, ",")
+}
+
 // computeAutoCpuset picks `budget` cores, preferring performance cores, then
 // least-loaded, then lowest id, while reserving reserveHostCores for the host.
+// allowed (when non-nil) restricts the candidate cores to the node's pool.
 // Pure + deterministic.
-func computeAutoCpuset(topo *CPUTopology, budget, reserveHostCores int, load map[int]int) string {
+func computeAutoCpuset(topo *CPUTopology, budget, reserveHostCores int, load map[int]int, allowed map[int]bool) string {
 	if topo == nil || len(topo.Cores) == 0 || budget <= 0 {
 		return ""
 	}
-	maxAssignable := topo.LogicalCount - reserveHostCores
+
+	// Candidate cores: the node pool when set, otherwise all cores.
+	cores := make([]CPUCore, 0, len(topo.Cores))
+	for _, c := range topo.Cores {
+		if allowed == nil || allowed[c.ID] {
+			cores = append(cores, c)
+		}
+	}
+	if len(cores) == 0 {
+		return ""
+	}
+
+	maxAssignable := len(cores) - reserveHostCores
 	if maxAssignable < 1 {
 		maxAssignable = 1
 	}
@@ -138,8 +201,6 @@ func computeAutoCpuset(topo *CPUTopology, budget, reserveHostCores int, load map
 		budget = maxAssignable
 	}
 
-	cores := make([]CPUCore, len(topo.Cores))
-	copy(cores, topo.Cores)
 	sort.SliceStable(cores, func(i, j int) bool {
 		ri, rj := coreTypeRank(cores[i].Type), coreTypeRank(cores[j].Type)
 		if ri != rj {

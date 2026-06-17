@@ -834,7 +834,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 			if req.Cpuset != nil {
 				cs = strings.TrimSpace(*req.Cpuset)
 			}
-			if verr := h.state.CPUPinning.ValidateCpuset(r.Context(), pinNode.Token, cs); verr != nil {
+			if verr := h.state.CPUPinning.ValidateCpuset(r.Context(), pinNode.Token, cs, pinNode.CpusetCpus); verr != nil {
 				sendJSONError(w, "Invalid cpuset: "+verr.Error(), 400)
 				return
 			}
@@ -842,7 +842,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		case "auto":
 			// "" when the node has not reported a topology yet; mode stays 'auto'
 			// and the effective cpuset falls back to the node default this time.
-			newCpuset, _ = h.state.CPUPinning.AutoCpuset(r.Context(), pinNode.Token, srv.NodeID, srv.ID, req.CPULimit)
+			newCpuset, _ = h.state.CPUPinning.AutoCpuset(r.Context(), pinNode.Token, srv.NodeID, srv.ID, req.CPULimit, pinNode.CpusetCpus)
 		default:
 			sendJSONError(w, "Invalid cpuPinningMode (shared|auto|manual)", 400)
 			return

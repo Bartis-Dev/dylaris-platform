@@ -264,6 +264,10 @@ export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { 
 // the heartbeat env no longer overwrites them.
 export const configureNode = (id: number, data: { name?: string; region: string; tags?: string }) =>
     fetchAPI(`/nodes/${id}/config`, { method: 'PATCH', body: JSON.stringify(data) });
+// Set the node's container CPU pool (which host cores its containers may use).
+// "" clears the restriction (all cores allowed).
+export const updateNodeCpuset = (id: number, cpusetCpus: string) =>
+    fetchAPI(`/nodes/${id}`, { method: 'PUT', body: JSON.stringify({ cpusetCpus }) });
 
 // --- SERVERS ---
 export const getServers = () => fetchAPI('/servers');

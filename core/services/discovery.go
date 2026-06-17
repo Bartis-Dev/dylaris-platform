@@ -6,6 +6,7 @@ import (
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -105,6 +106,43 @@ func (s *DiscoveryService) Start() {
 			s.scanNodes()
 		}
 	}()
+}
+
+// checkCPUTopologyChange compares the node's currently reported CPU topology
+// against the last-seen signature (kept in Redis). On a real hardware change it
+// resets every CPU pinning on the node (server cpusets + node cpuset). The first
+// observation just records the signature (no reset). Runs only on the leader
+// because scanNodes is leader-gated.
+func (s *DiscoveryService) checkCPUTopologyChange(ctx context.Context, node *models.Node) {
+	raw, err := s.redis.Get(ctx, fmt.Sprintf("dylaris:node:%s:cpu", node.Token)).Result()
+	if err != nil {
+		return // node has not reported a topology
+	}
+	var topo CPUTopology
+	if err := json.Unmarshal([]byte(raw), &topo); err != nil {
+		return
+	}
+	sig := TopologySignature(&topo)
+	if sig == "" {
+		return
+	}
+	sigKey := fmt.Sprintf("dylaris:node:%s:cpu:sig", node.Token)
+	prev, _ := s.redis.Get(ctx, sigKey).Result()
+	if prev == sig {
+		return
+	}
+	if prev != "" {
+		resetN, rerr := s.store.ResetServerCPUPinningByNode(node.ID)
+		if rerr != nil {
+			log.Printf("CPU topology changed on %s but pinning reset failed: %v", node.Name, rerr)
+			return // keep the old signature so the reset is retried next scan
+		}
+		if cerr := s.store.UpdateNodeCpusetCpus(node.ID, ""); cerr != nil {
+			log.Printf("CPU topology changed on %s: node cpuset reset failed: %v", node.Name, cerr)
+		}
+		log.Printf("Node %s CPU topology changed -> reset %d server pinning(s) + node cpuset", node.Name, resetN)
+	}
+	s.redis.Set(ctx, sigKey, sig, 0)
 }
 
 func (s *DiscoveryService) scanNodes() {
@@ -230,6 +268,12 @@ func (s *DiscoveryService) scanNodes() {
 				log.Printf("Node region updated for %s: %q → %q", node.Name, node.Region, hb.Region)
 				s.store.SetNodeRegion(node.ID, hb.Region)
 			}
+
+			// Hardware-change guard: if the node's host CPU layout changed since we
+			// last saw it (e.g. a CPU swap, detected on the node's restart re-scan),
+			// reset every CPU pinning on this node so no server / node cpuset
+			// references cores that no longer exist.
+			s.checkCPUTopologyChange(ctx, node)
 		}
 	}
 

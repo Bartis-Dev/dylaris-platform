@@ -69,6 +69,7 @@ type Store interface {
 	UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error
 	UpdateServerCPUPinning(id int, mode, cpuset string) error
 	ListServerCpusetsByNode(nodeID int) (map[int]string, error)
+	ResetServerCPUPinningByNode(nodeID int) (int64, error)
 	UpdateServerPorts(id int, hostPort, containerPort int) error
 	GetUsedHostPortsOnNode(nodeID int) ([]int, error)
 	GetAllActiveServers() ([]models.Server, error)
@@ -458,17 +459,17 @@ type InactiveCandidate struct {
 // ignored. Limit is clamped to [1, 200] by the store; 0 falls back to 50.
 type TicketFilter struct {
 	// Visibility scope — exactly one of these is typically set per request.
-	UserID         *string  // user's own tickets
-	AssignedUserID *string  // tickets assigned to a supporter
-	AssignedTeam   string   // tickets owned by a team (cross-team visibility scope)
-	WatcherUserID  *string  // tickets the user is CC'd on
+	UserID         *string // user's own tickets
+	AssignedUserID *string // tickets assigned to a supporter
+	AssignedTeam   string  // tickets owned by a team (cross-team visibility scope)
+	WatcherUserID  *string // tickets the user is CC'd on
 
 	// Refinements layered on top of the scope.
-	Status      []string // include only these statuses
-	Priority    []string // include only these priorities
-	CategoryID  *int
-	ServerUUID  string
-	Region      string
+	Status     []string // include only these statuses
+	Priority   []string // include only these priorities
+	CategoryID *int
+	ServerUUID string
+	Region     string
 
 	// Pagination.
 	Limit  int

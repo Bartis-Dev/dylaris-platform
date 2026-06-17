@@ -57,8 +57,9 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	topo, _ := h.state.CPUPinning.GetNodeTopology(r.Context(), node.Token)
 	load, _ := h.state.CPUPinning.NodeCoreLoad(node.ID, 0)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"topology": topo, // null when the node has not reported a topology yet
-		"load":     load,
+		"success":    true,
+		"topology":   topo, // null when the node has not reported a topology yet
+		"load":       load,
+		"nodeCpuset": node.CpusetCpus, // the node's allowed core pool ("" = all cores)
 	})
 }
