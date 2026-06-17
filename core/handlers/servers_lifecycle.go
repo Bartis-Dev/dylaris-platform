@@ -61,6 +61,15 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// BYON placement scoping: a tenant may only deploy on their OWN nodes or on a
+	// platform node. Gated by feature_byon_enabled, so with BYON off this is a
+	// no-op and placement behaves as today. (Auto-placement pickNode scoping by
+	// owner is a follow-up; this gate also rejects an auto-pick of a foreign node.)
+	if byonActive(h.state, r) && !canPlaceOnNode(h.state, r, node) {
+		sendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
+		return
+	}
+
 	// Non-admins can only create servers they own. Only admins may set an
 	// arbitrary OwnerID; otherwise any authenticated user could create
 	// servers under another user's identity and burn their quotas.
