@@ -41,7 +41,11 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "DB error", 503)
 		return
 	}
-	if !IsAdmin(r) {
+	// Node list is admin-only today. In BYON mode a non-admin tenant may list
+	// THEIR OWN nodes; everything else stays admin-only.
+	admin := IsAdmin(r)
+	byon := byonActive(h.state, r)
+	if !admin && !byon {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -53,6 +57,18 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	if nodes == nil {
 		nodes = []models.Node{}
+	}
+
+	// BYON tenant: scope the list to nodes they own.
+	if !admin && byon {
+		uid := byonCallerID(r)
+		owned := make([]models.Node, 0, len(nodes))
+		for _, n := range nodes {
+			if n.OwnerID != nil && *n.OwnerID == uid {
+				owned = append(owned, n)
+			}
+		}
+		nodes = owned
 	}
 
 	// Derive the unusable flag at response time (no DB column needed): an
