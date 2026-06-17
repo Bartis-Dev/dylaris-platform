@@ -254,12 +254,18 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 
 // GetNodeServers returns all servers assigned to a node
 func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	node, err := h.state.Store.GetNodeByID(id)
+	if err != nil || node == nil {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
+	if !canManageNode(h.state, r, node) {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
-	vars := mux.Vars(r)
-	id, _ := strconv.Atoi(vars["id"])
 
 	servers, err := h.state.Store.ListServersByNode(id)
 	if err != nil {
@@ -322,17 +328,16 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 // GetNodeStorage returns storage path info from the node's Redis heartbeat.
 // GET /api/nodes/{id}/storage
 func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		sendJSONError(w, "Node not found", 404)
+		return
+	}
+	if !canManageNode(h.state, r, node) {
+		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 

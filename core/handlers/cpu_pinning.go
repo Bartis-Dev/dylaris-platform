@@ -33,12 +33,6 @@ func NewCPUPinningHandler(state *AppState) *CPUPinningHandler {
 // the per-core pinning load (how many servers are pinned to each core). Gated to
 // admins and users allowed to change resources, since that is who configures pinning.
 func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(string)
-	perms := LoadEffectivePermissions(h.state, userID)
-	if !perms.IsAdmin && !perms.CanChangeResources {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		sendJSONError(w, "Invalid node ID", http.StatusBadRequest)
@@ -47,6 +41,13 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
+	// Allowed: admins, the node's BYON owner, or users with resource-change rights.
+	userID, _ := r.Context().Value("userID").(string)
+	perms := LoadEffectivePermissions(h.state, userID)
+	if !canManageNode(h.state, r, node) && !perms.CanChangeResources {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if h.state.CPUPinning == nil {
