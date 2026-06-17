@@ -265,6 +265,7 @@ func main() {
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
+	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -610,6 +611,10 @@ func main() {
 	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(nodeHandler.ForceDeleteNode)).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/cpu", authHandler.AuthMiddleware(cpuPinningHandler.GetNodeCPU)).Methods("GET")
+	// BYON per-user node enrollment tokens (feature-gated inside the handlers).
+	api.HandleFunc("/nodes/enroll-token", authHandler.AuthMiddleware(nodeEnrollHandler.MintToken)).Methods("POST")
+	api.HandleFunc("/nodes/enroll-token", authHandler.AuthMiddleware(nodeEnrollHandler.ListTokens)).Methods("GET")
+	api.HandleFunc("/nodes/enroll-token/{id}", authHandler.AuthMiddleware(nodeEnrollHandler.RevokeToken)).Methods("DELETE")
 
 	// Admin endpoints
 	api.HandleFunc("/admin/servers", authHandler.AuthMiddleware(serverHandler.GetAdminServers)).Methods("GET")

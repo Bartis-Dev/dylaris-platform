@@ -43,6 +43,11 @@ type Store interface {
 	SetNodeIPs(id int, publicIP string, privateIPs []string) error
 	UpdateNodeCpusetCpus(id int, cpusetCpus string) error
 	SetNodeOwner(id int, ownerID *string) error
+	// --- BYON node enrollment ---
+	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error
+	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
+	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
+	DeleteNodeEnrollToken(id, userID string) error
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error

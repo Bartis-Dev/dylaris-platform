@@ -1,0 +1,72 @@
+package store
+
+import (
+	"database/sql"
+	"time"
+)
+
+// NodeEnrollToken is a per-user token a BYON tenant uses to enroll their own
+// node. The plaintext is never stored (only its hash); these structs never carry
+// the plaintext or the hash to the client.
+type NodeEnrollToken struct {
+	ID        string     `json:"id"`
+	UserID    string     `json:"userId"`
+	Label     string     `json:"label"`
+	CreatedAt time.Time  `json:"createdAt"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// CreateNodeEnrollToken stores a new enroll token (hashed) for a user.
+func (s *PostgresStore) CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error {
+	_, err := s.db.Exec(
+		`INSERT INTO node_enroll_tokens (user_id, token_hash, label, expires_at) VALUES ($1, $2, $3, $4)`,
+		userID, hashAuthToken(plaintext), label, expiresAt)
+	return err
+}
+
+// ResolveNodeEnrollToken returns the owning user id for a valid, unexpired token.
+// ok=false (no error) when the token is unknown or expired.
+func (s *PostgresStore) ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error) {
+	err = s.db.QueryRow(
+		`SELECT user_id FROM node_enroll_tokens
+		 WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
+		hashAuthToken(plaintext)).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return userID, true, nil
+}
+
+// ListNodeEnrollTokens returns a user's tokens (metadata only, never the hash).
+func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error) {
+	rows, err := s.db.Query(
+		`SELECT id, user_id, label, created_at, expires_at
+		 FROM node_enroll_tokens WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeEnrollToken
+	for rows.Next() {
+		var t NodeEnrollToken
+		var exp sql.NullTime
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Label, &t.CreatedAt, &exp); err != nil {
+			return nil, err
+		}
+		if exp.Valid {
+			t.ExpiresAt = &exp.Time
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DeleteNodeEnrollToken revokes a token, scoped to its owner so a tenant can only
+// delete their own.
+func (s *PostgresStore) DeleteNodeEnrollToken(id, userID string) error {
+	_, err := s.db.Exec(`DELETE FROM node_enroll_tokens WHERE id = $1 AND user_id = $2`, id, userID)
+	return err
+}
