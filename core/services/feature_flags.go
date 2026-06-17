@@ -79,6 +79,13 @@ func (f *FeatureFlags) IsAutoMoveEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_auto_move_enabled", false)
 }
 
+// IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
+// enrollment, node ownership scoping, plans/billing). Default = false: the
+// platform ships as today's single-operator panel and the operator opts in.
+func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_byon_enabled", false)
+}
+
 // Invalidate drops the cached entry for a key so the next Get re-reads from
 // the store. Called by settings PUT handlers after a write.
 func (f *FeatureFlags) Invalidate(key string) {

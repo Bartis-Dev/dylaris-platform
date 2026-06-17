@@ -163,6 +163,11 @@ func migrateSchema(db *sql.DB) error {
 		// overwrites name/tags/region. Operational fields (status, address, IPs,
 		// capacity) always follow the heartbeat regardless.
 		{"nodes", "configured", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		// BYON multi-tenancy: owner_id NULL = platform node (operator-owned;
+		// solo + hoster modes), set = tenant node (the user who brought it).
+		// ON DELETE SET NULL so deleting a user reverts their nodes to platform.
+		// Only meaningful when feature_byon_enabled; inert otherwise.
+		{"nodes", "owner_id", "UUID REFERENCES users(id) ON DELETE SET NULL"},
 		// Security questions — JSON array of
 		// {question, answer_hash} pairs; answer_hash is bcrypt.
 		{"users", "security_questions", "JSONB DEFAULT '[]'"},

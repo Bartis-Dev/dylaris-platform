@@ -42,6 +42,7 @@ type Store interface {
 	SetNodeAddress(id int, address string) error
 	SetNodeIPs(id int, publicIP string, privateIPs []string) error
 	UpdateNodeCpusetCpus(id int, cpusetCpus string) error
+	SetNodeOwner(id int, ownerID *string) error
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error

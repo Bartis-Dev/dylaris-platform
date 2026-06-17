@@ -333,16 +333,20 @@ const nodeSelectCols = `id, name, address, token, status, is_local, COALESCE(tag
 	link_enabled, link_instances, COALESCE(link_secret, ''), COALESCE(cpuset_cpus, ''), created_at,
 	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at,
 	COALESCE(cpu_overcommit_ratio, 1.0), COALESCE(ram_overcommit_ratio, 1.0),
-	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, ''), COALESCE(configured, false)`
+	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, ''), COALESCE(configured, false), owner_id`
 
 func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var n models.Node
 	var privateIPsJSON []byte
+	var ownerID sql.NullString
 	err := scan(&n.ID, &n.Name, &n.Address, &n.Token, &n.Status, &n.IsLocal, &n.Tags,
 		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt,
-		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region, &n.Configured)
+		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region, &n.Configured, &ownerID)
 	if err != nil {
 		return nil, err
+	}
+	if ownerID.Valid {
+		n.OwnerID = &ownerID.String
 	}
 	if len(privateIPsJSON) > 0 {
 		json.Unmarshal(privateIPsJSON, &n.PrivateIPs)
@@ -548,6 +552,13 @@ func (s *PostgresStore) UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB 
 // DYLARIS_REGION env. Empty string clears the region (node is "anywhere").
 func (s *PostgresStore) SetNodeRegion(id int, region string) error {
 	_, err := s.db.Exec(`UPDATE nodes SET region = $1 WHERE id = $2`, region, id)
+	return err
+}
+
+// SetNodeOwner binds a node to a BYON tenant (or clears it back to a platform
+// node when ownerID is nil). Only used in BYON mode.
+func (s *PostgresStore) SetNodeOwner(id int, ownerID *string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET owner_id = $1 WHERE id = $2`, ownerID, id)
 	return err
 }
 

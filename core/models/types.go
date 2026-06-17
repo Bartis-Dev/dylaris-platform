@@ -37,15 +37,15 @@ type User struct {
 	CanCreateModpacks bool `json:"canCreateModpacks"`
 
 	// Verification / lifecycle
-	EmailVerifiedAt          *time.Time `json:"emailVerifiedAt,omitempty"`
-	EmailVerificationToken   string     `json:"-"`
-	EmailVerificationSentAt  *time.Time `json:"-"`
-	PasswordResetToken       string     `json:"-"`
-	PasswordResetExpiresAt   *time.Time `json:"-"`
-	LastLoginAt              *time.Time `json:"lastLoginAt,omitempty"`
-	DeletionStatus           string     `json:"deletionStatus"`
-	DeletionWarningSentAt    *time.Time `json:"deletionWarningSentAt,omitempty"`
-	DeletionScheduledAt      *time.Time `json:"deletionScheduledAt,omitempty"`
+	EmailVerifiedAt         *time.Time `json:"emailVerifiedAt,omitempty"`
+	EmailVerificationToken  string     `json:"-"`
+	EmailVerificationSentAt *time.Time `json:"-"`
+	PasswordResetToken      string     `json:"-"`
+	PasswordResetExpiresAt  *time.Time `json:"-"`
+	LastLoginAt             *time.Time `json:"lastLoginAt,omitempty"`
+	DeletionStatus          string     `json:"deletionStatus"`
+	DeletionWarningSentAt   *time.Time `json:"deletionWarningSentAt,omitempty"`
+	DeletionScheduledAt     *time.Time `json:"deletionScheduledAt,omitempty"`
 
 	LastUsernameChange *time.Time `json:"lastUsernameChange,omitempty"`
 }
@@ -163,17 +163,17 @@ type TicketAuditEvent struct {
 // row stays readable after the originating user or category is removed.
 // OwnerUserID is nullable because users can be anonymized post-deletion.
 type TicketDeletion struct {
-	ID             string    `json:"id"`
-	TicketID       int       `json:"ticketId"`
-	TicketSubject  string    `json:"ticketSubject"`
-	OwnerUserID    *string   `json:"ownerUserId,omitempty"`
-	OwnerUsername  string    `json:"ownerUsername"`
-	CategoryName   *string   `json:"categoryName,omitempty"`
-	DeletedBy      string    `json:"deletedBy"`
-	DeletedByName  string    `json:"deletedByName"`
-	DeletedAt      time.Time `json:"deletedAt"`
-	IPAddress      *string   `json:"ipAddress,omitempty"`
-	UserAgent      *string   `json:"userAgent,omitempty"`
+	ID            string    `json:"id"`
+	TicketID      int       `json:"ticketId"`
+	TicketSubject string    `json:"ticketSubject"`
+	OwnerUserID   *string   `json:"ownerUserId,omitempty"`
+	OwnerUsername string    `json:"ownerUsername"`
+	CategoryName  *string   `json:"categoryName,omitempty"`
+	DeletedBy     string    `json:"deletedBy"`
+	DeletedByName string    `json:"deletedByName"`
+	DeletedAt     time.Time `json:"deletedAt"`
+	IPAddress     *string   `json:"ipAddress,omitempty"`
+	UserAgent     *string   `json:"userAgent,omitempty"`
 }
 
 // ── Tickets Polish ───────────────────────────────────────────────────
@@ -232,10 +232,10 @@ type ServerAuditEvent struct {
 // ServerAuditState is what GET /servers/{id}/audit/status returns — drives
 // the UI toggle that admins use to flip audit_force_on.
 type ServerAuditState struct {
-	Enabled       bool `json:"enabled"`        // auto-flipped by InviteMember
-	ForceOn       bool `json:"forceOn"`        // admin override
-	EffectiveOn   bool `json:"effectiveOn"`    // enabled OR forceOn
-	EventCount    int  `json:"eventCount"`     // total rows for this server
+	Enabled     bool `json:"enabled"`     // auto-flipped by InviteMember
+	ForceOn     bool `json:"forceOn"`     // admin override
+	EffectiveOn bool `json:"effectiveOn"` // enabled OR forceOn
+	EventCount  int  `json:"eventCount"`  // total rows for this server
 }
 
 // Notification is one in-app notification row. Generic enough for any
@@ -263,11 +263,14 @@ type Node struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	LastSeenAt    *time.Time `json:"lastSeenAt"`
 
-	Address    string   `json:"address"`
-	Status     string   `json:"status"`
-	Tags       string   `json:"tags"`
-	Region     string   `json:"region"`
-	IsLocal    bool     `json:"isLocal"`
+	Address string `json:"address"`
+	Status  string `json:"status"`
+	Tags    string `json:"tags"`
+	Region  string `json:"region"`
+	IsLocal bool   `json:"isLocal"`
+	// OwnerID is the BYON tenant who owns this node. nil = platform node
+	// (operator-owned). Only meaningful when feature_byon_enabled is on.
+	OwnerID    *string  `json:"ownerId,omitempty"`
 	PublicIP   string   `json:"publicIp"`
 	PrivateIPs []string `json:"privateIps"`
 
@@ -314,49 +317,49 @@ func (n *Node) IsExternal() bool {
 }
 
 type Server struct {
-	ID              int          `json:"id"`
-	UUID            string       `json:"uuid"`
-	Name            string       `json:"name"`
-	NodeID          int          `json:"nodeId"`
-	NodeName        string       `json:"node"`
-	NodeAddress     string       `json:"nodeAddress"`
-	OwnerID         string       `json:"ownerId"`
-	OwnerName       string       `json:"owner"`
-	GameImage       string       `json:"image"`
-	Port            int          `json:"port"`
-	Memory          int          `json:"memory"`
-	CPULimit        float64      `json:"cpuLimit"`
+	ID          int     `json:"id"`
+	UUID        string  `json:"uuid"`
+	Name        string  `json:"name"`
+	NodeID      int     `json:"nodeId"`
+	NodeName    string  `json:"node"`
+	NodeAddress string  `json:"nodeAddress"`
+	OwnerID     string  `json:"ownerId"`
+	OwnerName   string  `json:"owner"`
+	GameImage   string  `json:"image"`
+	Port        int     `json:"port"`
+	Memory      int     `json:"memory"`
+	CPULimit    float64 `json:"cpuLimit"`
 	// CPUPinningMode: 'shared' (default), 'auto' or 'manual'. Cpuset is the
 	// effective core list (e.g. "0-3,8"), empty when shared/unpinned.
-	CPUPinningMode  string       `json:"cpuPinningMode"`
-	Cpuset          string       `json:"cpuset"`
-	StartCommand    string       `json:"startCommand"`
-	Status          string       `json:"status"`
-	DesiredState    string       `json:"desiredState"`
-	IsFixed         bool         `json:"isFixed"`
-	ActiveSubServer string       `json:"activeSubServer"`
-	ExtraJvmFlags    string       `json:"extraJvmFlags"`
-	InstallerType    string       `json:"installerType"`
-	MinecraftVersion string       `json:"minecraftVersion"`
-	BuildNumber      string       `json:"buildNumber"`
-	DiskLimit        int64        `json:"diskLimit"`
-	HostPort        int             `json:"hostPort"`
-	ContainerPort   int             `json:"containerPort"`
-	ServerType      string          `json:"serverType"`
-	ProxyID         *int            `json:"proxyId"`
-	AutoMove        bool            `json:"autoMove"`
-	Region          string          `json:"region"`
+	CPUPinningMode   string `json:"cpuPinningMode"`
+	Cpuset           string `json:"cpuset"`
+	StartCommand     string `json:"startCommand"`
+	Status           string `json:"status"`
+	DesiredState     string `json:"desiredState"`
+	IsFixed          bool   `json:"isFixed"`
+	ActiveSubServer  string `json:"activeSubServer"`
+	ExtraJvmFlags    string `json:"extraJvmFlags"`
+	InstallerType    string `json:"installerType"`
+	MinecraftVersion string `json:"minecraftVersion"`
+	BuildNumber      string `json:"buildNumber"`
+	DiskLimit        int64  `json:"diskLimit"`
+	HostPort         int    `json:"hostPort"`
+	ContainerPort    int    `json:"containerPort"`
+	ServerType       string `json:"serverType"`
+	ProxyID          *int   `json:"proxyId"`
+	AutoMove         bool   `json:"autoMove"`
+	Region           string `json:"region"`
 	// RCON config. RconEnabled controls whether the server writes
 	// enable-rcon=true to server.properties on next launch and whether the
 	// panel surfaces RCON-driven UIs (Players tab, /rcon endpoint). RconPort
 	// 0 = MC default 25575; RconPassword is stored separately (encrypted) and
 	// never serialized to JSON.
-	RconEnabled     bool            `json:"rconEnabled"`
-	RconPort        int             `json:"rconPort"`
-	RconPassword    string          `json:"-"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	Role            string          `json:"role,omitempty"`
-	Permissions     *TabPermissions `json:"permissions,omitempty"`
+	RconEnabled  bool            `json:"rconEnabled"`
+	RconPort     int             `json:"rconPort"`
+	RconPassword string          `json:"-"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	Role         string          `json:"role,omitempty"`
+	Permissions  *TabPermissions `json:"permissions,omitempty"`
 }
 
 // TabPermissions defines per-tab access rights for invited users
