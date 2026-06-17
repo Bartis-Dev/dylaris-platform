@@ -520,6 +520,15 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, reg
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
 		log.Printf("Heartbeat warning: %v", err)
 	}
+
+	// Publish host CPU topology (scanned once at startup) so Core + panel can show
+	// cores and P/E for the pinning UI. Re-published each beat to keep it alive;
+	// a hardware change is picked up on the next node restart.
+	if topo := getCPUTopology(); topo != nil {
+		if b, err := json.Marshal(topo); err == nil {
+			rdb.Set(ctx, fmt.Sprintf("dylaris:node:%s:cpu", id), b, 60*time.Second)
+		}
+	}
 }
 
 // privateIPv4s walks the host's interfaces and returns every non-loopback
