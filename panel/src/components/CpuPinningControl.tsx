@@ -80,6 +80,12 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
     };
 
     const activeHint = MODES.find(m => m.id === mode)?.hint ?? '';
+    // Pool availability: how many cores this node offers (its pool, or all cores)
+    // and how many already carry at least one pinned server.
+    const poolSize = allowed ? allowed.size : (topology?.logicalCount ?? 0);
+    const assignedCount = topology
+        ? topology.cores.filter(c => (!allowed || allowed.has(c.id)) && (load[String(c.id)] ?? 0) > 0).length
+        : 0;
 
     return (
         <div className="flex flex-col gap-2">
@@ -103,6 +109,13 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
             </div>
 
             <p className="text-[11px] text-(--base-06)">{activeHint}</p>
+
+            {nodeId !== undefined && topology && (
+                <p className="text-[11px] text-(--base-06)">
+                    Pool: {poolSize} core{poolSize === 1 ? '' : 's'} available
+                    {nodeCpuset ? ` (restricted to ${nodeCpuset})` : ''}, {assignedCount} already in use by other servers.
+                </p>
+            )}
 
             {mode === 'manual' && nodeId !== undefined && (
                 <>
@@ -153,6 +166,11 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
                                     <span className="ml-1">CPU limit is {cpuLimit} core{cpuLimit === 1 ? '' : 's'}.</span>
                                 )}
                             </p>
+                            {cpuLimit !== undefined && selected.size > 0 && cpuLimit > selected.size && (
+                                <p className="text-[11px] text-(--warning-light)">
+                                    CPU limit ({cpuLimit}) is higher than the {selected.size} pinned core{selected.size === 1 ? '' : 's'}; actual usage is capped at {selected.size}. Lower the limit or pin more cores.
+                                </p>
+                            )}
                             {nodeCpuset && (
                                 <p className="text-[11px] text-(--base-06)">Node core pool: {nodeCpuset}</p>
                             )}
