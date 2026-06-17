@@ -172,6 +172,12 @@ func migrateSchema(db *sql.DB) error {
 		// (compliance setups). Effective gate is OR of the two.
 		{"servers", "audit_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{"servers", "audit_force_on", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		// Per-server CPU pinning. mode: 'shared' (default, inherit node cpuset /
+		// all cores), 'auto' (Core assigns a cpuset spread across least-loaded,
+		// P-preferred cores), 'manual' (operator-chosen cpuset). cpuset is the
+		// effective core list, e.g. "0-3,8".
+		{"servers", "cpu_pinning_mode", "TEXT NOT NULL DEFAULT 'shared'"},
+		{"servers", "cpuset", "TEXT NOT NULL DEFAULT ''"},
 		// Roles + granular capability flags.
 		// role values: 'user' | 'support' | 'admin'. is_admin is kept as a
 		// derived view for backward compat with handlers that read it

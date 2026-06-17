@@ -42,6 +42,10 @@ type AppState struct {
 	// Redis so every admin sees the same live status.
 	DBMigration *services.DBMigrationService
 
+	// CPUPinning reads node CPU topology (published to Redis by each node) and
+	// computes auto cpusets for per-server CPU pinning.
+	CPUPinning *services.CPUPinningService
+
 	// DBType is the normalized database backend ("timescaledb" or "postgres"),
 	// set from config at boot. The status page uses it to distinguish an
 	// intended plain-postgres deployment from a misconfigured timescale one.

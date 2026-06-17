@@ -67,6 +67,8 @@ type Store interface {
 	UpdateServerActiveSubServer(id int, subServer string) error
 	UpdateServerName(id int, name string) error
 	UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error
+	UpdateServerCPUPinning(id int, mode, cpuset string) error
+	ListServerCpusetsByNode(nodeID int) (map[int]string, error)
 	UpdateServerPorts(id int, hostPort, containerPort int) error
 	GetUsedHostPortsOnNode(nodeID int) ([]int, error)
 	GetAllActiveServers() ([]models.Server, error)

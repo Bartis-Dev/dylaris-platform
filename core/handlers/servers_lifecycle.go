@@ -139,7 +139,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 				"image":      srv.GameImage,
 				"ram":        req.Docker.RAM,
 				"cpuLimit":   req.Docker.CPULimit,
-				"cpusetCpus": node.CpusetCpus,
+				"cpusetCpus": effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"diskLimit":  req.Docker.DiskLimit,
 				"command":    "",
 			},
@@ -278,7 +278,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 				"image":         req.JavaImage,
 				"ram":           srv.Memory,
 				"cpuLimit":      srv.CPULimit,
-				"cpusetCpus":    node.CpusetCpus,
+				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"extraJvmFlags": combinedJvmFlags,
 			},
 			"activeSubServer": subName,
@@ -430,7 +430,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 				"image":         javaImage,
 				"ram":           srv.Memory,
 				"cpuLimit":      srv.CPULimit,
-				"cpusetCpus":    node.CpusetCpus,
+				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"extraJvmFlags": combinedJvmFlags,
 			},
 			"activeSubServer": subName,
@@ -517,7 +517,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 					"image":         srv.GameImage,
 					"ram":           srv.Memory,
 					"cpuLimit":      srv.CPULimit,
-					"cpusetCpus":    node.CpusetCpus,
+					"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 					"extraJvmFlags": combinedJvmFlags,
 				},
 			}
@@ -784,6 +784,9 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		DiskLimit     int64   `json:"diskLimit"`
 		HostPort      int     `json:"hostPort"`      // admin-only
 		ContainerPort int     `json:"containerPort"` // admin-only
+		// Optional CPU pinning change. Omitted (nil) = leave pinning unchanged.
+		CPUPinningMode *string `json:"cpuPinningMode"`
+		Cpuset         *string `json:"cpuset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
@@ -811,6 +814,45 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	if err := h.state.Store.UpdateServerResources(serverID, req.RAM, req.CPULimit, req.DiskLimit); err != nil {
 		sendJSONError(w, "Failed to update resources", 500)
 		return
+	}
+
+	// Optional per-server CPU pinning change. Resolved into an effective cpuset
+	// and persisted here; it is applied to the container by the recreate below.
+	if req.CPUPinningMode != nil && h.state.CPUPinning != nil {
+		mode := strings.TrimSpace(*req.CPUPinningMode)
+		pinNode, perr := h.state.Store.GetNodeByID(srv.NodeID)
+		if perr != nil {
+			sendJSONError(w, "Node not found", 404)
+			return
+		}
+		var newCpuset string
+		switch mode {
+		case "shared":
+			newCpuset = ""
+		case "manual":
+			cs := ""
+			if req.Cpuset != nil {
+				cs = strings.TrimSpace(*req.Cpuset)
+			}
+			if verr := h.state.CPUPinning.ValidateCpuset(r.Context(), pinNode.Token, cs); verr != nil {
+				sendJSONError(w, "Invalid cpuset: "+verr.Error(), 400)
+				return
+			}
+			newCpuset = cs
+		case "auto":
+			// "" when the node has not reported a topology yet; mode stays 'auto'
+			// and the effective cpuset falls back to the node default this time.
+			newCpuset, _ = h.state.CPUPinning.AutoCpuset(r.Context(), pinNode.Token, srv.NodeID, srv.ID, req.CPULimit)
+		default:
+			sendJSONError(w, "Invalid cpuPinningMode (shared|auto|manual)", 400)
+			return
+		}
+		if err := h.state.Store.UpdateServerCPUPinning(srv.ID, mode, newCpuset); err != nil {
+			sendJSONError(w, "Failed to save CPU pinning", 500)
+			return
+		}
+		srv.CPUPinningMode = mode
+		srv.Cpuset = newCpuset
 	}
 
 	// Port changes: admin-only
@@ -863,7 +905,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 			dockerPayload := map[string]interface{}{
 				"ram":        req.RAM,
 				"cpuLimit":   req.CPULimit,
-				"cpusetCpus": node.CpusetCpus,
+				"cpusetCpus": effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"diskLimit":  req.DiskLimit,
 				"image":      srv.GameImage,
 				"command":    newStartCommand,

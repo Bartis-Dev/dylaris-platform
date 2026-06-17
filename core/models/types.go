@@ -326,6 +326,10 @@ type Server struct {
 	Port            int          `json:"port"`
 	Memory          int          `json:"memory"`
 	CPULimit        float64      `json:"cpuLimit"`
+	// CPUPinningMode: 'shared' (default), 'auto' or 'manual'. Cpuset is the
+	// effective core list (e.g. "0-3,8"), empty when shared/unpinned.
+	CPUPinningMode  string       `json:"cpuPinningMode"`
+	Cpuset          string       `json:"cpuset"`
 	StartCommand    string       `json:"startCommand"`
 	Status          string       `json:"status"`
 	DesiredState    string       `json:"desiredState"`

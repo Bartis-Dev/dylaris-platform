@@ -92,6 +92,9 @@ func main() {
 		DBType:   cfg.DBType,
 	})
 
+	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.
+	appState.CPUPinning = services.NewCPUPinningService(redisClient, pgStore)
+
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a
 	// single Redis Pub/Sub channel; panels subscribe via SSE so they refresh
@@ -260,6 +263,7 @@ func main() {
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
+	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -604,6 +608,7 @@ func main() {
 	api.HandleFunc("/nodes/{id:[0-9]+}/servers", authHandler.AuthMiddleware(nodeHandler.GetNodeServers)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(nodeHandler.ForceDeleteNode)).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
+	api.HandleFunc("/nodes/{id:[0-9]+}/cpu", authHandler.AuthMiddleware(cpuPinningHandler.GetNodeCPU)).Methods("GET")
 
 	// Admin endpoints
 	api.HandleFunc("/admin/servers", authHandler.AuthMiddleware(serverHandler.GetAdminServers)).Methods("GET")
