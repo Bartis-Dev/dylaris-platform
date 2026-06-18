@@ -21,10 +21,34 @@ type DiscoveryService struct {
 	// (single-Core dev mode); non-nil = only run when this Core holds the
 	// global lease. See pkg/leader.
 	leader leader.Election
+	// flags gates BYON-only behavior (max_nodes adoption cap). nil = no gating.
+	flags *FeatureFlags
 }
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (s *DiscoveryService) SetLeader(l leader.Election) { s.leader = l }
+
+// SetFeatureFlags wires the feature-flag gate. Call once at boot.
+func (s *DiscoveryService) SetFeatureFlags(f *FeatureFlags) { s.flags = f }
+
+// nodeLimitReached reports whether adopting one more node would exceed the
+// tenant's effective max_nodes cap. Only enforced when BYON is enabled; a 0 cap
+// (no plan/override) means unlimited. Fail-open on store errors so a transient
+// glitch never silently strands a node unadopted.
+func (s *DiscoveryService) nodeLimitReached(uid string) bool {
+	if s.flags == nil || !s.flags.IsBYONEnabled(context.Background()) {
+		return false
+	}
+	lim, err := EffectiveLimits(s.store, uid)
+	if err != nil || lim.MaxNodes <= 0 {
+		return false
+	}
+	cnt, err := s.store.CountNodesByOwner(uid)
+	if err != nil {
+		return false
+	}
+	return int64(cnt) >= lim.MaxNodes
+}
 
 // Payload that the Node writes to Redis
 type NodeHeartbeat struct {
@@ -222,7 +246,11 @@ func (s *DiscoveryService) scanNodes() {
 				// token's user (owner_id). Harmless if the feature is later off.
 				if uid, ok, terr := s.store.ResolveNodeEnrollToken(hb.EnrollToken); terr == nil && ok {
 					if created, gerr := s.store.GetNodeByToken(hb.ID); gerr == nil {
-						if serr := s.store.SetNodeOwner(created.ID, &uid); serr != nil {
+						if s.nodeLimitReached(uid) {
+							// HARD max_nodes cap: leave the node unowned (not adopted)
+							// so the tenant must raise their plan or free a node.
+							log.Printf("Node %s NOT adopted: user %s is at their node limit", hb.Name, uid)
+						} else if serr := s.store.SetNodeOwner(created.ID, &uid); serr != nil {
 							log.Printf("node %s: bind owner failed: %v", hb.Name, serr)
 						} else {
 							log.Printf("Node %s enrolled to user %s (BYON)", hb.Name, uid)

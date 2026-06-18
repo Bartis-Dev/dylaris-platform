@@ -113,6 +113,7 @@ func main() {
 
 	discovery := services.NewDiscoveryService(pgStore, redisClient, cfg.ClusterSecret)
 	discovery.SetLeader(coreLeader)
+	discovery.SetFeatureFlags(appState.FeatureFlags)
 	discovery.Start()
 
 	nodeCleanup := services.NewNodeCleanupService(pgStore, 24*time.Hour)
