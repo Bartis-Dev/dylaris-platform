@@ -10,16 +10,30 @@ import (
 	"dylaris-core/store"
 )
 
-// fakeWarpStore implements the narrow warpStore surface Enroll uses.
+// fakeWarpStore implements the warpStore surface the service uses. It seeds a
+// single region "leader-01" (10.0.99.0/24) with one leader so enroll behaves like
+// the pre-multi-hub single-hub deployment.
 type fakeWarpStore struct {
-	peers  map[string]store.WarpPeer // pubkey → peer
-	byKey  map[int][]store.WarpPeer
-	nextID int
+	peers   map[string]store.WarpPeer // pubkey -> peer
+	byKey   map[int][]store.WarpPeer
+	regions []store.WarpRegion
+	leaders []store.WarpLeader
+	nextID  int
 }
 
 func newFakeWarpStore() *fakeWarpStore {
-	return &fakeWarpStore{peers: map[string]store.WarpPeer{}, byKey: map[int][]store.WarpPeer{}}
+	return &fakeWarpStore{
+		peers: map[string]store.WarpPeer{},
+		byKey: map[int][]store.WarpPeer{},
+		regions: []store.WarpRegion{
+			{Region: "leader-01", Subnet: "10.0.99.0/24", Enabled: true},
+		},
+		leaders: []store.WarpLeader{
+			{LeaderID: "leader-01", Region: "leader-01", Endpoint: "vpn.example.com:25599", Enabled: true},
+		},
+	}
 }
+
 func (f *fakeWarpStore) InsertWarpPeer(p store.WarpPeer) (int, error) {
 	f.nextID++
 	p.ID = f.nextID
@@ -33,15 +47,35 @@ func (f *fakeWarpStore) GetWarpPeerByPubkey(pk string) (*store.WarpPeer, error) 
 	}
 	return nil, errNotFound
 }
-func (f *fakeWarpStore) ListWarpPeersByKey(id int) ([]store.WarpPeer, error) { return f.byKey[id], nil }
-func (f *fakeWarpStore) ListAllWarpPeers() ([]store.WarpPeer, error) {
+func (f *fakeWarpStore) ListWarpPeersByRegion(region string) ([]store.WarpPeer, error) {
 	var out []store.WarpPeer
 	for _, p := range f.peers {
-		out = append(out, p)
+		if p.Region == region {
+			out = append(out, p)
+		}
 	}
 	return out, nil
 }
-func (f *fakeWarpStore) DeleteWarpPeerByPubkey(pk string) error {
+func (f *fakeWarpStore) CountWarpPeersByRegion() (map[string]int, error) {
+	out := map[string]int{}
+	for _, p := range f.peers {
+		out[p.Region]++
+	}
+	return out, nil
+}
+func (f *fakeWarpStore) ListWarpRegions() ([]store.WarpRegion, error) { return f.regions, nil }
+func (f *fakeWarpStore) GetWarpRegion(region string) (*store.WarpRegion, error) {
+	for _, r := range f.regions {
+		if r.Region == region {
+			rr := r
+			return &rr, nil
+		}
+	}
+	return nil, errNotFound
+}
+func (f *fakeWarpStore) ListWarpLeaders() ([]store.WarpLeader, error) { return f.leaders, nil }
+
+func (f *fakeWarpStore) deletePeer(pk string) {
 	if p, ok := f.peers[pk]; ok {
 		delete(f.peers, pk)
 		rest := f.byKey[p.APIKeyID][:0]
@@ -52,10 +86,9 @@ func (f *fakeWarpStore) DeleteWarpPeerByPubkey(pk string) error {
 		}
 		f.byKey[p.APIKeyID] = rest
 	}
-	return nil
 }
 
-func (f *fakeWarpStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (string, string, error) {
+func (f *fakeWarpStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, region string, allocIP func(taken map[string]bool) (string, error)) (string, string, error) {
 	var evicted string
 	if len(f.byKey[keyID]) >= limit {
 		if onNewConn != "kill_old" {
@@ -63,7 +96,7 @@ func (f *fakeWarpStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 		}
 		old := f.byKey[keyID][0]
 		evicted = old.Pubkey
-		_ = f.DeleteWarpPeerByPubkey(old.Pubkey)
+		f.deletePeer(old.Pubkey)
 	}
 	wgIP := fixedIP
 	if wgIP == "" {
@@ -77,7 +110,7 @@ func (f *fakeWarpStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 		}
 		wgIP = ip
 	}
-	_, _ = f.InsertWarpPeer(store.WarpPeer{APIKeyID: keyID, Pubkey: pubkey, WGIP: wgIP, LeaderID: leaderID})
+	_, _ = f.InsertWarpPeer(store.WarpPeer{APIKeyID: keyID, Pubkey: pubkey, WGIP: wgIP, Region: region})
 	return wgIP, evicted, nil
 }
 
@@ -99,12 +132,12 @@ func enrollTestService(t *testing.T) (*WarpService, *fakeWarpStore, *miniredis.M
 	t.Cleanup(mr.Close)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	fs := newFakeWarpStore()
-	svc := &WarpService{warp: fs, redis: rdb, clientSubnet: "10.0.99.0/24", leaderID: "leader-01"}
+	svc := &WarpService{warp: fs, redis: rdb, clusterSecret: "cluster-secret"}
 	return svc, fs, mr
 }
 
 func storePeer(keyID int, pub, ip string) store.WarpPeer {
-	return store.WarpPeer{APIKeyID: keyID, Pubkey: pub, WGIP: ip, LeaderID: "leader-01"}
+	return store.WarpPeer{APIKeyID: keyID, Pubkey: pub, WGIP: ip, Region: "leader-01"}
 }
 
 func TestEnroll_GeneralKey_AllocatesAndPushesAddPeer(t *testing.T) {
@@ -116,6 +149,9 @@ func TestEnroll_GeneralKey_AllocatesAndPushesAddPeer(t *testing.T) {
 	}
 	if resp.WGIP == "" || resp.WGSubnet != "10.0.99.0/24" {
 		t.Fatalf("bad resp %+v", resp)
+	}
+	if resp.Region != "leader-01" {
+		t.Fatalf("expected region leader-01, got %q", resp.Region)
 	}
 	vals, _ := mr.List("dylaris:warp:leader-01:queue")
 	if len(vals) != 1 {
@@ -143,7 +179,7 @@ func TestEnroll_Idempotent_SamePubkeySameIP(t *testing.T) {
 		t.Fatalf("re-enroll: %v", err)
 	}
 	if r1.WGIP != r2.WGIP {
-		t.Fatalf("re-enroll changed IP: %s → %s", r1.WGIP, r2.WGIP)
+		t.Fatalf("re-enroll changed IP: %s -> %s", r1.WGIP, r2.WGIP)
 	}
 }
 

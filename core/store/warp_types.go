@@ -12,16 +12,36 @@ type WarpAPIKey struct {
 	OnNewConn string // "kill_old" | "block"
 	FixedWGIP string // "" = auto-allocate
 	NodeID    string
+	Region    string // "" = auto-assign at enroll; else pin enrolls to this region
 	RevokedAt *time.Time
 	CreatedAt time.Time
 }
 
-// WarpPeer is one enrolled client: pubkey ↔ allocated WG IP.
+// WarpPeer is one enrolled client: pubkey -> allocated WG IP, pinned to a region.
 type WarpPeer struct {
 	ID        int
 	APIKeyID  int
 	Pubkey    string
 	WGIP      string
+	Region    string
+	CreatedAt time.Time
+}
+
+// WarpRegion owns one WG identity: a subnet and (implicitly) a key derived from
+// CLUSTER_SECRET+region. Its leaders are interchangeable endpoints for it.
+type WarpRegion struct {
+	Region    string
+	Subnet    string // e.g. "10.99.1.0/24"
+	Enabled   bool
+	CreatedAt time.Time
+}
+
+// WarpLeader is one redundant endpoint serving a region. All leaders of a region
+// share the region's key + subnet + peer set; they differ only by Endpoint.
+type WarpLeader struct {
 	LeaderID  string
+	Region    string
+	Endpoint  string // "host:port" reachable by clients
+	Enabled   bool
 	CreatedAt time.Time
 }

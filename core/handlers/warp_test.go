@@ -38,24 +38,29 @@ func (f *warpFakeStore) GetWarpPeerByPubkey(pk string) (*store.WarpPeer, error) 
 	}
 	return nil, warpErr("not found")
 }
-func (f *warpFakeStore) ListWarpPeersByKey(id int) ([]store.WarpPeer, error) {
-	var out []store.WarpPeer
-	for _, p := range f.peers {
-		if p.APIKeyID == id {
-			out = append(out, p)
-		}
-	}
-	return out, nil
-}
-func (f *warpFakeStore) ListAllWarpPeers() ([]store.WarpPeer, error) {
-	var out []store.WarpPeer
-	for _, p := range f.peers {
-		out = append(out, p)
-	}
-	return out, nil
-}
 func (f *warpFakeStore) DeleteWarpPeerByPubkey(pk string) error { delete(f.peers, pk); return nil }
-func (f *warpFakeStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (string, string, error) {
+
+// Multi-hub: a single seeded region "leader-01" (10.0.99.0/24) with one leader.
+func (f *warpFakeStore) ListWarpRegions() ([]store.WarpRegion, error) {
+	return []store.WarpRegion{{Region: "leader-01", Subnet: "10.0.99.0/24", Enabled: true}}, nil
+}
+func (f *warpFakeStore) GetWarpRegion(region string) (*store.WarpRegion, error) {
+	if region == "leader-01" {
+		return &store.WarpRegion{Region: "leader-01", Subnet: "10.0.99.0/24", Enabled: true}, nil
+	}
+	return nil, warpErr("no such region")
+}
+func (f *warpFakeStore) ListWarpLeaders() ([]store.WarpLeader, error) {
+	return []store.WarpLeader{{LeaderID: "leader-01", Region: "leader-01", Endpoint: "vpn.example.com:51820", Enabled: true}}, nil
+}
+func (f *warpFakeStore) CountWarpPeersByRegion() (map[string]int, error) {
+	out := map[string]int{}
+	for _, p := range f.peers {
+		out[p.Region]++
+	}
+	return out, nil
+}
+func (f *warpFakeStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, region string, allocIP func(taken map[string]bool) (string, error)) (string, string, error) {
 	wgIP := fixedIP
 	if wgIP == "" {
 		taken := map[string]bool{}
@@ -68,7 +73,7 @@ func (f *warpFakeStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 		}
 		wgIP = ip
 	}
-	_, _ = f.InsertWarpPeer(store.WarpPeer{APIKeyID: keyID, Pubkey: pubkey, WGIP: wgIP, LeaderID: leaderID})
+	_, _ = f.InsertWarpPeer(store.WarpPeer{APIKeyID: keyID, Pubkey: pubkey, WGIP: wgIP, Region: region})
 	return wgIP, "", nil
 }
 
@@ -85,15 +90,12 @@ func newWarpTestHandler(t *testing.T) *WarpHandler {
 	t.Cleanup(mr.Close)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	fs := &warpFakeStore{
-		// Enrollment now requires gateway routing; set it so the happy-path
-		// test exercises a fully enabled platform.
-		settings: map[string]string{
-			"warp:leader_endpoint": "vpn.example.com:51820",
-			"routing_mode":         "gateway",
-		},
-		peers: map[string]store.WarpPeer{},
+		// Enrollment requires gateway routing; set it so the happy-path test
+		// exercises a fully enabled platform.
+		settings: map[string]string{"routing_mode": "gateway"},
+		peers:    map[string]store.WarpPeer{},
 	}
-	svc := services.NewWarpService(fs, rdb, "10.0.99.0/24", "leader-01", "test-secret")
+	svc := services.NewWarpService(fs, rdb, "test-secret")
 	state := &AppState{Store: fs, Redis: rdb}
 	return NewWarpHandler(state, svc)
 }

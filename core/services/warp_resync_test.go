@@ -8,14 +8,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestProcessResyncRequest_PushesFullPeerSetAndClearsKey(t *testing.T) {
+func TestProcessResync_PushesRegionPeerSetAndClearsPerLeaderKey(t *testing.T) {
 	svc, fs, mr := enrollTestService(t)
 	fs.InsertWarpPeer(storePeer(1, "pub1", "10.0.99.2"))
 	fs.InsertWarpPeer(storePeer(1, "pub2", "10.0.99.3"))
 	ctx := context.Background()
-	svc.redis.Set(ctx, "dylaris:warp:resync-request", "leader-01", 0)
+	// Per-leader resync key: leader "leader-01" serves region "leader-01".
+	svc.redis.Set(ctx, "dylaris:warp:leader-01:resync-request", "leader-01", 0)
 
-	if err := svc.processResyncRequest(ctx); err != nil {
+	if err := svc.processResync(ctx); err != nil {
 		t.Fatalf("resync: %v", err)
 	}
 
@@ -37,7 +38,7 @@ func TestProcessResyncRequest_PushesFullPeerSetAndClearsKey(t *testing.T) {
 	if cmd.Type != "resync" || len(cmd.Peers) != 2 {
 		t.Fatalf("bad resync command: %+v", cmd)
 	}
-	if _, err := svc.redis.Get(ctx, "dylaris:warp:resync-request").Result(); err != redis.Nil {
-		t.Fatal("resync-request key should be cleared after processing")
+	if _, err := svc.redis.Get(ctx, "dylaris:warp:leader-01:resync-request").Result(); err != redis.Nil {
+		t.Fatal("per-leader resync-request key should be cleared after processing")
 	}
 }

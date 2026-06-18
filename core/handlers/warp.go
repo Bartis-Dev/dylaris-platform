@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
+
+	"github.com/gorilla/mux"
 )
 
 type warpCtxKey string
@@ -78,8 +81,8 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	res, err := h.svc.Enroll(r.Context(), key, req.PublicKey, req.TunnelSubnets)
 	if err != nil {
 		// 409 only for a genuine connection-limit conflict; everything else is
-		// a server-side fault (DB, IP allocation, leader key) — surface it as
-		// 500 and log it instead of masking it behind 409 + leaking internals.
+		// a server-side fault (no region configured, DB, IP allocation, leader
+		// key) — surface it as 500 and log it instead of leaking internals.
 		if errors.Is(err, store.ErrWarpLimitReached) {
 			sendJSONError(w, "Connection limit reached for this key", http.StatusConflict)
 			return
@@ -88,17 +91,8 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Enrollment failed", http.StatusInternalServerError)
 		return
 	}
-
-	leaderPub, err := h.svc.LeaderPublicKey()
-	if err != nil {
-		sendJSONError(w, "leader key error", http.StatusInternalServerError)
-		return
-	}
-	endpoint, _ := h.state.Store.GetSetting("warp:leader_endpoint")
-	res.LeaderPublicKey = leaderPub
-	res.LeaderEndpoint = endpoint
-	res.Keepalive = 25
-
+	// The service now fills region subnet, region pubkey and the failover endpoint
+	// list, so an idempotent re-enroll can never disagree with a fresh one.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
 }
@@ -116,6 +110,7 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 		OnNewConn string `json:"on_new_conn"`
 		FixedWGIP string `json:"fixed_wg_ip"`
 		NodeID    string `json:"node_id"`
+		Region    string `json:"region"` // "" = auto-assign at enroll
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -137,7 +132,8 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
 		Name: req.Name, KeyHash: HashAPIKey(plaintext), Policy: req.Policy,
-		MaxConns: req.MaxConns, OnNewConn: req.OnNewConn, FixedWGIP: req.FixedWGIP, NodeID: req.NodeID,
+		MaxConns: req.MaxConns, OnNewConn: req.OnNewConn, FixedWGIP: req.FixedWGIP,
+		NodeID: req.NodeID, Region: req.Region,
 	})
 	if err != nil {
 		sendJSONError(w, "Failed to create key", http.StatusInternalServerError)
@@ -149,42 +145,94 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetSettings returns warp client_subnet + leader_endpoint.
-func (h *WarpHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
-	subnet, _ := h.state.Store.GetSetting("warp:client_subnet")
-	if subnet == "" {
-		subnet = "10.0.99.0/24"
+// ListRegions returns the full warp registry (regions + leaders + liveness +
+// peer counts) for the admin panel.
+func (h *WarpHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
 	}
-	endpoint, _ := h.state.Store.GetSetting("warp:leader_endpoint")
+	regions, err := h.svc.RegionsOverview(r.Context())
+	if err != nil {
+		sendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true, "clientSubnet": subnet, "leaderEndpoint": endpoint,
-	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "regions": regions})
 }
 
-// SaveSettings (admin) persists + mirrors warp settings to Redis.
-func (h *WarpHandler) SaveSettings(w http.ResponseWriter, r *http.Request) {
+// UpsertRegion (admin) creates or updates a region's subnet + enabled flag.
+func (h *WarpHandler) UpsertRegion(w http.ResponseWriter, r *http.Request) {
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	var req struct {
-		ClientSubnet   string `json:"clientSubnet"`
-		LeaderEndpoint string `json:"leaderEndpoint"`
+		Region  string `json:"region"`
+		Subnet  string `json:"subnet"`
+		Enabled bool   `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Region == "" || req.Subnet == "" {
+		sendJSONError(w, "region and subnet are required", http.StatusBadRequest)
 		return
 	}
-	if req.ClientSubnet != "" {
-		if err := h.state.Store.SetSetting("warp:client_subnet", req.ClientSubnet); err != nil {
-			sendJSONError(w, "Failed to save", http.StatusInternalServerError)
-			return
-		}
-		h.state.Redis.Set(r.Context(), "dylaris:warp:client_subnet", req.ClientSubnet, 0)
+	if _, _, err := net.ParseCIDR(req.Subnet); err != nil {
+		sendJSONError(w, "subnet must be a CIDR (e.g. 10.99.1.0/24)", http.StatusBadRequest)
+		return
 	}
-	if err := h.state.Store.SetSetting("warp:leader_endpoint", req.LeaderEndpoint); err != nil {
-		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
+	if err := h.state.Store.UpsertWarpRegion(req.Region, req.Subnet, req.Enabled); err != nil {
+		sendJSONError(w, "Failed to save region", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// DeleteRegion (admin) removes a region (cascades its leaders).
+func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	region := mux.Vars(r)["region"]
+	if err := h.state.Store.DeleteWarpRegion(region); err != nil {
+		sendJSONError(w, "Failed to delete region", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// UpsertLeader (admin) creates or updates a leader endpoint within a region.
+func (h *WarpHandler) UpsertLeader(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		LeaderID string `json:"leaderId"`
+		Region   string `json:"region"`
+		Endpoint string `json:"endpoint"`
+		Enabled  bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.LeaderID == "" || req.Region == "" || req.Endpoint == "" {
+		sendJSONError(w, "leaderId, region and endpoint are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.UpsertWarpLeader(req.LeaderID, req.Region, req.Endpoint, req.Enabled); err != nil {
+		sendJSONError(w, "Failed to save leader (does the region exist?)", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// DeleteLeader (admin) removes a leader endpoint.
+func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	leaderID := mux.Vars(r)["leaderId"]
+	if err := h.state.Store.DeleteWarpLeader(leaderID); err != nil {
+		sendJSONError(w, "Failed to delete leader", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

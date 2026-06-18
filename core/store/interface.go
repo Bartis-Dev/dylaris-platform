@@ -184,7 +184,19 @@ type Store interface {
 	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)
 	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)
 	ListAllWarpPeers() ([]WarpPeer, error)
+	ListWarpPeersByRegion(region string) ([]WarpPeer, error)
+	CountWarpPeersByRegion() (map[string]int, error)
 	DeleteWarpPeerByPubkey(pubkey string) error
+	// Warp regions + leaders (multi-hub: region = identity, leaders = endpoints)
+	ListWarpRegions() ([]WarpRegion, error)
+	GetWarpRegion(region string) (*WarpRegion, error)
+	UpsertWarpRegion(region, subnet string, enabled bool) error
+	DeleteWarpRegion(region string) error
+	ListWarpLeaders() ([]WarpLeader, error)
+	ListWarpLeadersByRegion(region string) ([]WarpLeader, error)
+	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
+	DeleteWarpLeader(leaderID string) error
+	SeedWarpRegionIfEmpty(region, subnet, leaderID, endpoint string) error
 
 	// --- SFTP ---
 	GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error)

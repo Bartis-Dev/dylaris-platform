@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"sort"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,48 +19,47 @@ import (
 	"dylaris-core/store"
 )
 
-// warpStore is the narrow store surface Enroll needs (satisfied by store.Store
-// and by test fakes).
+// warpStore is the narrow store surface the warp service needs (satisfied by
+// store.Store and by test fakes).
 type warpStore interface {
 	GetWarpPeerByPubkey(pubkey string) (*store.WarpPeer, error)
-	ListAllWarpPeers() ([]store.WarpPeer, error)
-	EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (wgIP string, evicted string, err error)
+	ListWarpPeersByRegion(region string) ([]store.WarpPeer, error)
+	CountWarpPeersByRegion() (map[string]int, error)
+	EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, region string, allocIP func(taken map[string]bool) (string, error)) (wgIP string, evicted string, err error)
+	ListWarpRegions() ([]store.WarpRegion, error)
+	GetWarpRegion(region string) (*store.WarpRegion, error)
+	ListWarpLeaders() ([]store.WarpLeader, error)
 }
 
-// WarpService owns the warp peer registry side of Core: it derives the leader
-// public key, allocates WG IPs, enforces connection policies, and pushes peer
-// commands to the leader's Redis queue.
+// ErrNoWarpRegion is returned by Enroll when no enabled region exists to assign.
+var ErrNoWarpRegion = errors.New("no enabled warp region available")
+
+// WarpService owns the warp registry side of Core. In the multi-hub model the
+// REGION is the identity: a region owns a subnet and a WG key derived from
+// CLUSTER_SECRET+region; its leaders are interchangeable endpoints. The service
+// assigns peers to regions, allocates WG IPs from the region subnet, enforces
+// connection policy, and fans peer commands out to every leader of the region.
 type WarpService struct {
 	warp          warpStore
 	redis         *redis.Client
-	clientSubnet  string // e.g. "10.0.99.0/24"
-	leaderID      string // "leader-01"
-	clusterSecret string // for deriving the leader's public key (no heartbeat)
+	clusterSecret string // for deriving region public keys (no heartbeat needed)
 }
 
-func NewWarpService(s warpStore, r *redis.Client, clientSubnet, leaderID, clusterSecret string) *WarpService {
-	return &WarpService{warp: s, redis: r, clientSubnet: clientSubnet, leaderID: leaderID, clusterSecret: clusterSecret}
+func NewWarpService(s warpStore, r *redis.Client, clusterSecret string) *WarpService {
+	return &WarpService{warp: s, redis: r, clusterSecret: clusterSecret}
 }
 
-// LeaderID exposes the configured leader id.
-func (s *WarpService) LeaderID() string { return s.leaderID }
-
-// LeaderPublicKey derives the leader's WG public key from clusterSecret+leaderID.
-func (s *WarpService) LeaderPublicKey() (string, error) {
-	return DeriveLeaderPublicKey(s.clusterSecret, s.leaderID)
-}
-
-// leaderKeyHKDFSalt is the fixed domain-separation salt for the leader-key
+// leaderKeyHKDFSalt is the fixed domain-separation salt for the region/leader-key
 // derivation. MUST stay byte-identical to gateway/warp/keys.go.
 const leaderKeyHKDFSalt = "dylaris/warp/leader-key/v1"
 
-// DeriveLeaderPublicKey reproduces the gateway warp DeriveLeaderKey derivation
-// so Core knows the leader's pubkey without a heartbeat. It expands the cluster
-// secret with HKDF-SHA256 (fixed salt + leader ID as info). MUST stay
-// byte-identical to gateway/warp/keys.go DeriveLeaderKey.
-func DeriveLeaderPublicKey(clusterSecret, leaderID string) (string, error) {
+// DeriveLeaderPublicKey reproduces the gateway warp DeriveLeaderKey derivation so
+// Core knows a region's leader pubkey without a heartbeat. It expands the cluster
+// secret with HKDF-SHA256 (fixed salt + the region id as info — all mirror leaders
+// of a region share this key). MUST stay byte-identical to gateway/warp/keys.go.
+func DeriveLeaderPublicKey(clusterSecret, region string) (string, error) {
 	var km [32]byte
-	r := hkdf.New(sha256.New, []byte(clusterSecret), []byte(leaderKeyHKDFSalt), []byte(leaderID))
+	r := hkdf.New(sha256.New, []byte(clusterSecret), []byte(leaderKeyHKDFSalt), []byte(region))
 	if _, err := io.ReadFull(r, km[:]); err != nil {
 		return "", fmt.Errorf("hkdf expand: %w", err)
 	}
@@ -113,33 +114,201 @@ func incIP(ip net.IP) {
 	}
 }
 
-// EnrollResult mirrors the gateway client's enrollResponse JSON.
+// EnrollResult mirrors the gateway client's enrollResponse JSON. Endpoints is the
+// full failover list for the assigned region (alive-first); LeaderEndpoint is the
+// primary (Endpoints[0]) kept for older clients.
 type EnrollResult struct {
-	WGIP            string `json:"wg_ip"`
-	WGSubnet        string `json:"wg_subnet"`
-	LeaderPublicKey string `json:"leader_public_key"`
-	LeaderEndpoint  string `json:"leader_endpoint"`
-	DNS             string `json:"dns,omitempty"`
-	Keepalive       int    `json:"keepalive"`
+	WGIP            string   `json:"wg_ip"`
+	WGSubnet        string   `json:"wg_subnet"`
+	Region          string   `json:"region"`
+	LeaderPublicKey string   `json:"leader_public_key"`
+	LeaderEndpoint  string   `json:"leader_endpoint"`
+	Endpoints       []string `json:"endpoints"`
+	DNS             string   `json:"dns,omitempty"`
+	Keepalive       int      `json:"keepalive"`
 }
 
-func (s *WarpService) leaderQueueKey() string { return "dylaris:warp:" + s.leaderID + ":queue" }
+// --- Redis keys (all per-leader; queue/events already existed) ---
 
-func (s *WarpService) pushCommand(ctx context.Context, cmd map[string]interface{}) error {
+func (s *WarpService) leaderQueueKey(leaderID string) string {
+	return "dylaris:warp:" + leaderID + ":queue"
+}
+func (s *WarpService) resyncKey(leaderID string) string {
+	return "dylaris:warp:" + leaderID + ":resync-request"
+}
+func (s *WarpService) aliveKey(leaderID string) string {
+	return "dylaris:warp:" + leaderID + ":alive"
+}
+
+func (s *WarpService) leaderAlive(ctx context.Context, leaderID string) bool {
+	n, err := s.redis.Exists(ctx, s.aliveKey(leaderID)).Result()
+	return err == nil && n > 0
+}
+
+// pushToRegion fans a command out to every enabled leader of the region. It is
+// best-effort: a Redis push failure (or a region with no leader yet) does not fail
+// the caller, because the per-leader resync covers a leader that missed a command.
+func (s *WarpService) pushToRegion(ctx context.Context, region string, cmd map[string]interface{}) {
+	leaders, err := s.warp.ListWarpLeaders()
+	if err != nil {
+		log.Printf("[warp] pushToRegion %s: list leaders: %v", region, err)
+		return
+	}
 	b, err := json.Marshal(cmd)
 	if err != nil {
-		return err
+		log.Printf("[warp] pushToRegion %s: marshal: %v", region, err)
+		return
 	}
-	return s.redis.RPush(ctx, s.leaderQueueKey(), b).Err()
+	for _, l := range leaders {
+		if l.Region != region || !l.Enabled {
+			continue
+		}
+		if err := s.redis.RPush(ctx, s.leaderQueueKey(l.LeaderID), b).Err(); err != nil {
+			log.Printf("[warp] pushToRegion %s -> %s: %v", region, l.LeaderID, err)
+		}
+	}
 }
 
-// Enroll enforces the key's policy, allocates/persists a peer, pushes add_peer
-// (plus remove_peer for kill_old), and returns the tunnel config (WGIP/WGSubnet;
-// the handler fills leader pubkey/endpoint).
+// regionEndpoints returns the enabled leaders' endpoints for a region, alive ones
+// first (so the client tries a healthy hub before a stale one).
+func (s *WarpService) regionEndpoints(ctx context.Context, region string) []string {
+	leaders, err := s.warp.ListWarpLeaders()
+	if err != nil {
+		return nil
+	}
+	type ep struct {
+		endpoint string
+		alive    bool
+		id       string
+	}
+	var eps []ep
+	for _, l := range leaders {
+		if l.Region != region || !l.Enabled {
+			continue
+		}
+		eps = append(eps, ep{endpoint: l.Endpoint, alive: s.leaderAlive(ctx, l.LeaderID), id: l.LeaderID})
+	}
+	sort.Slice(eps, func(i, j int) bool {
+		if eps[i].alive != eps[j].alive {
+			return eps[i].alive // alive first
+		}
+		return eps[i].id < eps[j].id
+	})
+	out := make([]string, 0, len(eps))
+	for _, e := range eps {
+		out = append(out, e.endpoint)
+	}
+	return out
+}
+
+// assignRegion picks the region a new peer enrolls into: the key's preferred
+// region if set + enabled, else the least-loaded enabled region that has a live
+// leader. If no region has a live leader it degrades to the least-loaded enabled
+// region (logged loudly) so enroll still succeeds and resync covers the hub later.
+func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (string, error) {
+	regions, err := s.warp.ListWarpRegions()
+	if err != nil {
+		return "", err
+	}
+	enabled := make([]store.WarpRegion, 0, len(regions))
+	for _, r := range regions {
+		if r.Enabled {
+			enabled = append(enabled, r)
+		}
+	}
+	if len(enabled) == 0 {
+		return "", ErrNoWarpRegion
+	}
+
+	if key.Region != "" {
+		for _, r := range enabled {
+			if r.Region == key.Region {
+				return key.Region, nil
+			}
+		}
+		log.Printf("[warp] key %d prefers region %q which is not enabled; auto-assigning", key.ID, key.Region)
+	}
+
+	leaders, err := s.warp.ListWarpLeaders()
+	if err != nil {
+		return "", err
+	}
+	aliveByRegion := map[string]bool{}
+	for _, l := range leaders {
+		if l.Enabled && s.leaderAlive(ctx, l.LeaderID) {
+			aliveByRegion[l.Region] = true
+		}
+	}
+	counts, err := s.warp.CountWarpPeersByRegion()
+	if err != nil {
+		return "", err
+	}
+
+	cands := make([]store.WarpRegion, 0, len(enabled))
+	for _, r := range enabled {
+		if aliveByRegion[r.Region] {
+			cands = append(cands, r)
+		}
+	}
+	if len(cands) == 0 {
+		log.Printf("[warp] WARNING: no enabled region has a live leader; assigning to least-loaded enabled region anyway")
+		cands = enabled
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		ci, cj := counts[cands[i].Region], counts[cands[j].Region]
+		if ci != cj {
+			return ci < cj
+		}
+		return cands[i].Region < cands[j].Region
+	})
+	return cands[0].Region, nil
+}
+
+// buildResult assembles the enroll response for a peer already pinned to a region
+// (used by both the new-enroll and idempotent paths so they can never disagree on
+// subnet/key/endpoints — the bug the single-leader version had).
+func (s *WarpService) buildResult(ctx context.Context, region, wgIP string) (EnrollResult, error) {
+	reg, err := s.warp.GetWarpRegion(region)
+	if err != nil {
+		return EnrollResult{}, fmt.Errorf("region %q: %w", region, err)
+	}
+	pub, err := DeriveLeaderPublicKey(s.clusterSecret, region)
+	if err != nil {
+		return EnrollResult{}, err
+	}
+	endpoints := s.regionEndpoints(ctx, region)
+	primary := ""
+	if len(endpoints) > 0 {
+		primary = endpoints[0]
+	}
+	return EnrollResult{
+		WGIP:            wgIP,
+		WGSubnet:        reg.Subnet,
+		Region:          region,
+		LeaderPublicKey: pub,
+		LeaderEndpoint:  primary,
+		Endpoints:       endpoints,
+		Keepalive:       25,
+	}, nil
+}
+
+// Enroll enforces the key's policy, assigns + persists the peer to a region,
+// allocates a WG IP from the region subnet, fans add_peer (plus remove_peer for
+// kill_old) out to every leader of the region, and returns the full tunnel config.
 func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey string, _ []string) (EnrollResult, error) {
-	// Idempotent: same pubkey already enrolled → return its IP, no new push.
+	// Idempotent: same pubkey already enrolled -> rebuild its config from its
+	// stored region, no new push.
 	if existing, err := s.warp.GetWarpPeerByPubkey(pubkey); err == nil && existing != nil {
-		return EnrollResult{WGIP: existing.WGIP, WGSubnet: s.clientSubnet, Keepalive: 25}, nil
+		return s.buildResult(ctx, existing.Region, existing.WGIP)
+	}
+
+	region, err := s.assignRegion(ctx, key)
+	if err != nil {
+		return EnrollResult{}, err
+	}
+	reg, err := s.warp.GetWarpRegion(region)
+	if err != nil {
+		return EnrollResult{}, fmt.Errorf("region %q: %w", region, err)
 	}
 
 	limit := key.MaxConns
@@ -148,61 +317,73 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 	}
 
 	// Atomic: policy enforcement + IP allocation + insert under one tx + advisory lock.
-	wgIP, evicted, err := s.warp.EnrollPeerTx(key.ID, limit, key.OnNewConn, pubkey, key.FixedWGIP, s.leaderID,
-		func(taken map[string]bool) (string, error) { return NextFreeIP(s.clientSubnet, taken) })
+	wgIP, evicted, err := s.warp.EnrollPeerTx(key.ID, limit, key.OnNewConn, pubkey, key.FixedWGIP, region,
+		func(taken map[string]bool) (string, error) { return NextFreeIP(reg.Subnet, taken) })
 	if err != nil {
 		if errors.Is(err, store.ErrWarpLimitReached) {
-			// Preserve the sentinel (%w) so the handler can answer 409 for this
-			// genuine conflict while treating other enroll errors as 500.
 			return EnrollResult{}, fmt.Errorf("%w (policy=%s, max=%d)", store.ErrWarpLimitReached, key.Policy, limit)
 		}
 		return EnrollResult{}, err
 	}
 
-	// Push leader commands after the DB commit (best-effort; resync covers leader reboots).
+	// Fan out leader commands after the DB commit (best-effort; resync covers a
+	// leader that was down). Evicted peer (kill_old) is removed from every mirror.
 	if evicted != "" {
-		if perr := s.pushCommand(ctx, map[string]interface{}{"type": "remove_peer", "pubkey": evicted}); perr != nil {
-			fmt.Printf("[warp] enroll: remove_peer push failed for evicted %s: %v\n", evicted, perr)
+		s.pushToRegion(ctx, region, map[string]interface{}{"type": "remove_peer", "pubkey": evicted})
+	}
+	s.pushToRegion(ctx, region, map[string]interface{}{"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"}})
+
+	return s.buildResult(ctx, region, wgIP)
+}
+
+// --- Resync ---
+
+// processResync iterates the enabled leaders and, for any with a pending
+// per-leader resync-request, pushes that leader's full region peer set as a
+// `resync` command then clears the request. Per-leader keys mean mirror leaders
+// no longer clobber each other (the single-key bug of the single-hub version).
+func (s *WarpService) processResync(ctx context.Context) error {
+	leaders, err := s.warp.ListWarpLeaders()
+	if err != nil {
+		return err
+	}
+	for _, l := range leaders {
+		if !l.Enabled {
+			continue
+		}
+		_, err := s.redis.Get(ctx, s.resyncKey(l.LeaderID)).Result()
+		if err == redis.Nil {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		peers, err := s.warp.ListWarpPeersByRegion(l.Region)
+		if err != nil {
+			return err
+		}
+		specs := make([]map[string]interface{}, 0, len(peers))
+		for _, p := range peers {
+			specs = append(specs, map[string]interface{}{
+				"pubkey": p.Pubkey, "wg_ip": p.WGIP, "allowed_ips": []string{p.WGIP + "/32"},
+			})
+		}
+		b, err := json.Marshal(map[string]interface{}{"type": "resync", "peers": specs})
+		if err != nil {
+			return err
+		}
+		if err := s.redis.RPush(ctx, s.leaderQueueKey(l.LeaderID), b).Err(); err != nil {
+			return err
+		}
+		if err := s.redis.Del(ctx, s.resyncKey(l.LeaderID)).Err(); err != nil {
+			return err
 		}
 	}
-	if err := s.pushCommand(ctx, map[string]interface{}{"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"}}); err != nil {
-		return EnrollResult{}, err
-	}
-
-	return EnrollResult{WGIP: wgIP, WGSubnet: s.clientSubnet, Keepalive: 25}, nil
+	return nil
 }
 
-// processResyncRequest checks for a pending leader resync-request and, if set
-// for our leader, pushes the full peer set as a `resync` command then clears it.
-func (s *WarpService) processResyncRequest(ctx context.Context) error {
-	leaderID, err := s.redis.Get(ctx, "dylaris:warp:resync-request").Result()
-	if err == redis.Nil {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if leaderID != s.leaderID {
-		return nil
-	}
-	all, err := s.warp.ListAllWarpPeers()
-	if err != nil {
-		return err
-	}
-	peers := make([]map[string]interface{}, 0, len(all))
-	for _, p := range all {
-		peers = append(peers, map[string]interface{}{
-			"pubkey": p.Pubkey, "wg_ip": p.WGIP, "allowed_ips": []string{p.WGIP + "/32"},
-		})
-	}
-	if err := s.pushCommand(ctx, map[string]interface{}{"type": "resync", "peers": peers}); err != nil {
-		return err
-	}
-	return s.redis.Del(ctx, "dylaris:warp:resync-request").Err()
-}
-
-// StartResyncWatcher runs processResyncRequest on a ticker. isLeader gates it so
-// only the elected Core acts.
+// StartResyncWatcher runs processResync on a ticker. isLeader gates it so only the
+// elected Core acts.
 func (s *WarpService) StartResyncWatcher(isLeader func() bool) {
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
@@ -210,9 +391,58 @@ func (s *WarpService) StartResyncWatcher(isLeader func() bool) {
 			if isLeader != nil && !isLeader() {
 				continue
 			}
-			if err := s.processResyncRequest(context.Background()); err != nil {
-				fmt.Printf("[warp] resync watcher: %v\n", err)
+			if err := s.processResync(context.Background()); err != nil {
+				log.Printf("[warp] resync watcher: %v", err)
 			}
 		}
 	}()
+}
+
+// --- Registry overview (for the panel) ---
+
+type LeaderView struct {
+	LeaderID string `json:"leaderId"`
+	Endpoint string `json:"endpoint"`
+	Enabled  bool   `json:"enabled"`
+	Alive    bool   `json:"alive"`
+}
+
+type RegionView struct {
+	Region    string       `json:"region"`
+	Subnet    string       `json:"subnet"`
+	Enabled   bool         `json:"enabled"`
+	PeerCount int          `json:"peerCount"`
+	Leaders   []LeaderView `json:"leaders"`
+}
+
+// RegionsOverview returns the full registry (regions + their leaders + liveness +
+// peer counts) for the admin panel in one shot.
+func (s *WarpService) RegionsOverview(ctx context.Context) ([]RegionView, error) {
+	regions, err := s.warp.ListWarpRegions()
+	if err != nil {
+		return nil, err
+	}
+	leaders, err := s.warp.ListWarpLeaders()
+	if err != nil {
+		return nil, err
+	}
+	counts, err := s.warp.CountWarpPeersByRegion()
+	if err != nil {
+		return nil, err
+	}
+	byRegion := map[string][]LeaderView{}
+	for _, l := range leaders {
+		byRegion[l.Region] = append(byRegion[l.Region], LeaderView{
+			LeaderID: l.LeaderID, Endpoint: l.Endpoint, Enabled: l.Enabled,
+			Alive: s.leaderAlive(ctx, l.LeaderID),
+		})
+	}
+	out := make([]RegionView, 0, len(regions))
+	for _, r := range regions {
+		out = append(out, RegionView{
+			Region: r.Region, Subnet: r.Subnet, Enabled: r.Enabled,
+			PeerCount: counts[r.Region], Leaders: byRegion[r.Region],
+		})
+	}
+	return out, nil
 }

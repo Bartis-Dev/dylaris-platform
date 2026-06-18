@@ -239,14 +239,24 @@ func main() {
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState, libraryHandler)
 
-	// Warp: external/home node WireGuard bridge.
-	warpSubnet, _ := pgStore.GetSetting("warp:client_subnet")
-	if warpSubnet == "" {
-		warpSubnet = "10.0.99.0/24"
-	}
-	warpService := services.NewWarpService(pgStore, redisClient, warpSubnet, "leader-01", cfg.ClusterSecret)
+	// Warp: external/home node WireGuard bridge (multi-hub registry).
+	warpService := services.NewWarpService(pgStore, redisClient, cfg.ClusterSecret)
 	warpHandler := handlers.NewWarpHandler(appState, warpService)
 	warpService.StartResyncWatcher(coreLeader.IsLeader)
+	// Seed a default region from any pre-multi-hub settings so an existing
+	// single-hub deployment keeps working unchanged. Region id "leader-01" keeps
+	// the WG key derived from CLUSTER_SECRET+region byte-identical to the old
+	// single-leader key, so already-enrolled peers stay valid.
+	{
+		seedSubnet, _ := pgStore.GetSetting("warp:client_subnet")
+		if seedSubnet == "" {
+			seedSubnet = "10.0.99.0/24"
+		}
+		seedEndpoint, _ := pgStore.GetSetting("warp:leader_endpoint")
+		if err := pgStore.SeedWarpRegionIfEmpty("leader-01", seedSubnet, "leader-01", seedEndpoint); err != nil {
+			log.Printf("warp: seed default region: %v", err)
+		}
+	}
 
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
@@ -523,9 +533,12 @@ func main() {
 
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")
-	// Warp admin + settings (user session; admin enforced inside handler)
-	api.HandleFunc("/warp/settings", authHandler.AuthMiddleware(warpHandler.GetSettings)).Methods("GET")
-	api.HandleFunc("/warp/settings", authHandler.AuthMiddleware(warpHandler.SaveSettings)).Methods("PUT")
+	// Warp admin registry: regions + leaders (user session; admin enforced inside handler)
+	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(warpHandler.ListRegions)).Methods("GET")
+	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(warpHandler.UpsertRegion)).Methods("POST")
+	api.HandleFunc("/warp/regions/{region}", authHandler.AuthMiddleware(warpHandler.DeleteRegion)).Methods("DELETE")
+	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(warpHandler.UpsertLeader)).Methods("POST")
+	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(warpHandler.DeleteLeader)).Methods("DELETE")
 	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(warpHandler.MintAPIKey)).Methods("POST")
 
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")

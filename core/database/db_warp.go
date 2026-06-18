@@ -5,9 +5,16 @@ import (
 	"fmt"
 )
 
-// applyWarpSchema creates the Warp peer registry + enrollment API keys.
-// warp_api_keys: enrollment credentials with a connection policy.
-// warp_peers: one row per enrolled client (pubkey ↔ allocated WG IP).
+// applyWarpSchema creates the Warp registry: enrollment API keys, regions, the
+// redundant leaders per region, and the enrolled peers.
+//
+// Multi-hub model (region-as-identity): a REGION owns one WG identity (subnet +
+// key derived from CLUSTER_SECRET+region + peer set). The leaders inside a region
+// are interchangeable endpoints for that identity; they share the key, subnet and
+// peer set and differ only by host:port. A peer therefore pins to a region, not a
+// single leader, and its WG IP comes from the region's subnet.
+//
+// warp_peers.region replaced the old leader_id column (dev clean-slate norm).
 func applyWarpSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_api_keys (
 		id           SERIAL PRIMARY KEY,
@@ -18,17 +25,46 @@ func applyWarpSchema(db *sql.DB) error {
 		on_new_conn  VARCHAR(16)  NOT NULL DEFAULT 'block',
 		fixed_wg_ip  TEXT,
 		node_id      TEXT,
+		region       TEXT,
 		revoked_at   TIMESTAMPTZ,
 		created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 	)`); err != nil {
 		return fmt.Errorf("warp: create warp_api_keys: %w", err)
 	}
+	// region preference is additive on existing deployments.
+	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS region TEXT`); err != nil {
+		return fmt.Errorf("warp: add warp_api_keys.region: %w", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_regions (
+		region     TEXT PRIMARY KEY,
+		subnet     TEXT NOT NULL,
+		enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("warp: create warp_regions: %w", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_leaders (
+		leader_id  TEXT PRIMARY KEY,
+		region     TEXT NOT NULL REFERENCES warp_regions(region) ON DELETE CASCADE,
+		endpoint   TEXT NOT NULL,
+		enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("warp: create warp_leaders: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_warp_leaders_region
+		ON warp_leaders(region)`); err != nil {
+		return fmt.Errorf("warp: create warp_leaders index: %w", err)
+	}
+
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_peers (
 		id           SERIAL PRIMARY KEY,
 		api_key_id   INTEGER      NOT NULL REFERENCES warp_api_keys(id) ON DELETE CASCADE,
 		pubkey       TEXT         NOT NULL UNIQUE,
 		wg_ip        TEXT         NOT NULL UNIQUE,
-		leader_id    TEXT         NOT NULL DEFAULT 'leader-01',
+		region       TEXT         NOT NULL DEFAULT 'leader-01',
 		created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 	)`); err != nil {
 		return fmt.Errorf("warp: create warp_peers: %w", err)
@@ -36,6 +72,10 @@ func applyWarpSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_warp_peers_key
 		ON warp_peers(api_key_id)`); err != nil {
 		return fmt.Errorf("warp: create warp_peers index: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_warp_peers_region
+		ON warp_peers(region)`); err != nil {
+		return fmt.Errorf("warp: create warp_peers region index: %w", err)
 	}
 	return nil
 }

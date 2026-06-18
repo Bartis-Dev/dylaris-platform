@@ -8,45 +8,45 @@ import (
 func (s *PostgresStore) CreateWarpAPIKey(k WarpAPIKey) (int, error) {
 	var id int
 	err := s.db.QueryRow(`
-		INSERT INTO warp_api_keys (name, key_hash, policy, max_conns, on_new_conn, fixed_wg_ip, node_id)
-		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''))
+		INSERT INTO warp_api_keys (name, key_hash, policy, max_conns, on_new_conn, fixed_wg_ip, node_id, region)
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))
 		RETURNING id`,
-		k.Name, k.KeyHash, k.Policy, k.MaxConns, k.OnNewConn, k.FixedWGIP, k.NodeID,
+		k.Name, k.KeyHash, k.Policy, k.MaxConns, k.OnNewConn, k.FixedWGIP, k.NodeID, k.Region,
 	).Scan(&id)
 	return id, err
 }
 
 func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
 	var k WarpAPIKey
-	var fixedIP, nodeID sql.NullString
+	var fixedIP, nodeID, region sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
-		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), revoked_at, created_at
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''), revoked_at, created_at
 		FROM warp_api_keys WHERE key_hash = $1`, hash).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &nodeID, &region, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
-	k.FixedWGIP, k.NodeID = fixedIP.String, nodeID.String
+	k.FixedWGIP, k.NodeID, k.Region = fixedIP.String, nodeID.String, region.String
 	return &k, nil
 }
 
 func (s *PostgresStore) InsertWarpPeer(p WarpPeer) (int, error) {
 	var id int
 	err := s.db.QueryRow(`
-		INSERT INTO warp_peers (api_key_id, pubkey, wg_ip, leader_id)
+		INSERT INTO warp_peers (api_key_id, pubkey, wg_ip, region)
 		VALUES ($1,$2,$3,$4) RETURNING id`,
-		p.APIKeyID, p.Pubkey, p.WGIP, p.LeaderID).Scan(&id)
+		p.APIKeyID, p.Pubkey, p.WGIP, p.Region).Scan(&id)
 	return id, err
 }
 
 func (s *PostgresStore) GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error) {
 	var p WarpPeer
 	err := s.db.QueryRow(`
-		SELECT id, api_key_id, pubkey, wg_ip, leader_id, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
 		FROM warp_peers WHERE pubkey = $1`, pubkey).
-		Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.LeaderID, &p.CreatedAt)
+		Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.Region, &p.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (s *PostgresStore) GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error) {
 
 func (s *PostgresStore) ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error) {
 	rows, err := s.db.Query(`
-		SELECT id, api_key_id, pubkey, wg_ip, leader_id, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
 		FROM warp_peers WHERE api_key_id = $1 ORDER BY id`, apiKeyID)
 	if err != nil {
 		return nil, err
@@ -66,13 +66,46 @@ func (s *PostgresStore) ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error) {
 
 func (s *PostgresStore) ListAllWarpPeers() ([]WarpPeer, error) {
 	rows, err := s.db.Query(`
-		SELECT id, api_key_id, pubkey, wg_ip, leader_id, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
 		FROM warp_peers ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanWarpPeers(rows)
+}
+
+// ListWarpPeersByRegion returns every peer pinned to a region — the full peer set
+// a leader of that region must hold (used by the per-leader resync push).
+func (s *PostgresStore) ListWarpPeersByRegion(region string) ([]WarpPeer, error) {
+	rows, err := s.db.Query(`
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
+		FROM warp_peers WHERE region = $1 ORDER BY id`, region)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWarpPeers(rows)
+}
+
+// CountWarpPeersByRegion returns the peer count per region (region -> count), used
+// to pick the least-loaded region at enroll.
+func (s *PostgresStore) CountWarpPeersByRegion() (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT region, COUNT(*) FROM warp_peers GROUP BY region`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var region string
+		var n int
+		if err := rows.Scan(&region, &n); err != nil {
+			return nil, err
+		}
+		out[region] = n
+	}
+	return out, rows.Err()
 }
 
 func (s *PostgresStore) DeleteWarpPeerByPubkey(pubkey string) error {
@@ -84,12 +117,124 @@ func scanWarpPeers(rows *sql.Rows) ([]WarpPeer, error) {
 	var out []WarpPeer
 	for rows.Next() {
 		var p WarpPeer
-		if err := rows.Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.LeaderID, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.Region, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// --- Regions ---
+
+func (s *PostgresStore) ListWarpRegions() ([]WarpRegion, error) {
+	rows, err := s.db.Query(`SELECT region, subnet, enabled, created_at FROM warp_regions ORDER BY region`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpRegion
+	for rows.Next() {
+		var r WarpRegion
+		if err := rows.Scan(&r.Region, &r.Subnet, &r.Enabled, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetWarpRegion(region string) (*WarpRegion, error) {
+	var r WarpRegion
+	err := s.db.QueryRow(`SELECT region, subnet, enabled, created_at FROM warp_regions WHERE region = $1`, region).
+		Scan(&r.Region, &r.Subnet, &r.Enabled, &r.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// UpsertWarpRegion inserts or updates a region's subnet + enabled flag.
+func (s *PostgresStore) UpsertWarpRegion(region, subnet string, enabled bool) error {
+	_, err := s.db.Exec(`
+		INSERT INTO warp_regions (region, subnet, enabled) VALUES ($1,$2,$3)
+		ON CONFLICT (region) DO UPDATE SET subnet = EXCLUDED.subnet, enabled = EXCLUDED.enabled`,
+		region, subnet, enabled)
+	return err
+}
+
+func (s *PostgresStore) DeleteWarpRegion(region string) error {
+	_, err := s.db.Exec(`DELETE FROM warp_regions WHERE region = $1`, region)
+	return err
+}
+
+// --- Leaders ---
+
+func (s *PostgresStore) ListWarpLeaders() ([]WarpLeader, error) {
+	rows, err := s.db.Query(`SELECT leader_id, region, endpoint, enabled, created_at FROM warp_leaders ORDER BY region, leader_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWarpLeaders(rows)
+}
+
+func (s *PostgresStore) ListWarpLeadersByRegion(region string) ([]WarpLeader, error) {
+	rows, err := s.db.Query(`SELECT leader_id, region, endpoint, enabled, created_at FROM warp_leaders WHERE region = $1 ORDER BY leader_id`, region)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWarpLeaders(rows)
+}
+
+// UpsertWarpLeader inserts or updates a leader's region, endpoint + enabled flag.
+func (s *PostgresStore) UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error {
+	_, err := s.db.Exec(`
+		INSERT INTO warp_leaders (leader_id, region, endpoint, enabled) VALUES ($1,$2,$3,$4)
+		ON CONFLICT (leader_id) DO UPDATE SET region = EXCLUDED.region, endpoint = EXCLUDED.endpoint, enabled = EXCLUDED.enabled`,
+		leaderID, region, endpoint, enabled)
+	return err
+}
+
+func (s *PostgresStore) DeleteWarpLeader(leaderID string) error {
+	_, err := s.db.Exec(`DELETE FROM warp_leaders WHERE leader_id = $1`, leaderID)
+	return err
+}
+
+func scanWarpLeaders(rows *sql.Rows) ([]WarpLeader, error) {
+	var out []WarpLeader
+	for rows.Next() {
+		var l WarpLeader
+		if err := rows.Scan(&l.LeaderID, &l.Region, &l.Endpoint, &l.Enabled, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// SeedWarpRegionIfEmpty seeds the registry with a single region + leader when no
+// regions exist yet, so an existing single-hub deployment keeps working unchanged.
+// The seed region id equals the old leader id ("leader-01") so the WG key derived
+// from CLUSTER_SECRET+region stays byte-identical to the pre-multi-hub key.
+func (s *PostgresStore) SeedWarpRegionIfEmpty(region, subnet, leaderID, endpoint string) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_regions`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if err := s.UpsertWarpRegion(region, subnet, true); err != nil {
+		return err
+	}
+	if endpoint == "" {
+		// No endpoint configured yet: still create the region, but skip the
+		// leader row (operator sets the endpoint from the panel).
+		return nil
+	}
+	return s.UpsertWarpLeader(leaderID, region, endpoint, true)
 }
 
 // ErrWarpLimitReached is returned by EnrollPeerTx when the key's connection
@@ -107,7 +252,9 @@ const warpEnrollLock int64 = 0x77617270 // "warp"
 // all under one transaction + advisory lock. For "kill_old" at the limit it
 // evicts the oldest peer for the key and returns its pubkey in `evicted`.
 // Returns ErrWarpLimitReached when the limit is hit under any non-"kill_old" policy.
-func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, leaderID string, allocIP func(taken map[string]bool) (string, error)) (wgIP string, evicted string, err error) {
+// The peer pins to `region`; the IP comes from that region's subnet (allocIP),
+// but the taken-set is global because region subnets never overlap.
+func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, region string, allocIP func(taken map[string]bool) (string, error)) (wgIP string, evicted string, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", "", err
@@ -159,8 +306,8 @@ func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 	}
 
 	if _, err = tx.Exec(
-		`INSERT INTO warp_peers (api_key_id, pubkey, wg_ip, leader_id) VALUES ($1,$2,$3,$4)`,
-		keyID, pubkey, wgIP, leaderID); err != nil {
+		`INSERT INTO warp_peers (api_key_id, pubkey, wg_ip, region) VALUES ($1,$2,$3,$4)`,
+		keyID, pubkey, wgIP, region); err != nil {
 		return "", "", err
 	}
 	if err = tx.Commit(); err != nil {
