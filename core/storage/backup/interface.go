@@ -41,8 +41,14 @@ type Storage interface {
 	// when missing; callers should check for not-found semantics.
 	Stat(ctx context.Context, key string) (Object, error)
 
-	// DownloadURL returns a pre-signed URL valid for the given duration if
+	// DownloadURL returns a pre-signed GET URL valid for the given duration if
 	// the provider supports it. LocalStorage returns ("", nil) — the panel
 	// falls back to streaming via Core in that case.
 	DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+
+	// UploadURL returns a pre-signed PUT URL valid for the given duration if the
+	// provider supports it (S3/R2). Used to let a BYON tenant node upload a
+	// backup WITHOUT ever receiving the bucket credentials. Non-S3 providers
+	// return ("", nil).
+	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }

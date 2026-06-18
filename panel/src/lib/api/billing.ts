@@ -7,6 +7,8 @@ export interface BillingSettings {
     r2Retention: string;
     nodeRetention: string;
     r2QuotaGb: string;
+    presignTtlNodeMin: string;
+    presignTtlByonMin: string;
     paymentUrl: string;
 }
 

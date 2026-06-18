@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,10 @@ type BackupRestoreCommand struct {
 	SubServer  string          `json:"subServer"`
 	StorageKey string          `json:"storageKey"`
 	Storage    json.RawMessage `json:"storage"`
+	// PresignedGetURL, when set, is a pre-signed S3/R2 GET URL the node downloads
+	// from instead of using bucket credentials (BYON tenant nodes). Empty = use
+	// Storage creds (operator nodes).
+	PresignedGetURL string `json:"presignedGetUrl"`
 }
 
 // RunRestore streams the archive from storage straight into a tar reader
@@ -70,7 +75,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		gracefulStop(rdb, cmd.ServerUUID, dm)
 	}
 
-	body, err := downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
+	var body io.ReadCloser
+	var err error
+	if cmd.PresignedGetURL != "" {
+		body, err = downloadPresigned(ctx, cmd.PresignedGetURL)
+	} else {
+		body, err = downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
+	}
 	if err != nil {
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "download failed: "+err.Error())
@@ -222,6 +233,25 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 	default:
 		return nil, fmt.Errorf("unknown provider %s", info.Provider)
 	}
+}
+
+// downloadPresigned streams the archive from a pre-signed GET URL (BYON tenant
+// nodes, which never receive bucket credentials). Caller closes the body.
+func downloadPresigned(ctx context.Context, url string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("presigned get: %w", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		return nil, fmt.Errorf("presigned get status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return resp.Body, nil
 }
 
 // reportRestore publishes on a dedicated restore channel so the Core's

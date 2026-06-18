@@ -387,20 +387,21 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storageCfgJSON, _ := json.Marshal(storage)
+	storageCfgJSON, presignedGet := services.PrepareNodeStorage(r.Context(), h.state.Store, storage, node, run.StorageKey, "get")
 	subServer := ""
 	if job.SubServer != nil {
 		subServer = *job.SubServer
 	}
 	payload := map[string]interface{}{
-		"action":     "backup_restore",
-		"runId":      run.ID,
-		"restoreId":  restoreID,
-		"jobId":      job.ID,
-		"serverUuid": srv.UUID,
-		"subServer":  subServer,
-		"storageKey": run.StorageKey,
-		"storage":    json.RawMessage(storageCfgJSON),
+		"action":          "backup_restore",
+		"runId":           run.ID,
+		"restoreId":       restoreID,
+		"jobId":           job.ID,
+		"serverUuid":      srv.UUID,
+		"subServer":       subServer,
+		"storageKey":      run.StorageKey,
+		"storage":         json.RawMessage(storageCfgJSON),
+		"presignedGetUrl": presignedGet,
 	}
 	jsonData, _ := json.Marshal(payload)
 	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)
@@ -644,7 +645,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	if h.state.Queue == nil {
 		return runID, fmt.Errorf("queue unavailable")
 	}
-	storageCfgJSON, _ := json.Marshal(storage)
+	// BYON nodes get a presigned PUT URL + creds-stripped storage so the tenant's
+	// machine never receives the bucket credentials. Operator nodes are unchanged.
+	storageCfgJSON, presignedPut := services.PrepareNodeStorage(ctx, h.state.Store, storage, node, storageKey, "put")
 	payload := map[string]interface{}{
 		"action":          "backup_run",
 		"runId":           runID,
@@ -655,6 +658,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		"excludePatterns": job.ExcludePatterns,
 		"storageKey":      storageKey,
 		"storage":         json.RawMessage(storageCfgJSON),
+		"presignedPutUrl": presignedPut,
 	}
 	jsonData, _ := json.Marshal(payload)
 	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)

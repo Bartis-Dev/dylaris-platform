@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,10 @@ type BackupRunCommand struct {
 	ExcludePatterns []string        `json:"excludePatterns"`
 	StorageKey      string          `json:"storageKey"`
 	Storage         json.RawMessage `json:"storage"`
+	// PresignedPutURL, when set, is a pre-signed S3/R2 PUT URL the node uploads
+	// to instead of using bucket credentials (BYON tenant nodes never receive
+	// the operator's creds). Empty = use Storage creds (operator nodes).
+	PresignedPutURL string `json:"presignedPutUrl"`
 }
 
 type storageInfo struct {
@@ -160,11 +165,19 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 	}()
 
 	// Upload reads from the pipe. Returns once EOF (or pipe error) reached.
-	if err := uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pr); err != nil {
+	// A BYON tenant node gets a pre-signed PUT URL and never sees bucket creds;
+	// it stages the archive to a temp file first (PUT needs Content-Length).
+	var upErr error
+	if cmd.PresignedPutURL != "" {
+		upErr = uploadBackupPresigned(ctx, cmd.PresignedPutURL, pr)
+	} else {
+		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pr)
+	}
+	if upErr != nil {
 		// Drain any remaining bytes so the writer goroutine doesn't block on
 		// a full pipe; CloseWithError unblocks the writer immediately.
-		pr.CloseWithError(err)
-		reportBackup(ctx, rdb, cmd.RunID, "failed", "upload failed: "+err.Error(), 0)
+		pr.CloseWithError(upErr)
+		reportBackup(ctx, rdb, cmd.RunID, "failed", "upload failed: "+upErr.Error(), 0)
 		return
 	}
 
@@ -264,6 +277,51 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 	default:
 		return fmt.Errorf("unknown provider %s", info.Provider)
 	}
+}
+
+// presignedPutMaxSize is the S3/R2 single-PUT object limit. Larger BYON backups
+// would need multipart-presigned (a follow-up); we fail clearly rather than
+// silently truncate.
+const presignedPutMaxSize = 5 * 1024 * 1024 * 1024 // 5 GiB
+
+// uploadBackupPresigned uploads the archive to a pre-signed PUT URL. The PUT
+// needs a Content-Length, but the archive is produced as an unbounded stream, so
+// it is staged to a temp file first to learn the size. Used only for BYON tenant
+// nodes (which must never receive bucket credentials).
+func uploadBackupPresigned(ctx context.Context, url string, r io.Reader) error {
+	tmp, err := os.CreateTemp("", "dylaris-backup-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("temp file: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+
+	size, err := io.Copy(tmp, r)
+	if err != nil {
+		return fmt.Errorf("stage archive: %w", err)
+	}
+	if size > presignedPutMaxSize {
+		return fmt.Errorf("archive %d bytes exceeds the 5 GiB single-upload limit for tenant nodes", size)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, tmp)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = size
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("presigned put: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("presigned put status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 // nodeLocalArchiveName collapses a storage key into its leaf filename so

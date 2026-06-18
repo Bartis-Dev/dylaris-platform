@@ -98,12 +98,14 @@ func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Reque
 		return def
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":       true,
-		"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
-		"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
-		"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
-		"r2QuotaGb":     get(services.BillingR2QuotaKey, "0"),
-		"paymentUrl":    get(services.BillingPaymentURLKey, ""),
+		"success":           true,
+		"gracePeriod":       get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
+		"r2Retention":       get(services.BillingR2RetentionKey, services.DefaultR2Retention),
+		"nodeRetention":     get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
+		"r2QuotaGb":         get(services.BillingR2QuotaKey, "0"),
+		"presignTtlNodeMin": get(services.PresignTTLNodeKey, strconv.Itoa(services.DefaultPresignTTLNodeMin)),
+		"presignTtlByonMin": get(services.PresignTTLBYONKey, strconv.Itoa(services.DefaultPresignTTLBYONMin)),
+		"paymentUrl":        get(services.BillingPaymentURLKey, ""),
 	})
 }
 
@@ -115,11 +117,13 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req struct {
-		GracePeriod   string `json:"gracePeriod"`
-		R2Retention   string `json:"r2Retention"`
-		NodeRetention string `json:"nodeRetention"`
-		R2QuotaGb     string `json:"r2QuotaGb"`
-		PaymentUrl    string `json:"paymentUrl"`
+		GracePeriod       string `json:"gracePeriod"`
+		R2Retention       string `json:"r2Retention"`
+		NodeRetention     string `json:"nodeRetention"`
+		R2QuotaGb         string `json:"r2QuotaGb"`
+		PresignTtlNodeMin string `json:"presignTtlNodeMin"`
+		PresignTtlByonMin string `json:"presignTtlByonMin"`
+		PaymentUrl        string `json:"paymentUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -138,11 +142,19 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 = unlimited)", http.StatusBadRequest)
 		return
 	}
+	for _, ttl := range []string{req.PresignTtlNodeMin, req.PresignTtlByonMin} {
+		if n, err := strconv.Atoi(ttl); err != nil || n <= 0 {
+			sendJSONError(w, "Presigned URL TTL must be a positive number of minutes", http.StatusBadRequest)
+			return
+		}
+	}
 	writes := map[string]string{
 		services.BillingGracePeriodKey:   req.GracePeriod,
 		services.BillingR2RetentionKey:   req.R2Retention,
 		services.BillingNodeRetentionKey: req.NodeRetention,
 		services.BillingR2QuotaKey:       req.R2QuotaGb,
+		services.PresignTTLNodeKey:       req.PresignTtlNodeMin,
+		services.PresignTTLBYONKey:       req.PresignTtlByonMin,
 		services.BillingPaymentURLKey:    req.PaymentUrl,
 	}
 	for k, v := range writes {

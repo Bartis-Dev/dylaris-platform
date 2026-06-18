@@ -256,7 +256,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("create run: %w", err)
 	}
 
-	storageCfgJSON, _ := json.Marshal(storage)
+	storageCfgJSON, presignedPut := PrepareNodeStorage(ctx, b.store, storage, node, storageKey, "put")
 	subServer := ""
 	if job.SubServer != nil {
 		subServer = *job.SubServer
@@ -271,6 +271,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		"excludePatterns": job.ExcludePatterns,
 		"storageKey":      storageKey,
 		"storage":         json.RawMessage(storageCfgJSON),
+		"presignedPutUrl": presignedPut,
 	}
 	jsonData, _ := json.Marshal(payload)
 	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)

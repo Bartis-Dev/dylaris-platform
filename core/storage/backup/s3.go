@@ -162,3 +162,22 @@ func (s *S3Storage) DownloadURL(ctx context.Context, key string, ttl time.Durati
 	}
 	return out.URL, nil
 }
+
+// UploadURL returns a pre-signed PUT URL for `key`. Only Bucket+Key are signed
+// (no Content-Type), so the node can PUT the archive with just a Content-Length
+// header. Single-PUT max object size is ~5 GiB (S3/R2 limit); larger BYON
+// backups would need multipart-presigned (a follow-up).
+func (s *S3Storage) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	presigner := s3.NewPresignClient(s.client)
+	out, err := presigner.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}

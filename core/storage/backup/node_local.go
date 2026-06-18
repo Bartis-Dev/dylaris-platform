@@ -227,6 +227,10 @@ func (n *NodeLocalStorage) DownloadURL(_ context.Context, _ string, _ time.Durat
 	return "", nil
 }
 
+func (n *NodeLocalStorage) UploadURL(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", nil
+}
+
 // nodeLocalReader adapts the gRPC streaming channel into an io.ReadCloser.
 // Chunks arrive in order; we keep one in-memory buffer and copy out of it
 // as Read is called. The Node sends a final TransferDone with no Filename

@@ -141,3 +141,8 @@ func (l *LocalStorage) DownloadURL(_ context.Context, _ string, _ time.Duration)
 	// LocalStorage has no pre-signed URL. Caller streams via Core.
 	return "", nil
 }
+
+func (l *LocalStorage) UploadURL(_ context.Context, _ string, _ time.Duration) (string, error) {
+	// LocalStorage has no pre-signed URL.
+	return "", nil
+}

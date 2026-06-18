@@ -8,7 +8,7 @@ import { Loader2, Info } from 'lucide-react';
 const SPEC_RE = /^\d+[dwm]$/;
 
 export default function BillingTab() {
-    const [settings, setSettings] = useState<BillingSettings>({ gracePeriod: '3d', r2Retention: '3m', nodeRetention: '2w', r2QuotaGb: '0', paymentUrl: '' });
+    const [settings, setSettings] = useState<BillingSettings>({ gracePeriod: '3d', r2Retention: '3m', nodeRetention: '2w', r2QuotaGb: '0', presignTtlNodeMin: '60', presignTtlByonMin: '360', paymentUrl: '' });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -21,6 +21,8 @@ export default function BillingTab() {
                     r2Retention: res.r2Retention || '3m',
                     nodeRetention: res.nodeRetention || '2w',
                     r2QuotaGb: res.r2QuotaGb || '0',
+                    presignTtlNodeMin: res.presignTtlNodeMin || '60',
+                    presignTtlByonMin: res.presignTtlByonMin || '360',
                     paymentUrl: res.paymentUrl || '',
                 });
             }
@@ -96,6 +98,31 @@ export default function BillingTab() {
                         className="input-field w-32"
                     />
                     <p className="text-xs text-(--base-05)">Max stored backup size per tenant. 0 = unlimited. New backups are blocked with a message once exceeded. Per-user overrides come from User Management.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <label className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Presigned URL TTL — nodes (min)</label>
+                        <input
+                            type="number"
+                            min={1}
+                            value={settings.presignTtlNodeMin}
+                            onChange={e => setSettings(s => ({ ...s, presignTtlNodeMin: e.target.value }))}
+                            className="input-field w-32"
+                        />
+                        <p className="text-xs text-(--base-05)">Operator nodes. 60 = 1h.</p>
+                    </div>
+                    <div className="space-y-1">
+                        <label className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Presigned URL TTL — BYON (min)</label>
+                        <input
+                            type="number"
+                            min={1}
+                            value={settings.presignTtlByonMin}
+                            onChange={e => setSettings(s => ({ ...s, presignTtlByonMin: e.target.value }))}
+                            className="input-field w-32"
+                        />
+                        <p className="text-xs text-(--base-05)">Tenant nodes (slower uplinks). 360 = 6h.</p>
+                    </div>
                 </div>
 
                 <div className="space-y-1">
