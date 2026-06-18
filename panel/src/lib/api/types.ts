@@ -710,6 +710,12 @@ export const setServerAutoMove = (serverId: number, enabled: boolean) =>
 export const moveServer = (serverId: number, targetNodeId: number) =>
     fetchAPI(`/admin/servers/${serverId}/move`, { method: 'POST', body: JSON.stringify({ targetNodeId }) });
 
+// Tenant-facing transfer (BYON). Same orchestrator + status as moveServer, but
+// the caller only needs to own the server and be allowed to place on the target
+// node. Async — returns 202; progress is polled via getMigrationStatus.
+export const transferServer = (serverId: number, targetNodeId: number) =>
+    fetchAPI(`/servers/${serverId}/transfer`, { method: 'POST', body: JSON.stringify({ targetNodeId }) });
+
 // Orchestrator progress record. `phase` is "none" when no migration is active.
 // Terminal phases: done, failed, failed_post_cutover, aborted_players, none.
 export interface MigrationStatus {

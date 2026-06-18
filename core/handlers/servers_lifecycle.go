@@ -1029,8 +1029,54 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", 400)
 		return
 	}
-	if req.TargetNodeID == srv.NodeID {
-		sendJSONError(w, "Target node equals current node", 400)
+	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
+	if err != nil {
+		sendJSONError(w, "Target node not found", 404)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	h.queueMigration(w, r, srv, target, "manual", username)
+}
+
+// TransferServer (tenant) queues a node-to-node migration of a server the caller
+// OWNS to a target node they may place on. BYON-only: outside BYON mode, moves
+// stay admin-only (use MoveServer). The target picker is the tenant-scoped node
+// list, so in practice this covers moving between the user's own nodes (and
+// pulling a platform-hosted server onto their own hardware). Same orchestrator +
+// status as the admin move; gateway-gated (migration is gateway-only).
+func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Migration == nil {
+		sendJSONError(w, "Migration orchestrator not available", 503)
+		return
+	}
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	// Authz: owner-or-admin on the server; BYON must be on for a non-admin tenant.
+	username, _ := r.Context().Value("username").(string)
+	if !IsAdmin(r) {
+		if !byonActive(h.state, r) {
+			sendJSONError(w, "Server transfer is not enabled", 403)
+			return
+		}
+		if srv.OwnerName != username {
+			sendJSONError(w, "Forbidden", 403)
+			return
+		}
+	}
+	var req struct {
+		TargetNodeID int `json:"targetNodeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
@@ -1038,12 +1084,29 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Target node not found", 404)
 		return
 	}
+	// Placement authz: the caller must be allowed to place on the target node
+	// (their own BYON node, or a platform node in BYON mode). Admins always may.
+	if !canPlaceOnNode(h.state, r, target) {
+		sendJSONError(w, "You cannot place servers on the target node", 403)
+		return
+	}
+	h.queueMigration(w, r, srv, target, "transfer", username)
+}
+
+// queueMigration runs the shared validation + enqueue for both the admin move
+// and the tenant transfer: rejects a same-node target, requires the target be
+// online, then enqueues onto the orchestrator (async) and returns 202. Callers
+// own the access-control decision before calling this.
+func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, srv *models.Server, target *models.Node, reason, requestedBy string) {
+	if target.ID == srv.NodeID {
+		sendJSONError(w, "Target node equals current node", 400)
+		return
+	}
 	if target.Status != "online" {
 		sendJSONError(w, "Target node is not online", 409)
 		return
 	}
-	username, _ := r.Context().Value("username").(string)
-	if err := h.state.Migration.EnqueueMigration(r.Context(), serverID, req.TargetNodeID, "manual", username); err != nil {
+	if err := h.state.Migration.EnqueueMigration(r.Context(), srv.ID, target.ID, reason, requestedBy); err != nil {
 		sendJSONError(w, "Failed to queue migration", 500)
 		return
 	}

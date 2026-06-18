@@ -28,6 +28,9 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// Raw admin flag; the panel ANDs it with the live routing mode,
 			// since auto-move is only effective while the gateway is on.
 			"autoMove": h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
+			// BYON tenancy: drives tenant-facing UI (e.g. the server transfer
+			// control). Read-only flag; the actual authz is enforced backend-side.
+			"byon": h.state.FeatureFlags.IsBYONEnabled(r.Context()),
 		},
 	})
 }

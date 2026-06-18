@@ -11,7 +11,7 @@ import { DynamicIcon } from '@/lib/icons';
 import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
-    getInstallCooldown, moveServer, getMigrationStatus, type MigrationStatus, type Node,
+    getInstallCooldown, moveServer, transferServer, getMigrationStatus, type MigrationStatus, type Node,
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
 import { getNodes } from '@/lib/api/resources';
@@ -58,6 +58,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [moveBusy, setMoveBusy] = useState(false);
     const [moveMsg, setMoveMsg] = useState('');
     const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
+    // Dedicated transfer dialog for BYON owners (admins use the Resources popup).
+    const [showTransferPopup, setShowTransferPopup] = useState(false);
 
     const [storageCurrentPath, setStorageCurrentPath] = useState('');
     const [storagePaths, setStoragePaths] = useState<StoragePathInfo[]>([]);
@@ -281,8 +283,11 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     if (others.length > 0) setStorageMigrateTarget(others[0].path);
                 }
             } catch { /* ignore */ }
-            // Node list for the manual move picker — only ONLINE nodes other
-            // than the one this server currently lives on.
+        }
+        // Node list for the move/transfer picker — only ONLINE nodes other than
+        // the one this server currently lives on. Admins see all nodes; a BYON
+        // owner sees the tenant-scoped list (their own nodes).
+        if (canTransfer) {
             try {
                 const res = await getNodes();
                 if (res.success && Array.isArray(res.nodes)) {
@@ -296,15 +301,18 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
     };
 
-    // Manual node-to-node move (admin). Async on the backend; we seed the
-    // migration status optimistically so the poll picks up and the status line
-    // shows progress without waiting a full tick.
+    // Node-to-node move. Admins use the admin endpoint; BYON owners use the
+    // tenant transfer endpoint (owner + placement authz). Async on the backend;
+    // we seed the migration status optimistically so the poll picks up and the
+    // status line shows progress without waiting a full tick.
     const handleMoveServer = async () => {
         if (!moveTargetNodeId || moveBusy) return;
         setMoveBusy(true);
         setMoveMsg('');
         try {
-            const res: any = await moveServer(selectedServer.id, moveTargetNodeId);
+            const res: any = user?.isAdmin
+                ? await moveServer(selectedServer.id, moveTargetNodeId)
+                : await transferServer(selectedServer.id, moveTargetNodeId);
             if (res && (res.success === false || res.error)) {
                 setMoveMsg(res.error || res.message || 'Move failed.');
             } else {
@@ -328,6 +336,26 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
         setShowEditResourcesPopup(false);
         refreshServers();
+    };
+
+    // Open the dedicated BYON transfer dialog: load the (tenant-scoped) online
+    // node list, then show the picker. Mirrors the node-fetch the admin Resources
+    // popup does, but stands alone so owners never see the admin resource editor.
+    const handleOpenTransfer = async () => {
+        setMoveMsg('');
+        setMoveTargetNodeId(0);
+        setMoveNodes([]);
+        setShowTransferPopup(true);
+        try {
+            const res = await getNodes();
+            if (res.success && Array.isArray(res.nodes)) {
+                const targets: Node[] = res.nodes.filter(
+                    (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
+                );
+                setMoveNodes(targets);
+                if (targets.length > 0) setMoveTargetNodeId(targets[0].id);
+            }
+        } catch { /* ignore */ }
     };
 
     const handleMigrateStorage = async () => {
@@ -393,6 +421,11 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
 
     const isOwner = selectedServer.role !== 'invited' && selectedServer.role !== 'inherited';
     const perms = selectedServer.permissions;
+
+    // Who may move this server to another node. Admins always (any mode); a BYON
+    // server owner when tenancy is on. Migration is gateway-only, so hide the
+    // control entirely on ip_port instead of dangling a disabled picker.
+    const canTransfer = (!!user?.isAdmin || (featureFlags.byon && isOwner)) && routingMode !== 'ip_port';
 
     // Auto-move opt-in gating. The backend gates the PATCH on BOTH the platform
     // feature flag AND active gateway routing (503 otherwise), so we mirror both
@@ -572,6 +605,22 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                     Delete
                                 </button>
                             </div>
+                        )}
+                        {/* BYON owners get a dedicated transfer entry (admins use the
+                            Resources popup's transfer section instead). */}
+                        {canTransfer && !user?.isAdmin && (
+                            <>
+                                <div className="w-px h-6 bg-(--base-04)" />
+                                <button
+                                    onClick={handleOpenTransfer}
+                                    disabled={uploadLocked}
+                                    className="btn btn-secondary btn-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title={uploadLocked ? 'Upload in progress — wait or cancel it first' : 'Transfer this server to another of your nodes'}
+                                >
+                                    <Move size={14} />
+                                    Transfer
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -823,6 +872,61 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 </div>
             )}
 
+            {/* Transfer Popup (BYON owners). Admins use the Resources popup. */}
+            {showTransferPopup && (
+                <div className="modal-overlay animate-fade-in">
+                    <div className="modal-panel w-full max-w-md">
+                        <div className="modal-header">
+                            <h3 className="modal-title flex items-center gap-2">
+                                <Move size={18} />
+                                Transfer Server
+                            </h3>
+                        </div>
+                        <div className="modal-body space-y-4">
+                            {moveNodes.length === 0 ? (
+                                <p className="text-sm text-(--base-06)">No other online nodes of yours are available to transfer to.</p>
+                            ) : (
+                                <>
+                                    <div className="flex flex-col gap-[5px]">
+                                        <label className="mono-label">Target Node</label>
+                                        <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
+                                            {moveNodes.map(n => (
+                                                <option key={n.id} value={n.id}>{n.name}{n.region ? ` — ${n.region}` : ''}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <p className="text-xs text-(--base-06)">
+                                        The server is stopped, moved to the target node, and restarted there. The gateway keeps the player address stable. Same-LAN moves transfer directly; otherwise the data goes via your backup storage.
+                                    </p>
+                                </>
+                            )}
+                            {moveMsg && (
+                                <p className={`text-xs ${/queued|migration/i.test(moveMsg) ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{moveMsg}</p>
+                            )}
+                            {migrationStatus && migrationStatus.phase !== 'none' && (
+                                <div className="flex items-start gap-2 text-xs">
+                                    {!TERMINAL_PHASES.includes(migrationStatus.phase)
+                                        ? <RefreshCw size={13} className="animate-spin text-(--accent-light) mt-0.5 shrink-0" />
+                                        : migrationStatus.phase === 'done'
+                                            ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
+                                            : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
+                                    <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
+                                        Migration: {migrationStatus.phase.replace(/_/g, ' ')}
+                                        {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="modal-footer">
+                            <button type="button" onClick={() => setShowTransferPopup(false)} className="btn btn-ghost btn-sm">Close</button>
+                            <button type="button" onClick={handleMoveServer} disabled={moveBusy || !moveTargetNodeId} className="btn btn-primary btn-sm">
+                                {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Transfer</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Edit Resources Popup */}
             {showEditResourcesPopup && (
                 <div className="modal-overlay animate-fade-in">
@@ -882,17 +986,18 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 )}
                             </div>
 
-                            {/* Manual move (admin). Migration is gateway-only — hide
-                                the control entirely on IP:Port instead of dangling a
-                                disabled picker. */}
-                            {user?.isAdmin && routingMode !== 'ip_port' && (
+                            {/* Node-to-node transfer. Admins move between any nodes;
+                                a BYON owner transfers between their own nodes. Migration
+                                is gateway-only — hide the control entirely on IP:Port
+                                instead of dangling a disabled picker. */}
+                            {canTransfer && (
                                 <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
                                     <div className="flex items-center gap-2">
                                         <Move size={14} className="text-(--accent-light)" />
-                                        <span className="input-label mb-0">Move to Node</span>
+                                        <span className="input-label mb-0">Transfer to Node</span>
                                     </div>
                                     {moveNodes.length === 0 ? (
-                                        <p className="text-xs text-(--base-05) italic">No other online nodes available to move to.</p>
+                                        <p className="text-xs text-(--base-05) italic">No other online nodes available to transfer to.</p>
                                     ) : (
                                         <>
                                             <div className="flex gap-2 items-end">

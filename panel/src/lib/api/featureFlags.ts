@@ -9,6 +9,8 @@ export interface FeatureFlags {
     // Raw platform flag. The panel ANDs this with the live routing mode, since
     // auto-move is only effective while the gateway is on.
     autoMove: boolean;
+    // BYON tenancy. Gates tenant-facing UI like the server transfer control.
+    byon: boolean;
 }
 
 export interface FeatureFlagsAdminPayload {
