@@ -148,6 +148,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyBillingSchema(db); err != nil {
 		return err
 	}
+	if err := applyPlansSchema(db); err != nil {
+		return err
+	}
 	applyAdminResetEnvIfRequested(db)
 
 	seedSystemModules(db)

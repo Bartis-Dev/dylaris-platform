@@ -18,9 +18,18 @@ type UserBilling struct {
 	GracePeriod   string     `json:"gracePeriod,omitempty"`
 	R2Retention   string     `json:"r2Retention,omitempty"`
 	NodeRetention string     `json:"nodeRetention,omitempty"`
-	R2QuotaGB     *int64     `json:"r2QuotaGb,omitempty"` // per-user override; nil = platform default
-	UpdatedAt     time.Time  `json:"updatedAt"`
+	R2QuotaGB     *int64     `json:"r2QuotaGb,omitempty"` // per-user override; nil = use the plan value
+	// Per-user LIMIT overrides (nil = use the plan value). 0 = unlimited.
+	MaxNodes          *int64 `json:"maxNodes,omitempty"`
+	TrafficEdgeGB     *int64 `json:"trafficEdgeGb,omitempty"`
+	TrafficRelayGB    *int64 `json:"trafficRelayGb,omitempty"`
+	TrafficCombinedGB *int64 `json:"trafficCombinedGb,omitempty"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
+
+// userBillingCols is the column list (and order) shared by every UserBilling
+// SELECT so scanUserBilling can stay in lockstep.
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at`
 
 func scanUserBilling(row interface {
 	Scan(dest ...any) error
@@ -28,8 +37,9 @@ func scanUserBilling(row interface {
 	var b UserBilling
 	var grace, susp sql.NullTime
 	var gp, r2, nr sql.NullString
-	var quota sql.NullInt64
-	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota, &b.UpdatedAt); err != nil {
+	var quota, maxNodes, tEdge, tRelay, tComb sql.NullInt64
+	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
+		&maxNodes, &tEdge, &tRelay, &tComb, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if grace.Valid {
@@ -44,15 +54,25 @@ func scanUserBilling(row interface {
 	if quota.Valid {
 		b.R2QuotaGB = &quota.Int64
 	}
+	if maxNodes.Valid {
+		b.MaxNodes = &maxNodes.Int64
+	}
+	if tEdge.Valid {
+		b.TrafficEdgeGB = &tEdge.Int64
+	}
+	if tRelay.Valid {
+		b.TrafficRelayGB = &tRelay.Int64
+	}
+	if tComb.Valid {
+		b.TrafficCombinedGB = &tComb.Int64
+	}
 	return &b, nil
 }
 
 // GetUserBilling returns a tenant's billing row, or a zero-value active row when
 // none exists.
 func (s *PostgresStore) GetUserBilling(userID string) (*UserBilling, error) {
-	row := s.db.QueryRow(`
-		SELECT user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, updated_at
-		FROM user_billing WHERE user_id = $1`, userID)
+	row := s.db.QueryRow(`SELECT `+userBillingCols+` FROM user_billing WHERE user_id = $1`, userID)
 	b, err := scanUserBilling(row)
 	if err == sql.ErrNoRows {
 		return &UserBilling{UserID: userID, Status: "active"}, nil
@@ -175,9 +195,7 @@ func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 // by the leader-gated lifecycle worker to progress past_due -> suspended ->
 // retention cleanup.
 func (s *PostgresStore) ListUserBillingByStatus(status string) ([]UserBilling, error) {
-	rows, err := s.db.Query(`
-		SELECT user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, updated_at
-		FROM user_billing WHERE status = $1`, status)
+	rows, err := s.db.Query(`SELECT `+userBillingCols+` FROM user_billing WHERE status = $1`, status)
 	if err != nil {
 		return nil, err
 	}

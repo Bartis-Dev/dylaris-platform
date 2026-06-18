@@ -63,6 +63,17 @@ type Store interface {
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 	ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error)
 	BackupBytesByOwner(ownerID string) (int64, error)
+	// --- BYON plans + limits ---
+	ListPlans() ([]Plan, error)
+	GetPlan(id int) (*Plan, error)
+	GetDefaultPlan() (*Plan, error)
+	CreatePlan(p Plan) (int, error)
+	UpdatePlan(p Plan) error
+	DeletePlan(id int) error
+	GetUserPlanID(userID string) (*int, error)
+	SetUserPlan(userID string, planID *int) error
+	SetUserLimitOverrides(userID string, maxNodes, trafficEdge, trafficRelay, trafficCombined *int64) error
+	CountNodesByOwner(ownerID string) (int, error)
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error
