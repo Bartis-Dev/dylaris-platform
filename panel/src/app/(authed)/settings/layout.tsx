@@ -28,6 +28,7 @@ const ALL_TABS = [
     // toggling it on from the Features tab.
     { slug: 'gateway', label: 'Gateway', always: true },
     { slug: 'warp', label: 'Warp', always: true },
+    { slug: 'usage', label: 'Usage', always: true },
     { slug: 'backups', label: 'Backups', always: true },
     { slug: 'maintenance', label: 'Maintenance', always: true },
     { slug: 'database', label: 'Database', always: true },

@@ -269,6 +269,7 @@ func main() {
 	telemetrySettingsHandler := handlers.NewTelemetrySettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
+	usageHandler := handlers.NewUsageHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
@@ -458,6 +459,9 @@ func main() {
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Add)))).Methods("POST")
 	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Remove)))).Methods("DELETE")
 	// --- Username history + account policy ---
+	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
+	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(usageHandler.GetAllUsage)).Methods("GET")
+
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(usernameHistoryHandler.AdminRename)).Methods("PATCH")

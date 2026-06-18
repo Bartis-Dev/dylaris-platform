@@ -12,7 +12,8 @@ import (
 // "not found".
 type TrafficUsage struct {
 	UserID      string    `json:"userId"`
-	Period      time.Time `json:"period"` // first day of the billing month (UTC)
+	Username    string    `json:"username,omitempty"` // filled by the admin list, not the per-user read
+	Period      time.Time `json:"period"`             // first day of the billing month (UTC)
 	EdgeBytes   int64     `json:"edgeBytes"`
 	RelayBytes  int64     `json:"relayBytes"`
 	BackupBytes int64     `json:"backupBytes"`
@@ -124,9 +125,11 @@ func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*Traff
 // Used by the admin usage overview.
 func (s *PostgresStore) ListTrafficUsage(period time.Time) ([]TrafficUsage, error) {
 	rows, err := s.db.Query(`
-		SELECT user_id, period, edge_bytes, relay_bytes, backup_bytes, updated_at
-		FROM traffic_usage WHERE period = $1
-		ORDER BY edge_bytes DESC`, period)
+		SELECT t.user_id, COALESCE(u.username, ''), t.period, t.edge_bytes, t.relay_bytes, t.backup_bytes, t.updated_at
+		FROM traffic_usage t
+		LEFT JOIN users u ON u.id = t.user_id
+		WHERE t.period = $1
+		ORDER BY t.edge_bytes DESC`, period)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +137,7 @@ func (s *PostgresStore) ListTrafficUsage(period time.Time) ([]TrafficUsage, erro
 	var out []TrafficUsage
 	for rows.Next() {
 		var u TrafficUsage
-		if err := rows.Scan(&u.UserID, &u.Period, &u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.Username, &u.Period, &u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
