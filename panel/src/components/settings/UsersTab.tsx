@@ -19,6 +19,7 @@ import {
     type BillingStatus,
     type UserBillingAdmin,
 } from '@/lib/api/billing';
+import { getPlans, setUserPlan, setUserLimitOverrides, type Plan } from '@/lib/api/plans';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
@@ -901,7 +902,17 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [savingOverrides, setSavingOverrides] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
+    // Plan + per-user limit overrides ('' = use the plan value).
+    const [plans, setPlans] = useState<Plan[]>([]);
+    const [planId, setPlanId] = useState<number | null>(null);
+    const [maxNodes, setMaxNodes] = useState('');
+    const [tEdge, setTEdge] = useState('');
+    const [tRelay, setTRelay] = useState('');
+    const [tCombined, setTCombined] = useState('');
+    const [savingPlan, setSavingPlan] = useState(false);
+
     useEffect(() => {
+        getPlans().then(r => { if (r.success) setPlans(r.plans || []); });
         getUserBilling(user.id).then(d => {
             if (d.success) {
                 setData(d);
@@ -910,6 +921,11 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                 setR2(d.overrides.r2Retention || '');
                 setNr(d.overrides.nodeRetention || '');
                 setQuota(d.overrides.r2QuotaGb == null ? '' : String(d.overrides.r2QuotaGb));
+                setPlanId(d.planId ?? null);
+                setMaxNodes(d.overrides.maxNodes == null ? '' : String(d.overrides.maxNodes));
+                setTEdge(d.overrides.trafficEdgeGb == null ? '' : String(d.overrides.trafficEdgeGb));
+                setTRelay(d.overrides.trafficRelayGb == null ? '' : String(d.overrides.trafficRelayGb));
+                setTCombined(d.overrides.trafficCombinedGb == null ? '' : String(d.overrides.trafficCombinedGb));
             }
             setLoading(false);
         });
@@ -939,6 +955,25 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
         });
         setSavingOverrides(false);
         show(res.success ? 'Overrides saved.' : (res.message || 'Failed.'), !!res.success);
+    };
+
+    const numOk = (v: string) => v === '' || /^\d+$/.test(v);
+    const limitsValid = numOk(maxNodes) && numOk(tEdge) && numOk(tRelay) && numOk(tCombined);
+    const toNum = (v: string) => (v === '' ? null : parseInt(v, 10));
+
+    const savePlan = async () => {
+        if (!limitsValid) { show('Limits are whole numbers (empty = use plan, 0 = unlimited).', false); return; }
+        setSavingPlan(true);
+        const r1 = await setUserPlan(user.id, planId);
+        const r2res = await setUserLimitOverrides(user.id, {
+            maxNodes: toNum(maxNodes),
+            trafficEdgeGb: toNum(tEdge),
+            trafficRelayGb: toNum(tRelay),
+            trafficCombinedGb: toNum(tCombined),
+        });
+        setSavingPlan(false);
+        const ok = r1.success && r2res.success;
+        show(ok ? 'Plan & limits saved.' : (r1.message || r2res.message || 'Failed.'), ok);
     };
 
     return (
@@ -1031,6 +1066,39 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                     </button>
                                 </div>
                             </section>
+
+                            {/* Plan + per-user limit overrides */}
+                            <section className="space-y-3 border-t border-(--base-04) pt-4">
+                                <div>
+                                    <label className="input-label">Plan &amp; limit overrides</label>
+                                    <p className="text-xs text-(--base-06) mt-0.5">The plan sets the baseline; an override here wins. Empty = use the plan. 0 = unlimited.</p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <label className="input-label w-48 shrink-0">Plan</label>
+                                    <select
+                                        className="input-field w-56"
+                                        value={planId ?? ''}
+                                        onChange={e => setPlanId(e.target.value === '' ? null : parseInt(e.target.value, 10))}
+                                    >
+                                        <option value="">Default plan</option>
+                                        {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.isDefault ? ' (default)' : ''}</option>)}
+                                    </select>
+                                </div>
+                                <LimitField label="Max nodes" value={maxNodes} onChange={setMaxNodes} />
+                                <LimitField label="Traffic combined (GB/mo)" value={tCombined} onChange={setTCombined} />
+                                <LimitField label="Traffic edge (GB/mo)" value={tEdge} onChange={setTEdge} />
+                                <LimitField label="Traffic relay (GB/mo)" value={tRelay} onChange={setTRelay} />
+                                <div className="flex items-center justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={savePlan}
+                                        disabled={savingPlan || !limitsValid}
+                                        className="btn btn-primary btn-sm disabled:opacity-40"
+                                    >
+                                        {savingPlan ? 'Saving…' : 'Save plan & limits'}
+                                    </button>
+                                </div>
+                            </section>
                         </>
                     )}
                 </div>
@@ -1038,6 +1106,23 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                     <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+function LimitField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+    const ok = value === '' || /^\d+$/.test(value);
+    return (
+        <div className="flex items-center gap-3">
+            <label className="input-label w-48 shrink-0">{label}</label>
+            <input
+                type="number"
+                min={0}
+                value={value}
+                onChange={e => onChange(e.target.value)}
+                placeholder="use plan"
+                className={`input-field input-mono w-40 ${ok ? '' : 'border-(--error)'}`}
+            />
         </div>
     );
 }

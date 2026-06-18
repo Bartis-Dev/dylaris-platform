@@ -219,6 +219,7 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
+	planID, _ := h.state.Store.GetUserPlanID(userID)
 	get := func(key, def string) string {
 		if v, _ := h.state.Store.GetSetting(key); v != "" {
 			return v
@@ -230,11 +231,16 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 		"status":      b.Status,
 		"graceUntil":  b.GraceUntil,
 		"suspendedAt": b.SuspendedAt,
+		"planId":      planID,
 		"overrides": map[string]interface{}{
-			"gracePeriod":   b.GracePeriod,
-			"r2Retention":   b.R2Retention,
-			"nodeRetention": b.NodeRetention,
-			"r2QuotaGb":     b.R2QuotaGB,
+			"gracePeriod":       b.GracePeriod,
+			"r2Retention":       b.R2Retention,
+			"nodeRetention":     b.NodeRetention,
+			"r2QuotaGb":         b.R2QuotaGB,
+			"maxNodes":          b.MaxNodes,
+			"trafficEdgeGb":     b.TrafficEdgeGB,
+			"trafficRelayGb":    b.TrafficRelayGB,
+			"trafficCombinedGb": b.TrafficCombinedGB,
 		},
 		"defaults": map[string]interface{}{
 			"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),

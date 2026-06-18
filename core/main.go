@@ -302,6 +302,7 @@ func main() {
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	usageHandler := handlers.NewUsageHandler(appState)
 	billingHandler := handlers.NewBillingHandler(appState)
+	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
@@ -500,6 +501,14 @@ func main() {
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(billingHandler.GetUserBilling)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(billingHandler.SetBillingStatus)).Methods("PATCH")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(billingHandler.SetBillingOverrides)).Methods("PATCH")
+
+	// --- BYON plans + per-user plan/limit overrides (admin) ---
+	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(plansHandler.List)).Methods("GET")
+	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(plansHandler.Create)).Methods("POST")
+	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(plansHandler.Update)).Methods("PUT")
+	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(plansHandler.Delete)).Methods("DELETE")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/plan", authHandler.AuthMiddleware(plansHandler.SetUserPlan)).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(plansHandler.SetUserLimitOverrides)).Methods("PATCH")
 
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")

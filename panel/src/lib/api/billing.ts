@@ -12,13 +12,17 @@ export interface BillingSettings {
     paymentUrl: string;
 }
 
-// Per-user retention overrides. Empty string on a spec / null on the quota means
-// "use the platform default". A quota of 0 means unlimited for this user.
+// Per-user retention + limit overrides. Empty string on a spec / null on a numeric
+// field means "use the plan / platform default". A 0 means unlimited for this user.
 export interface UserBillingOverrides {
     gracePeriod: string;
     r2Retention: string;
     nodeRetention: string;
     r2QuotaGb: number | null;
+    maxNodes: number | null;
+    trafficEdgeGb: number | null;
+    trafficRelayGb: number | null;
+    trafficCombinedGb: number | null;
 }
 
 // Admin read of a single tenant's billing state plus the platform defaults the
@@ -28,6 +32,7 @@ export interface UserBillingAdmin {
     status: BillingStatus;
     graceUntil?: string | null;
     suspendedAt?: string | null;
+    planId?: number | null;
     overrides: UserBillingOverrides;
     defaults: { gracePeriod: string; r2Retention: string; nodeRetention: string; r2QuotaGb: string };
     message?: string;
@@ -79,8 +84,17 @@ export async function getUserBilling(userId: string): Promise<UserBillingAdmin> 
     } catch (err) { return handleError(err) as any; }
 }
 
+// RetentionOverridesInput is the subset the /billing-overrides endpoint accepts
+// (the limit overrides go to /limit-overrides via setUserLimitOverrides).
+export interface RetentionOverridesInput {
+    gracePeriod: string;
+    r2Retention: string;
+    nodeRetention: string;
+    r2QuotaGb: number | null;
+}
+
 // Admin: set a tenant's per-user retention overrides (empty string / null clears one).
-export async function setUserBillingOverrides(userId: string, o: UserBillingOverrides): Promise<{ success: boolean; message?: string }> {
+export async function setUserBillingOverrides(userId: string, o: RetentionOverridesInput): Promise<{ success: boolean; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/users/${userId}/billing-overrides`, {
             method: 'PATCH',
