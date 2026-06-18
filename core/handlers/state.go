@@ -46,6 +46,11 @@ type AppState struct {
 	// computes auto cpusets for per-server CPU pinning.
 	CPUPinning *services.CPUPinningService
 
+	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
+	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the
+	// leader-gated worker progresses expired grace windows. Nil-safe in callers.
+	Billing *services.BillingLifecycleService
+
 	// DBType is the normalized database backend ("timescaledb" or "postgres"),
 	// set from config at boot. The status page uses it to distinguish an
 	// intended plain-postgres deployment from a misconfigured timescale one.

@@ -136,6 +136,13 @@ func main() {
 	trafficAggregator.SetLeader(coreLeader)
 	trafficAggregator.Start(context.Background())
 
+	// Billing lifecycle — leader-gated. Progresses past_due tenants whose grace
+	// window has elapsed into suspended (stops servers, keeps data). Payment-
+	// provider-agnostic; handlers/webhooks call EnterPastDue/Reactivate/Suspend.
+	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, cfg.FrontendURL)
+	appState.Billing.SetLeader(coreLeader)
+	appState.Billing.Start(context.Background())
+
 	// DNS reconciler — leader-gated. Points each region's edge wildcard A record
 	// at the live edge IPs via the DNS provider. Off unless DNS_UPDATER_ENABLED
 	// and provider credentials are set; credentials live only here, never on edges.
@@ -283,6 +290,7 @@ func main() {
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	usageHandler := handlers.NewUsageHandler(appState)
+	billingHandler := handlers.NewBillingHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
@@ -474,6 +482,10 @@ func main() {
 	// --- Username history + account policy ---
 	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
 	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(usageHandler.GetAllUsage)).Methods("GET")
+
+	api.HandleFunc("/me/billing", authHandler.AuthMiddleware(billingHandler.GetMyBilling)).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(billingHandler.SetBillingStatus)).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(billingHandler.SetBillingOverrides)).Methods("PATCH")
 
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")

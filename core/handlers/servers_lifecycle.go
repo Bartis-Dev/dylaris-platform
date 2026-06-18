@@ -632,6 +632,16 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// BYON billing suspend: a suspended tenant keeps read access but cannot
+	// start/restart their servers until payment is settled (an operator can
+	// reactivate). past_due (grace) is unaffected. Admins bypass.
+	if (req.Action == "start" || req.Action == "restart") && !isAdmin {
+		if b, err := h.state.Store.GetUserBilling(srv.OwnerID); err == nil && b.Status == "suspended" {
+			sendJSONError(w, "Account suspended for non-payment. Settle payment to start your servers.", 403)
+			return
+		}
+	}
+
 	// Install cooldown: 30s after setup/reinstall the node sets a Redis key
 	// with TTL so the freshly-installed server can boot to a stable state
 	// without a foot-gun start/stop/kill during world generation. The same

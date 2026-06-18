@@ -60,6 +60,7 @@ type Store interface {
 	SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error
 	SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string) error
 	ListUserBillingByStatus(status string) ([]UserBilling, error)
+	ListServersByOwner(ownerID string) ([]models.Server, error)
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error

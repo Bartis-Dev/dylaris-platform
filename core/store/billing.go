@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"dylaris-core/models"
 	"time"
 )
 
@@ -85,6 +86,26 @@ func (s *PostgresStore) SetUserBillingOverrides(userID, gracePeriod, r2Retention
 			updated_at     = NOW()`,
 		userID, gracePeriod, r2Retention, nodeRetention)
 	return err
+}
+
+// ListServersByOwner returns the servers a tenant owns (id, uuid, status,
+// node_id), used by the billing lifecycle to stop a suspended tenant's servers
+// without pulling the full server columns.
+func (s *PostgresStore) ListServersByOwner(ownerID string) ([]models.Server, error) {
+	rows, err := s.db.Query(`SELECT id, uuid, status, node_id FROM servers WHERE owner_id = $1`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Server
+	for rows.Next() {
+		var srv models.Server
+		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Status, &srv.NodeID); err != nil {
+			return nil, err
+		}
+		out = append(out, srv)
+	}
+	return out, rows.Err()
 }
 
 // ListUserBillingByStatus returns every tenant in a given lifecycle status. Used
