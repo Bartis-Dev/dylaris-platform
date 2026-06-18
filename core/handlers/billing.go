@@ -83,6 +83,66 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": req.Status})
 }
 
+// GetBillingSettings GET /api/admin/settings/billing — the platform default
+// grace + retention windows and the payment URL the banner links to.
+func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	get := func(key, def string) string {
+		if v, _ := h.state.Store.GetSetting(key); v != "" {
+			return v
+		}
+		return def
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
+		"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
+		"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
+		"paymentUrl":    get(services.BillingPaymentURLKey, ""),
+	})
+}
+
+// SetBillingSettings PUT /api/admin/settings/billing — write the platform
+// defaults. Retention specs are validated; the payment URL is free-form.
+func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		GracePeriod   string `json:"gracePeriod"`
+		R2Retention   string `json:"r2Retention"`
+		NodeRetention string `json:"nodeRetention"`
+		PaymentUrl    string `json:"paymentUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	for _, spec := range []string{req.GracePeriod, req.R2Retention, req.NodeRetention} {
+		if !services.ValidRetentionSpec(spec) {
+			sendJSONError(w, "Invalid retention spec (use e.g. 3d, 2w, 3m)", http.StatusBadRequest)
+			return
+		}
+	}
+	writes := map[string]string{
+		services.BillingGracePeriodKey:   req.GracePeriod,
+		services.BillingR2RetentionKey:   req.R2Retention,
+		services.BillingNodeRetentionKey: req.NodeRetention,
+		services.BillingPaymentURLKey:    req.PaymentUrl,
+	}
+	for k, v := range writes {
+		if err := h.state.Store.SetSetting(k, v); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
 // SetBillingOverrides PATCH /api/admin/users/{id}/billing-overrides — per-user
 // retention overrides. An empty spec clears the override (falls back to the
 // platform default).

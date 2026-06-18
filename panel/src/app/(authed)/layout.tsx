@@ -9,6 +9,7 @@ import Navbar from '@/components/Navbar';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import ProfilePopup from '@/components/ProfilePopup';
 import MaintenanceBanner from '@/components/MaintenanceBanner';
+import BillingBanner from '@/components/BillingBanner';
 import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
@@ -63,6 +64,8 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
             {/* Global maintenance banner. Renders nothing when off. */}
             <MaintenanceBanner />
+            {/* Non-dismissible billing banner for past_due/suspended tenants. */}
+            <BillingBanner />
             {/* Top Navbar */}
             <div className="relative z-30 shrink-0">
                 <Navbar>

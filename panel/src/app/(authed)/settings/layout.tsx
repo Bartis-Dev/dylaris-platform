@@ -29,6 +29,7 @@ const ALL_TABS = [
     { slug: 'gateway', label: 'Gateway', always: true },
     { slug: 'warp', label: 'Warp', always: true },
     { slug: 'usage', label: 'Usage', always: true },
+    { slug: 'billing', label: 'Billing', always: true },
     { slug: 'backups', label: 'Backups', always: true },
     { slug: 'maintenance', label: 'Maintenance', always: true },
     { slug: 'database', label: 'Database', always: true },

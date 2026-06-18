@@ -484,6 +484,8 @@ func main() {
 	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(usageHandler.GetAllUsage)).Methods("GET")
 
 	api.HandleFunc("/me/billing", authHandler.AuthMiddleware(billingHandler.GetMyBilling)).Methods("GET")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(billingHandler.GetBillingSettings)).Methods("GET")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(billingHandler.SetBillingSettings)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(billingHandler.SetBillingStatus)).Methods("PATCH")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(billingHandler.SetBillingOverrides)).Methods("PATCH")
 
