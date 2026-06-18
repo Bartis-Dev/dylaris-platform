@@ -9,6 +9,7 @@ import {
 import { regionLabel, regionFlag } from '../lib/regions';
 import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu } from 'lucide-react';
 import CpuPinningControl from './CpuPinningControl';
+import { useAppData } from '@/lib/AppDataContext';
 
 interface StoragePathInfo {
     path: string;
@@ -42,10 +43,17 @@ interface CreateServerWizardProps {
 }
 
 export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = true }: CreateServerWizardProps) {
+    // Admins get the full scheduling wizard (assign owner, any node, tags,
+    // regions). A BYON tenant gets a slimmed flow: owner is themselves, and only
+    // their own nodes are selectable (getNodes already scopes the list to them).
+    const { user } = useAppData();
+    const isAdmin = !!user?.isAdmin;
+
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [users, setUsers] = useState<User[]>([]);
     const [nodes, setNodes] = useState<Node[]>([]);
+    const [nodesLoaded, setNodesLoaded] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
 
     const [nodeId, setNodeId] = useState("");
@@ -84,13 +92,24 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         setSelectedRegion(''); setAvailableRegions([]);
         setAutoMove(false);
         setCpuMode('shared'); setCpuset('');
+        setNodesLoaded(false);
 
-        getUsers().then(res => {
-            if (res.success && res.users) {
-                setUsers(res.users);
-                if (res.users.length > 0) setOwnerId(res.users[0].id);
-            }
-        });
+        // Owner assignment + tag/region scheduling are admin-only. A tenant owns
+        // what they create, so skip the (admin-only) user list and pin the owner
+        // to themselves.
+        if (isAdmin) {
+            getUsers().then(res => {
+                if (res.success && res.users) {
+                    setUsers(res.users);
+                    if (res.users.length > 0) setOwnerId(res.users[0].id);
+                }
+            });
+            getAvailableRegions().then(res => {
+                if (res.success) setAvailableRegions(res.regions || []);
+            });
+        } else if (user?.id) {
+            setOwnerId(user.id);
+        }
 
         getNodes().then(res => {
             if (res.success && res.nodes) {
@@ -98,17 +117,14 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 const online = res.nodes.filter((n: Node) => n.status === 'online');
                 if (online.length > 0) setNodeId(String(online[0].id));
             }
-        });
-
-        getAvailableRegions().then(res => {
-            if (res.success) setAvailableRegions(res.regions || []);
-        });
-    }, [isOpen]);
+        }).finally(() => setNodesLoaded(true));
+    }, [isOpen, isAdmin, user?.id]);
 
     // Region changed → reload the tag list scoped to that region so admins
-    // can't pick a tag that doesn't exist for the chosen region.
+    // can't pick a tag that doesn't exist for the chosen region. Admin-only:
+    // tenants never see the tag/region scheduler.
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen || !isAdmin) return;
         getAvailableTags(selectedRegion || undefined).then(res => {
             if (res.success) {
                 const tags = res.tags || [];
@@ -117,7 +133,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 setSelectedTags(prev => prev.filter(t => tags.includes(t)));
             }
         });
-    }, [isOpen, selectedRegion]);
+    }, [isOpen, isAdmin, selectedRegion]);
 
     // Scheduler preview: ask which node would be picked whenever region,
     // tags, or resource shape changes. Surfaces the choice + reason in the
@@ -158,6 +174,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     }, [nodeId]);
 
     const onlineNodes = useMemo(() => nodes.filter(n => n.status === 'online'), [nodes]);
+
+    // A tenant with no online node of their own can't self-create a server: show
+    // the "add a node" upsell instead of an empty picker. Admins never hit this.
+    const showNoNodeMsg = !isAdmin && nodesLoaded && onlineNodes.length === 0;
 
     const filteredNodes = useMemo(() =>
         onlineNodes.filter(n =>
@@ -246,11 +266,24 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
                 {/* Body */}
                 <div className="modal-body overflow-y-auto flex-1 p-8">
+                    {showNoNodeMsg ? (
+                        <div className="flex flex-col items-center justify-center text-center gap-3 py-12 px-6">
+                            <div className="w-14 h-14 rounded-xl bg-(--base-03) flex items-center justify-center">
+                                <Server size={26} className="text-(--accent-light)" />
+                            </div>
+                            <h3 className="text-lg font-display font-bold text-(--base-09)">No nodes yet</h3>
+                            <p className="text-sm text-(--base-06) max-w-sm">
+                                To host a server you need your own node. Adding a node requires a subscription.
+                            </p>
+                            <p className="text-xs text-(--base-05) italic">Renting a managed server is coming soon.</p>
+                        </div>
+                    ) : (
                     <form onSubmit={(e) => e.preventDefault()}>
 
                         {step === 1 && (
                             <div className="space-y-5 animate-fade-in">
-                                {/* Region pills */}
+                                {/* Region pills (admin scheduling only) */}
+                                {isAdmin && (
                                 <section className="space-y-2">
                                     <div className="flex items-center gap-2">
                                         <MapPin size={14} className="text-(--accent-light)" />
@@ -298,9 +331,11 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         </div>
                                     )}
                                 </section>
+                                )}
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {/* Left: Owner */}
+                                <div className={`grid grid-cols-1 gap-6 ${isAdmin ? 'md:grid-cols-2' : ''}`}>
+                                {/* Left: Owner (admin assigns; a tenant owns what they create) */}
+                                {isAdmin && (
                                 <section className="space-y-2 min-h-80 flex flex-col">
                                     <div className="flex items-center justify-between border-b border-(--base-03) pb-2 min-h-9">
                                         <h3 className="text-base font-display font-bold text-(--base-09)">Assign Owner</h3>
@@ -347,11 +382,14 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         )}
                                     </div>
                                 </section>
+                                )}
 
-                                {/* Right: Target (Node | Tag) */}
+                                {/* Right: Target. Tenants only ever pick a node;
+                                    the Node|Tag scheduler toggle is admin-only. */}
                                 <section className="space-y-2 min-h-80 flex flex-col">
                                     <div className="flex items-center justify-between border-b border-(--base-03) pb-2 min-h-9">
                                         <h3 className="text-base font-display font-bold text-(--base-09)">Target</h3>
+                                        {isAdmin && (
                                         <div className="flex bg-(--base-03) p-0.5 rounded-md">
                                             <button
                                                 type="button"
@@ -368,6 +406,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 <TagIcon size={11} /> Tag
                                             </button>
                                         </div>
+                                        )}
                                     </div>
 
                                     {targetMode === 'node' && (
@@ -663,10 +702,18 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                             </div>
                         )}
                     </form>
+                    )}
                 </div>
 
                 {/* Footer */}
                 <div className="modal-footer">
+                    {showNoNodeMsg ? (
+                        <>
+                            <div></div>
+                            <button onClick={onClose} className="btn btn-secondary">Close</button>
+                        </>
+                    ) : (
+                    <>
                     {step > 1 ? (
                         <button onClick={() => setStep(step - 1)} className="btn btn-secondary">Back</button>
                     ) : (
@@ -695,6 +742,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                         >
                             {loading ? 'Creating...' : 'CREATE SERVER'} <Rocket size={18} className="ml-1" />
                         </button>
+                    )}
+                    </>
                     )}
                 </div>
             </div>

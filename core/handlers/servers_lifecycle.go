@@ -69,13 +69,24 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// BYON placement scoping: a tenant may only deploy on their OWN nodes or on a
-	// platform node. Gated by feature_byon_enabled, so with BYON off this is a
-	// no-op and placement behaves as today. Auto-placement is already owner-scoped
-	// above; this gate covers the explicit-nodeId path and is belt-and-suspenders.
+	// BYON placement scoping: a tenant may only deploy on their OWN node. Gated by
+	// feature_byon_enabled, so with BYON off this is a no-op and placement behaves
+	// as today. Auto-placement is already owner-scoped above; this gate covers the
+	// explicit-nodeId path and is belt-and-suspenders.
 	if byonActive(h.state, r) && !canPlaceOnNode(h.state, r, node) {
 		sendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
 		return
+	}
+
+	// BYON abuse guard: cap the number of servers a tenant can stack on one of
+	// their own nodes. The limit protects the shared control plane (every
+	// container is a DB row + Redis keys + heartbeat/stats work), not the node's
+	// own hardware. Scales with the node's thread count. Admins are exempt.
+	if byonActive(h.state, r) && !IsAdmin(r) {
+		if reached, capN := h.byonNodeServerCapReached(r.Context(), node); reached {
+			sendJSONError(w, fmt.Sprintf("This node's server limit (%d) is reached. Stop/delete a server or add another node.", capN), http.StatusForbidden)
+			return
+		}
 	}
 
 	// Non-admins can only create servers they own. Only admins may set an
@@ -1112,6 +1123,46 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 	}
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "migration queued"})
+}
+
+// byonNodeServerFallbackCap bounds servers-per-node when the node has not yet
+// reported its CPU topology (so we can't scale by thread count). Generous enough
+// not to block a legitimate first few servers, low enough to stop runaway abuse.
+const byonNodeServerFallbackCap = 16
+
+// byonNodeServerCapReached reports whether a tenant has hit the per-node server
+// cap on one of their own BYON nodes, plus the resolved cap (for the message).
+// Cap = factor x logical threads (setting byon.max_servers_per_core, default 2);
+// when the topology is unknown it falls back to a fixed ceiling. Fail-open on a
+// store error so a transient DB blip never blocks a legitimate create.
+func (h *ServerHandler) byonNodeServerCapReached(ctx context.Context, node *models.Node) (bool, int) {
+	factor := 2
+	if v, _ := h.state.Store.GetSetting("byon.max_servers_per_core"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			factor = n
+		}
+	}
+
+	cores := 0
+	if h.state.CPUPinning != nil {
+		if topo, _ := h.state.CPUPinning.GetNodeTopology(ctx, node.Token); topo != nil {
+			cores = topo.LogicalCount
+			if cores == 0 {
+				cores = len(topo.Cores)
+			}
+		}
+	}
+
+	capN := factor * cores
+	if capN <= 0 {
+		capN = byonNodeServerFallbackCap // topology not reported yet
+	}
+
+	count, err := h.state.Store.CountServersByNode(node.ID)
+	if err != nil {
+		return false, capN // fail-open: never block on a store error
+	}
+	return count >= capN, capN
 }
 
 // GetMigrationStatus GET /api/servers/{id}/migration-status

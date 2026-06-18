@@ -41,10 +41,10 @@ type PickNodeRequest struct {
 	CPUCores float64  `json:"cpuCores"`
 	DiskGB   int      `json:"diskGb"`
 
-	// OwnerScope, when non-nil, restricts placement to nodes the tenant may use:
-	// platform nodes (owner_id nil) or nodes owned by this user id. Set internally
-	// by CreateServer for a non-admin caller in BYON mode so the scheduler never
-	// picks a foreign node only to be rejected by the placement gate. The admin
+	// OwnerScope, when non-nil, restricts placement to nodes OWNED by this user id
+	// (their own BYON nodes only — platform nodes are excluded for self-service).
+	// Set internally by CreateServer for a non-admin caller in BYON mode so the
+	// scheduler never picks a node the placement gate would reject. The admin
 	// preview endpoint leaves it nil (sees every node). Not JSON-decoded.
 	OwnerScope *string `json:"-"`
 }
@@ -131,10 +131,11 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 		if n.IsExternal() && !gatewayOn {
 			continue
 		}
-		// BYON: a tenant may only auto-place on a platform node (owner nil) or
-		// their own node. Mirrors canPlaceOnNode so the pick can't be rejected
-		// downstream for ownership.
-		if req.OwnerScope != nil && n.OwnerID != nil && *n.OwnerID != *req.OwnerScope {
+		// BYON: a tenant may only auto-place on THEIR OWN node. Platform nodes
+		// (owner nil) are operator-only for self-service; tenants reach them via
+		// the rented-server path instead. Mirrors canPlaceOnNode so the pick can't
+		// be rejected downstream for ownership.
+		if req.OwnerScope != nil && (n.OwnerID == nil || *n.OwnerID != *req.OwnerScope) {
 			continue
 		}
 		if req.NodeID > 0 && n.ID != req.NodeID {
