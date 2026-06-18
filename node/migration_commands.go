@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -131,7 +133,11 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 // and extracts it into a locally-selected storage path. It does NOT allocate a
 // host port or start the container — the orchestrator sends a normal start
 // afterwards, which recreates the container from the extracted .node_config.json.
-func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, sourceNodeID, token, expectedSha256 string) {
+// migrationProbeTimeout bounds each LAN-candidate reachability probe so a
+// same-LAN move stays within a few seconds before falling back to the overlay.
+const migrationProbeTimeout = 2 * time.Second
+
+func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, sourceNodeID, token, expectedSha256 string, sourcePrivateIPs []string) {
 	if sourceNodeID == "" || token == "" || expectedSha256 == "" {
 		log.Printf("migrate_in %s: missing sourceNodeID/token/expectedSha256", serverUUID)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", "missing migrate_in parameters")
@@ -157,7 +163,19 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		return
 	}
 
-	url := fmt.Sprintf("http://%s/migration", endpoint)
+	// Choose where to pull from. With no LAN IPs (platform moves) this is exactly
+	// today's behavior: the overlay endpoint, no probe. For BYON moves we probe
+	// the source's LAN IPs first and pull directly over the LAN when reachable,
+	// so a same-LAN transfer never hairpins through the warp overlay. The chosen
+	// host's full download is still SHA256-verified, so a wrong host can't corrupt.
+	chosen := endpoint
+	if len(sourcePrivateIPs) > 0 {
+		if picked := chooseMigrationHost(ctx, migrationCandidates(endpoint, sourcePrivateIPs), token); picked != "" {
+			chosen = picked
+		}
+	}
+
+	url := fmt.Sprintf("http://%s/migration", chosen)
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_in %s: pulling from %s", serverUUID, url)
 	if err := migration.Pull(ctx, url, token, expectedSha256, tmpZip, 3); err != nil {
@@ -184,6 +202,55 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 
 	setMigrationStatus(ctx, rdb, serverUUID, "transferred", "")
 	log.Printf("migrate_in %s: transferred into %s", serverUUID, targetDir)
+}
+
+// migrationCandidates returns host:port endpoints to try, LAN IPs first then the
+// overlay endpoint, deduped. The LAN IPs reuse the overlay endpoint's port (the
+// migration server listens on all interfaces on a single port).
+func migrationCandidates(overlayEndpoint string, privateIPs []string) []string {
+	port := "25522"
+	if _, p, err := net.SplitHostPort(overlayEndpoint); err == nil && p != "" {
+		port = p
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(hp string) {
+		if hp != "" && !seen[hp] {
+			seen[hp] = true
+			out = append(out, hp)
+		}
+	}
+	for _, ip := range privateIPs {
+		add(net.JoinHostPort(ip, port))
+	}
+	add(overlayEndpoint)
+	return out
+}
+
+// chooseMigrationHost probes each candidate with a short HEAD request (bearer
+// token) and returns the first that answers 200. Empty when none responded
+// within the per-candidate budget; the caller then uses the overlay endpoint.
+func chooseMigrationHost(ctx context.Context, candidates []string, token string) string {
+	for _, hp := range candidates {
+		url := fmt.Sprintf("http://%s/migration", hp)
+		cctx, cancel := context.WithTimeout(ctx, migrationProbeTimeout)
+		req, err := http.NewRequestWithContext(cctx, http.MethodHead, url, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			return hp
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
+	return ""
 }
 
 // handleMigrateCleanup (source side) removes the staged archive and the

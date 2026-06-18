@@ -137,7 +137,7 @@ func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, ser
 // pulls the staged archive from sourceNodeID using token, verifies it against
 // expectedSha256, and extracts it. The move parameters ride as top-level fields
 // (matching the node's NodeCommand shape), not inside Config.
-func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string) error {
+func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, sourcePrivateIPs []string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateInCmd struct {
@@ -146,13 +146,18 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 		SourceNodeID   string                 `json:"sourceNodeId"`
 		MigrateToken   string                 `json:"migrateToken"`
 		ExpectedSha256 string                 `json:"expectedSha256"`
+		// SourcePrivateIPs are the source node's LAN host IPs. When set (BYON
+		// transfers), the target probes them first so a same-LAN move pulls
+		// directly over the LAN instead of hairpinning through the warp overlay.
+		SourcePrivateIPs []string `json:"sourcePrivateIps,omitempty"`
 	}
 	cmd := migrateInCmd{
-		Action:         "migrate_in",
-		Config:         map[string]interface{}{"uuid": serverUUID},
-		SourceNodeID:   sourceNodeID,
-		MigrateToken:   token,
-		ExpectedSha256: expectedSha256,
+		Action:           "migrate_in",
+		Config:           map[string]interface{}{"uuid": serverUUID},
+		SourceNodeID:     sourceNodeID,
+		MigrateToken:     token,
+		ExpectedSha256:   expectedSha256,
+		SourcePrivateIPs: sourcePrivateIPs,
 	}
 
 	jsonData, err := json.Marshal(cmd)

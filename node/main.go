@@ -112,6 +112,9 @@ type NodeCommand struct {
 	SourceNodeID   string `json:"sourceNodeId,omitempty"`
 	MigrateToken   string `json:"migrateToken,omitempty"`
 	ExpectedSha256 string `json:"expectedSha256,omitempty"`
+	// SourcePrivateIPs: the source node's LAN IPs to probe before the overlay
+	// (BYON same-LAN fast path). Empty = overlay-only (platform moves).
+	SourcePrivateIPs []string `json:"sourcePrivateIps,omitempty"`
 }
 
 func main() {
@@ -1091,7 +1094,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "migrate_in":
 		// Target side: pull the staged archive and extract it. No
 		// container start here — the orchestrator sends start next.
-		handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256)
+		handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.SourcePrivateIPs)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.

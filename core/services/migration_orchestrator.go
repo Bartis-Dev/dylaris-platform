@@ -317,7 +317,14 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	}
 	// sourceNodeID is the node ID as a string — the target resolves the pull
 	// endpoint via dylaris:migration:endpoint:<sourceNodeID>.
-	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256); err != nil {
+	// For BYON transfers (either node owned), also hand the target the source's
+	// LAN IPs so a same-LAN move pulls directly instead of hairpinning the warp
+	// overlay. Platform<->platform stays overlay-only (empty list).
+	var sourcePrivateIPs []string
+	if sourceNode.OwnerID != nil || targetNode.OwnerID != nil {
+		sourcePrivateIPs = sourceNode.PrivateIPs
+	}
+	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, sourcePrivateIPs); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
