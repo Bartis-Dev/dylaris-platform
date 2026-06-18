@@ -129,6 +129,13 @@ func main() {
 	sftpSync := services.NewSFTPSyncService(pgStore, redisClient)
 	sftpSync.Start()
 
+	// Traffic aggregator — leader-gated + BYON-gated. Turns the per-server byte
+	// counters edges + relays publish to Redis into per-tenant monthly rows in
+	// traffic_usage. No-op in solo/hoster mode (feature_byon_enabled off).
+	trafficAggregator := services.NewTrafficAggregator(pgStore, redisClient, appState.FeatureFlags)
+	trafficAggregator.SetLeader(coreLeader)
+	trafficAggregator.Start(context.Background())
+
 	// Auto-delete service — daily ticker scans inactive users,
 	// emails warnings, executes deletions per the auth.* settings. No-op
 	// unless the operator turns it on. Leader-gated so only one Core runs

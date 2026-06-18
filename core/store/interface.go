@@ -48,6 +48,12 @@ type Store interface {
 	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	DeleteNodeEnrollToken(id, userID string) error
+	// --- BYON traffic metering ---
+	TenantServerOwners() (map[string]string, error)
+	AddTrafficUsage(userID string, period time.Time, edgeBytes, relayBytes int64) error
+	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
+	GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error)
+	ListTrafficUsage(period time.Time) ([]TrafficUsage, error)
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error
