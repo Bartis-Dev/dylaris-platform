@@ -38,14 +38,22 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// pool. With both empty the scheduler considers every online node.
 	hasFilters := strings.TrimSpace(req.Region) != "" || len(req.Tags) > 0 || strings.TrimSpace(req.Tag) != ""
 	if nodeIDInt == 0 && hasFilters {
-		pick := (&PlacementHandler{state: h.state}).pickNode(r.Context(), PickNodeRequest{
+		pickReq := PickNodeRequest{
 			Region:   req.Region,
 			Tags:     req.Tags,
 			Tag:      req.Tag,
 			RAMMB:    req.Docker.RAM,
 			CPUCores: req.Docker.CPULimit,
 			DiskGB:   int(req.Docker.DiskLimit / 1024),
-		})
+		}
+		// BYON: scope auto-placement to nodes this tenant may use (platform or
+		// own), so the scheduler never picks a foreign node only to be rejected
+		// by the ownership gate below. No-op when BYON is off or caller is admin.
+		if byonActive(h.state, r) && !IsAdmin(r) {
+			uid := byonCallerID(r)
+			pickReq.OwnerScope = &uid
+		}
+		pick := (&PlacementHandler{state: h.state}).pickNode(r.Context(), pickReq)
 		if !pick.Success || pick.Picked == nil {
 			sendJSONError(w, "No node available: "+pick.Reason, http.StatusServiceUnavailable)
 			return
@@ -63,8 +71,8 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 
 	// BYON placement scoping: a tenant may only deploy on their OWN nodes or on a
 	// platform node. Gated by feature_byon_enabled, so with BYON off this is a
-	// no-op and placement behaves as today. (Auto-placement pickNode scoping by
-	// owner is a follow-up; this gate also rejects an auto-pick of a foreign node.)
+	// no-op and placement behaves as today. Auto-placement is already owner-scoped
+	// above; this gate covers the explicit-nodeId path and is belt-and-suspenders.
 	if byonActive(h.state, r) && !canPlaceOnNode(h.state, r, node) {
 		sendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
 		return

@@ -40,6 +40,13 @@ type PickNodeRequest struct {
 	RAMMB    int      `json:"ramMb"`
 	CPUCores float64  `json:"cpuCores"`
 	DiskGB   int      `json:"diskGb"`
+
+	// OwnerScope, when non-nil, restricts placement to nodes the tenant may use:
+	// platform nodes (owner_id nil) or nodes owned by this user id. Set internally
+	// by CreateServer for a non-admin caller in BYON mode so the scheduler never
+	// picks a foreign node only to be rejected by the placement gate. The admin
+	// preview endpoint leaves it nil (sees every node). Not JSON-decoded.
+	OwnerScope *string `json:"-"`
 }
 
 // NodeCandidate is one node considered for placement. `Available` means
@@ -122,6 +129,12 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 			continue
 		}
 		if n.IsExternal() && !gatewayOn {
+			continue
+		}
+		// BYON: a tenant may only auto-place on a platform node (owner nil) or
+		// their own node. Mirrors canPlaceOnNode so the pick can't be rejected
+		// downstream for ownership.
+		if req.OwnerScope != nil && n.OwnerID != nil && *n.OwnerID != *req.OwnerScope {
 			continue
 		}
 		if req.NodeID > 0 && n.ID != req.NodeID {
