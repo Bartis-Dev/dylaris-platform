@@ -735,20 +735,38 @@ export const getRoutingMode = () => fetchAPI('/settings/routing-mode');
 export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessMode }) =>
     fetchAPI('/settings/routing-mode', { method: 'POST', body: JSON.stringify(data) });
 
-// --- Warp (external/home node WireGuard bridge) ---
-export interface WarpSettings {
-    clientSubnet: string;
-    leaderEndpoint: string;
+// --- Warp (external/home node WireGuard bridge, multi-hub) ---
+// A region owns one WG identity (subnet + key); its leaders are interchangeable
+// endpoints. Clients fail over between a region's leaders without changing IP.
+export interface WarpLeaderView {
+    leaderId: string;
+    endpoint: string;
+    enabled: boolean;
+    alive: boolean;
+}
+export interface WarpRegionView {
+    region: string;
+    subnet: string;
+    enabled: boolean;
+    peerCount: number;
+    leaders: WarpLeaderView[] | null;
 }
 export interface MintWarpKeyInput {
     name: string;
     policy: 'fixed' | 'general';
     max_conns: number;
     on_new_conn: 'kill_old' | 'block';
+    region?: string; // "" = auto-assign at enroll (least-loaded live region)
 }
-export const getWarpSettings = () => fetchAPI('/warp/settings');
-export const saveWarpSettings = (data: WarpSettings) =>
-    fetchAPI('/warp/settings', { method: 'PUT', body: JSON.stringify(data) });
+export const getWarpRegions = () => fetchAPI('/warp/regions');
+export const upsertWarpRegion = (data: { region: string; subnet: string; enabled: boolean }) =>
+    fetchAPI('/warp/regions', { method: 'POST', body: JSON.stringify(data) });
+export const deleteWarpRegion = (region: string) =>
+    fetchAPI(`/warp/regions/${encodeURIComponent(region)}`, { method: 'DELETE' });
+export const upsertWarpLeader = (data: { leaderId: string; region: string; endpoint: string; enabled: boolean }) =>
+    fetchAPI('/warp/leaders', { method: 'POST', body: JSON.stringify(data) });
+export const deleteWarpLeader = (leaderId: string) =>
+    fetchAPI(`/warp/leaders/${encodeURIComponent(leaderId)}`, { method: 'DELETE' });
 export const mintWarpKey = (data: MintWarpKeyInput) =>
     fetchAPI('/admin/warp/keys', { method: 'POST', body: JSON.stringify(data) });
 
