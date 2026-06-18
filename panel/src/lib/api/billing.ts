@@ -6,6 +6,7 @@ export interface BillingSettings {
     gracePeriod: string;
     r2Retention: string;
     nodeRetention: string;
+    r2QuotaGb: string;
     paymentUrl: string;
 }
 

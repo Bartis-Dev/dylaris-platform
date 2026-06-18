@@ -62,6 +62,7 @@ type Store interface {
 	ListUserBillingByStatus(status string) ([]UserBilling, error)
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 	ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error)
+	BackupBytesByOwner(ownerID string) (int64, error)
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error

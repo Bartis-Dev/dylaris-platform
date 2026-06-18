@@ -234,6 +234,18 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("no storage available")
 	}
 
+	// R2 backup quota: skip the scheduled run once the tenant is at/over quota
+	// (0/unset = unlimited). The next_run is still advanced below so we don't
+	// re-check on a tight loop; the run resumes when usage drops or the limit rises.
+	if exceeded, used, quota := R2QuotaExceeded(b.store, srv.OwnerID); exceeded {
+		log.Printf("backup-scheduler: job %d skipped — quota reached (%d/%d GB)", job.ID, used/(1<<30), quota/(1<<30))
+		next := computeNextRun(job.Schedule, time.Now())
+		if next != nil {
+			b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
+		}
+		return nil
+	}
+
 	storageKey := fmt.Sprintf("backups/%s/job-%d/%s.tar.gz", srv.UUID, job.ID, time.Now().UTC().Format("20060102-150405"))
 	runID, err := b.store.CreateBackupRun(&models.BackupRun{
 		JobID:      job.ID,

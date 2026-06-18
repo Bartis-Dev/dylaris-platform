@@ -23,10 +23,14 @@ func applyBillingSchema(db *sql.DB) error {
 		grace_period   TEXT,
 		r2_retention   TEXT,
 		node_retention TEXT,
+		-- per-user R2 backup quota override in GB (NULL = platform default). 0 = unlimited.
+		r2_quota_gb    BIGINT,
 		updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`); err != nil {
 		return fmt.Errorf("billing: create user_billing: %w", err)
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_user_billing_status ON user_billing(status)`)
+	// Idempotent add for DBs created before the quota column existed.
+	db.Exec(`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS r2_quota_gb BIGINT`)
 	return nil
 }

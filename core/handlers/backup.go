@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	backupstorage "dylaris-core/storage/backup"
 
 	pbNode "dylaris-proto/node"
@@ -611,6 +612,12 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	srv, err := h.state.Store.GetServerByID(job.ServerID)
 	if err != nil {
 		return 0, fmt.Errorf("server not found: %w", err)
+	}
+	// R2 backup quota: refuse a new backup once the tenant is at/over quota
+	// (0/unset = unlimited, so solo/hoster is unaffected).
+	if exceeded, used, quota := services.R2QuotaExceeded(h.state.Store, srv.OwnerID); exceeded {
+		return 0, fmt.Errorf("backup quota reached (%d / %d GB used) — delete old backups or raise the limit",
+			used/(1024*1024*1024), quota/(1024*1024*1024))
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {

@@ -18,6 +18,7 @@ type UserBilling struct {
 	GracePeriod   string     `json:"gracePeriod,omitempty"`
 	R2Retention   string     `json:"r2Retention,omitempty"`
 	NodeRetention string     `json:"nodeRetention,omitempty"`
+	R2QuotaGB     *int64     `json:"r2QuotaGb,omitempty"` // per-user override; nil = platform default
 	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
@@ -27,7 +28,8 @@ func scanUserBilling(row interface {
 	var b UserBilling
 	var grace, susp sql.NullTime
 	var gp, r2, nr sql.NullString
-	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &b.UpdatedAt); err != nil {
+	var quota sql.NullInt64
+	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if grace.Valid {
@@ -39,6 +41,9 @@ func scanUserBilling(row interface {
 	b.GracePeriod = gp.String
 	b.R2Retention = r2.String
 	b.NodeRetention = nr.String
+	if quota.Valid {
+		b.R2QuotaGB = &quota.Int64
+	}
 	return &b, nil
 }
 
@@ -46,7 +51,7 @@ func scanUserBilling(row interface {
 // none exists.
 func (s *PostgresStore) GetUserBilling(userID string) (*UserBilling, error) {
 	row := s.db.QueryRow(`
-		SELECT user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, updated_at
+		SELECT user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, updated_at
 		FROM user_billing WHERE user_id = $1`, userID)
 	b, err := scanUserBilling(row)
 	if err == sql.ErrNoRows {
@@ -147,12 +152,28 @@ func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, e
 	return out, rows.Err()
 }
 
+// BackupBytesByOwner returns the current stored backup size (successful runs) for
+// a tenant. Used by the R2 quota gate before a new backup.
+func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
+	var total sql.NullInt64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(SUM(br.size_bytes), 0)
+		FROM backup_runs br
+		JOIN backup_jobs bj ON bj.id = br.job_id
+		JOIN servers s ON s.id = bj.server_id
+		WHERE s.owner_id = $1 AND br.status = 'success'`, ownerID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
 // ListUserBillingByStatus returns every tenant in a given lifecycle status. Used
 // by the leader-gated lifecycle worker to progress past_due -> suspended ->
 // retention cleanup.
 func (s *PostgresStore) ListUserBillingByStatus(status string) ([]UserBilling, error) {
 	rows, err := s.db.Query(`
-		SELECT user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, updated_at
+		SELECT user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, updated_at
 		FROM user_billing WHERE status = $1`, status)
 	if err != nil {
 		return nil, err

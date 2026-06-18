@@ -4,6 +4,7 @@ import (
 	"dylaris-core/services"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -101,6 +102,7 @@ func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Reque
 		"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
 		"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
 		"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
+		"r2QuotaGb":     get(services.BillingR2QuotaKey, "0"),
 		"paymentUrl":    get(services.BillingPaymentURLKey, ""),
 	})
 }
@@ -116,6 +118,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		GracePeriod   string `json:"gracePeriod"`
 		R2Retention   string `json:"r2Retention"`
 		NodeRetention string `json:"nodeRetention"`
+		R2QuotaGb     string `json:"r2QuotaGb"`
 		PaymentUrl    string `json:"paymentUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -128,10 +131,18 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	if req.R2QuotaGb == "" {
+		req.R2QuotaGb = "0"
+	}
+	if n, err := strconv.ParseInt(req.R2QuotaGb, 10, 64); err != nil || n < 0 {
+		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 = unlimited)", http.StatusBadRequest)
+		return
+	}
 	writes := map[string]string{
 		services.BillingGracePeriodKey:   req.GracePeriod,
 		services.BillingR2RetentionKey:   req.R2Retention,
 		services.BillingNodeRetentionKey: req.NodeRetention,
+		services.BillingR2QuotaKey:       req.R2QuotaGb,
 		services.BillingPaymentURLKey:    req.PaymentUrl,
 	}
 	for k, v := range writes {

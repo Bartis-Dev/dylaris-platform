@@ -9,6 +9,7 @@ import (
 	"dylaris-core/store"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,11 +22,43 @@ const (
 	BillingR2RetentionKey   = "billing.r2_retention"
 	BillingNodeRetentionKey = "billing.node_retention"
 	BillingPaymentURLKey    = "billing.payment_url"
+	BillingR2QuotaKey       = "billing.r2_quota_gb" // platform default, 0 = unlimited
 
 	DefaultGracePeriod   = "3d"
 	DefaultR2Retention   = "3m"
 	DefaultNodeRetention = "2w"
 )
+
+// R2QuotaExceeded reports whether a tenant is at or over their R2 backup quota.
+// Quota resolution: per-user override (user_billing.r2_quota_gb) wins, else the
+// platform setting (billing.r2_quota_gb), else 0 = unlimited. A 0/unset quota
+// never blocks (so solo/hoster and unmetered tenants are unaffected).
+func R2QuotaExceeded(st store.Store, ownerID string) (exceeded bool, usedBytes, quotaBytes int64) {
+	b, err := st.GetUserBilling(ownerID)
+	if err != nil {
+		return false, 0, 0
+	}
+	quotaGB := int64(-1)
+	if b.R2QuotaGB != nil {
+		quotaGB = *b.R2QuotaGB
+	}
+	if quotaGB < 0 {
+		if v, _ := st.GetSetting(BillingR2QuotaKey); v != "" {
+			if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
+				quotaGB = n
+			}
+		}
+	}
+	if quotaGB <= 0 {
+		return false, 0, 0 // unlimited / unset
+	}
+	quotaBytes = quotaGB * 1024 * 1024 * 1024
+	used, err := st.BackupBytesByOwner(ownerID)
+	if err != nil {
+		return false, 0, quotaBytes
+	}
+	return used >= quotaBytes, used, quotaBytes
+}
 
 // BillingLifecycleService runs the non-payment lifecycle: past_due (grace, all
 // running) -> suspended (services stopped, read access kept) -> retention cleanup
