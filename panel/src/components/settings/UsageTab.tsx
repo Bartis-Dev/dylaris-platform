@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getAllUsage, formatBytes, TrafficUsage } from '@/lib/api/usage';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
-import { Activity, FolderDown, HardDrive, Info } from 'lucide-react';
+import { Activity, FolderDown, HardDrive, Info, AlertTriangle } from 'lucide-react';
 
 // currentMonth returns YYYY-MM for the <input type="month"> default.
 function currentMonth(): string {
@@ -78,7 +78,8 @@ export default function UsageTab() {
                 <p className="text-sm text-(--base-07)">
                     Edge is billable player traffic. Relay is filebrowser transfer through the Beam relay,
                     and Backup is R2 storage held right now. Only servers on tenant-owned (BYON) nodes are
-                    metered; platform-owned nodes never appear here.
+                    metered; platform-owned nodes never appear here. A value shown as <span className="font-mono">used / limit</span> is
+                    capped by the tenant&apos;s plan; a red row is over its (warn-only) traffic limit and is not blocked.
                 </p>
             </div>
 
@@ -119,10 +120,10 @@ export default function UsageTab() {
                                         <div className="text-(--base-09)">{r.username || '(unknown)'}</div>
                                         <div className="font-mono text-[10px] text-(--base-05)">{r.userId.slice(0, 8)}</div>
                                     </td>
-                                    <Td right>{formatBytes(r.edgeBytes)}</Td>
-                                    <Td right>{formatBytes(r.relayBytes)}</Td>
-                                    <Td right>{formatBytes(r.backupBytes)}</Td>
-                                    <Td right strong>{formatBytes(r.edgeBytes + r.relayBytes)}</Td>
+                                    <UsageCell bytes={r.edgeBytes} limitGb={r.limits?.trafficEdgeGb} over={r.over?.edge} />
+                                    <UsageCell bytes={r.relayBytes} limitGb={r.limits?.trafficRelayGb} over={r.over?.relay} />
+                                    <UsageCell bytes={r.backupBytes} limitGb={r.limits?.r2QuotaGb} over={r.over?.r2} />
+                                    <UsageCell bytes={r.edgeBytes + r.relayBytes} limitGb={r.limits?.trafficCombinedGb} over={r.over?.combined} strong />
                                 </tr>
                             ))}
                         </tbody>
@@ -157,6 +158,20 @@ function Td({ children, right, strong }: { children: React.ReactNode; right?: bo
     return (
         <td className={`px-4 py-2.5 ${right ? 'text-right font-mono' : ''} ${strong ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
             {children}
+        </td>
+    );
+}
+
+// UsageCell shows a metered value, optionally against its plan limit, red + warn
+// when over (traffic limits are warn-only — display, not enforcement).
+function UsageCell({ bytes, limitGb, over, strong }: { bytes: number; limitGb?: number; over?: boolean; strong?: boolean }) {
+    return (
+        <td className={`px-4 py-2.5 text-right font-mono ${over ? 'text-(--error)' : strong ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
+            <span className="inline-flex items-center justify-end gap-1">
+                {over && <AlertTriangle size={12} />}
+                {formatBytes(bytes)}
+                {limitGb != null && limitGb > 0 && <span className="text-(--base-05)"> / {limitGb} GB</span>}
+            </span>
         </td>
     );
 }

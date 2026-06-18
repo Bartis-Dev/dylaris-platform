@@ -1,10 +1,38 @@
 package handlers
 
 import (
+	"dylaris-core/services"
+	"dylaris-core/store"
 	"encoding/json"
 	"net/http"
 	"time"
 )
+
+const usageGiB = int64(1024 * 1024 * 1024)
+
+// usageView inlines a tenant's metered usage and adds their effective limits plus
+// per-channel "over" warn flags (traffic is warn-only — these drive a UI banner,
+// not a block). A 0 limit means unlimited, so it never flags.
+type usageView struct {
+	*store.TrafficUsage
+	Limits services.Limits `json:"limits"`
+	Over   map[string]bool `json:"over"`
+}
+
+func (h *UsageHandler) viewFor(u *store.TrafficUsage) usageView {
+	lim, _ := services.EffectiveLimits(h.state.Store, u.UserID)
+	over := func(limGB, bytes int64) bool { return limGB > 0 && bytes > limGB*usageGiB }
+	return usageView{
+		TrafficUsage: u,
+		Limits:       lim,
+		Over: map[string]bool{
+			"edge":     over(lim.TrafficEdgeGB, u.EdgeBytes),
+			"relay":    over(lim.TrafficRelayGB, u.RelayBytes),
+			"combined": over(lim.TrafficCombinedGB, u.EdgeBytes+u.RelayBytes),
+			"r2":       over(lim.R2QuotaGB, u.BackupBytes),
+		},
+	}
+}
 
 // UsageHandler serves per-tenant traffic + storage usage for the BYON billing UI.
 // In solo/hoster mode nothing is metered, so reads return zero rows.
@@ -43,7 +71,7 @@ func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"usage":   u,
+		"usage":   h.viewFor(u),
 	})
 }
 
@@ -60,9 +88,13 @@ func (h *UsageHandler) GetAllUsage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
+	views := make([]usageView, 0, len(list))
+	for i := range list {
+		views = append(views, h.viewFor(&list[i]))
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"period":  period.Format("2006-01"),
-		"usage":   list,
+		"usage":   views,
 	})
 }

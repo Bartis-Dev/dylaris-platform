@@ -1,8 +1,26 @@
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
+// Effective limits the usage is measured against (0 = unlimited). GB.
+export interface UsageLimits {
+    maxNodes: number;
+    r2QuotaGb: number;
+    trafficEdgeGb: number;
+    trafficRelayGb: number;
+    trafficCombinedGb: number;
+}
+
+// Per-channel over-limit warn flags (traffic is warn-only — not blocked).
+export interface UsageOver {
+    edge: boolean;
+    relay: boolean;
+    combined: boolean;
+    r2: boolean;
+}
+
 // One tenant's metered usage for a billing month. edgeBytes is the billable
 // player traffic; relayBytes (filebrowser) and backupBytes (R2 storage) are
-// observability + future overage.
+// observability + future overage. limits/over are the effective plan/override
+// caps and the over-limit warn flags.
 export interface TrafficUsage {
     userId: string;
     username?: string;
@@ -11,6 +29,8 @@ export interface TrafficUsage {
     relayBytes: number;
     backupBytes: number;
     updatedAt: string;
+    limits?: UsageLimits;
+    over?: UsageOver;
 }
 
 // getMyUsage returns the caller's own usage for the current (or ?period) month.
