@@ -108,6 +108,45 @@ func (s *PostgresStore) ListServersByOwner(ownerID string) ([]models.Server, err
 	return out, rows.Err()
 }
 
+// BackupRunRef is the minimal handle the retention cleanup needs to delete a
+// stored backup: the run row id, its storage object key, and which storage
+// backend holds it.
+type BackupRunRef struct {
+	RunID      int
+	StorageKey string
+	StorageID  *int
+}
+
+// ListBackupRunsByOwner returns every backup run for the servers a tenant owns,
+// used by the billing retention cleanup to delete R2 objects + rows after the
+// r2_retention window.
+func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error) {
+	rows, err := s.db.Query(`
+		SELECT br.id, br.storage_key, bj.storage_id
+		FROM backup_runs br
+		JOIN backup_jobs bj ON bj.id = br.job_id
+		JOIN servers s ON s.id = bj.server_id
+		WHERE s.owner_id = $1`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BackupRunRef
+	for rows.Next() {
+		var ref BackupRunRef
+		var sid sql.NullInt64
+		if err := rows.Scan(&ref.RunID, &ref.StorageKey, &sid); err != nil {
+			return nil, err
+		}
+		if sid.Valid {
+			v := int(sid.Int64)
+			ref.StorageID = &v
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
 // ListUserBillingByStatus returns every tenant in a given lifecycle status. Used
 // by the leader-gated lifecycle worker to progress past_due -> suspended ->
 // retention cleanup.

@@ -139,7 +139,7 @@ func main() {
 	// Billing lifecycle — leader-gated. Progresses past_due tenants whose grace
 	// window has elapsed into suspended (stops servers, keeps data). Payment-
 	// provider-agnostic; handlers/webhooks call EnterPastDue/Reactivate/Suspend.
-	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, cfg.FrontendURL)
+	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL)
 	appState.Billing.SetLeader(coreLeader)
 	appState.Billing.Start(context.Background())
 

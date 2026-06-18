@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/mailer"
 	"dylaris-core/pkg/leader"
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 	"fmt"
 	"log"
@@ -32,13 +34,14 @@ const (
 type BillingLifecycleService struct {
 	store       store.Store
 	queue       *QueueService
+	registry    *nodegrpc.Registry // for backupstorage.Deps (node-local deletes)
 	frontendURL string
 	leader      leader.Election
 	interval    time.Duration
 }
 
-func NewBillingLifecycleService(s store.Store, q *QueueService, frontendURL string) *BillingLifecycleService {
-	return &BillingLifecycleService{store: s, queue: q, frontendURL: frontendURL, interval: time.Hour}
+func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegrpc.Registry, frontendURL string) *BillingLifecycleService {
+	return &BillingLifecycleService{store: s, queue: q, registry: registry, frontendURL: frontendURL, interval: time.Hour}
 }
 
 func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
@@ -78,6 +81,59 @@ func (s *BillingLifecycleService) runOnce(ctx context.Context) {
 		}
 		if err := s.Suspend(ctx, b.UserID); err != nil {
 			log.Printf("billing lifecycle: suspend %s: %v", b.UserID, err)
+		}
+	}
+
+	s.cleanupExpiredR2(ctx)
+	// NOTE: node-connection retention teardown (drop the warp tunnel + revoke the
+	// tenant's warp peers/keys after node_retention) is handled in the Warp
+	// multi-hub track, which adds the tenant-scoped warp queries + remove_peer
+	// command needed to disconnect a LIVE tunnel. Deleting enroll tokens alone
+	// would not drop an active tunnel, so it is intentionally not done here.
+}
+
+// cleanupExpiredR2 deletes the R2 backups of suspended tenants whose r2_retention
+// window has elapsed (measured from suspended_at). The user account + server
+// metadata are never touched — only the backup objects + their rows.
+func (s *BillingLifecycleService) cleanupExpiredR2(ctx context.Context) {
+	suspended, err := s.store.ListUserBillingByStatus("suspended")
+	if err != nil {
+		log.Printf("billing lifecycle: list suspended: %v", err)
+		return
+	}
+	now := time.Now()
+	for _, b := range suspended {
+		if b.SuspendedAt == nil {
+			continue
+		}
+		spec := s.effectiveSpec(b.R2Retention, BillingR2RetentionKey, DefaultR2Retention)
+		deadline, ok := AddRetention(*b.SuspendedAt, spec)
+		if !ok || now.Before(deadline) {
+			continue
+		}
+		s.deleteTenantBackups(ctx, b.UserID)
+	}
+}
+
+func (s *BillingLifecycleService) deleteTenantBackups(ctx context.Context, userID string) {
+	refs, err := s.store.ListBackupRunsByOwner(userID)
+	if err != nil {
+		log.Printf("billing lifecycle: list backups for %s: %v", userID, err)
+		return
+	}
+	deps := backupstorage.Deps{Registry: s.registry, NodeStore: s.store}
+	for _, ref := range refs {
+		if ref.StorageID != nil {
+			if storage, err := s.store.GetBackupStorage(*ref.StorageID); err == nil && storage != nil {
+				if provider, err := backupstorage.Open(ctx, storage, deps); err == nil {
+					if err := provider.Delete(ctx, ref.StorageKey); err != nil {
+						log.Printf("billing lifecycle: delete backup object %s: %v", ref.StorageKey, err)
+					}
+				}
+			}
+		}
+		if err := s.store.DeleteBackupRun(ref.RunID); err != nil {
+			log.Printf("billing lifecycle: delete backup run %d: %v", ref.RunID, err)
 		}
 	}
 }
