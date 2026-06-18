@@ -179,6 +179,9 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 		GracePeriod   string `json:"gracePeriod"`
 		R2Retention   string `json:"r2Retention"`
 		NodeRetention string `json:"nodeRetention"`
+		// R2QuotaGb is a pointer so null clears the override (use platform default)
+		// while an explicit 0 means "unlimited for this user".
+		R2QuotaGb *int64 `json:"r2QuotaGb"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -190,9 +193,54 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	if err := h.state.Store.SetUserBillingOverrides(userID, req.GracePeriod, req.R2Retention, req.NodeRetention); err != nil {
+	if req.R2QuotaGb != nil && *req.R2QuotaGb < 0 {
+		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 = unlimited)", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetUserBillingOverrides(userID, req.GracePeriod, req.R2Retention, req.NodeRetention, req.R2QuotaGb); err != nil {
 		sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// GetUserBilling GET /api/admin/users/{id}/billing — admin reads a tenant's full
+// lifecycle state (status + per-user retention overrides) plus the platform
+// defaults so the override modal can show "uses default" hints. Like GetMyBilling
+// it never 404s: a tenant with no row reads back as active with empty overrides.
+func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	userID := mux.Vars(r)["id"]
+	b, err := h.state.Store.GetUserBilling(userID)
+	if err != nil {
+		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		return
+	}
+	get := func(key, def string) string {
+		if v, _ := h.state.Store.GetSetting(key); v != "" {
+			return v
+		}
+		return def
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"status":      b.Status,
+		"graceUntil":  b.GraceUntil,
+		"suspendedAt": b.SuspendedAt,
+		"overrides": map[string]interface{}{
+			"gracePeriod":   b.GracePeriod,
+			"r2Retention":   b.R2Retention,
+			"nodeRetention": b.NodeRetention,
+			"r2QuotaGb":     b.R2QuotaGB,
+		},
+		"defaults": map[string]interface{}{
+			"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
+			"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
+			"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
+			"r2QuotaGb":     get(services.BillingR2QuotaKey, "0"),
+		},
+	})
 }

@@ -12,6 +12,27 @@ export interface BillingSettings {
     paymentUrl: string;
 }
 
+// Per-user retention overrides. Empty string on a spec / null on the quota means
+// "use the platform default". A quota of 0 means unlimited for this user.
+export interface UserBillingOverrides {
+    gracePeriod: string;
+    r2Retention: string;
+    nodeRetention: string;
+    r2QuotaGb: number | null;
+}
+
+// Admin read of a single tenant's billing state plus the platform defaults the
+// override fields fall back to (shown as placeholders in the UI).
+export interface UserBillingAdmin {
+    success: boolean;
+    status: BillingStatus;
+    graceUntil?: string | null;
+    suspendedAt?: string | null;
+    overrides: UserBillingOverrides;
+    defaults: { gracePeriod: string; r2Retention: string; nodeRetention: string; r2QuotaGb: string };
+    message?: string;
+}
+
 // getMyBilling returns the caller's lifecycle state for the banner.
 export async function getMyBilling(): Promise<{ success: boolean; status?: BillingStatus; graceUntil?: string | null; paymentUrl?: string }> {
     try {
@@ -50,8 +71,16 @@ export async function setUserBillingStatus(userId: string, status: BillingStatus
     } catch (err) { return handleError(err); }
 }
 
-// Admin: set a tenant's per-user retention overrides (empty string clears one).
-export async function setUserBillingOverrides(userId: string, o: { gracePeriod: string; r2Retention: string; nodeRetention: string }): Promise<{ success: boolean; message?: string }> {
+// Admin: read a tenant's full billing state + platform defaults for the modal.
+export async function getUserBilling(userId: string): Promise<UserBillingAdmin> {
+    try {
+        const res = await fetch(`${API_URL}/admin/users/${userId}/billing`, { headers: getAuthHeader() });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}
+
+// Admin: set a tenant's per-user retention overrides (empty string / null clears one).
+export async function setUserBillingOverrides(userId: string, o: UserBillingOverrides): Promise<{ success: boolean; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/users/${userId}/billing-overrides`, {
             method: 'PATCH',

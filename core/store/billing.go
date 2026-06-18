@@ -80,16 +80,19 @@ func (s *PostgresStore) SetUserBillingStatus(userID, status string, graceUntil, 
 
 // SetUserBillingOverrides upserts the per-user retention overrides, leaving the
 // status/timestamps untouched. An empty spec clears the override (NULL = default).
-func (s *PostgresStore) SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string) error {
+// r2QuotaGB is a pointer so the caller can distinguish "use platform default"
+// (nil -> NULL) from an explicit 0 ("unlimited for this user").
+func (s *PostgresStore) SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string, r2QuotaGB *int64) error {
 	_, err := s.db.Exec(`
-		INSERT INTO user_billing (user_id, grace_period, r2_retention, node_retention, updated_at)
-		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NOW())
+		INSERT INTO user_billing (user_id, grace_period, r2_retention, node_retention, r2_quota_gb, updated_at)
+		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), $5, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
 			grace_period   = NULLIF($2,''),
 			r2_retention   = NULLIF($3,''),
 			node_retention = NULLIF($4,''),
+			r2_quota_gb    = $5,
 			updated_at     = NOW()`,
-		userID, gracePeriod, r2Retention, nodeRetention)
+		userID, gracePeriod, r2Retention, nodeRetention, r2QuotaGB)
 	return err
 }
 

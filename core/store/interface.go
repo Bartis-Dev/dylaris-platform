@@ -58,7 +58,7 @@ type Store interface {
 	// --- BYON billing lifecycle ---
 	GetUserBilling(userID string) (*UserBilling, error)
 	SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error
-	SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string) error
+	SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string, r2QuotaGB *int64) error
 	ListUserBillingByStatus(status string) ([]UserBilling, error)
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 	ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error)

@@ -12,8 +12,15 @@ import {
     type AccountPolicy,
     type UsernameHistoryEntry,
 } from '@/lib/api/accountPolicy';
+import {
+    getUserBilling,
+    setUserBillingStatus,
+    setUserBillingOverrides,
+    type BillingStatus,
+    type UserBillingAdmin,
+} from '@/lib/api/billing';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package } from 'lucide-react';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
 
 interface UsersTabProps {
@@ -53,6 +60,9 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     // Username-history modal
     const [historyUser, setHistoryUser] = useState<{ id: string; username: string } | null>(null);
+
+    // Billing override modal (BYON lifecycle: status + per-user retention overrides)
+    const [billingUser, setBillingUser] = useState<{ id: string; username: string } | null>(null);
 
     // Role + permissions — edit modal
     const [editRole, setEditRole] = useState<'user' | 'support' | 'admin'>('user');
@@ -334,6 +344,13 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             title="Username history"
                                         >
                                             <HistoryIcon size={13} />
+                                        </button>
+                                        <button
+                                            onClick={() => setBillingUser({ id: u.id, username: u.username })}
+                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
+                                            title="Billing & retention (BYON)"
+                                        >
+                                            <CreditCard size={13} />
                                         </button>
                                         <button
                                             onClick={() => openSettings(u)}
@@ -728,6 +745,11 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             {historyUser && (
                 <UsernameHistoryModal user={historyUser} onClose={() => setHistoryUser(null)} />
             )}
+
+            {/* Billing override modal */}
+            {billingUser && (
+                <BillingOverrideModal user={billingUser} onClose={() => setBillingUser(null)} />
+            )}
         </div>
     );
 }
@@ -848,6 +870,189 @@ function UsernameHistoryModal({ user, onClose }: { user: { id: string; username:
                     <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Billing override modal (BYON lifecycle)
+// ─────────────────────────────────────────────
+// Admin surface for one tenant's billing: flip the lifecycle status (which has
+// side effects — past_due starts the grace window + dunning mail, suspended
+// stops their servers) and set per-user retention overrides that fall back to
+// the platform defaults shown as placeholders. Only meaningful when BYON is
+// enabled and the user owns nodes, but harmless to set ahead of time.
+const SPEC_RE = /^\d+[dwm]$/;
+
+function statusBadge(s: BillingStatus) {
+    const cls = s === 'suspended' ? 'badge badge-error' : s === 'past_due' ? 'badge badge-warning' : 'badge badge-neutral';
+    return <span className={cls}>{s.replace('_', ' ').toUpperCase()}</span>;
+}
+
+function BillingOverrideModal({ user, onClose }: { user: { id: string; username: string }; onClose: () => void }) {
+    const [data, setData] = useState<UserBillingAdmin | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [status, setStatus] = useState<BillingStatus>('active');
+    const [gp, setGp] = useState('');
+    const [r2, setR2] = useState('');
+    const [nr, setNr] = useState('');
+    const [quota, setQuota] = useState(''); // '' = use platform default
+    const [savingStatus, setSavingStatus] = useState(false);
+    const [savingOverrides, setSavingOverrides] = useState(false);
+    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+    useEffect(() => {
+        getUserBilling(user.id).then(d => {
+            if (d.success) {
+                setData(d);
+                setStatus(d.status);
+                setGp(d.overrides.gracePeriod || '');
+                setR2(d.overrides.r2Retention || '');
+                setNr(d.overrides.nodeRetention || '');
+                setQuota(d.overrides.r2QuotaGb == null ? '' : String(d.overrides.r2QuotaGb));
+            }
+            setLoading(false);
+        });
+    }, [user.id]);
+
+    const show = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3000); };
+
+    const specOk = (v: string) => v === '' || SPEC_RE.test(v);
+    const quotaOk = quota === '' || /^\d+$/.test(quota);
+    const overridesValid = specOk(gp) && specOk(r2) && specOk(nr) && quotaOk;
+
+    const applyStatus = async () => {
+        setSavingStatus(true);
+        const res = await setUserBillingStatus(user.id, status);
+        setSavingStatus(false);
+        show(res.success ? 'Status updated.' : (res.message || 'Failed.'), !!res.success);
+    };
+
+    const saveOverrides = async () => {
+        if (!overridesValid) { show('Use specs like 3d, 2w, 3m; quota is a whole number of GB.', false); return; }
+        setSavingOverrides(true);
+        const res = await setUserBillingOverrides(user.id, {
+            gracePeriod: gp,
+            r2Retention: r2,
+            nodeRetention: nr,
+            r2QuotaGb: quota === '' ? null : parseInt(quota, 10),
+        });
+        setSavingOverrides(false);
+        show(res.success ? 'Overrides saved.' : (res.message || 'Failed.'), !!res.success);
+    };
+
+    return (
+        <div className="modal-overlay animate-fade-in" onClick={onClose}>
+            <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                <div className="modal-header flex justify-between items-center">
+                    <h3 className="modal-title">Billing — {user.username}</h3>
+                    <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
+                        <X size={16} />
+                    </button>
+                </div>
+                <div className="modal-body max-h-[70vh] overflow-y-auto space-y-6">
+                    {loading || !data ? (
+                        <div className="space-y-3">
+                            <SkeletonText width="w-1/3" />
+                            <SkeletonText width="w-2/3" className="h-2" />
+                            <SkeletonText width="w-1/2" className="h-2" />
+                        </div>
+                    ) : (
+                        <>
+                            {/* Lifecycle status */}
+                            <section className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <label className="input-label">Lifecycle status</label>
+                                    {statusBadge(data.status)}
+                                </div>
+                                <p className="text-xs text-(--base-06)">
+                                    past due starts the grace window + dunning email; suspended stops the tenant&apos;s servers
+                                    (data and backups are kept). active reactivates without auto-starting servers.
+                                </p>
+                                {data.graceUntil && (
+                                    <p className="text-xs text-(--base-06)">Grace until {new Date(data.graceUntil).toLocaleString()}</p>
+                                )}
+                                {data.suspendedAt && (
+                                    <p className="text-xs text-(--base-06)">Suspended {new Date(data.suspendedAt).toLocaleString()}</p>
+                                )}
+                                <div className="flex items-center gap-2">
+                                    <select
+                                        value={status}
+                                        onChange={e => setStatus(e.target.value as BillingStatus)}
+                                        className="input-field w-44"
+                                    >
+                                        <option value="active">active</option>
+                                        <option value="past_due">past due</option>
+                                        <option value="suspended">suspended</option>
+                                    </select>
+                                    <button
+                                        type="button"
+                                        onClick={applyStatus}
+                                        disabled={savingStatus || status === data.status}
+                                        className="btn btn-secondary btn-sm disabled:opacity-40"
+                                    >
+                                        {savingStatus ? 'Applying…' : 'Apply status'}
+                                    </button>
+                                </div>
+                            </section>
+
+                            {/* Per-user retention overrides */}
+                            <section className="space-y-3 border-t border-(--base-04) pt-4">
+                                <div>
+                                    <label className="input-label">Retention overrides</label>
+                                    <p className="text-xs text-(--base-06) mt-0.5">Leave a field empty to use the platform default (shown faint).</p>
+                                </div>
+                                <OverrideField label="Grace period" value={gp} onChange={setGp} placeholder={data.defaults.gracePeriod} valid={specOk(gp)} />
+                                <OverrideField label="R2 backup retention" value={r2} onChange={setR2} placeholder={data.defaults.r2Retention} valid={specOk(r2)} />
+                                <OverrideField label="Node connection retention" value={nr} onChange={setNr} placeholder={data.defaults.nodeRetention} valid={specOk(nr)} />
+                                <div className="flex items-center gap-3">
+                                    <label className="input-label w-48 shrink-0">R2 quota (GB)</label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        value={quota}
+                                        onChange={e => setQuota(e.target.value)}
+                                        placeholder={data.defaults.r2QuotaGb === '0' ? 'default (unlimited)' : `default (${data.defaults.r2QuotaGb})`}
+                                        className={`input-field input-mono w-40 ${quotaOk ? '' : 'border-(--error)'}`}
+                                    />
+                                </div>
+                                <p className="text-xs text-(--base-05)">Quota 0 = unlimited for this user. Empty = platform default.</p>
+                                <div className="flex items-center justify-end gap-3">
+                                    {toast && (
+                                        <span className={`text-sm ${toast.ok ? 'text-(--success-light)' : 'text-(--error)'}`}>{toast.msg}</span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={saveOverrides}
+                                        disabled={savingOverrides || !overridesValid}
+                                        className="btn btn-primary btn-sm disabled:opacity-40"
+                                    >
+                                        {savingOverrides ? 'Saving…' : 'Save overrides'}
+                                    </button>
+                                </div>
+                            </section>
+                        </>
+                    )}
+                </div>
+                <div className="modal-footer">
+                    <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function OverrideField({ label, value, onChange, placeholder, valid }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; valid: boolean }) {
+    return (
+        <div className="flex items-center gap-3">
+            <label className="input-label w-48 shrink-0">{label}</label>
+            <input
+                type="text"
+                value={value}
+                onChange={e => onChange(e.target.value)}
+                placeholder={`default (${placeholder})`}
+                className={`input-field input-mono w-40 ${valid ? '' : 'border-(--error)'}`}
+            />
         </div>
     );
 }
