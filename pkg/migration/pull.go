@@ -23,6 +23,19 @@ import (
 // maxRetries additional times (so total attempts = maxRetries+1). Returns nil
 // only when the bytes on disk hash to the expected value.
 func Pull(ctx context.Context, url, token, expectedSha256, destPath string, maxRetries int) error {
+	return pull(ctx, url, token, expectedSha256, destPath, maxRetries)
+}
+
+// PullURL is Pull for a pre-signed URL (S3/R2): the URL itself carries the
+// auth in its query string, so NO Authorization header is sent (an extra header
+// can conflict with SigV4 query-string signing). Used by the migration R2
+// fallback path — the same streaming download + sha256 verification as Pull, so
+// a corrupted transfer never reaches Extract.
+func PullURL(ctx context.Context, url, expectedSha256, destPath string, maxRetries int) error {
+	return pull(ctx, url, "", expectedSha256, destPath, maxRetries)
+}
+
+func pull(ctx context.Context, url, token, expectedSha256, destPath string, maxRetries int) error {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
@@ -68,7 +81,11 @@ func pullOnce(ctx context.Context, url, token, destPath string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	// Empty token == pre-signed URL: auth rides in the query string, so omit the
+	// header (an empty/extra Authorization can break SigV4 query signing).
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

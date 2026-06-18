@@ -115,6 +115,11 @@ type NodeCommand struct {
 	// SourcePrivateIPs: the source node's LAN IPs to probe before the overlay
 	// (BYON same-LAN fast path). Empty = overlay-only (platform moves).
 	SourcePrivateIPs []string `json:"sourcePrivateIps,omitempty"`
+	// Pre-signed S3/R2 URLs for the cross-LAN BYON R2 transfer fallback:
+	// migrate_push_r2 uploads to PresignedPutURL, migrate_pull_r2 downloads from
+	// PresignedGetURL. The node never receives bucket credentials.
+	PresignedPutURL string `json:"presignedPutUrl,omitempty"`
+	PresignedGetURL string `json:"presignedGetUrl,omitempty"`
 }
 
 func main() {
@@ -1099,6 +1104,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
 		handleMigrateCleanup(ctx, rdb, storage, cmd.Config.UUID)
+
+	case "migrate_push_r2":
+		// Source side (cross-LAN BYON fallback): upload the staged archive to R2.
+		handleMigratePushR2(ctx, rdb, storage, cmd.Config.UUID, cmd.PresignedPutURL)
+
+	case "migrate_pull_r2":
+		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
+		handleMigratePullR2(ctx, rdb, storage, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256)
 
 	case "proxy_network_create":
 		// config.UUID identifies the proxy server. Idempotent.

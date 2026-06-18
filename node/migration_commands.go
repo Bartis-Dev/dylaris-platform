@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"dylaris-pkg/migration"
@@ -41,8 +43,11 @@ type migrationMeta struct {
 }
 
 // migrationStatus tracks a move's progress for core/orchestrator polling.
+// Phases: staged (source archived) | need_remote (target can't reach source LAN,
+// orchestrator should use the R2 fallback) | pushed (source uploaded to R2) |
+// transferred (target has the verified copy) | error.
 type migrationStatus struct {
-	Phase string `json:"phase"`           // staged | transferred | error
+	Phase string `json:"phase"`
 	Error string `json:"error,omitempty"` // populated only on phase=error
 }
 
@@ -154,6 +159,24 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		return
 	}
 
+	// Choose where to pull from BEFORE allocating any storage, so a cross-LAN
+	// BYON bail leaves nothing behind. Platform moves (no LAN IPs) pull over the
+	// overlay endpoint, no probe — exactly today's behavior. For BYON moves we
+	// probe the source's LAN IPs; reachable means a same-LAN move that pulls
+	// directly over the LAN. If the LAN is unreachable (cross-LAN) we deliberately
+	// do NOT hairpin the warp overlay — we report "need_remote" so the
+	// orchestrator falls back to the node-direct R2 transfer path instead.
+	chosen := endpoint
+	if len(sourcePrivateIPs) > 0 {
+		picked := chooseMigrationHost(ctx, lanCandidates(endpoint, sourcePrivateIPs), token)
+		if picked == "" {
+			log.Printf("migrate_in %s: source LAN unreachable, requesting R2 fallback", serverUUID)
+			setMigrationStatus(ctx, rdb, serverUUID, "need_remote", "")
+			return
+		}
+		chosen = picked
+	}
+
 	// Pick a target storage path by free space; this also creates <path>/<uuid>/
 	// and persists the storage Redis key, exactly like create/migrate_storage.
 	targetPath, err := storage.SelectStoragePath(serverUUID, "")
@@ -161,18 +184,6 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		log.Printf("migrate_in %s: cannot select storage path: %v", serverUUID, err)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf("storage selection failed: %v", err))
 		return
-	}
-
-	// Choose where to pull from. With no LAN IPs (platform moves) this is exactly
-	// today's behavior: the overlay endpoint, no probe. For BYON moves we probe
-	// the source's LAN IPs first and pull directly over the LAN when reachable,
-	// so a same-LAN transfer never hairpins through the warp overlay. The chosen
-	// host's full download is still SHA256-verified, so a wrong host can't corrupt.
-	chosen := endpoint
-	if len(sourcePrivateIPs) > 0 {
-		if picked := chooseMigrationHost(ctx, migrationCandidates(endpoint, sourcePrivateIPs), token); picked != "" {
-			chosen = picked
-		}
 	}
 
 	url := fmt.Sprintf("http://%s/migration", chosen)
@@ -204,26 +215,25 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	log.Printf("migrate_in %s: transferred into %s", serverUUID, targetDir)
 }
 
-// migrationCandidates returns host:port endpoints to try, LAN IPs first then the
-// overlay endpoint, deduped. The LAN IPs reuse the overlay endpoint's port (the
-// migration server listens on all interfaces on a single port).
-func migrationCandidates(overlayEndpoint string, privateIPs []string) []string {
+// lanCandidates returns the source's LAN host:port endpoints to probe, deduped.
+// The overlay endpoint is deliberately NOT included: a BYON move either pulls
+// over the LAN or falls back to R2, never hairpins the warp overlay. The LAN IPs
+// reuse the overlay endpoint's port (the migration server listens on all
+// interfaces on a single port).
+func lanCandidates(overlayEndpoint string, privateIPs []string) []string {
 	port := "25522"
 	if _, p, err := net.SplitHostPort(overlayEndpoint); err == nil && p != "" {
 		port = p
 	}
 	seen := map[string]bool{}
 	var out []string
-	add := func(hp string) {
-		if hp != "" && !seen[hp] {
+	for _, ip := range privateIPs {
+		hp := net.JoinHostPort(ip, port)
+		if !seen[hp] {
 			seen[hp] = true
 			out = append(out, hp)
 		}
 	}
-	for _, ip := range privateIPs {
-		add(net.JoinHostPort(ip, port))
-	}
-	add(overlayEndpoint)
 	return out
 }
 
@@ -279,4 +289,120 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 
 	storage.RemoveServerPath(serverUUID)
 	log.Printf("migrate_cleanup %s: source data removed", serverUUID)
+}
+
+// handleMigratePushR2 (source side) uploads the already-staged migration archive
+// to a pre-signed S3/R2 PUT URL. Used as the cross-LAN BYON fallback: when the
+// target cannot reach the source over the LAN it reports "need_remote" and the
+// orchestrator routes the transfer through R2 (node-direct, $0 egress, no warp
+// hairpin). The archive + its hash were already produced by migrate_out, so this
+// only re-uses that staged zip — no re-archiving. Reports phase "pushed".
+func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, putURL string) {
+	if putURL == "" {
+		log.Printf("migrate_push_r2 %s: missing presigned put url", serverUUID)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", "missing push_r2 url")
+		return
+	}
+	storagePath := storage.GetServerPath(serverUUID)
+	if storagePath == "" {
+		log.Printf("migrate_push_r2 %s: no storage path found", serverUUID)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", "storage path not found")
+		return
+	}
+	zipPath := stagedArchivePath(storagePath, serverUUID)
+	if stat, err := os.Stat(zipPath); err != nil || stat.IsDir() {
+		log.Printf("migrate_push_r2 %s: staged archive missing at %s", serverUUID, zipPath)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", "staged archive missing")
+		return
+	}
+
+	log.Printf("migrate_push_r2 %s: uploading staged archive to R2", serverUUID)
+	if err := putFilePresigned(ctx, putURL, zipPath); err != nil {
+		log.Printf("migrate_push_r2 %s: upload failed: %v", serverUUID, err)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf("r2 push failed: %v", err))
+		return
+	}
+
+	setMigrationStatus(ctx, rdb, serverUUID, "pushed", "")
+	log.Printf("migrate_push_r2 %s: uploaded to R2", serverUUID)
+}
+
+// handleMigratePullR2 (target side) downloads the migration archive from a
+// pre-signed S3/R2 GET URL, verifies its sha256 against the source's expected
+// hash, and extracts it. Mirrors handleMigrateIn exactly except the source is R2
+// instead of the source node's HTTP server. As with the LAN/overlay path, the
+// hash is checked BEFORE extract so a corrupted download never lands in the live
+// server directory. Reports phase "transferred" — identical to migrate_in, so
+// the orchestrator's cutover proceeds the same way.
+func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, getURL, expectedSha256 string) {
+	if getURL == "" || expectedSha256 == "" {
+		log.Printf("migrate_pull_r2 %s: missing getURL/expectedSha256", serverUUID)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", "missing pull_r2 parameters")
+		return
+	}
+
+	targetPath, err := storage.SelectStoragePath(serverUUID, "")
+	if err != nil {
+		log.Printf("migrate_pull_r2 %s: cannot select storage path: %v", serverUUID, err)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf("storage selection failed: %v", err))
+		return
+	}
+
+	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
+	log.Printf("migrate_pull_r2 %s: downloading from R2", serverUUID)
+	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3); err != nil {
+		log.Printf("migrate_pull_r2 %s: download failed: %v", serverUUID, err)
+		os.Remove(tmpZip)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf("r2 pull failed: %v", err))
+		return
+	}
+
+	targetDir := filepath.Join(targetPath, serverUUID)
+	if err := migration.Extract(tmpZip, targetDir); err != nil {
+		log.Printf("migrate_pull_r2 %s: extract failed: %v", serverUUID, err)
+		os.Remove(tmpZip)
+		os.RemoveAll(targetDir)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf("extract failed: %v", err))
+		return
+	}
+	os.Remove(tmpZip)
+
+	setMigrationStatus(ctx, rdb, serverUUID, "transferred", "")
+	log.Printf("migrate_pull_r2 %s: transferred into %s", serverUUID, targetDir)
+}
+
+// putFilePresigned uploads a local file to a pre-signed PUT URL. The file is
+// already on disk so its size is known up front (no temp re-staging like the
+// backup path). The single-PUT 5 GiB cap (S3/R2 limit) is enforced clearly
+// rather than silently truncating; larger transfers need multipart-presigned.
+func putFilePresigned(ctx context.Context, url, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open staged archive: %w", err)
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	size := stat.Size()
+	if size > presignedPutMaxSize {
+		return fmt.Errorf("staged archive %d bytes exceeds the 5 GiB single-upload limit", size)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, f)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = size
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("presigned put: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("presigned put status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }

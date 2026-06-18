@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
 	"dylaris-pkg/migration"
@@ -85,6 +86,11 @@ const (
 	migrationStopTimeout       = 90 * time.Second
 	migrationStageTimeout      = 5 * time.Minute  // archiving GBs on the source
 	migrationTransferTimeout   = 30 * time.Minute // multi-GB transfer to target
+	// migrationR2PhaseTimeout bounds each leg (upload, then download) of the
+	// cross-LAN BYON R2 fallback. Longer than the LAN/overlay transfer because a
+	// BYON home uplink is slow; still capped so one stuck transfer can't block the
+	// serialized migration queue indefinitely. Within the BYON presign TTL (6h).
+	migrationR2PhaseTimeout = 1 * time.Hour
 	migrationStartTimeout      = 90 * time.Second // best-effort online confirm
 	migrationPollInterval      = 2 * time.Second
 	migrationTokenTTL          = 15 * time.Minute
@@ -329,7 +335,20 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "transferred", migrationTransferTimeout); phase != "transferred" {
+	// migrate_in reports "transferred" on success, or "need_remote" when this is
+	// a BYON move and the target cannot reach the source over the LAN. In the
+	// latter case we transfer through R2 (node-direct, no warp hairpin) instead.
+	phase, nerr := o.waitForNodePhaseAny(ctx, srv.UUID, map[string]bool{"transferred": true, "need_remote": true}, migrationTransferTimeout)
+	if phase == "need_remote" {
+		log.Printf("migration %s: source LAN unreachable, falling back to R2 transfer", srv.UUID)
+		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, meta.SHA256); err != nil {
+			// Still pre-cutover: node_id unchanged, source authoritative — roll back.
+			log.Printf("migration %s: R2 transfer failed: %v", srv.UUID, err)
+			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "r2 transfer failed: "+err.Error())
+			return
+		}
+		// R2 transfer verified the archive on the target — fall through to cutover.
+	} else if phase != "transferred" {
 		// Target self-cleans its partial (Wave 2b). node_id is NOT yet changed,
 		// so the source remains authoritative — safe to roll back.
 		log.Printf("migration %s: transfer failed (phase=%s, err=%s)", srv.UUID, phase, nerr)
@@ -522,6 +541,106 @@ func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, serverUUID
 		case <-ticker.C:
 		}
 	}
+}
+
+// waitForNodePhaseAny is waitForNodePhase for a SET of acceptable terminal
+// phases. It returns as soon as the node reports any phase in `accept` (or
+// "error", with its message), or the timeout elapses. Used by migrate_in, which
+// can end in either "transferred" (got the copy) or "need_remote" (BYON LAN
+// unreachable, use the R2 fallback).
+func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, serverUUID string, accept map[string]bool, timeout time.Duration) (string, string) {
+	key := fmt.Sprintf("dylaris:migration:%s:status", serverUUID)
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(migrationPollInterval)
+	defer ticker.Stop()
+
+	lastPhase := ""
+	for {
+		raw, err := o.redis.Get(ctx, key).Result()
+		if err == nil && raw != "" {
+			var st struct {
+				Phase string `json:"phase"`
+				Error string `json:"error,omitempty"`
+			}
+			if json.Unmarshal([]byte(raw), &st) == nil {
+				lastPhase = st.Phase
+				if accept[st.Phase] {
+					return st.Phase, ""
+				}
+				if st.Phase == "error" {
+					return st.Phase, st.Error
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return lastPhase, "timed out"
+		}
+		select {
+		case <-ctx.Done():
+			return lastPhase, "context cancelled"
+		case <-ticker.C:
+		}
+	}
+}
+
+// transferViaR2 is the cross-LAN BYON fallback transport. The source uploads its
+// already-staged archive to a temporary R2 object (pre-signed PUT) and the target
+// downloads it (pre-signed GET), verifies the sha256, and extracts — node-direct,
+// $0 egress, no warp hairpin, and the two nodes never need to be reachable to
+// each other. The transfer object is temporary (NOT a backup_run, so it never
+// counts against the tenant's R2 quota) and is deleted when we're done, success
+// or fail. On success the target has reported "transferred" exactly like
+// migrate_in, so the caller proceeds to the normal cutover.
+func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, expectedSha256 string) error {
+	bs, err := o.store.GetDefaultBackupStorage()
+	if err != nil {
+		return fmt.Errorf("resolve backup storage: %w", err)
+	}
+	if bs == nil || bs.Provider != "s3" {
+		return fmt.Errorf("cross-LAN BYON transfer requires an S3/R2 backup storage (none configured)")
+	}
+	prov, err := backupstorage.Open(ctx, bs, backupstorage.Deps{})
+	if err != nil {
+		return fmt.Errorf("open backup storage: %w", err)
+	}
+
+	// One stable key per server (migrations are serialized, so no collision).
+	key := fmt.Sprintf("migration-transfer/%s.zip", srv.UUID)
+	// Use the BYON presign TTL (longer) since at least one leg is a slow home link.
+	ttl := presignTTL(o.store, true)
+	putURL, err := prov.UploadURL(ctx, key, ttl)
+	if err != nil || putURL == "" {
+		return fmt.Errorf("presign put url: %v", err)
+	}
+	getURL, err := prov.DownloadURL(ctx, key, ttl)
+	if err != nil || getURL == "" {
+		return fmt.Errorf("presign get url: %v", err)
+	}
+	// Always remove the temporary transfer object — on success it's redundant once
+	// the target has it, on failure we must not leak it. Background ctx so a
+	// cancelled migration still cleans up.
+	defer func() {
+		if derr := prov.Delete(context.Background(), key); derr != nil {
+			log.Printf("migration %s: R2 transfer object cleanup failed (%s): %v", srv.UUID, key, derr)
+		}
+	}()
+
+	// Source uploads its staged archive to R2.
+	if err := o.queue.SendMigratePushR2Command(ctx, sourceNode.Token, srv.UUID, putURL); err != nil {
+		return fmt.Errorf("queue migrate_push_r2: %w", err)
+	}
+	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
+		return fmt.Errorf("source R2 upload failed (phase=%s): %s", phase, nerr)
+	}
+
+	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".
+	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256); err != nil {
+		return fmt.Errorf("queue migrate_pull_r2: %w", err)
+	}
+	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
+		return fmt.Errorf("target R2 download failed (phase=%s): %s", phase, nerr)
+	}
+	return nil
 }
 
 // nodeMeta mirrors the node-owned dylaris:migration:<uuid>:meta JSON.

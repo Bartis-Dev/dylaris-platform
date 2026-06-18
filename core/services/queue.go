@@ -168,6 +168,60 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 	return err
 }
 
+// SendMigratePushR2Command queues a migrate_push_r2 command (cross-LAN BYON
+// fallback). The source node uploads its already-staged archive to the pre-signed
+// PUT URL and reports phase "pushed". The URL carries its own auth, so the node
+// never receives bucket credentials.
+func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, serverUUID, putURL string) error {
+	stream := nodeCmdStream(nodeToken)
+
+	type migratePushR2Cmd struct {
+		Action          string                 `json:"action"`
+		Config          map[string]interface{} `json:"config"`
+		PresignedPutURL string                 `json:"presignedPutUrl"`
+	}
+	cmd := migratePushR2Cmd{
+		Action:          "migrate_push_r2",
+		Config:          map[string]interface{}{"uuid": serverUUID},
+		PresignedPutURL: putURL,
+	}
+
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrate_push_r2 command: %w", err)
+	}
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
+}
+
+// SendMigratePullR2Command queues a migrate_pull_r2 command (cross-LAN BYON
+// fallback). The target node downloads from the pre-signed GET URL, verifies the
+// archive against expectedSha256, extracts it, and reports phase "transferred" —
+// the same terminal phase as migrate_in, so cutover proceeds identically.
+func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, getURL, expectedSha256 string) error {
+	stream := nodeCmdStream(nodeToken)
+
+	type migratePullR2Cmd struct {
+		Action          string                 `json:"action"`
+		Config          map[string]interface{} `json:"config"`
+		PresignedGetURL string                 `json:"presignedGetUrl"`
+		ExpectedSha256  string                 `json:"expectedSha256"`
+	}
+	cmd := migratePullR2Cmd{
+		Action:          "migrate_pull_r2",
+		Config:          map[string]interface{}{"uuid": serverUUID},
+		PresignedGetURL: getURL,
+		ExpectedSha256:  expectedSha256,
+	}
+
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrate_pull_r2 command: %w", err)
+	}
+	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
+	return err
+}
+
 // SendMigrateCleanupCommand queues a migrate_cleanup (auto-move) command. The
 // source node deletes the staged archive and the original server directory.
 // Sent only after the target confirms transfer; the orchestrator owns ordering.
