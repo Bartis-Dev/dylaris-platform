@@ -49,6 +49,16 @@ type Config struct {
 	// as the target. Read by the migration/backup/restore handler — live
 	// runtime queries always target the main DB.
 	ExternalTicketDBURL string
+
+	// DNS updater — leader-gated reconciler that points each region's edge
+	// wildcard A record (e.g. *.eu.dylaris.com) at the live edge IPs in that
+	// region via the DNS provider. Off unless DNS_UPDATER_ENABLED=true AND the
+	// provider credentials are present. Credentials live ONLY in Core, never on
+	// the edges.
+	DNSUpdaterEnabled bool
+	DNSProvider       string // "cloudflare"
+	CFAPIToken        string
+	CFZoneID          string
 }
 
 func LoadConfig() (Config, error) {
@@ -65,6 +75,8 @@ func LoadConfig() (Config, error) {
 	if coreID == "" {
 		coreID, _ = os.Hostname()
 	}
+
+	dnsUpdaterEnabled, _ := strconv.ParseBool(getEnv("DNS_UPDATER_ENABLED", "false"))
 
 	cfg := Config{
 		APIPort:       getEnv("API_PORT", "25500"),
@@ -93,6 +105,11 @@ func LoadConfig() (Config, error) {
 		RedisDB:   redisDB,
 
 		ExternalTicketDBURL: getEnv("EXTERNAL_TICKET_DB_URL", ""),
+
+		DNSUpdaterEnabled: dnsUpdaterEnabled,
+		DNSProvider:       getEnv("DNS_PROVIDER", "cloudflare"),
+		CFAPIToken:        getSecret("CF_API_TOKEN", ""),
+		CFZoneID:          getEnv("CF_ZONE_ID", ""),
 	}
 
 	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET

@@ -136,6 +136,19 @@ func main() {
 	trafficAggregator.SetLeader(coreLeader)
 	trafficAggregator.Start(context.Background())
 
+	// DNS reconciler — leader-gated. Points each region's edge wildcard A record
+	// at the live edge IPs via the DNS provider. Off unless DNS_UPDATER_ENABLED
+	// and provider credentials are set; credentials live only here, never on edges.
+	if cfg.DNSUpdaterEnabled {
+		if provider := services.NewCloudflareProvider(cfg.CFAPIToken, cfg.CFZoneID); provider != nil {
+			dnsReconciler := services.NewDNSReconciler(redisClient, provider)
+			dnsReconciler.SetLeader(coreLeader)
+			dnsReconciler.Start(context.Background())
+		} else {
+			log.Println("DNS updater enabled but Cloudflare credentials missing (CF_API_TOKEN / CF_ZONE_ID) — skipping")
+		}
+	}
+
 	// Auto-delete service — daily ticker scans inactive users,
 	// emails warnings, executes deletions per the auth.* settings. No-op
 	// unless the operator turns it on. Leader-gated so only one Core runs

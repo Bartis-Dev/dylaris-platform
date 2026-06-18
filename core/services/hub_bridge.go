@@ -31,7 +31,13 @@ type GatewayEdgeInfo struct {
 	ServicePort string         `json:"service_port"`
 	SplicePort  string         `json:"splice_port"`
 	Status      string         `json:"status"`
-	Stats       *EdgeLiveStats `json:"stats,omitempty"`
+	// Region + Wildcard are advertised by regional edges for the DNS updater.
+	// Region groups edges (eu/us); Wildcard is the A-record name the reconciler
+	// points at this region's edge IPs (e.g. "*.eu.dylaris.com"). Empty on edges
+	// not configured for multi-region DNS.
+	Region   string         `json:"region,omitempty"`
+	Wildcard string         `json:"wildcard,omitempty"`
+	Stats    *EdgeLiveStats `json:"stats,omitempty"`
 }
 
 // EdgeLiveStats mirrors the EdgeMetrics payload published by the Edge service
