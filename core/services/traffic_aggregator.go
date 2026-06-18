@@ -117,6 +117,34 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 			a.redis.Set(ctx, su.key, su.val, trafficSeenTTL)
 		}
 	}
+
+	a.snapshotBackupStorage(owners, period)
+}
+
+// snapshotBackupStorage overwrites each tenant's R2 backup-storage gauge for the
+// period. Unlike traffic (a cumulative flow), storage is a current total, so it
+// is set, not added — and tenants whose backups dropped to 0 are explicitly
+// reset, which is why every known tenant is written, not just those with backups.
+func (a *TrafficAggregator) snapshotBackupStorage(owners map[string]string, period time.Time) {
+	byTenant, err := a.store.TenantBackupBytes()
+	if err != nil {
+		log.Printf("traffic aggregator: backup storage lookup: %v", err)
+		return
+	}
+	// Union of tenants that own a server and tenants that still hold backups
+	// (a tenant can keep backups after deleting every server).
+	tenants := map[string]struct{}{}
+	for _, tenant := range owners {
+		tenants[tenant] = struct{}{}
+	}
+	for tenant := range byTenant {
+		tenants[tenant] = struct{}{}
+	}
+	for tenant := range tenants {
+		if err := a.store.SetTrafficBackupBytes(tenant, period, byTenant[tenant]); err != nil {
+			log.Printf("traffic aggregator: set backup bytes for %s: %v", tenant, err)
+		}
+	}
 }
 
 // collect scans one counter family, attributes each server's new bytes to its

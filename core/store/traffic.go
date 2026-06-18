@@ -44,6 +44,36 @@ func (s *PostgresStore) TenantServerOwners() (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// TenantBackupBytes returns the current stored backup size per tenant (user id),
+// summing successful backup runs for servers on tenant-owned nodes. This is a
+// storage gauge (what is held in R2 right now), not a flow, so the aggregator
+// overwrites the snapshot each tick. Tenants with no backups are absent from the
+// map; the caller resets those to 0.
+func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
+	rows, err := s.db.Query(`
+		SELECT n.owner_id, COALESCE(SUM(br.size_bytes), 0)
+		FROM backup_runs br
+		JOIN backup_jobs bj ON bj.id = br.job_id
+		JOIN servers s ON s.id = bj.server_id
+		JOIN nodes n ON n.id = s.node_id
+		WHERE n.owner_id IS NOT NULL AND br.status = 'success'
+		GROUP BY n.owner_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var owner string
+		var total int64
+		if err := rows.Scan(&owner, &total); err != nil {
+			return nil, err
+		}
+		out[owner] = total
+	}
+	return out, rows.Err()
+}
+
 // AddTrafficUsage adds (not sets) byte deltas onto a tenant's current-period row,
 // creating it on first write. The aggregator computes deltas from monotonic
 // Redis counters, so this accumulates the running monthly total.

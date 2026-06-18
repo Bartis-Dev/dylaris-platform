@@ -50,6 +50,7 @@ type Store interface {
 	DeleteNodeEnrollToken(id, userID string) error
 	// --- BYON traffic metering ---
 	TenantServerOwners() (map[string]string, error)
+	TenantBackupBytes() (map[string]int64, error)
 	AddTrafficUsage(userID string, period time.Time, edgeBytes, relayBytes int64) error
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
 	GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error)
