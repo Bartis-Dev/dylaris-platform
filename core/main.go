@@ -801,6 +801,8 @@ func main() {
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.MoveServer))).Methods("POST")
 	// Tenant-facing transfer (BYON) — gateway-only; owner-or-admin + placement authz inside.
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.TransferServer))).Methods("POST")
+	// Demo flag (admin) — mark a normal server as a public read-only showcase.
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/demo", authHandler.AuthMiddleware(serverHandler.SetServerDemo)).Methods("PATCH")
 	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(serverHandler.GetMigrationStatus)).Methods("GET")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")

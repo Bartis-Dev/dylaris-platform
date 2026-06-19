@@ -76,9 +76,22 @@ func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) int64 
 	return defaultVal
 }
 
-// getServerUUID extracts and validates the server_uuid query param.
-// Non-admin users must own the server with that UUID.
+// getServerUUID extracts and validates the server_uuid query param for a WRITE
+// or download operation. Non-admin users must own the server or be invited with
+// the "files" permission. Demo viewers are denied here (read-only).
 func (h *FileHandler) getServerUUID(r *http.Request) (string, error) {
+	return h.resolveServerUUID(r, false)
+}
+
+// getServerUUIDRead is getServerUUID for read-only operations (list + view file
+// content). It additionally allows any authenticated user to READ a demo server,
+// so a logged-out-of-everything account can still browse the showcase. Write and
+// download endpoints keep using the strict getServerUUID.
+func (h *FileHandler) getServerUUIDRead(r *http.Request) (string, error) {
+	return h.resolveServerUUID(r, true)
+}
+
+func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool) (string, error) {
 	uuid := r.URL.Query().Get("server_uuid")
 	if uuid == "" {
 		uuid = r.FormValue("server_uuid")
@@ -102,6 +115,9 @@ func (h *FileHandler) getServerUUID(r *http.Request) (string, error) {
 	// Honor invited-member permissions, not just ownership: a user invited to
 	// this server with the "files" permission may use the file browser.
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
+		if allowDemoRead && isDemoServer(h.state.Store, uuid) {
+			return uuid, nil // read-only demo access
+		}
 		return "", fmt.Errorf("access denied")
 	}
 	return uuid, nil
@@ -130,7 +146,7 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	if pathParam == "" {
 		pathParam = "/"
 	}
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUIDRead(r)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -189,7 +205,7 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 // GetFileContentHandler handles requests to read the content of a file
 func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUIDRead(r)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return

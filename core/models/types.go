@@ -360,6 +360,10 @@ type Server struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 	Role         string          `json:"role,omitempty"`
 	Permissions  *TabPermissions `json:"permissions,omitempty"`
+	// IsDemo is set at response time (not a DB column) when this server is on the
+	// admin's demo list. Non-owner viewers get read-only access; the panel uses
+	// this to render a read-only badge and suppress write affordances.
+	IsDemo bool `json:"isDemo,omitempty"`
 }
 
 // TabPermissions defines per-tab access rights for invited users

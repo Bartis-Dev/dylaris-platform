@@ -11,7 +11,7 @@ import { DynamicIcon } from '@/lib/icons';
 import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
-    getInstallCooldown, moveServer, transferServer, getMigrationStatus, type MigrationStatus, type Node,
+    getInstallCooldown, moveServer, transferServer, setServerDemo, getMigrationStatus, type MigrationStatus, type Node,
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
 import { getNodes } from '@/lib/api/resources';
@@ -324,6 +324,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
         setMoveBusy(false);
     };
+    // Admin: flag this server as a public read-only demo (or unflag it).
+    const handleToggleDemo = async () => {
+        try {
+            await setServerDemo(selectedServer.id, !selectedServer.isDemo);
+            refreshServers();
+        } catch { /* ignore */ }
+    };
+
     const handleSaveResources = async () => {
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
         await updateServerResources(
@@ -419,7 +427,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
     };
 
-    const isOwner = selectedServer.role !== 'invited' && selectedServer.role !== 'inherited';
+    // 'demo' is a read-only viewer role (showcase server the user does not own),
+    // so it is NOT an owner — keep it out of every owner-gated control.
+    const isOwner = selectedServer.role !== 'invited' && selectedServer.role !== 'inherited' && selectedServer.role !== 'demo';
+    const isDemoView = selectedServer.role === 'demo';
     const perms = selectedServer.permissions;
 
     // Who may move this server to another node. Admins always (any mode); a BYON
@@ -482,10 +493,17 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         ) : (
                             <div className="flex items-center gap-2 bg-(--base-03)/40 border border-(--base-04) rounded-md px-3 py-1">
                                 <h1 className="text-xl font-bold font-display text-(--base-09) tracking-wide">{selectedServer.name}</h1>
-                                <button onClick={handleStartEditName} className="text-(--base-06) hover:text-(--base-09) transition-colors">
-                                    <Pencil size={16} />
-                                </button>
+                                {!isDemoView && (
+                                    <button onClick={handleStartEditName} className="text-(--base-06) hover:text-(--base-09) transition-colors">
+                                        <Pencil size={16} />
+                                    </button>
+                                )}
                             </div>
+                        )}
+                        {isDemoView && (
+                            <span className="mono-label bg-(--accent-ghost) border border-(--accent-border) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1">
+                                Demo · read-only
+                            </span>
                         )}
                         {selectedServer.activeSubServer && (
                             <span className="mono-label bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07)">
@@ -951,6 +969,32 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 <label className="input-label">Storage Limit (GB)</label>
                                 <input type="number" min={0} step={1} value={editDiskLimit} onChange={e => setEditDiskLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
                                 <p className="text-xs text-(--base-06)">0 = unlimited</p>
+                            </div>
+
+                            {/* Demo flag (admin). A flagged server shows up read-only
+                                in the sidebar for any user who has no server of their
+                                own — a public showcase. Writes stay blocked server-side. */}
+                            <div className="border-t border-(--base-03) pt-4">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="flex items-start gap-2.5 min-w-0">
+                                        <Globe size={14} className={`shrink-0 mt-0.5 ${selectedServer.isDemo ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                        <div className="min-w-0">
+                                            <div className="text-sm font-medium text-(--base-09)">Public Demo Server</div>
+                                            <p className="text-xs text-(--base-06)">
+                                                Show this server read-only to users who have none of their own. They can view overview, console, stats and browse files, but cannot edit, power, download or upload.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={!!selectedServer.isDemo}
+                                        onClick={handleToggleDemo}
+                                        className={`shrink-0 toggle-track ${selectedServer.isDemo ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                    >
+                                        <span className={`toggle-knob ${selectedServer.isDemo ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Auto-move opt-in. Disabled when the platform feature

@@ -263,27 +263,33 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
             ))}
           </div>
         )}
-        <div className="border-t border-(--base-03) flex items-center bg-(--base-02)">
-          <span className="px-3 py-2.5 text-(--accent-light) font-mono font-medium select-none">&gt;</span>
-          <input
-            ref={inputRef}
-            value={command}
-            onChange={e => setCommand(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter command... (Tab for autocomplete)"
-            className="flex-1 py-2.5 bg-transparent outline-none text-sm text-(--base-09) placeholder:text-(--base-06) font-mono"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <button
-            onClick={handleSend}
-            disabled={!command.trim()}
-            className="px-4 py-2.5 text-(--accent-light) hover:bg-(--base-03) transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Send command"
-          >
-            <Send size={20} />
-          </button>
-        </div>
+        {server.role === 'demo' ? (
+          <div className="border-t border-(--base-03) px-3 py-2.5 bg-(--base-02) text-center text-xs text-(--base-06) font-mono">
+            Read-only demo &mdash; console input disabled
+          </div>
+        ) : (
+          <div className="border-t border-(--base-03) flex items-center bg-(--base-02)">
+            <span className="px-3 py-2.5 text-(--accent-light) font-mono font-medium select-none">&gt;</span>
+            <input
+              ref={inputRef}
+              value={command}
+              onChange={e => setCommand(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Enter command... (Tab for autocomplete)"
+              className="flex-1 py-2.5 bg-transparent outline-none text-sm text-(--base-09) placeholder:text-(--base-06) font-mono"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!command.trim()}
+              className="px-4 py-2.5 text-(--accent-light) hover:bg-(--base-03) transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Send command"
+            >
+              <Send size={20} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

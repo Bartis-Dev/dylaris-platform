@@ -134,9 +134,12 @@ export interface Server {
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;
     createdAt?: string;
-    role?: 'owner' | 'invited' | 'admin' | 'inherited';
+    role?: 'owner' | 'invited' | 'admin' | 'inherited' | 'demo';
     permissions?: TabPermissions;
     region?: string;
+    // Read-only showcase server (admin-flagged). Non-owner viewers may only read;
+    // the panel suppresses write affordances when this is set.
+    isDemo?: boolean;
 }
 
 export interface SftpCredentials {
@@ -717,6 +720,11 @@ export const moveServer = (serverId: number, targetNodeId: number) =>
 // node. Async — returns 202; progress is polled via getMigrationStatus.
 export const transferServer = (serverId: number, targetNodeId: number) =>
     fetchAPI(`/servers/${serverId}/transfer`, { method: 'POST', body: JSON.stringify({ targetNodeId }) });
+
+// Mark/unmark a server as a public read-only demo (admin). Non-owner users with
+// no server of their own then see it read-only in their sidebar.
+export const setServerDemo = (serverId: number, enabled: boolean) =>
+    fetchAPI(`/admin/servers/${serverId}/demo`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
 // Orchestrator progress record. `phase` is "none" when no migration is active.
 // Terminal phases: done, failed, failed_post_cutover, aborted_players, none.

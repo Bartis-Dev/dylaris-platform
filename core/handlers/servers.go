@@ -172,6 +172,36 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	perms := LoadEffectivePermissions(h.state, userID)
 	servers = FilterServersByRegion(servers, perms)
 
+	// Demo servers. Mark any server already in the list that is on the demo list
+	// (so its owner/admin sees the demo status in the toggle), and — for a
+	// non-admin with no server of their own — append the read-only showcase
+	// server(s) so a fresh account isn't empty. Read access is enforced
+	// server-side; the role "demo" + read-only permission set here only tells the
+	// panel to render the appended ones read-only.
+	if demoUUIDs := loadDemoServerUUIDs(h.state.Store); len(demoUUIDs) > 0 {
+		demoSet := make(map[string]bool, len(demoUUIDs))
+		for _, u := range demoUUIDs {
+			demoSet[u] = true
+		}
+		for i := range servers {
+			if demoSet[servers[i].UUID] {
+				servers[i].IsDemo = true
+			}
+		}
+		if !isAdmin && len(servers) == 0 {
+			for _, uuid := range demoUUIDs {
+				ds, derr := h.state.Store.GetServerByUUID(uuid)
+				if derr != nil || ds == nil {
+					continue
+				}
+				ds.IsDemo = true
+				ds.Role = "demo"
+				ds.Permissions = &models.TabPermissions{Console: true, Files: true}
+				servers = append(servers, *ds)
+			}
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,
