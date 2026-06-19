@@ -291,6 +291,18 @@ type GatewaySettings struct {
 	HosterDomains        []HosterDomain `json:"hosterDomains"`
 	CustomDomainsEnabled bool           `json:"customDomainsEnabled"`
 	CnameTarget          string         `json:"cnameTarget"`
+	// BlockedRoutePrefixes are leftmost labels users may not register as a route
+	// (e.g. "admin", "dylaris"). Applies to the hoster-subdomain picker and the
+	// leftmost label of custom/raw domains. Even though only :25565 MC traffic is
+	// routed, reserving these keeps confusable / impersonating names off the table.
+	BlockedRoutePrefixes []string `json:"blockedRoutePrefixes"`
+}
+
+// defaultBlockedRoutePrefixes seeds a protective reserved list when the admin has
+// never saved one. Once saved (even empty), the admin's list wins.
+var defaultBlockedRoutePrefixes = []string{
+	"admin", "dylaris", "app", "api", "www", "panel", "gateway", "edge", "hub",
+	"link", "warp", "beam", "mail", "ns", "status", "support", "staff", "system", "root",
 }
 
 type GatewayLimits struct {
@@ -354,6 +366,7 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		HosterDomains:        h.loadHosterDomains(),
 		CustomDomainsEnabled: getSetting("gateway_custom_domains_enabled") == "true",
 		CnameTarget:          getSetting("gateway_cname_target"),
+		BlockedRoutePrefixes: h.loadBlockedRoutePrefixes(),
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -372,6 +385,21 @@ func (h *SettingsHandler) loadHosterDomains() []HosterDomain {
 	var out []HosterDomain
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return []HosterDomain{}
+	}
+	return out
+}
+
+// loadBlockedRoutePrefixes parses the persisted reserved-prefix list. When the
+// setting was never saved (raw == "") it falls back to the protective default;
+// once the admin saves a list (even an empty one) that explicit choice is used.
+func (h *SettingsHandler) loadBlockedRoutePrefixes() []string {
+	raw, _ := h.state.Store.GetSetting("gateway_blocked_route_prefixes")
+	if raw == "" {
+		return append([]string(nil), defaultBlockedRoutePrefixes...)
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return []string{}
 	}
 	return out
 }
@@ -438,6 +466,19 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	}
 	hostersJSON, _ := json.Marshal(cleaned)
 
+	// Normalize the reserved-prefix list: lowercase, trimmed, deduped, non-empty.
+	blockedSeen := map[string]bool{}
+	blocked := make([]string, 0, len(req.BlockedRoutePrefixes))
+	for _, p := range req.BlockedRoutePrefixes {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" || blockedSeen[p] {
+			continue
+		}
+		blockedSeen[p] = true
+		blocked = append(blocked, p)
+	}
+	blockedJSON, _ := json.Marshal(blocked)
+
 	// Save port-enable settings
 	portSettings := []struct{ k, v string }{
 		{"gateway_port_mc_enabled", fmt.Sprintf("%t", req.Limits.PortMcEnabled)},
@@ -446,6 +487,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		{"gateway_hoster_domains", string(hostersJSON)},
 		{"gateway_custom_domains_enabled", fmt.Sprintf("%t", req.CustomDomainsEnabled)},
 		{"gateway_cname_target", strings.TrimSpace(req.CnameTarget)},
+		{"gateway_blocked_route_prefixes", string(blockedJSON)},
 	}
 	for _, p := range portSettings {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {

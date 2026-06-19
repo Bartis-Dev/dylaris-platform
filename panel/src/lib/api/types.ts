@@ -631,6 +631,8 @@ export interface GatewaySettings {
     hosterDomains: HosterDomain[];
     customDomainsEnabled: boolean;
     cnameTarget: string;
+    // Reserved leftmost labels users may not register as a route (e.g. admin, dylaris).
+    blockedRoutePrefixes: string[];
 }
 
 export interface GatewayRouteOptions {

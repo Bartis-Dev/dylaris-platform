@@ -422,6 +422,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	TargetPort   int    `json:"targetPort"`
 }) (string, error) {
 	hosters, customEnabled, _ := h.loadGatewayDomainConfig()
+	blocked := h.loadBlockedRoutePrefixes()
 
 	// 1) Hoster-picker path
 	if req.Subdomain != "" || req.HosterDomain != "" {
@@ -443,6 +444,9 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 		if !validateSubdomain(sub, hd.Validation) {
 			return "", fmt.Errorf("subdomain does not match the allowed format for %s", host)
 		}
+		if blocked[sub] {
+			return "", fmt.Errorf("subdomain %q is reserved", sub)
+		}
 		return sub + "." + host, nil
 	}
 
@@ -460,6 +464,9 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 		if len(labels) < 2 || len(labels) > 4 {
 			return "", fmt.Errorf("custom domain may have at most two subdomain levels")
 		}
+		if blocked[labels[0]] {
+			return "", fmt.Errorf("leftmost label %q is reserved", labels[0])
+		}
 		for _, h := range hosters {
 			if dom == h.Domain || strings.HasSuffix(dom, "."+h.Domain) {
 				return "", fmt.Errorf("custom domain may not be a subdomain of a hoster domain (%s) — use the subdomain picker instead", h.Domain)
@@ -473,6 +480,9 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 		dom := strings.ToLower(strings.TrimSpace(req.Domain))
 		if !domainRegex.MatchString(dom) {
 			return "", fmt.Errorf("invalid domain format")
+		}
+		if labels := strings.Split(dom, "."); len(labels) > 0 && blocked[labels[0]] {
+			return "", fmt.Errorf("leftmost label %q is reserved", labels[0])
 		}
 		return dom, nil
 	}
@@ -492,6 +502,27 @@ func (h *GatewayHandler) loadGatewayDomainConfig() ([]HosterDomain, bool, string
 	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
 	cname, _ := h.state.Store.GetSetting("gateway_cname_target")
 	return hosters, enabled == "true", cname
+}
+
+// loadBlockedRoutePrefixes returns the reserved leftmost-label set as a lookup
+// map. Unset (raw == "") falls back to the protective default shared with the
+// settings handler; an explicitly-saved list (even empty) is honored as-is.
+func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
+	raw, _ := h.state.Store.GetSetting("gateway_blocked_route_prefixes")
+	var list []string
+	if raw == "" {
+		list = defaultBlockedRoutePrefixes
+	} else {
+		_ = json.Unmarshal([]byte(raw), &list)
+	}
+	m := make(map[string]bool, len(list))
+	for _, p := range list {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			m[p] = true
+		}
+	}
+	return m
 }
 
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {

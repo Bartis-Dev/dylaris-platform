@@ -746,6 +746,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         hosterDomains: [],
         customDomainsEnabled: false,
         cnameTarget: '',
+        blockedRoutePrefixes: [],
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -771,6 +772,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     hosterDomains: gwRes.settings.hosterDomains || [],
                     customDomainsEnabled: !!gwRes.settings.customDomainsEnabled,
                     cnameTarget: gwRes.settings.cnameTarget || '',
+                    blockedRoutePrefixes: gwRes.settings.blockedRoutePrefixes || [],
                 };
                 setSettings(loaded);
                 snapshotRef.current = loaded;
@@ -1114,6 +1116,32 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             <p className="text-xs text-(--base-06)">Shown to users as the CNAME record they need to point their domain at.</p>
                         </div>
                     )}
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5 space-y-3">
+                    <div>
+                        <h3 className="mono-label">Reserved Route Prefixes</h3>
+                        <p className="text-xs text-(--base-06) mt-1">
+                            Leftmost labels users cannot register (subdomain picker and the first label of custom domains). One per line.
+                        </p>
+                    </div>
+                    <textarea
+                        value={settings.blockedRoutePrefixes.join('\n')}
+                        onChange={e => setSettings(prev => ({
+                            ...prev,
+                            blockedRoutePrefixes: e.target.value
+                                .split(/[\n,]/)
+                                .map(s => s.trim().toLowerCase())
+                                .filter(Boolean),
+                        }))}
+                        rows={4}
+                        spellCheck={false}
+                        placeholder={'admin\ndylaris\napp\napi'}
+                        className="input-field input-mono text-sm w-full resize-y"
+                    />
+                    <p className="text-xs text-(--base-06)">
+                        Leave empty to allow everything. Saving an empty list disables the built-in defaults.
+                    </p>
                 </div>
             </div>
 
