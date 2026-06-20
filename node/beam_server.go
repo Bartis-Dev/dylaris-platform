@@ -20,6 +20,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
@@ -140,6 +141,16 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	// stream EOFs, so a live partial is always actively being written.
 	go sweepStaleUploadTemps(ctx, storageMgr)
 
+	// LAN fast-path TLS listener (opt-in, default on). The plain :25521 listener
+	// above is reached only via the encrypted overlay (relay hop). Direct LAN
+	// clients (the Beam app on the same network) instead hit this TLS listener so
+	// the hop is encrypted; the cert is deterministically derived from the beam
+	// secret + node ID, and Core hands the app the matching fingerprint to pin,
+	// which also defeats MITM. Same handler/auth (the JWT ticket) as the relay path.
+	if os.Getenv("BEAM_LAN_FASTPATH") != "false" {
+		go startBeamLANListener(ctx, bs, jwtSecret, nodeID)
+	}
+
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
@@ -147,6 +158,44 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 
 	if err := srv.Serve(lis); err != nil {
 		log.Printf("beam-server: serve error: %v", err)
+	}
+}
+
+// startBeamLANListener serves the BeamNodeService over TLS on the LAN fast-path
+// port using the deterministic pinned certificate. Failures are non-fatal — the
+// relay path keeps working regardless.
+func startBeamLANListener(ctx context.Context, bs *beamServer, jwtSecret, nodeID string) {
+	lanPort := os.Getenv("BEAM_LAN_PORT")
+	if lanPort == "" {
+		lanPort = "25523"
+	}
+	cert, fp, derr := beamauth.DeriveLANCert(jwtSecret, nodeID)
+	if derr != nil {
+		log.Printf("beam-server: LAN fast-path disabled, cert derive failed: %v", derr)
+		return
+	}
+	addr := ":" + lanPort
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		if errors.Is(err, syscall.EADDRINUSE) {
+			log.Printf("beam-server: PORT_BUSY (LAN) — %s is already in use; LAN fast-path disabled", addr)
+		} else {
+			log.Printf("beam-server: LAN fast-path listen on %s failed: %v", addr, err)
+		}
+		return
+	}
+	tlsSrv := grpc.NewServer(
+		grpc.Creds(credentials.NewServerTLSFromCert(&cert)),
+		grpc.StatsHandler(&beamConnCleaner{m: &bs.serverUUIDByPeer}),
+	)
+	pb.RegisterBeamNodeServiceServer(tlsSrv, bs)
+	log.Printf("beam-server: LAN fast-path (TLS, pinned) listening on %s, fp=%s", addr, fp[:16]+"...")
+	go func() {
+		<-ctx.Done()
+		tlsSrv.GracefulStop()
+	}()
+	if err := tlsSrv.Serve(lis); err != nil {
+		log.Printf("beam-server: LAN fast-path serve error: %v", err)
 	}
 }
 

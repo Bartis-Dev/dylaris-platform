@@ -260,6 +260,18 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fingerprint of the node's deterministic LAN TLS cert, so the app can pin it
+	// (encryption + MITM protection on the direct LAN hop). Derived from the same
+	// beam secret + node ID the node uses to serve that listener.
+	lanFingerprint := ""
+	if len(lanIPs) > 0 {
+		if fp, ferr := beamauth.LANCertFingerprint(h.jwtSecret, nodeDiscoveryID); ferr == nil {
+			lanFingerprint = fp
+		} else {
+			lanIPs = nil // no pin => don't advertise the LAN path at all
+		}
+	}
+
 	// Sign ticket via shared auth package — same format used by gateway
 	// beam-relay validators and node-side BeamNodeService.Authenticate.
 	claims := beamauth.BeamClaims{
@@ -289,15 +301,17 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		"ticket":  ticketString,
 		"expires": time.Now().Add(beamauth.BeamTicketTTL).Unix(),
 		"lanHints": map[string]interface{}{
-			"ips":  lanIPs,
-			"port": beamLANPort,
+			"ips":         lanIPs,
+			"port":        beamLANPort,
+			"fingerprint": lanFingerprint,
 		},
 	})
 }
 
-// beamLANPort is the node beam-server port (BEAM_GRPC_PORT default). The app
-// probes the node's private IPs on this port for the LAN fast-path.
-const beamLANPort = "25521"
+// beamLANPort is the node's LAN fast-path TLS port (BEAM_LAN_PORT default). The
+// app probes the node's private IPs on this port, dials TLS, and pins the
+// fingerprint above. Distinct from the plain overlay port (25521) used by the relay.
+const beamLANPort = "25523"
 
 // GetBeamConfig returns the Beam relay address and branding info.
 // GET /api/beam/config
