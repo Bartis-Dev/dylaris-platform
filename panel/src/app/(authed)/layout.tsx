@@ -15,7 +15,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
@@ -135,6 +135,15 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                         className="dropdown-item"
                                     >
                                         <Package size={20} className="mr-3" /> My Modpacks
+                                    </GuardedLink>
+                                )}
+                                {/* Connect-store entry only on the hosted build. */}
+                                {featureFlags.store && (
+                                    <GuardedLink
+                                        href="/account/store"
+                                        className="dropdown-item"
+                                    >
+                                        <Store size={20} className="mr-3" /> Dylaris Store
                                     </GuardedLink>
                                 )}
                                 <GuardedLink

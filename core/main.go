@@ -71,6 +71,8 @@ func main() {
 		FeatureFlags:        services.NewFeatureFlags(pgStore),
 		DBType:              cfg.DBType,
 		StoreEnabled:        cfg.StoreEnabled,
+		StoreURL:            cfg.StoreURL,
+		StoreSharedKey:      cfg.StoreSharedKey,
 	}
 
 	redisClient, err := database.InitRedis(cfg)
@@ -807,6 +809,15 @@ func main() {
 	// Demo account designation (admin) — the single read-only account that sees the demo servers.
 	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(serverHandler.GetDemoAccount)).Methods("GET")
 	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(serverHandler.SetDemoAccount)).Methods("PUT")
+
+	// Store-linking (dylaris.com). Gated by StoreEnabled inside each handler.
+	// link/start + status are panel-user authed; link/verify + verify-user are
+	// service-to-service (shared key in X-Store-Key, no panel session).
+	storeHandler := handlers.NewStoreHandler(appState)
+	api.HandleFunc("/store/link/start", authHandler.AuthMiddleware(storeHandler.LinkStart)).Methods("POST")
+	api.HandleFunc("/store/status", authHandler.AuthMiddleware(storeHandler.Status)).Methods("GET")
+	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, storeHandler.LinkVerify)).Methods("POST")
+	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
 	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(serverHandler.GetMigrationStatus)).Methods("GET")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")

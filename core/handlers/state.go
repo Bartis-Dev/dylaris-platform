@@ -56,9 +56,17 @@ type AppState struct {
 	// intended plain-postgres deployment from a misconfigured timescale one.
 	DBType string
 
-	// StoreEnabled mirrors config.StoreEnabled: true only when BOTH STORE_URL
-	// and STORE_SHARED_KEY are set. Gates every store-coupled surface — the
-	// connect-store button (later) and the demo account/servers feature — so a
-	// self-hosted open-core build with no store ENV exposes none of it.
+	// StoreEnabled mirrors config.StoreEnabled: true only when BOTH StoreURL
+	// and StoreSharedKey are set. Gates every store-coupled surface — the
+	// connect-store button, store-linking endpoints, and the demo account/
+	// servers feature — so a self-hosted open-core build with no store ENV
+	// exposes none of it.
 	StoreEnabled bool
+	// StoreURL is the dylaris.com storefront base URL (e.g. https://dylaris.com).
+	// Used to build the connect-store redirect and to read link status.
+	StoreURL string
+	// StoreSharedKey is the service-to-service trust shared with dylaris.com. It
+	// authenticates store->core calls (link/verify, verify-user) and core->store
+	// calls (link-status). NOT a user proof.
+	StoreSharedKey string
 }
