@@ -161,7 +161,7 @@ export default function ServerFilesPage() {
                     )}
                 </div>
             )}
-            <FileBrowserView serverUuid={server.uuid} currentServerPath={server.activeSubServer || ''} />
+            <FileBrowserView serverUuid={server.uuid} currentServerPath={server.activeSubServer || ''} readOnly={server.role === 'demo'} />
 
             {toast && (
                 <div className="toast-container">

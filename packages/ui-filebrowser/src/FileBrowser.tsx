@@ -17,7 +17,7 @@ const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
 
-const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter }) => {
+const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false }) => {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [currentPath, setCurrentPath] = useState(currentServerPath);
   const [error, setError] = useState('');
@@ -322,6 +322,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }, [globalSearchTerm, currentPath, handleRecursiveSearch]);
 
   const handleRenameClick = () => {
+    if (blockReadOnly()) return;
     setTempFileName(editingFile);
     setIsRenaming(true);
     setTimeout(() => renameInputRef.current?.focus(), 0);
@@ -350,7 +351,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     setToastMessage({ message, type });
     setTimeout(() => {
       setToastMessage(null);
-    }, 3000); 
+    }, 3000);
+  };
+
+  // Read-only guard: in demo mode every mutating button stays visible but does
+  // nothing except surface this toast. Returns true when the action was blocked.
+  const blockReadOnly = (): boolean => {
+    if (readOnly) {
+      showToast('Read-only demo. Changes are disabled here.', 'info');
+      return true;
+    }
+    return false;
   };
 
   const handleFileClick = (name: string, isDir: boolean, path?: string) => {
@@ -455,6 +466,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   const handleDeleteClick = (e: React.MouseEvent, file: FileEntry) => {
     e.stopPropagation();
+    if (blockReadOnly()) return;
     setFileToDelete(file);
     setShowDeleteConfirm(true);
   };
@@ -762,10 +774,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             />
         </label>
         <div className="flex gap-1.5 shrink-0">
-          <button title="Upload" onClick={() => setShowUploadPopup(true)} className="btn btn-secondary p-2">
+          <button title="Upload" onClick={() => { if (blockReadOnly()) return; setShowUploadPopup(true); }} className="btn btn-secondary p-2">
             <Upload size={20} />
           </button>
-          <button title="New File/Folder" onClick={() => { setPopupMode('create'); setNewName(''); setPopupError(''); }} className="btn btn-secondary p-2">
+          <button title="New File/Folder" onClick={() => { if (blockReadOnly()) return; setPopupMode('create'); setNewName(''); setPopupError(''); }} className="btn btn-secondary p-2">
             <Plus size={20} />
           </button>
         </div>
@@ -799,14 +811,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     <ExternalLink size={18} />
                 </button>
               )}
-              <button title="Rename" onClick={(e) => { e.stopPropagation(); setActionTarget(file); setNewName(file.name); setPopupMode('rename'); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+              <button title="Rename" onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(file.name); setPopupMode('rename'); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
                   <FilePen size={18} />
               </button>
-              <button title="Copy" onClick={(e) => { e.stopPropagation(); setActionTarget(file); setNewName(getCopyName(file.name, file.is_dir, files)); setPopupMode('copy'); setPopupError(''); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+              <button title="Copy" onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(getCopyName(file.name, file.is_dir, files)); setPopupMode('copy'); setPopupError(''); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
                 <Copy size={18} />
               </button>
               <button title="Download" disabled={!!downloadProgress} onClick={async (e) => {
                 e.stopPropagation();
+                if (blockReadOnly()) return;
                 // Single-flight: ignore clicks while a download is already
                 // running so a double-click can't launch overlapping downloads.
                 if (downloadProgress) return;
@@ -1061,7 +1074,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             )}
             <div className="modal-footer">
               {!isEditingEnabled ? (
-                 <button onClick={() => setIsEditingEnabled(true)} className="btn btn-secondary px-4 py-2 text-sm">Edit</button>
+                 <button onClick={() => { if (blockReadOnly()) return; setIsEditingEnabled(true); }} className="btn btn-secondary px-4 py-2 text-sm">Edit</button>
               ) : (
                 <>
                   <button onClick={() => {

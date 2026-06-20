@@ -30,4 +30,10 @@ export interface FileBrowserProps {
   currentServerPath: string;
   serverUuid?: string;
   adapter: FileBrowserAdapter;
+  // Read-only mode (e.g. the public demo server). All action buttons stay
+  // VISIBLE so users see the full UI, but every mutating action is inert:
+  // download/delete/rename/copy/create/upload show a toast instead, and the
+  // editor opens for reading with no Save. The backend 403s these anyway
+  // (default-deny); this is purely the client-side UX.
+  readOnly?: boolean;
 }

@@ -9,9 +9,11 @@ import DebugLogPanel from '@/components/DebugLogPanel';
 interface FileBrowserViewProps {
   currentServerPath: string;
   serverUuid?: string;
+  // Read-only demo: buttons stay visible but every mutating action is inert.
+  readOnly?: boolean;
 }
 
-const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, serverUuid }) => {
+const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, serverUuid, readOnly }) => {
   // The adapter is fixed per environment — browser stays on HTTP, Wails
   // stays on gRPC. We don't memoize on isWails() because window.go is
   // available before render in Wails (no race).
@@ -41,6 +43,7 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
           currentServerPath={currentServerPath}
           serverUuid={serverUuid}
           adapter={adapter}
+          readOnly={readOnly}
         />
       </div>
       {devMode && (
