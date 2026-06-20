@@ -973,7 +973,9 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
 
                             {/* Demo flag (admin). A flagged server shows up read-only
                                 in the sidebar for any user who has no server of their
-                                own — a public showcase. Writes stay blocked server-side. */}
+                                own — a public showcase. Writes stay blocked server-side.
+                                Only on the hosted (store-enabled) build. */}
+                            {featureFlags.store && (
                             <div className="border-t border-(--base-03) pt-4">
                                 <div className="flex items-center justify-between gap-4">
                                     <div className="flex items-start gap-2.5 min-w-0">
@@ -996,6 +998,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                     </button>
                                 </div>
                             </div>
+                            )}
 
                             {/* Auto-move opt-in. Disabled when the platform feature
                                 is off or routing is on IP:Port (gateway off) — the

@@ -46,6 +46,10 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) 
 // account is forced GET-only by AuthMiddleware, so the session can only view.
 // Returns 404 when no demo account is configured (feature off).
 func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.state.StoreEnabled {
+		sendJSONError(w, "Demo is not enabled", http.StatusNotFound)
+		return
+	}
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
@@ -193,7 +197,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				// public demo session can only ever view, never change anything.
 				// One central gate covers all write endpoints (power, files, RCON,
 				// profile, server-create, ...) without per-handler checks.
-				if !claims.IsAdmin && isDemoAccount(h.state.Store, user.ID) &&
+				if !claims.IsAdmin && isDemoAccount(h.state, user.ID) &&
 					r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 					sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
 					return

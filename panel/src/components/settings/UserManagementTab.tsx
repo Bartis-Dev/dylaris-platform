@@ -13,6 +13,7 @@ import {
 import { getAdminSecurityQuestionPool, setAdminSecurityQuestionPool } from '@/lib/api/securityQuestions';
 import { getAuditPolicy, saveAuditPolicy, AuditPolicy } from '@/lib/api/serverAudit';
 import { Skeleton, SkeletonText, SkeletonFormRow } from '@/components/Skeleton';
+import { useAppData } from '@/lib/AppDataContext';
 
 const ENCRYPTION_OPTIONS = [
     { value: 'starttls', label: 'STARTTLS (port 587)' },
@@ -21,6 +22,8 @@ const ENCRYPTION_OPTIONS = [
 ];
 
 export default function UserManagementTab() {
+    // The demo-account feature only exists on the hosted (store-enabled) build.
+    const { featureFlags } = useAppData();
     return (
         <div className="space-y-8 max-w-3xl">
             <header>
@@ -34,7 +37,7 @@ export default function UserManagementTab() {
 
             <AuthPolicySection />
             <SecurityQuestionsPoolSection />
-            <DemoAccountSection />
+            {featureFlags.store && <DemoAccountSection />}
             <AutoDeleteSection />
             <AuditPolicySection />
             <SMTPSection />

@@ -70,6 +70,7 @@ func main() {
 		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
 		FeatureFlags:        services.NewFeatureFlags(pgStore),
 		DBType:              cfg.DBType,
+		StoreEnabled:        cfg.StoreEnabled,
 	}
 
 	redisClient, err := database.InitRedis(cfg)

@@ -31,6 +31,10 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// BYON tenancy: drives tenant-facing UI (e.g. the server transfer
 			// control). Read-only flag; the actual authz is enforced backend-side.
 			"byon": h.state.FeatureFlags.IsBYONEnabled(r.Context()),
+			// Store integration (dylaris.com): true only when both STORE_URL and
+			// STORE_SHARED_KEY are set. Gates the connect-store button and the
+			// demo account/server UI; off => clean open-core build.
+			"store": h.state.StoreEnabled,
 		},
 	})
 }

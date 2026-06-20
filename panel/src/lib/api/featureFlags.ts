@@ -11,6 +11,10 @@ export interface FeatureFlags {
     autoMove: boolean;
     // BYON tenancy. Gates tenant-facing UI like the server transfer control.
     byon: boolean;
+    // Store integration (dylaris.com). True only when the hosted Core has both
+    // STORE_URL + STORE_SHARED_KEY set. Gates the connect-store button and the
+    // demo account/server admin UI; false on a self-host/open-core build.
+    store: boolean;
 }
 
 export interface FeatureFlagsAdminPayload {

@@ -115,7 +115,7 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool) (st
 	// Honor invited-member permissions, not just ownership: a user invited to
 	// this server with the "files" permission may use the file browser.
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
-		if allowDemoRead && isDemoServer(h.state.Store, uuid) {
+		if allowDemoRead && isDemoServer(h.state, uuid) {
 			return uuid, nil // read-only demo access
 		}
 		return "", fmt.Errorf("access denied")

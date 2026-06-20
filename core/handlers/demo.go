@@ -26,11 +26,13 @@ const demoServerUUIDsSetting = "demo_server_uuids"
 const demoAccountUUIDSetting = "demo_account_uuid"
 
 // isDemoAccount reports whether the given user id is the designated demo account.
-func isDemoAccount(st store.Store, userID string) bool {
-	if userID == "" {
+// Always false when the store integration is off — the whole demo feature only
+// exists on the hosted build (STORE_URL + STORE_SHARED_KEY set).
+func isDemoAccount(s *AppState, userID string) bool {
+	if s == nil || !s.StoreEnabled || userID == "" {
 		return false
 	}
-	v, _ := st.GetSetting(demoAccountUUIDSetting)
+	v, _ := s.Store.GetSetting(demoAccountUUIDSetting)
 	return v != "" && v == userID
 }
 
@@ -48,11 +50,12 @@ func loadDemoServerUUIDs(st store.Store) []string {
 }
 
 // isDemoServer reports whether the given server UUID is on the demo list.
-func isDemoServer(st store.Store, uuid string) bool {
-	if uuid == "" {
+// Always false when the store integration is off (open-core/self-host build).
+func isDemoServer(s *AppState, uuid string) bool {
+	if s == nil || !s.StoreEnabled || uuid == "" {
 		return false
 	}
-	for _, u := range loadDemoServerUUIDs(st) {
+	for _, u := range loadDemoServerUUIDs(s.Store) {
 		if u == uuid {
 			return true
 		}
@@ -63,6 +66,10 @@ func isDemoServer(st store.Store, uuid string) bool {
 // SetServerDemo PATCH /api/admin/servers/{id}/demo — admin only.
 // Adds or removes the server from the demo list. Multiple servers may be demos.
 func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
+	if !h.state.StoreEnabled {
+		sendJSONError(w, "Demo feature not available", http.StatusNotFound)
+		return
+	}
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
@@ -114,6 +121,10 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 // GetDemoAccount GET /api/admin/settings/demo-account — admin only.
 // Returns the username of the designated demo account ("" when unset).
 func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
+	if !h.state.StoreEnabled {
+		sendJSONError(w, "Demo feature not available", http.StatusNotFound)
+		return
+	}
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
@@ -131,6 +142,10 @@ func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
 // Designates (by username) the read-only demo account, or clears it when the
 // username is empty. An admin can never be the demo account.
 func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
+	if !h.state.StoreEnabled {
+		sendJSONError(w, "Demo feature not available", http.StatusNotFound)
+		return
+	}
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return

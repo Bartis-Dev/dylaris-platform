@@ -59,6 +59,17 @@ type Config struct {
 	DNSProvider       string // "cloudflare"
 	CFAPIToken        string
 	CFZoneID          string
+
+	// Store integration — the hosted dylaris.com storefront. When BOTH
+	// STORE_URL and STORE_SHARED_KEY are set, StoreEnabled flips on and the
+	// store-linking + demo-showcase surfaces appear (connect-store button,
+	// demo account/servers). Self-hosters without these ENV vars get a clean
+	// open-core build with no store or demo surface at all. STORE_SHARED_KEY is
+	// the service-to-service trust between Core and dylaris.com (NOT a user
+	// proof); it must match the same key configured on dylaris.com.
+	StoreURL       string
+	StoreSharedKey string
+	StoreEnabled   bool
 }
 
 func LoadConfig() (Config, error) {
@@ -77,6 +88,9 @@ func LoadConfig() (Config, error) {
 	}
 
 	dnsUpdaterEnabled, _ := strconv.ParseBool(getEnv("DNS_UPDATER_ENABLED", "false"))
+
+	storeURL := strings.TrimSpace(getEnv("STORE_URL", ""))
+	storeSharedKey := getSecret("STORE_SHARED_KEY", "")
 
 	cfg := Config{
 		APIPort:       getEnv("API_PORT", "25500"),
@@ -110,6 +124,10 @@ func LoadConfig() (Config, error) {
 		DNSProvider:       getEnv("DNS_PROVIDER", "cloudflare"),
 		CFAPIToken:        getSecret("CF_API_TOKEN", ""),
 		CFZoneID:          getEnv("CF_ZONE_ID", ""),
+
+		StoreURL:       storeURL,
+		StoreSharedKey: storeSharedKey,
+		StoreEnabled:   storeURL != "" && storeSharedKey != "",
 	}
 
 	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET

@@ -178,7 +178,9 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// public demo session has something to look at. Read access is enforced
 	// server-side; the role "demo" + read-only permission set here only tells the
 	// panel to render the appended ones read-only.
-	if demoUUIDs := loadDemoServerUUIDs(h.state.Store); len(demoUUIDs) > 0 {
+	// Whole demo surface only exists on the hosted (store-enabled) build; a
+	// self-host build never reads a stale demo_server_uuids setting.
+	if demoUUIDs := loadDemoServerUUIDs(h.state.Store); h.state.StoreEnabled && len(demoUUIDs) > 0 {
 		demoSet := make(map[string]bool, len(demoUUIDs))
 		for _, u := range demoUUIDs {
 			demoSet[u] = true
@@ -188,7 +190,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 				servers[i].IsDemo = true
 			}
 		}
-		if isDemoAccount(h.state.Store, userID) {
+		if isDemoAccount(h.state, userID) {
 			for _, uuid := range demoUUIDs {
 				ds, derr := h.state.Store.GetServerByUUID(uuid)
 				if derr != nil || ds == nil {

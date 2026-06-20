@@ -55,4 +55,10 @@ type AppState struct {
 	// set from config at boot. The status page uses it to distinguish an
 	// intended plain-postgres deployment from a misconfigured timescale one.
 	DBType string
+
+	// StoreEnabled mirrors config.StoreEnabled: true only when BOTH STORE_URL
+	// and STORE_SHARED_KEY are set. Gates every store-coupled surface — the
+	// connect-store button (later) and the demo account/servers feature — so a
+	// self-hosted open-core build with no store ENV exposes none of it.
+	StoreEnabled bool
 }
