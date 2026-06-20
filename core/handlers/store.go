@@ -153,6 +153,69 @@ func (h *StoreHandler) VerifyUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Provision POST /api/store/provision — store-key. The store (source of truth
+// for payment) drives the Core billing lifecycle for a linked tenant:
+//
+//	action "activate" -> billing active (+ optional plan assignment)
+//	action "past_due" -> dunning grace window starts
+//	action "suspend"  -> stop tenant servers, mark suspended (no data deleted)
+//
+// This is how a successful Stripe checkout / failed payment / canceled
+// subscription reaches Core. It NEVER deletes user data.
+func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
+	if !h.requireStoreKey(w, r) {
+		return
+	}
+	if h.state.Billing == nil {
+		sendJSONError(w, "Billing not available", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		UUID   string `json:"uuid"`
+		Action string `json:"action"`
+		PlanID *int   `json:"planId,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
+		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.state.Store.GetUserByID(req.UUID)
+	if err != nil || user == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	switch req.Action {
+	case "activate":
+		if err := h.state.Billing.Reactivate(req.UUID); err != nil {
+			sendJSONError(w, "Failed to activate billing", http.StatusInternalServerError)
+			return
+		}
+		if req.PlanID != nil && *req.PlanID > 0 {
+			if err := h.state.Store.SetUserPlan(req.UUID, req.PlanID); err != nil {
+				sendJSONError(w, "Activated but failed to assign plan", http.StatusInternalServerError)
+				return
+			}
+		}
+	case "past_due":
+		if err := h.state.Billing.EnterPastDue(req.UUID); err != nil {
+			sendJSONError(w, "Failed to set past_due", http.StatusInternalServerError)
+			return
+		}
+	case "suspend":
+		if err := h.state.Billing.Suspend(r.Context(), req.UUID); err != nil {
+			sendJSONError(w, "Failed to suspend", http.StatusInternalServerError)
+			return
+		}
+	default:
+		sendJSONError(w, "Unknown action", http.StatusBadRequest)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "action": req.Action})
+}
+
 // Status GET /api/store/status — authed panel user. Reads the link status from
 // dylaris.com on demand (single-owned link: the store holds the join, Core does
 // not). Drives the account-settings "Connect Store" / "Linked" UI.
