@@ -469,6 +469,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
 	applyPidsLimit(hc)
+	applyIOWeight(hc)
 
 	nc := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
@@ -498,6 +499,17 @@ func applyPidsLimit(hc *container.HostConfig) {
 	if pidsLimit > 0 {
 		pl := pidsLimit
 		hc.Resources.PidsLimit = &pl
+	}
+}
+
+// applyIOWeight sets the cgroup blkio relative weight (10–1000) on the container
+// when configured via dylaris:placement:io_weight. 0 = unset (no weight). This is
+// a relative fair-share between containers, not a hard cap, and only takes effect
+// with an I/O scheduler that honours blkio weight (BFQ/CFQ); it is a harmless
+// no-op otherwise. Applied at both container-build sites alongside applyPidsLimit.
+func applyIOWeight(hc *container.HostConfig) {
+	if ioWeight >= 10 && ioWeight <= 1000 {
+		hc.Resources.BlkioWeight = ioWeight
 	}
 }
 
@@ -585,6 +597,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 		RestartPolicy: container.RestartPolicy{Name: "no"},
 	}
 	applyPidsLimit(hc)
+	applyIOWeight(hc)
 
 	// Port binding: only in direct port mode (routing_mode != "gateway").
 	// Reuse an already-allocated port if one exists, otherwise allocate a new one.

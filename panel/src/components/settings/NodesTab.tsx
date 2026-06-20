@@ -609,6 +609,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         portMode: 'sequential',
         containerPort: 25565,
         pidsLimit: 0,
+        ioWeight: 0,
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -719,6 +720,26 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                         </div>
                         <p className="text-xs text-(--base-06)">
                             Caps the cgroup PID count per server container (applies on next (re)start). <span className="font-mono">0</span> = unlimited. This counts <strong>threads too</strong>, so set it generously (e.g. <span className="font-mono">4096</span>) — a value too low will throttle or crash heavy modded servers.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5">
+                    <h3 className="mono-label mb-3">Disk I/O Fair-Share</h3>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">blkio weight per server (10–1000, 0 = off)</label>
+                        <div className="relative w-32">
+                            <input
+                                type="number"
+                                min={0}
+                                max={1000}
+                                value={settings.ioWeight}
+                                onChange={e => setSettings(s => ({ ...s, ioWeight: Math.max(0, Math.min(1000, Number(e.target.value))) }))}
+                                className="input-field input-mono w-full text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                        </div>
+                        <p className="text-xs text-(--base-06)">
+                            Relative disk-I/O priority between server containers (applies on next (re)start), so one noisy server can&apos;t starve the others. <span className="font-mono">0</span> = off; valid range <span className="font-mono">10–1000</span>. This is a <strong>relative weight, not a hard cap</strong>, and only takes effect with a blkio-weight I/O scheduler (BFQ/CFQ); it is a harmless no-op otherwise.
                         </p>
                     </div>
                 </div>

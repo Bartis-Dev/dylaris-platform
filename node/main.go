@@ -65,6 +65,12 @@ var (
 	// 0 = unlimited (default). Anti fork-bomb / process-exhaustion guard. Note it
 	// counts threads too, so a too-low value would throttle heavy modded servers.
 	pidsLimit int64
+
+	// ioWeight is the per-container blkio relative weight (10–1000), loaded from
+	// Redis (dylaris:placement:io_weight), refreshed every 30s. 0 = unset.
+	// Relative fair-share, not a hard cap; effective only with a blkio-weight
+	// scheduler (BFQ/CFQ).
+	ioWeight uint16
 )
 
 // nodeExternal is set at startup: an external/home node forces gateway+beam
@@ -450,6 +456,12 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 	if v, err := rdb.Get(ctx, "dylaris:placement:pids_limit").Result(); err == nil && v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
 			pidsLimit = n
+		}
+	}
+	// Per-container blkio weight (fair-share). 0 or out-of-range leaves it unset.
+	if v, err := rdb.Get(ctx, "dylaris:placement:io_weight").Result(); err == nil && v != "" {
+		if n, err := strconv.ParseUint(v, 10, 16); err == nil && (n == 0 || (n >= 10 && n <= 1000)) {
+			ioWeight = uint16(n)
 		}
 	}
 	routingMode, fileAccessMode = applyExternalOverride(routingMode, fileAccessMode, nodeExternal)

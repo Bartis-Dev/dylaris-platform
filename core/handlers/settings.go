@@ -535,6 +535,13 @@ type PlacementSettings struct {
 	// threads too, so set it generously (e.g. 4096) — too low throttles heavy
 	// modded servers.
 	PidsLimit int64 `json:"pidsLimit"`
+	// IOWeight is the cgroup blkio relative weight (10–1000) applied to every
+	// server container, so a noisy neighbour can't starve others of disk I/O.
+	// 0 = unset (default). NOTE: this is a RELATIVE priority, not a hard cap, and
+	// only takes effect with an I/O scheduler that honours blkio weight (BFQ/CFQ);
+	// on blk-mq with none/mq-deadline it is a no-op. Hard per-device bps caps need
+	// the backing block device and are intentionally not wired here.
+	IOWeight uint16 `json:"ioWeight"`
 }
 
 var defaultPlacementSettings = PlacementSettings{
@@ -546,6 +553,7 @@ var defaultPlacementSettings = PlacementSettings{
 	PortMode:             "sequential",
 	ContainerPort:        25565,
 	PidsLimit:            0, // unlimited by default — opt-in anti fork-bomb cap
+	IOWeight:             0, // unset by default — opt-in blkio fair-share
 }
 
 // GetPlacementSettings GET /api/settings/placement
@@ -594,6 +602,14 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 	if req.PidsLimit < 0 {
 		req.PidsLimit = 0
 	}
+	// blkio weight is valid only in 10–1000; clamp non-zero values into range.
+	if req.IOWeight != 0 {
+		if req.IOWeight < 10 {
+			req.IOWeight = 10
+		} else if req.IOWeight > 1000 {
+			req.IOWeight = 1000
+		}
+	}
 
 	pairs := []struct{ k, v string }{
 		{"placement.cpu_overcommit_default", fmt.Sprintf("%g", req.CPUOvercommitDefault)},
@@ -604,6 +620,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		{"placement.port_mode", req.PortMode},
 		{"placement.container_port", fmt.Sprintf("%d", req.ContainerPort)},
 		{"placement.pids_limit", fmt.Sprintf("%d", req.PidsLimit)},
+		{"placement.io_weight", fmt.Sprintf("%d", req.IOWeight)},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -619,6 +636,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		h.state.Redis.Set(ctx, "dylaris:placement:port_mode", req.PortMode, 0)
 		h.state.Redis.Set(ctx, "dylaris:placement:container_port", fmt.Sprintf("%d", req.ContainerPort), 0)
 		h.state.Redis.Set(ctx, "dylaris:placement:pids_limit", fmt.Sprintf("%d", req.PidsLimit), 0)
+		h.state.Redis.Set(ctx, "dylaris:placement:io_weight", fmt.Sprintf("%d", req.IOWeight), 0)
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -670,6 +688,12 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 		var n int64
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
 			s.PidsLimit = n
+		}
+	}
+	if v := getStr("placement.io_weight"); v != "" {
+		var n uint16
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && (n == 0 || (n >= 10 && n <= 1000)) {
+			s.IOWeight = n
 		}
 	}
 	return s

@@ -675,6 +675,8 @@ export interface PlacementSettings {
     containerPort: number;
     // Per-container process/thread cap (cgroup pids). 0 = unlimited.
     pidsLimit: number;
+    // Per-container blkio relative weight (10–1000). 0 = off. Scheduler-dependent.
+    ioWeight: number;
 }
 export interface NodeCandidate {
     nodeId: number;
