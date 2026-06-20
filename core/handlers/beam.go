@@ -245,7 +245,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		node, err := h.state.Store.GetNodeByID(server.NodeID)
 		if err == nil && node != nil {
 			nodeDiscoveryID = node.Token
-			lanIPs = node.PrivateIPs
+			// Only expose the node's private IPs for the LAN fast-path when it is
+			// a BYON node (tenant-owned, the only case where a client can be on
+			// the same LAN) or the caller is an admin. This avoids leaking a
+			// shared platform node's internal IPs to a non-admin tenant, for whom
+			// the fast-path is useless anyway (they're never on that datacenter LAN).
+			if node.OwnerID != nil || isAdmin {
+				lanIPs = node.PrivateIPs
+			}
 		}
 	}
 	if nodeDiscoveryID == "" {
