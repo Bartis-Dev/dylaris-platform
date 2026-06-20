@@ -8,6 +8,7 @@ import {
     AuthPolicy, SMTPConfig,
     getAuthPolicy, saveAuthPolicy,
     getSMTPConfig, saveSMTPConfig, testSendSMTP,
+    getDemoAccount, setDemoAccount,
 } from '@/lib/api/authSettings';
 import { getAdminSecurityQuestionPool, setAdminSecurityQuestionPool } from '@/lib/api/securityQuestions';
 import { getAuditPolicy, saveAuditPolicy, AuditPolicy } from '@/lib/api/serverAudit';
@@ -33,10 +34,80 @@ export default function UserManagementTab() {
 
             <AuthPolicySection />
             <SecurityQuestionsPoolSection />
+            <DemoAccountSection />
             <AutoDeleteSection />
             <AuditPolicySection />
             <SMTPSection />
         </div>
+    );
+}
+
+// ── Demo account section ──────────────────────────────────────────────
+// Designates a single read-only account that sees the demo servers and is
+// forced GET-only server-side. Create a normal user first, then name it here.
+function DemoAccountSection() {
+    const [username, setUsername] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+    useEffect(() => {
+        getDemoAccount().then(res => {
+            if (res.success) setUsername(res.username || '');
+        }).finally(() => setLoading(false));
+    }, []);
+
+    const save = async () => {
+        setSaving(true);
+        setMsg(null);
+        const res = await setDemoAccount(username.trim());
+        setSaving(false);
+        if (res.success) {
+            setUsername(res.username || '');
+            setMsg({ ok: true, text: res.username ? `Demo account set to "${res.username}".` : 'Demo account cleared.' });
+        } else {
+            setMsg({ ok: false, text: res.message || res.error || 'Failed to save.' });
+        }
+    };
+
+    return (
+        <section className="card p-5 space-y-4">
+            <div className="flex items-center gap-2">
+                <ShieldCheck size={16} className="text-(--accent-light)" />
+                <h3 className="font-medium text-sm text-(--base-09)">Public Demo Account</h3>
+            </div>
+            <p className="text-xs text-(--base-06)">
+                A single read-only account that sees every server flagged as a demo. It is forced
+                GET-only (cannot edit, power, create or download anything). Reachable with its own
+                password, or one-click via the public demo session. Leave empty to disable.
+            </p>
+            {loading ? (
+                <SkeletonFormRow />
+            ) : (
+                <div className="flex gap-2 items-end">
+                    <div className="flex flex-col gap-[5px] flex-1">
+                        <label className="input-label">Demo account username</label>
+                        <input
+                            type="text"
+                            value={username}
+                            onChange={e => setUsername(e.target.value)}
+                            placeholder="demo"
+                            className="input-field w-full"
+                            spellCheck={false}
+                        />
+                    </div>
+                    <button onClick={save} disabled={saving} className="btn btn-primary btn-sm shrink-0">
+                        {saving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                    </button>
+                </div>
+            )}
+            {msg && (
+                <p className={`text-xs flex items-center gap-1.5 ${msg.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                    {msg.ok ? <CircleCheck size={13} /> : <CircleAlert size={13} />}
+                    {msg.text}
+                </p>
+            )}
+        </section>
     );
 }
 

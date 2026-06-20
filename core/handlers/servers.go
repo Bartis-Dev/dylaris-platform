@@ -173,9 +173,9 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	servers = FilterServersByRegion(servers, perms)
 
 	// Demo servers. Mark any server already in the list that is on the demo list
-	// (so its owner/admin sees the demo status in the toggle), and — for a
-	// non-admin with no server of their own — append the read-only showcase
-	// server(s) so a fresh account isn't empty. Read access is enforced
+	// (so its owner/admin sees the demo status in the toggle), and — for the
+	// designated read-only demo account — append the showcase server(s) so the
+	// public demo session has something to look at. Read access is enforced
 	// server-side; the role "demo" + read-only permission set here only tells the
 	// panel to render the appended ones read-only.
 	if demoUUIDs := loadDemoServerUUIDs(h.state.Store); len(demoUUIDs) > 0 {
@@ -188,7 +188,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 				servers[i].IsDemo = true
 			}
 		}
-		if !isAdmin && len(servers) == 0 {
+		if isDemoAccount(h.state.Store, userID) {
 			for _, uuid := range demoUUIDs {
 				ds, derr := h.state.Store.GetServerByUUID(uuid)
 				if derr != nil || ds == nil {

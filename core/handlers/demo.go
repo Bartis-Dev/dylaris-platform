@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"dylaris-core/store"
 
@@ -18,6 +19,20 @@ import (
 // has no invite, so checkServerAccess returns false for all write endpoints).
 
 const demoServerUUIDsSetting = "demo_server_uuids"
+
+// demoAccountUUIDSetting holds the UUID of the single designated demo account.
+// That account is forced read-only (GET-only) in AuthMiddleware and is the only
+// account that sees the demo servers in its sidebar. Empty = feature off.
+const demoAccountUUIDSetting = "demo_account_uuid"
+
+// isDemoAccount reports whether the given user id is the designated demo account.
+func isDemoAccount(st store.Store, userID string) bool {
+	if userID == "" {
+		return false
+	}
+	v, _ := st.GetSetting(demoAccountUUIDSetting)
+	return v != "" && v == userID
+}
 
 // loadDemoServerUUIDs returns the admin-flagged demo server UUIDs.
 func loadDemoServerUUIDs(st store.Store) []string {
@@ -94,4 +109,60 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "enabled": req.Enabled})
+}
+
+// GetDemoAccount GET /api/admin/settings/demo-account — admin only.
+// Returns the username of the designated demo account ("" when unset).
+func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	username := ""
+	if uuid, _ := h.state.Store.GetSetting(demoAccountUUIDSetting); uuid != "" {
+		if u, err := h.state.Store.GetUserByID(uuid); err == nil && u != nil {
+			username = u.Username
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": username})
+}
+
+// SetDemoAccount PUT /api/admin/settings/demo-account — admin only.
+// Designates (by username) the read-only demo account, or clears it when the
+// username is empty. An admin can never be the demo account.
+func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		if err := h.state.Store.SetSetting(demoAccountUUIDSetting, ""); err != nil {
+			sendJSONError(w, "Failed to clear demo account", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": ""})
+		return
+	}
+	u, err := h.state.Store.GetUserByUsername(username)
+	if err != nil || u == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if u.IsAdmin {
+		sendJSONError(w, "An admin cannot be the demo account", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetSetting(demoAccountUUIDSetting, u.ID); err != nil {
+		sendJSONError(w, "Failed to save demo account", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": u.Username})
 }

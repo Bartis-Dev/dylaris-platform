@@ -56,6 +56,25 @@ export async function saveAuthPolicy(policy: AuthPolicy) {
     } catch (err) { return handleError(err); }
 }
 
+// Demo account: the single read-only user that sees the demo servers.
+export async function getDemoAccount() {
+    try {
+        const res = await fetch(`${API_URL}/admin/settings/demo-account`, { headers: getAuthHeader() });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+export async function setDemoAccount(username: string) {
+    try {
+        const res = await fetch(`${API_URL}/admin/settings/demo-account`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username }),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
 export async function getSMTPConfig() {
     try {
         const res = await fetch(`${API_URL}/admin/settings/smtp`, { headers: getAuthHeader() });

@@ -40,6 +40,34 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) 
 	return token.SignedString(h.jwtKey)
 }
 
+// DemoLogin POST /api/auth/demo-login — public, rate-limited.
+// Issues a normal session for the designated read-only demo account, so the
+// website/panel can offer a one-click "View demo" with no credentials. The
+// account is forced GET-only by AuthMiddleware, so the session can only view.
+// Returns 404 when no demo account is configured (feature off).
+func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	uuid, _ := h.state.Store.GetSetting(demoAccountUUIDSetting)
+	if uuid == "" {
+		sendJSONError(w, "Demo is not enabled", http.StatusNotFound)
+		return
+	}
+	u, err := h.state.Store.GetUserByID(uuid)
+	if err != nil || u == nil {
+		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
+		return
+	}
+	token, err := h.IssueToken(u.Username, false)
+	if err != nil {
+		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "token": token, "username": u.Username})
+}
+
 // ... Structs LoginRequest, Claims, UpdateRequest etc. kept as-is ...
 // Claims.Purpose distinguishes normal sessions ("" / "session") from
 // short-lived special-purpose tokens. "2fa_setup" is a token issued at
@@ -161,6 +189,15 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if h.state.Store != nil {
 			if user, err := h.state.Store.GetUserByUsername(claims.Username); err == nil {
 				ctx = context.WithValue(ctx, "userID", user.ID)
+				// The demo account is read-only: reject every mutating verb so a
+				// public demo session can only ever view, never change anything.
+				// One central gate covers all write endpoints (power, files, RCON,
+				// profile, server-create, ...) without per-handler checks.
+				if !claims.IsAdmin && isDemoAccount(h.state.Store, user.ID) &&
+					r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+					sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
+					return
+				}
 			}
 		}
 

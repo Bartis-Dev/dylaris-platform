@@ -803,6 +803,9 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.TransferServer))).Methods("POST")
 	// Demo flag (admin) — mark a normal server as a public read-only showcase.
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/demo", authHandler.AuthMiddleware(serverHandler.SetServerDemo)).Methods("PATCH")
+	// Demo account designation (admin) — the single read-only account that sees the demo servers.
+	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(serverHandler.GetDemoAccount)).Methods("GET")
+	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(serverHandler.SetDemoAccount)).Methods("PUT")
 	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(serverHandler.GetMigrationStatus)).Methods("GET")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
@@ -832,6 +835,8 @@ func main() {
 	// Public — login page polls registration-status to decide whether to show the register link.
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
 	api.HandleFunc("/auth/register", authLimiter.Limit(5, registrationHandler.Register)).Methods("POST")
+	// Public one-click read-only demo session (rate-limited). 404 when no demo account is set.
+	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, authHandler.DemoLogin)).Methods("POST")
 	api.HandleFunc("/auth/verify-email", registrationHandler.VerifyEmail).Methods("POST")
 	api.HandleFunc("/auth/resend-verification", registrationHandler.ResendVerification).Methods("POST")
 
