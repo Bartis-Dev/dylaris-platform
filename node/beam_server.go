@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -106,7 +108,14 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	listenAddr := ":" + beamPort
 	lis, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		log.Printf("beam-server: failed to listen on %s: %v", listenAddr, err)
+		// Distinguish a busy port (the most common, actionable cause — another
+		// process already holds BEAM_GRPC_PORT) from other listen failures, so
+		// the LAN fast-path's "port busy" condition is unambiguous in the logs.
+		if errors.Is(err, syscall.EADDRINUSE) {
+			log.Printf("beam-server: PORT_BUSY — %s is already in use; set BEAM_GRPC_PORT to a free port or stop the conflicting process (LAN fast-path disabled until resolved)", listenAddr)
+		} else {
+			log.Printf("beam-server: failed to listen on %s: %v", listenAddr, err)
+		}
 		return
 	}
 

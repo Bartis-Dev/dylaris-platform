@@ -238,12 +238,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID)
+	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + LAN hints.
 	nodeDiscoveryID := ""
+	var lanIPs []string
 	if server.NodeID > 0 {
 		node, err := h.state.Store.GetNodeByID(server.NodeID)
 		if err == nil && node != nil {
 			nodeDiscoveryID = node.Token
+			lanIPs = node.PrivateIPs
 		}
 	}
 	if nodeDiscoveryID == "" {
@@ -269,12 +271,26 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// SignBeamTicket takes claims by value and sets ExpiresAt on its
 	// own copy, so claims.ExpiresAt here is still nil; dereferencing it
 	// panicked the handler (the connection drop surfaced as a 502).
+	// LAN fast-path hints: the node's private (RFC1918) IPs + the beam port, so
+	// a Beam app on the same LAN can dial the node directly and skip the relay.
+	// Same trust model as the relay->node hop (the JWT ticket gates auth and is
+	// node+server bound); the app only uses these when the user opts in, and the
+	// node only answers if it publishes the beam port on the LAN. Returned only
+	// to a caller already authorized for this server.
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"ticket":  ticketString,
 		"expires": time.Now().Add(beamauth.BeamTicketTTL).Unix(),
+		"lanHints": map[string]interface{}{
+			"ips":  lanIPs,
+			"port": beamLANPort,
+		},
 	})
 }
+
+// beamLANPort is the node beam-server port (BEAM_GRPC_PORT default). The app
+// probes the node's private IPs on this port for the LAN fast-path.
+const beamLANPort = "25521"
 
 // GetBeamConfig returns the Beam relay address and branding info.
 // GET /api/beam/config
