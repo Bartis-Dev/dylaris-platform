@@ -170,9 +170,9 @@ func (h *GatewayHandler) DeleteExternalRoute(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
+	if err := h.state.Gateway.DeleteExternalRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Route deletion queued"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Route deleted"})
 }

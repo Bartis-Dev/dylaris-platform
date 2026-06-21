@@ -92,10 +92,12 @@ type hubQueueMessage struct {
 	ServerID     *uint   `json:"server_id,omitempty"`
 	OwnerID      *string `json:"owner_id,omitempty"`
 	NewLinkToken string  `json:"new_link_token,omitempty"`
-	// External: this is a route-only entry; the edge dials TargetIP:TargetPort
-	// directly (no Link). The hub stores it and publishes external:true.
-	External bool `json:"external,omitempty"`
 }
+
+// externalRouteTTL is 0 (persistent). External routes are published to Redis by
+// Core directly (not via the hub DB), so they have no link-bound 24h refresh;
+// Core owns their create/delete and the hub's zombie sweep skips them.
+const externalRouteTTL = 0
 
 // --- GatewayProvider interface ---
 
@@ -104,6 +106,7 @@ type hubQueueMessage struct {
 type GatewayProvider interface {
 	CreateServerRoute(serverID uint, ownerID string, domain string, port int) error
 	CreateExternalRoute(ownerID string, domain string, targetHost string, port int) error
+	DeleteExternalRoute(domain string) error
 	DeleteRoute(domain string) error
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 }
@@ -163,9 +166,11 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 	return g.pushToQueue(msg)
 }
 
-// CreateExternalRoute registers a route-only entry: the edge proxies `domain` to
-// the customer-supplied public host:port directly (no managed node / Link). The
-// edge re-validates the target against private/loopback ranges at dial time.
+// CreateExternalRoute registers a route-only entry by publishing it DIRECTLY to
+// Redis (route:{domain} + sys:index:routes), bypassing the hub's queue/DB. The
+// hub does not own external routes (no Link, no managed server), it only learns
+// to skip them in its zombie sweep. The edge dials TargetIP:TargetPort directly
+// and re-validates the target against private ranges at dial time.
 func (g *RedisGateway) CreateExternalRoute(ownerID string, domain string, targetHost string, port int) error {
 	if port == 25565 {
 		if val, _ := g.store.GetSetting("gateway_port_mc_enabled"); val == "false" {
@@ -177,15 +182,35 @@ func (g *RedisGateway) CreateExternalRoute(ownerID string, domain string, target
 			return fmt.Errorf("HTTPS port (443) routing is disabled")
 		}
 	}
-	oID := ownerID
-	return g.pushToQueue(hubQueueMessage{
-		Action:     "create_route",
-		Domain:     domain,
-		TargetIP:   targetHost, // raw host — edge dials directly
-		TargetPort: port,
-		OwnerID:    &oID,
-		External:   true,
+	data, err := json.Marshal(map[string]interface{}{
+		"domain":      domain,
+		"target_ip":   targetHost,
+		"target_port": port,
+		"tunnel_id":   "", // no link
+		"server_uuid": "",
+		"external":    true,
+		"owner_id":    ownerID,
 	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := g.redis.Set(ctx, "route:"+domain, data, externalRouteTTL).Err(); err != nil {
+		return err
+	}
+	return g.redis.SAdd(ctx, "sys:index:routes", domain).Err()
+}
+
+// DeleteExternalRoute removes a route-only entry directly from Redis (Core owns
+// external-route lifecycle).
+func (g *RedisGateway) DeleteExternalRoute(domain string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := g.redis.Del(ctx, "route:"+domain).Err(); err != nil {
+		return err
+	}
+	return g.redis.SRem(ctx, "sys:index:routes", domain).Err()
 }
 
 func (g *RedisGateway) DeleteRoute(domain string) error {
