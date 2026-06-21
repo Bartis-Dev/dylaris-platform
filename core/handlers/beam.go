@@ -492,11 +492,13 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 // deliberately NOT considered here: they pin where Beam.exe connects
 // from outside, where the download port (25552) is typically closed.
 //
-// The only setting that can short-circuit discovery is beam.download_link
-// — an explicit full-URL override for admins who serve binaries from a
-// CDN/mirror instead of the relay itself.
+// The Beam app is published to GitHub Releases (no longer served by the relay).
+// Resolution order:
+//   1. beam.download_link — explicit full-URL override (CDN/mirror).
+//   2. The matching asset of the latest release in beam.release_repo (default
+//      Bartis-Dev/dylaris-gateway). The repo must be PUBLIC so Core can fetch
+//      the asset without auth.
 func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) []string {
-	// Full URL override — explicit admin opt-out from relay discovery.
 	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
 		base := strings.TrimRight(link, "/")
 		if strings.Contains(base, "/download/") {
@@ -505,43 +507,47 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 		return []string{base + "/download/" + platform}
 	}
 
-	relays := DiscoverBeamRelays(ctx, rdb)
-	if len(relays) == 0 {
-		return nil
+	repo := strings.TrimSpace(getSetting("beam.release_repo"))
+	if repo == "" {
+		repo = "Bartis-Dev/dylaris-gateway"
 	}
+	if u, err := githubLatestAssetURL(ctx, repo, platform); err == nil && u != "" {
+		return []string{u}
+	}
+	return nil
+}
 
-	urls := make([]string, 0, 3*len(relays))
-	seen := make(map[string]bool)
-	addCandidate := func(host, port string) {
-		host = strings.TrimSpace(host)
-		if host == "" {
-			return
-		}
-		if idx := strings.IndexByte(host, ':'); idx >= 0 {
-			host = host[:idx]
-		}
-		if port == "" {
-			port = "25552"
-		}
-		u := fmt.Sprintf("https://%s:%s/download/%s", host, port, platform)
-		if seen[u] {
-			return
-		}
-		seen[u] = true
-		urls = append(urls, u)
+// githubLatestAssetURL returns the browser download URL of the dylaris-beam asset
+// for the given platform from the latest release of repo.
+func githubLatestAssetURL(ctx context.Context, repo, platform string) (string, error) {
+	api := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
+	if err != nil {
+		return "", err
 	}
-
-	// Every discovered relay contributes its registered IPs and BEAM_ID
-	// (resolvable via Docker DNS when the operator names the service after
-	// it). One of these will reach the relay on the internal overlay.
-	for _, info := range relays {
-		addCandidate(info.IP, info.DownloadPort)
-		addCandidate(info.PrivateIP, info.DownloadPort)
-		addCandidate(info.BeamID, info.DownloadPort)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
 	}
-
-	if len(urls) == 0 {
-		return nil
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github releases: %d", resp.StatusCode)
 	}
-	return urls
+	var rel struct {
+		Assets []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return "", err
+	}
+	want := "dylaris-beam-" + platform
+	for _, a := range rel.Assets {
+		if a.Name == want || a.Name == want+".exe" {
+			return a.URL, nil
+		}
+	}
+	return "", fmt.Errorf("no asset for %s", platform)
 }
