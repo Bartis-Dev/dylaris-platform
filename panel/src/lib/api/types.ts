@@ -805,6 +805,24 @@ export const deleteServerRoute = (serverId: number, domain: string) =>
     fetchAPI(`/servers/${serverId}/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchAPI('/gateway/route-options');
 
+// Route-only ("external") routes: a protected address pointed at a server the
+// user already runs (a public host:port), no managed node. Owner-scoped.
+export interface ExternalRoute {
+    domain: string;
+    target_ip: string;
+    target_port: number;
+    external?: boolean;
+    owner_id?: string;
+}
+export interface CreateExternalRouteRequest extends CreateRouteRequest {
+    targetHost: string;
+}
+export const getExternalRoutes = (): Promise<ExternalRoute[]> => fetchAPI('/gateway/external-routes');
+export const createExternalRoute = (data: CreateExternalRouteRequest) =>
+    fetchAPI('/gateway/external-routes', { method: 'POST', body: JSON.stringify(data) });
+export const deleteExternalRoute = (domain: string) =>
+    fetchAPI(`/gateway/external-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+
 // Live availability check for the route-create form. Accepts the same
 // three input shapes the create endpoint does and answers `{available}`
 // without leaking who owns a taken domain.

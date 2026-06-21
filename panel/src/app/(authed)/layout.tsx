@@ -15,11 +15,11 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, featureFlags } = useAppData();
+    const { user, ready, featureFlags, gatewayEnabled } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -135,6 +135,15 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                         className="dropdown-item"
                                     >
                                         <Package size={20} className="mr-3" /> My Modpacks
+                                    </GuardedLink>
+                                )}
+                                {/* Route-only ("protected addresses") — gateway-gated. */}
+                                {gatewayEnabled && (
+                                    <GuardedLink
+                                        href="/routes"
+                                        className="dropdown-item"
+                                    >
+                                        <Globe size={20} className="mr-3" /> Protected Addresses
                                     </GuardedLink>
                                 )}
                                 {/* Connect-store entry only on the hosted build. */}
