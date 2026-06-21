@@ -492,12 +492,12 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 // deliberately NOT considered here: they pin where Beam.exe connects
 // from outside, where the download port (25552) is typically closed.
 //
-// The Beam app is published to GitHub Releases (no longer served by the relay).
+// The Beam app is published to Cloudflare R2 (no longer served by the relay).
 // Resolution order:
 //   1. beam.download_link — explicit full-URL override (CDN/mirror).
-//   2. The matching asset of the latest release in beam.release_repo (default
-//      Bartis-Dev/dylaris-gateway). The repo must be PUBLIC so Core can fetch
-//      the asset without auth.
+//   2. The platform URL from the R2 manifest (beam.release_manifest, default
+//      https://downloads.dylaris.com/beam/latest.json). Public, so Core fetches
+//      it without auth.
 func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) []string {
 	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
 		base := strings.TrimRight(link, "/")
@@ -507,47 +507,41 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 		return []string{base + "/download/" + platform}
 	}
 
-	repo := strings.TrimSpace(getSetting("beam.release_repo"))
-	if repo == "" {
-		repo = "Bartis-Dev/dylaris-gateway"
+	manifestURL := strings.TrimSpace(getSetting("beam.release_manifest"))
+	if manifestURL == "" {
+		manifestURL = "https://downloads.dylaris.com/beam/latest.json"
 	}
-	if u, err := githubLatestAssetURL(ctx, repo, platform); err == nil && u != "" {
+	if u, err := manifestPlatformURL(ctx, manifestURL, platform); err == nil && u != "" {
 		return []string{u}
 	}
 	return nil
 }
 
-// githubLatestAssetURL returns the browser download URL of the dylaris-beam asset
-// for the given platform from the latest release of repo.
-func githubLatestAssetURL(ctx context.Context, repo, platform string) (string, error) {
-	api := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
+// manifestPlatformURL fetches the R2 release manifest and returns the download
+// URL for the given platform slug (e.g. windows-amd64).
+func manifestPlatformURL(ctx context.Context, manifestURL, platform string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github releases: %d", resp.StatusCode)
+		return "", fmt.Errorf("manifest: %d", resp.StatusCode)
 	}
-	var rel struct {
-		Assets []struct {
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-		} `json:"assets"`
+	var m struct {
+		Platforms map[string]struct {
+			URL string `json:"url"`
+		} `json:"platforms"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return "", err
 	}
-	want := "dylaris-beam-" + platform
-	for _, a := range rel.Assets {
-		if a.Name == want || a.Name == want+".exe" {
-			return a.URL, nil
-		}
+	if p, ok := m.Platforms[platform]; ok && p.URL != "" {
+		return p.URL, nil
 	}
-	return "", fmt.Errorf("no asset for %s", platform)
+	return "", fmt.Errorf("no manifest entry for %s", platform)
 }
