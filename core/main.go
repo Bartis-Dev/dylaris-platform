@@ -754,9 +754,9 @@ func main() {
 
 	// Route-only (external origin): a protected address pointed at a server the
 	// user already runs, no managed node. Owner-scoped; create is gateway-gated.
-	api.HandleFunc("/gateway/external-routes", authHandler.AuthMiddleware(gatewayHandler.ListExternalRoutes)).Methods("GET")
-	api.HandleFunc("/gateway/external-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateExternalRoute))).Methods("POST")
-	api.HandleFunc("/gateway/external-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteExternalRoute)).Methods("DELETE")
+	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
+	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
+	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
 
 	// Infrastructure overview + migration status
 	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(infrastructureHandler.GetOverview)).Methods("GET")

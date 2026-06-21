@@ -71,13 +71,15 @@ type GatewayRoute struct {
 	Domain     string `json:"domain"`
 	TargetIP   string `json:"target_ip"`
 	TargetPort int    `json:"target_port"`
-	TunnelID   string `json:"tunnel_id"` // link token (empty for external routes)
+	TunnelID   string `json:"tunnel_id"` // link token (the customer's route-only Link, or a managed node's Link)
 	ServerUUID string `json:"server_uuid"`
-	// External marks a route-only entry whose origin is a customer-supplied
-	// public host:port the EDGE dials directly (no managed node / Link tunnel).
-	External bool `json:"external,omitempty"`
-	// OwnerID (user UUID) is published for external routes so the panel can list
-	// and authorize them per owner. Empty for server-bound routes.
+	// CoreOwned marks a route Core publishes DIRECTLY to Redis (not via the Hub
+	// DB): the tenant route-only kits. It still rides the normal Link tunnel path
+	// (TunnelID set) — the flag only tells the Hub's zombie sweep to leave it
+	// alone, since the Hub doesn't own its lifecycle.
+	CoreOwned bool `json:"core_owned,omitempty"`
+	// OwnerID (user UUID) is published for Core-owned routes so the panel can list
+	// and authorize them per owner. Empty for server-bound (managed) routes.
 	OwnerID string `json:"owner_id,omitempty"`
 }
 
@@ -94,10 +96,11 @@ type hubQueueMessage struct {
 	NewLinkToken string  `json:"new_link_token,omitempty"`
 }
 
-// externalRouteTTL is 0 (persistent). External routes are published to Redis by
-// Core directly (not via the hub DB), so they have no link-bound 24h refresh;
-// Core owns their create/delete and the hub's zombie sweep skips them.
-const externalRouteTTL = 0
+// coreOwnedRouteTTL is 0 (persistent). Core-owned (route-only) routes are
+// published to Redis by Core directly (not via the hub DB), so they have no
+// link-bound 24h refresh; Core owns their create/delete and the hub's zombie
+// sweep skips them.
+const coreOwnedRouteTTL = 0
 
 // --- GatewayProvider interface ---
 
@@ -105,8 +108,12 @@ const externalRouteTTL = 0
 // Reads are done directly from Redis using the helper functions below.
 type GatewayProvider interface {
 	CreateServerRoute(serverID uint, ownerID string, domain string, port int) error
-	CreateExternalRoute(ownerID string, domain string, targetHost string, port int) error
-	DeleteExternalRoute(domain string) error
+	// CreateRouteViaLink publishes a route-only entry that rides the tenant's own
+	// Link tunnel: the edge opens a stream on linkToken and the customer's Link
+	// dials targetHost:port on its LOCAL network. No managed node, no exposed
+	// origin, splice + rolling updates preserved.
+	CreateRouteViaLink(ownerID string, domain string, linkToken string, targetHost string, port int) error
+	DeleteCoreOwnedRoute(domain string) error
 	DeleteRoute(domain string) error
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 	// LinkToken derives the deterministic Link tunnel token for a link identity
@@ -170,12 +177,13 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 	return g.pushToQueue(msg)
 }
 
-// CreateExternalRoute registers a route-only entry by publishing it DIRECTLY to
+// CreateRouteViaLink registers a route-only entry by publishing it DIRECTLY to
 // Redis (route:{domain} + sys:index:routes), bypassing the hub's queue/DB. The
-// hub does not own external routes (no Link, no managed server), it only learns
-// to skip them in its zombie sweep. The edge dials TargetIP:TargetPort directly
-// and re-validates the target against private ranges at dial time.
-func (g *RedisGateway) CreateExternalRoute(ownerID string, domain string, targetHost string, port int) error {
+// route carries the tenant's Link token as tunnel_id, so the edge uses the normal
+// tunnel path: it opens a stream on that tunnel and the customer's Link dials the
+// LOCAL target. The hub does not own this route (Core direct-published it), it
+// only learns to skip it in the zombie sweep via the core_owned flag.
+func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkToken string, targetHost string, port int) error {
 	if port == 25565 {
 		if val, _ := g.store.GetSetting("gateway_port_mc_enabled"); val == "false" {
 			return fmt.Errorf("minecraft port (25565) routing is disabled")
@@ -186,13 +194,16 @@ func (g *RedisGateway) CreateExternalRoute(ownerID string, domain string, target
 			return fmt.Errorf("HTTPS port (443) routing is disabled")
 		}
 	}
+	if linkToken == "" {
+		return fmt.Errorf("link token is required")
+	}
 	data, err := json.Marshal(map[string]interface{}{
 		"domain":      domain,
 		"target_ip":   targetHost,
 		"target_port": port,
-		"tunnel_id":   "", // no link
+		"tunnel_id":   linkToken,
 		"server_uuid": "",
-		"external":    true,
+		"core_owned":  true,
 		"owner_id":    ownerID,
 	})
 	if err != nil {
@@ -200,15 +211,15 @@ func (g *RedisGateway) CreateExternalRoute(ownerID string, domain string, target
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := g.redis.Set(ctx, "route:"+domain, data, externalRouteTTL).Err(); err != nil {
+	if err := g.redis.Set(ctx, "route:"+domain, data, coreOwnedRouteTTL).Err(); err != nil {
 		return err
 	}
 	return g.redis.SAdd(ctx, "sys:index:routes", domain).Err()
 }
 
-// DeleteExternalRoute removes a route-only entry directly from Redis (Core owns
-// external-route lifecycle).
-func (g *RedisGateway) DeleteExternalRoute(domain string) error {
+// DeleteCoreOwnedRoute removes a route-only entry directly from Redis (Core owns
+// its lifecycle).
+func (g *RedisGateway) DeleteCoreOwnedRoute(domain string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := g.redis.Del(ctx, "route:"+domain).Err(); err != nil {
