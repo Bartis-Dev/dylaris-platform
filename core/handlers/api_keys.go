@@ -170,6 +170,17 @@ func generatePlaintextKey() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// generateLinkIdentity mints a stable, unique link identity (the warp key's
+// node_id). The Link derives its tunnel token deterministically from this id +
+// the cluster secret, so the id must be unguessable. 16 random bytes suffice.
+func generateLinkIdentity() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "link-" + hex.EncodeToString(b), nil
+}
+
 // --- External RCON middleware ---
 
 // APIKeyMiddleware validates Authorization: Bearer <dyl_…> for the external

@@ -145,6 +145,104 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// MintLinkKit (tenant) creates a route-only "link kit": a warp enrollment key
+// bound to the calling user plus an auto-generated link identity (node_id). The
+// customer runs warp (joins the overlay) + link (tunnels their LOCAL server out
+// through warp) — no managed node. Returns the plaintext warp key, the link
+// identity and the DERIVED link token ONCE. The customer sets the link token as
+// the link's AGENT_SECRET, so the cluster secret never leaves Core (a tenant must
+// never be able to derive another tenant's link token).
+func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	// Route-only needs the overlay: warp enroll + link tunnel only exist in
+	// gateway/both routing mode. Match Enroll, which refuses in ip_port mode.
+	if !h.state.gatewayEnabled() || h.state.Gateway == nil {
+		sendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
+		return
+	}
+	userID := byonCallerID(r)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "Route-only link"
+	}
+
+	nodeID, err := generateLinkIdentity()
+	if err != nil {
+		sendJSONError(w, "Failed to generate link identity", http.StatusInternalServerError)
+		return
+	}
+	plaintext, err := generatePlaintextKey()
+	if err != nil {
+		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		return
+	}
+	// general policy + single connection: one customer machine, one warp peer.
+	// kill_old so a restart re-enrolls cleanly instead of hitting the limit.
+	if _, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
+		Name:      name,
+		KeyHash:   HashAPIKey(plaintext),
+		Policy:    "general",
+		MaxConns:  1,
+		OnNewConn: "kill_old",
+		NodeID:    nodeID,
+		OwnerID:   userID,
+	}); err != nil {
+		sendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"warp_key":   plaintext,
+		"link_id":    nodeID,
+		"link_token": h.state.Gateway.LinkToken(nodeID),
+		"note":       "Shown once. Deploy warp with the warp key, and link with the link token as its AGENT_SECRET.",
+	})
+}
+
+// ListLinkKits (tenant) returns the caller's route-only link kits (metadata only,
+// no secrets). The link token is re-derivable from link_id, so it is re-revealed
+// via the kit's reveal flow, not listed here.
+func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	userID := byonCallerID(r)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	keys, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
+	if err != nil {
+		sendJSONError(w, "Failed to load link kits", http.StatusInternalServerError)
+		return
+	}
+	type linkKit struct {
+		ID        int    `json:"id"`
+		Name      string `json:"name"`
+		LinkID    string `json:"link_id"`
+		CreatedAt string `json:"created_at"`
+	}
+	out := make([]linkKit, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "kits": out})
+}
+
 // ListRegions returns the full warp registry (regions + leaders + liveness +
 // peer counts) for the admin panel.
 func (h *WarpHandler) ListRegions(w http.ResponseWriter, r *http.Request) {

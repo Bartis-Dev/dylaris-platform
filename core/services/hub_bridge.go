@@ -109,6 +109,10 @@ type GatewayProvider interface {
 	DeleteExternalRoute(domain string) error
 	DeleteRoute(domain string) error
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
+	// LinkToken derives the deterministic Link tunnel token for a link identity
+	// (a warp key's node_id). Core holds the cluster secret; tenants receive only
+	// the derived token via their kit, never the secret itself.
+	LinkToken(nodeID string) string
 }
 
 // --- RedisGateway (active in gateway / both routing modes) ---
@@ -237,6 +241,11 @@ func (g *RedisGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error 
 		ServerUUID:   server.UUID,
 		NewLinkToken: newToken,
 	})
+}
+
+// LinkToken derives the Link tunnel token for a link identity (warp key node_id).
+func (g *RedisGateway) LinkToken(nodeID string) string {
+	return DeriveLinkToken(nodeID, g.clusterSecret)
 }
 
 func (g *RedisGateway) pushToQueue(msg hubQueueMessage) error {

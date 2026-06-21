@@ -13,6 +13,7 @@ type WarpAPIKey struct {
 	FixedWGIP string // "" = auto-allocate
 	NodeID    string
 	Region    string // "" = auto-assign at enroll; else pin enrolls to this region
+	OwnerID   string // "" = admin-minted (platform); else the tenant the key/route-only kit belongs to
 	RevokedAt *time.Time
 	CreatedAt time.Time
 }

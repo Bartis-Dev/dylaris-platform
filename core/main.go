@@ -553,6 +553,9 @@ func main() {
 	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(warpHandler.UpsertLeader)).Methods("POST")
 	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(warpHandler.DeleteLeader)).Methods("DELETE")
 	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(warpHandler.MintAPIKey)).Methods("POST")
+	// Route-only link kits (tenant self-service; BYON-gated inside the handler)
+	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.ListLinkKits)).Methods("GET")
+	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")
 
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 

@@ -8,28 +8,57 @@ import (
 func (s *PostgresStore) CreateWarpAPIKey(k WarpAPIKey) (int, error) {
 	var id int
 	err := s.db.QueryRow(`
-		INSERT INTO warp_api_keys (name, key_hash, policy, max_conns, on_new_conn, fixed_wg_ip, node_id, region)
-		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))
+		INSERT INTO warp_api_keys (name, key_hash, policy, max_conns, on_new_conn, fixed_wg_ip, node_id, region, owner_id)
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,'')::uuid)
 		RETURNING id`,
-		k.Name, k.KeyHash, k.Policy, k.MaxConns, k.OnNewConn, k.FixedWGIP, k.NodeID, k.Region,
+		k.Name, k.KeyHash, k.Policy, k.MaxConns, k.OnNewConn, k.FixedWGIP, k.NodeID, k.Region, k.OwnerID,
 	).Scan(&id)
 	return id, err
 }
 
 func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
 	var k WarpAPIKey
-	var fixedIP, nodeID, region sql.NullString
+	var fixedIP, nodeID, region, ownerID sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
-		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''), revoked_at, created_at
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
+		       COALESCE(owner_id::text,''), revoked_at, created_at
 		FROM warp_api_keys WHERE key_hash = $1`, hash).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &nodeID, &region, &ownerID, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
-	k.FixedWGIP, k.NodeID, k.Region = fixedIP.String, nodeID.String, region.String
+	k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, ownerID.String
 	return &k, nil
+}
+
+// ListWarpAPIKeysByOwner returns the non-revoked warp keys minted for a tenant —
+// the link/route-only kits they own. Used by the panel to list "my links".
+func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
+		       COALESCE(owner_id::text,''), revoked_at, created_at
+		FROM warp_api_keys
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL
+		ORDER BY created_at DESC`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpAPIKey
+	for rows.Next() {
+		var k WarpAPIKey
+		var fixedIP, nodeID, region, owner sql.NullString
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }
 
 func (s *PostgresStore) InsertWarpPeer(p WarpPeer) (int, error) {

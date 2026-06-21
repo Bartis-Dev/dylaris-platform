@@ -35,6 +35,11 @@ func applyWarpSchema(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS region TEXT`); err != nil {
 		return fmt.Errorf("warp: add warp_api_keys.region: %w", err)
 	}
+	// owner_id binds a key (and the link/route-only kit it backs) to a tenant.
+	// NULL for admin-minted keys; set for tenant-minted route-only kits.
+	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE CASCADE`); err != nil {
+		return fmt.Errorf("warp: add warp_api_keys.owner_id: %w", err)
+	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_regions (
 		region     TEXT PRIMARY KEY,
