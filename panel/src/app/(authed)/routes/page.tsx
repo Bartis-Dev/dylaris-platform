@@ -2,34 +2,50 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Globe, Plus, Trash2, ShieldAlert, Loader2, Server } from 'lucide-react';
+import { Globe, Plus, Trash2, Loader2, Server, Link2, Copy, Check, ShieldCheck } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 import {
-    CreateRouteRequest, ExternalRoute,
-    getExternalRoutes, createExternalRoute, deleteExternalRoute,
+    CreateRouteRequest, LinkRoute, LinkKit, MintedLinkKit,
+    getLinkRoutes, createLinkRoute, deleteLinkRoute,
+    listLinkKits, mintLinkKit,
 } from '@/lib/api';
 
-// Route-only: a DDoS-protected address pointed at a server the user already
-// runs. No managed node — the edge proxies straight to their public host:port.
+// Route-only ("via Link"): a DDoS-protected address pointed at a server the user
+// runs on their OWN machine, reached through their own outbound Link tunnel. No
+// managed node, no open ports — the customer runs warp + link with a "link kit"
+// and the edge proxies through that tunnel to their LOCAL server.
 export default function RoutesPage() {
     const router = useRouter();
     const { gatewayEnabled } = useAppData();
 
-    const [routes, setRoutes] = useState<ExternalRoute[]>([]);
+    const [kits, setKits] = useState<LinkKit[]>([]);
+    const [routes, setRoutes] = useState<LinkRoute[]>([]);
     const [loading, setLoading] = useState(true);
-    const [creating, setCreating] = useState(false);
+
+    // Mint-link flow
+    const [linkName, setLinkName] = useState('');
+    const [minting, setMinting] = useState(false);
+    const [minted, setMinted] = useState<MintedLinkKit | null>(null);
+
+    // Create-route flow
+    const [linkId, setLinkId] = useState('');
     const [domainReq, setDomainReq] = useState<CreateRouteRequest>({ targetPort: 25565 });
     const [availability, setAvailability] = useState<DomainAvailability>('idle');
-    const [targetHost, setTargetHost] = useState('');
+    const [targetHost, setTargetHost] = useState('127.0.0.1');
     const [targetPort, setTargetPort] = useState(25565);
+    const [creating, setCreating] = useState(false);
     const [error, setError] = useState('');
     const [toast, setToast] = useState('');
 
     const load = useCallback(async () => {
         try {
-            const r = await getExternalRoutes();
+            const [k, r] = await Promise.all([listLinkKits(), getLinkRoutes()]);
+            const kitList = k?.kits ?? [];
+            setKits(kitList);
             setRoutes(Array.isArray(r) ? r : []);
+            // Default the route form to the first link if none chosen yet.
+            setLinkId(prev => prev || (kitList[0]?.link_id ?? ''));
         } finally {
             setLoading(false);
         }
@@ -42,16 +58,35 @@ export default function RoutesPage() {
         if (!gatewayEnabled) router.replace('/');
     }, [gatewayEnabled, router]);
 
-    const submit = async () => {
+    const flashToast = (msg: string) => {
+        setToast(msg);
+        setTimeout(() => setToast(''), 3000);
+    };
+
+    const mint = async () => {
+        setMinting(true);
+        try {
+            const res = await mintLinkKit(linkName.trim());
+            setMinted(res);
+            setLinkName('');
+            await load();
+            setLinkId(res.link_id);
+        } catch (e) {
+            flashToast(e instanceof Error ? e.message : 'Failed to create link');
+        } finally {
+            setMinting(false);
+        }
+    };
+
+    const submitRoute = async () => {
         setError('');
-        if (!targetHost.trim()) { setError('Enter the address of your server'); return; }
+        if (!linkId) { setError('Create a link first, then select it'); return; }
+        if (!targetHost.trim()) { setError('Enter the local address of your server'); return; }
         if (availability === 'taken') { setError('That domain is already taken'); return; }
         setCreating(true);
         try {
-            await createExternalRoute({ ...domainReq, targetPort, targetHost: targetHost.trim() });
-            setTargetHost('');
-            setToast('Route created');
-            setTimeout(() => setToast(''), 3000);
+            await createLinkRoute({ ...domainReq, linkId, targetPort, targetHost: targetHost.trim() });
+            flashToast('Route created');
             await load();
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to create route');
@@ -60,9 +95,9 @@ export default function RoutesPage() {
         }
     };
 
-    const remove = async (domain: string) => {
+    const removeRoute = async (domain: string) => {
         if (!confirm(`Delete the route ${domain}?`)) return;
-        await deleteExternalRoute(domain);
+        await deleteLinkRoute(domain);
         await load();
     };
 
@@ -74,13 +109,68 @@ export default function RoutesPage() {
                 <Globe size={22} className="text-(--accent-light)" />
                 <div>
                     <h1 className="text-xl font-display">Protected addresses</h1>
-                    <p className="text-sm text-(--base-06)">Point a DDoS-protected address at a server you already run — no node needed.</p>
+                    <p className="text-sm text-(--base-06)">Point a DDoS-protected address at a server on your own machine — no node, no open ports. Traffic reaches it through your outbound link tunnel.</p>
                 </div>
             </header>
 
-            {/* Create */}
+            {/* Links */}
+            <div className="card p-5 space-y-4">
+                <div className="flex items-center gap-2">
+                    <Link2 size={16} className="text-(--accent-light)" />
+                    <h2 className="font-medium text-(--base-09)">Your links</h2>
+                </div>
+
+                {minted && <MintReveal kit={minted} onCopy={flashToast} onClose={() => setMinted(null)} />}
+
+                {kits.length > 0 && (
+                    <div className="space-y-2">
+                        {kits.map(k => (
+                            <div key={k.id} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">
+                                <ShieldCheck size={14} className="text-(--success-light) shrink-0" />
+                                <span className="text-sm text-(--base-09) truncate">{k.name}</span>
+                                <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <div className="grid grid-cols-[1fr_auto] gap-3 max-w-md">
+                    <div className="flex flex-col gap-1.5">
+                        <label className="input-label">New link name</label>
+                        <input
+                            type="text"
+                            value={linkName}
+                            onChange={e => setLinkName(e.target.value)}
+                            placeholder="Home PC"
+                            className="input-field text-sm w-full"
+                        />
+                    </div>
+                    <div className="flex flex-col gap-1.5 justify-end">
+                        <button onClick={mint} disabled={minting} className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-60">
+                            {minting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                            {minting ? 'Creating…' : 'Create link'}
+                        </button>
+                    </div>
+                </div>
+                <p className="text-xs text-(--base-06)">A link is the kit you run on your machine (warp + link). It opens an outbound tunnel — nothing is exposed.</p>
+            </div>
+
+            {/* Create route */}
             <div className="card p-5 space-y-4">
                 <h2 className="font-medium text-(--base-09)">New route</h2>
+
+                <div className="flex flex-col gap-1.5">
+                    <label className="input-label">Link</label>
+                    <select
+                        value={linkId}
+                        onChange={e => setLinkId(e.target.value)}
+                        disabled={kits.length === 0}
+                        className="input-field text-sm w-full max-w-md disabled:opacity-60"
+                    >
+                        {kits.length === 0 && <option value="">Create a link first</option>}
+                        {kits.map(k => <option key={k.id} value={k.link_id}>{k.name}</option>)}
+                    </select>
+                </div>
 
                 <div className="flex flex-col gap-1.5">
                     <label className="input-label">Your domain</label>
@@ -89,14 +179,14 @@ export default function RoutesPage() {
 
                 <div className="grid grid-cols-[1fr_auto] gap-3 max-w-md">
                     <div className="flex flex-col gap-1.5">
-                        <label className="input-label">Your server address</label>
+                        <label className="input-label">Local server address</label>
                         <div className="flex items-center gap-2">
                             <Server size={14} className="text-(--base-06) shrink-0" />
                             <input
                                 type="text"
                                 value={targetHost}
                                 onChange={e => setTargetHost(e.target.value)}
-                                placeholder="play.myhost.com or 203.0.113.7"
+                                placeholder="127.0.0.1 or 192.168.1.50"
                                 className="input-field text-sm w-full"
                             />
                         </div>
@@ -111,24 +201,17 @@ export default function RoutesPage() {
                         />
                     </div>
                 </div>
-
-                {/* The critical security caveat for public-IP origins. */}
-                <div className="flex items-start gap-2.5 p-3 rounded-md bg-(--warning)/5 border border-(--warning)/20">
-                    <ShieldAlert size={15} className="text-(--warning-light) shrink-0 mt-0.5" />
-                    <p className="text-xs text-(--base-07) leading-relaxed">
-                        Lock your server&apos;s firewall to only accept connections from the Dylaris edge IPs. Otherwise an attacker who finds your real IP can hit it directly and bypass the protection. A home server behind NAT has no public IP to attack, so this is automatic there.
-                    </p>
-                </div>
+                <p className="text-xs text-(--base-06)">This is the address your link dials on its own machine — loopback or LAN. Your link only dials addresses you allow it to (LINK_ALLOWED_TARGETS).</p>
 
                 {error && <p className="text-sm text-(--error-light)">{error}</p>}
 
-                <button onClick={submit} disabled={creating} className="btn btn-primary inline-flex items-center gap-2 w-fit disabled:opacity-60">
+                <button onClick={submitRoute} disabled={creating || kits.length === 0} className="btn btn-primary inline-flex items-center gap-2 w-fit disabled:opacity-60">
                     {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                     {creating ? 'Creating…' : 'Create route'}
                 </button>
             </div>
 
-            {/* List */}
+            {/* List routes */}
             <div className="space-y-2">
                 <h2 className="font-medium text-(--base-09)">Your routes</h2>
                 {loading ? (
@@ -142,7 +225,7 @@ export default function RoutesPage() {
                                 <div className="font-mono text-sm text-(--base-09) truncate">{rt.domain}</div>
                                 <div className="text-xs text-(--base-06) font-mono">→ {rt.target_ip}:{rt.target_port}</div>
                             </div>
-                            <button onClick={() => remove(rt.domain)} title="Delete" className="p-2 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0">
+                            <button onClick={() => removeRoute(rt.domain)} title="Delete" className="p-2 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0">
                                 <Trash2 size={16} />
                             </button>
                         </div>
@@ -153,6 +236,51 @@ export default function RoutesPage() {
             {toast && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-md bg-(--success) text-white text-sm shadow-lg">{toast}</div>
             )}
+        </div>
+    );
+}
+
+// MintReveal shows the one-time secrets for a freshly minted link kit. The warp
+// key is hashed server-side and can never be shown again, so we make copying it
+// prominent and warn the user.
+function MintReveal({ kit, onCopy, onClose }: { kit: MintedLinkKit; onCopy: (m: string) => void; onClose: () => void }) {
+    const envBlock = `WARP_API_KEY=${kit.warp_key}\nLINK_ID=${kit.link_id}\nLINK_TOKEN=${kit.link_token}`;
+    return (
+        <div className="rounded-md border border-(--accent)/30 bg-(--accent)/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-(--base-09)">Link created — copy these now</span>
+                <button onClick={onClose} className="text-xs text-(--base-06) hover:text-(--base-09)">Dismiss</button>
+            </div>
+            <p className="text-xs text-(--base-07) leading-relaxed">
+                Shown once. Deploy warp + link on your machine with these values. The warp key cannot be retrieved later.
+            </p>
+            <CopyRow label="WARP_API_KEY" value={kit.warp_key} onCopy={onCopy} />
+            <CopyRow label="LINK_TOKEN" value={kit.link_token} onCopy={onCopy} />
+            <button
+                onClick={() => { navigator.clipboard?.writeText(envBlock); onCopy('Copied .env block'); }}
+                className="btn btn-secondary inline-flex items-center gap-2 text-xs"
+            >
+                <Copy size={13} /> Copy full .env block
+            </button>
+        </div>
+    );
+}
+
+function CopyRow({ label, value, onCopy }: { label: string; value: string; onCopy: (m: string) => void }) {
+    const [copied, setCopied] = useState(false);
+    const copy = () => {
+        navigator.clipboard?.writeText(value);
+        setCopied(true);
+        onCopy(`Copied ${label}`);
+        setTimeout(() => setCopied(false), 1500);
+    };
+    return (
+        <div className="flex items-center gap-2">
+            <span className="input-label w-32 shrink-0">{label}</span>
+            <code className="text-xs font-mono text-(--base-08) bg-(--base-01) px-2 py-1 rounded truncate flex-1">{value}</code>
+            <button onClick={copy} title={`Copy ${label}`} className="p-1.5 text-(--base-06) hover:text-(--accent-light) transition-colors shrink-0">
+                {copied ? <Check size={14} className="text-(--success-light)" /> : <Copy size={14} />}
+            </button>
         </div>
     );
 }

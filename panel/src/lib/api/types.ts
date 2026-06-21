@@ -805,23 +805,47 @@ export const deleteServerRoute = (serverId: number, domain: string) =>
     fetchAPI(`/servers/${serverId}/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchAPI('/gateway/route-options');
 
-// Route-only ("external") routes: a protected address pointed at a server the
-// user already runs (a public host:port), no managed node. Owner-scoped.
-export interface ExternalRoute {
+// Route-only ("via Link") routes: a protected address pointed at a server the
+// user runs on their OWN machine, reached through their own outbound Link tunnel
+// (no managed node, no exposed origin). Owner-scoped.
+export interface LinkRoute {
     domain: string;
     target_ip: string;
     target_port: number;
-    external?: boolean;
+    tunnel_id?: string;
+    core_owned?: boolean;
     owner_id?: string;
 }
-export interface CreateExternalRouteRequest extends CreateRouteRequest {
-    targetHost: string;
+export interface CreateLinkRouteRequest extends CreateRouteRequest {
+    linkId: string;    // the Link kit's id (warp key node_id)
+    targetHost: string; // the LOCAL target the Link dials (LAN / loopback allowed)
 }
-export const getExternalRoutes = (): Promise<ExternalRoute[]> => fetchAPI('/gateway/external-routes');
-export const createExternalRoute = (data: CreateExternalRouteRequest) =>
-    fetchAPI('/gateway/external-routes', { method: 'POST', body: JSON.stringify(data) });
-export const deleteExternalRoute = (domain: string) =>
-    fetchAPI(`/gateway/external-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+export const getLinkRoutes = (): Promise<LinkRoute[]> => fetchAPI('/gateway/link-routes');
+export const createLinkRoute = (data: CreateLinkRouteRequest) =>
+    fetchAPI('/gateway/link-routes', { method: 'POST', body: JSON.stringify(data) });
+export const deleteLinkRoute = (domain: string) =>
+    fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+
+// Link kits: a warp key + auto link identity bound to the account. The customer
+// runs warp + link with the kit to expose a LOCAL server through the gateway.
+// Mint returns the secrets ONCE; the list is metadata-only.
+export interface LinkKit {
+    id: number;
+    name: string;
+    link_id: string;
+    created_at: string;
+}
+export interface MintedLinkKit {
+    success: boolean;
+    warp_key: string;
+    link_id: string;
+    link_token: string;
+    note: string;
+}
+export const listLinkKits = (): Promise<{ success: boolean; kits: LinkKit[] }> =>
+    fetchAPI('/warp/link-kits');
+export const mintLinkKit = (name: string): Promise<MintedLinkKit> =>
+    fetchAPI('/warp/link-kits', { method: 'POST', body: JSON.stringify({ name }) });
 
 // Live availability check for the route-create form. Accepts the same
 // three input shapes the create endpoint does and answers `{available}`
