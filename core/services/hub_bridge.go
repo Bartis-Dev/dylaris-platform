@@ -71,8 +71,14 @@ type GatewayRoute struct {
 	Domain     string `json:"domain"`
 	TargetIP   string `json:"target_ip"`
 	TargetPort int    `json:"target_port"`
-	TunnelID   string `json:"tunnel_id"` // link token
+	TunnelID   string `json:"tunnel_id"` // link token (empty for external routes)
 	ServerUUID string `json:"server_uuid"`
+	// External marks a route-only entry whose origin is a customer-supplied
+	// public host:port the EDGE dials directly (no managed node / Link tunnel).
+	External bool `json:"external,omitempty"`
+	// OwnerID (user UUID) is published for external routes so the panel can list
+	// and authorize them per owner. Empty for server-bound routes.
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 // hubQueueMessage is the payload pushed to dylaris:hub:queue.
@@ -86,6 +92,9 @@ type hubQueueMessage struct {
 	ServerID     *uint   `json:"server_id,omitempty"`
 	OwnerID      *string `json:"owner_id,omitempty"`
 	NewLinkToken string  `json:"new_link_token,omitempty"`
+	// External: this is a route-only entry; the edge dials TargetIP:TargetPort
+	// directly (no Link). The hub stores it and publishes external:true.
+	External bool `json:"external,omitempty"`
 }
 
 // --- GatewayProvider interface ---
@@ -94,6 +103,7 @@ type hubQueueMessage struct {
 // Reads are done directly from Redis using the helper functions below.
 type GatewayProvider interface {
 	CreateServerRoute(serverID uint, ownerID string, domain string, port int) error
+	CreateExternalRoute(ownerID string, domain string, targetHost string, port int) error
 	DeleteRoute(domain string) error
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 }
@@ -151,6 +161,31 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 	}
 
 	return g.pushToQueue(msg)
+}
+
+// CreateExternalRoute registers a route-only entry: the edge proxies `domain` to
+// the customer-supplied public host:port directly (no managed node / Link). The
+// edge re-validates the target against private/loopback ranges at dial time.
+func (g *RedisGateway) CreateExternalRoute(ownerID string, domain string, targetHost string, port int) error {
+	if port == 25565 {
+		if val, _ := g.store.GetSetting("gateway_port_mc_enabled"); val == "false" {
+			return fmt.Errorf("minecraft port (25565) routing is disabled")
+		}
+	}
+	if port == 443 {
+		if val, _ := g.store.GetSetting("gateway_port_https_enabled"); val == "false" {
+			return fmt.Errorf("HTTPS port (443) routing is disabled")
+		}
+	}
+	oID := ownerID
+	return g.pushToQueue(hubQueueMessage{
+		Action:     "create_route",
+		Domain:     domain,
+		TargetIP:   targetHost, // raw host — edge dials directly
+		TargetPort: port,
+		OwnerID:    &oID,
+		External:   true,
+	})
 }
 
 func (g *RedisGateway) DeleteRoute(domain string) error {
