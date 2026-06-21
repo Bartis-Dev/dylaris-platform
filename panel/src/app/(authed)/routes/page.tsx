@@ -244,7 +244,10 @@ export default function RoutesPage() {
 // key is hashed server-side and can never be shown again, so we make copying it
 // prominent and warn the user.
 function MintReveal({ kit, onCopy, onClose }: { kit: MintedLinkKit; onCopy: (m: string) => void; onClose: () => void }) {
-    const envBlock = `WARP_API_KEY=${kit.warp_key}\nLINK_ID=${kit.link_id}\nLINK_TOKEN=${kit.link_token}`;
+    // Matches docker-compose.route-only.yml. The operator-supplied values
+    // (ENROLL_URL / TUNNEL_SUBNETS / REDIS_ADDR / LOCAL_TARGET) go in the rest
+    // of the .env — see the route-only deploy guide.
+    const envBlock = `WARP_API_KEY=${kit.warp_key}\nLINK_TOKEN=${kit.link_token}`;
     return (
         <div className="rounded-md border border-(--accent)/30 bg-(--accent)/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
