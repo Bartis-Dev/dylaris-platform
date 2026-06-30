@@ -77,12 +77,21 @@ message NodeMessage {
 message NodeAuth {
   string node_token = 1;
   NodeIPs ips = 2;
+  // BYON Redis-ACL bootstrap (only set when the node runs REDIS_ACL_ENABLED):
+  string enroll_token = 3;   // first enrollment only
+  string secret_proof = 4;   // HMAC proof of possession on later connects
+  bool   acl_supported = 5;  // node advertises it can use scoped creds
 }
 
 message AuthResult {
   bool ok = 1;
   string core_id = 2;
   string message = 3;
+  // BYON Redis-ACL bootstrap response (only set when feature_redis_acl is on):
+  bool   acl_enabled = 4;   // informational: Core provisioned this node's ACL (node still gates on its own REDIS_ACL_ENABLED)
+  string node_secret = 5;   // hex per-node secret (returned once on first issue / enroll)
+  // field 6 reserved (was redis_addr; removed as unused — node keeps its env REDIS_ADDR)
+  reserved 6;
 }
 
 message NodeIPs {

@@ -78,6 +78,23 @@ var (
 // platform-global routing/file-access setting (spec §9 per-node override).
 var nodeExternal bool
 
+// Redis ACL bootstrap config (BYON Redis ACL hardening). All inert when
+// redisACLEnabled is false — the OFF path is byte-identical to before.
+var (
+	// redisACLEnabled gates the entire scoped-credentials path. Off = today.
+	redisACLEnabled bool
+	// coreGRPCAddr is host:port of a Core gRPC endpoint, used for the one-shot
+	// secret-bootstrap handshake. Required only when ACL is on AND no cached
+	// secret exists (first boot) or after a Redis auth failure.
+	coreGRPCAddr string
+	// nodeSecretDir is the directory that holds the cached .node_secret. Set to
+	// the first persisted storage path so it survives restarts.
+	nodeSecretDir string
+	// nodeEnrollToken mirrors NODE_ENROLL_TOKEN (BYON per-user enroll token).
+	// Reused by the heartbeat AND the gRPC secret bootstrap.
+	nodeEnrollToken string
+)
+
 // hasTag reports whether comma-separated tags contains target (trimmed).
 func hasTag(tags, target string) bool {
 	for _, t := range strings.Split(tags, ",") {
@@ -137,17 +154,61 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	redisUserEff, redisPassEff := redisUser, redisPass
+	if redisACLEnabled {
+		secret := ensureNodeSecret(ctx)
+		if secret == nil {
+			log.Fatal("redisacl: shutdown before node secret could be obtained")
+		}
+		redisUserEff = aclNodeUsername(nodeID)
+		redisPassEff = aclNodePassword(secret, nodeID)
+	}
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
-		Username: redisUser,
-		Password: redisPass,
+		Username: redisUserEff,
+		Password: redisPassEff,
 		DB:       redisDB,
 	})
 
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+	if redisACLEnabled {
+		// Non-fatal: retry. On auth failure re-confirm with Core (which re-applies
+		// the ACL) and rebuild the client if the secret changed. MC containers keep
+		// running throughout, so a slow Core/Valkey never takes the node down.
+		backoff := time.Second
+		for {
+			if err := rdb.Ping(ctx).Err(); err == nil {
+				break
+			} else {
+				log.Printf("redisacl: Redis ping failed, re-confirming ACL with Core: %v", err)
+			}
+			if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
+				_ = saveNodeSecret(nodeSecretDir, s)
+				nodeSecret = s
+				_ = rdb.Close()
+				rdb = redis.NewClient(&redis.Options{
+					Addr: redisAddr, Username: aclNodeUsername(nodeID),
+					Password: aclNodePassword(s, nodeID), DB: redisDB,
+				})
+			} else if berr != nil {
+				log.Printf("redisacl: re-confirm with Core failed: %v", berr)
+			}
+			select {
+			case <-ctx.Done():
+				log.Fatal("redisacl: shutdown during Redis bootstrap")
+			case <-time.After(backoff):
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+		}
+		log.Println("Connected to Redis (ACL mode)")
+	} else {
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			log.Fatalf("Failed to connect to Redis: %v", err)
+		}
+		log.Println("Connected to Redis")
 	}
-	log.Println("Connected to Redis")
 
 	// Multi-storage: init StorageManager with configured paths
 	storageMgr := NewStorageManager(storagePaths, rdb)
@@ -363,6 +424,27 @@ func parseConfig() {
 	// Storage paths (comma-separated, default: ./dylaris_data/servers)
 	storagePaths = os.Getenv("STORAGE_PATHS")
 
+	// Redis ACL bootstrap config. nodeEnrollToken is read here (mirrors the
+	// heartbeat's NODE_ENROLL_TOKEN) so the gRPC bootstrap can reuse it.
+	redisACLEnabled = os.Getenv("REDIS_ACL_ENABLED") == "true"
+	coreGRPCAddr = os.Getenv("CORE_GRPC_ADDR")
+	nodeEnrollToken = os.Getenv("NODE_ENROLL_TOKEN")
+	// Cache the per-node secret on the first persisted storage path so it
+	// survives restarts (resolved the same way StorageManager picks paths[0]).
+	nodeSecretDir = firstPersistedStoragePath(storagePaths)
+	if redisACLEnabled {
+		log.Printf("Redis ACL mode ENABLED — node will use scoped credentials (secret dir: %s)", nodeSecretDir)
+		// Two-sided opt-in: Core MUST also have feature_redis_acl ON. If Core has it
+		// OFF, it returns a plain auth result with no secret, so a first-boot node
+		// (no cached secret) blocks waiting for one, and a node with a stale cached
+		// secret can't authenticate to Redis. Enable both sides together (see
+		// docs/superpowers/redis-acl-deploy.md).
+		log.Println("Redis ACL mode requires feature_redis_acl ENABLED on Core too — node-on/core-off will block on bootstrap.")
+		if coreGRPCAddr == "" {
+			log.Println("WARNING: REDIS_ACL_ENABLED but CORE_GRPC_ADDR is empty — the node can still run on a cached secret, but first-boot bootstrap and ACL re-confirm need a reachable Core gRPC endpoint.")
+		}
+	}
+
 	// Port range stays env-only because firewall rules on the host must
 	// match. Allocation strategy + container port move to admin settings
 	// (published to Redis by Core) and are loaded later in loadModesFromRedis.
@@ -398,6 +480,26 @@ func parseConfig() {
 	if sftpPort == "" {
 		sftpPort = "25520"
 	}
+}
+
+// firstPersistedStoragePath resolves the directory used to cache .node_secret.
+// It mirrors how StorageManager picks paths[0]: the first non-empty entry of
+// STORAGE_PATHS (as an absolute path), or the default ./dylaris_data/servers
+// when unset. Keeping it consistent with StorageManager ensures the cache lands
+// on a persisted volume that survives container restarts.
+func firstPersistedStoragePath(pathsCSV string) string {
+	for _, p := range strings.Split(pathsCSV, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			return abs
+		}
+		return p
+	}
+	baseDir, _ := os.Getwd()
+	return filepath.Join(baseDir, "dylaris_data", "servers")
 }
 
 // getOutboundIP returns the node's public IP address.
@@ -520,8 +622,8 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, reg
 	// BYON: advertise the per-user enroll token so Core can bind this node to its
 	// owner on first discovery. Only present when the operator brought the node
 	// with NODE_ENROLL_TOKEN set; platform nodes omit it.
-	if tok := os.Getenv("NODE_ENROLL_TOKEN"); tok != "" {
-		data["enrollToken"] = tok
+	if nodeEnrollToken != "" {
+		data["enrollToken"] = nodeEnrollToken
 	}
 
 	// Include live CPU/RAM in heartbeat

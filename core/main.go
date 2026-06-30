@@ -13,8 +13,10 @@ import (
 	"dylaris-core/database"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
 	gorillaHandlers "github.com/gorilla/handlers"
@@ -42,6 +44,72 @@ func detectBeamPlatform(ua string) string {
 	default:
 		return "linux-amd64"
 	}
+}
+
+// aclHandshakeStore adapts the Core store to redisacl.HandshakeStore. Primitive
+// types only, keeping the redisacl package free of store/models imports.
+type aclHandshakeStore struct {
+	store *store.PostgresStore
+	flags *services.FeatureFlags
+}
+
+func (a *aclHandshakeStore) GetNodeSecretEnc(id int) (string, error) {
+	return a.store.GetNodeSecretEnc(id)
+}
+func (a *aclHandshakeStore) SetNodeSecretEnc(id int, enc string) error {
+	return a.store.SetNodeSecretEnc(id, enc)
+}
+
+func (a *aclHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) {
+	servers, err := a.store.ListServersByNode(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	uuids := make([]string, 0, len(servers))
+	for _, s := range servers {
+		uuids = append(uuids, s.UUID)
+	}
+	return uuids, nil
+}
+
+func (a *aclHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, error) {
+	return a.store.ResolveNodeEnrollToken(plaintext)
+}
+
+func (a *aclHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
+	n, err := a.store.GetNodeByToken(token)
+	if err != nil {
+		return 0, false, nil // unknown token: not found, not an error for this path
+	}
+	return n.ID, true, nil
+}
+
+// NodeLimitReached mirrors discovery.nodeLimitReached: only when BYON is on; a
+// 0 / missing cap means unlimited; fail-open on store errors.
+func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
+	if a.flags == nil || !a.flags.IsBYONEnabled(context.Background()) {
+		return false
+	}
+	lim, err := services.EffectiveLimits(a.store, ownerID)
+	if err != nil || lim.MaxNodes <= 0 {
+		return false
+	}
+	cnt, err := a.store.CountNodesByOwner(ownerID)
+	if err != nil {
+		return false
+	}
+	return int64(cnt) >= lim.MaxNodes
+}
+
+func (a *aclHandshakeStore) CreateBYONNode(token, address, ownerID string) (int, error) {
+	n := &models.Node{Name: token, Token: token, Address: address, Status: "offline"}
+	if err := a.store.CreateNode(n); err != nil {
+		return 0, err
+	}
+	if err := a.store.SetNodeOwner(n.ID, &ownerID); err != nil {
+		return 0, err
+	}
+	return n.ID, nil
 }
 
 func main() {
@@ -323,8 +391,21 @@ func main() {
 			return node.ID, nil
 		},
 	}
+	// Per-node Redis-ACL handshake. nil-safe + gated: when feature_redis_acl is
+	// off (default) the gRPC auth path is byte-identical to before.
+	aclProvisioner := redisacl.NewProvisioner(redisClient)
+	aclHandshake := redisacl.NewHandshake(
+		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
+		aclProvisioner,
+		cfg.ClusterSecret,
+		func(ctx context.Context) bool { return appState.FeatureFlags.IsRedisACLEnabled(ctx) },
+	)
+	// Pre-placement ACL hook: re-apply a node's Redis ACL right before sending a
+	// server-placement command, closing the window where a freshly created
+	// server's keys are NOPERM for the node until its next reconnect. nil-safe.
+	appState.Queue.SetACL(aclHandshake)
 	go func() {
-		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID); err != nil {
+		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()
@@ -827,6 +908,7 @@ func main() {
 	api.HandleFunc("/store/status", authHandler.AuthMiddleware(storeHandler.Status)).Methods("GET")
 	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, storeHandler.LinkVerify)).Methods("POST")
 	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
+	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")
 	api.HandleFunc("/store/provision", authLimiter.Limit(60, storeHandler.Provision)).Methods("POST")
 	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(serverHandler.GetMigrationStatus)).Methods("GET")

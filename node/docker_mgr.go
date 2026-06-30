@@ -173,10 +173,19 @@ type ServerConfig struct {
 // MC containers are non-Swarm and may not resolve Swarm DNS, so we use
 // mcRedis* vars (from SIDECAR_REDIS_ADDR or fallback to REDIS_ADDR).
 func buildRedisEnv(uuid, subServer string) []string {
+	user, pass := mcRedisUser, mcRedisPass
+	if redisACLEnabled && nodeSecret != nil {
+		// BYON Redis ACL: give MC containers the per-node SHIPPER user, scoped to
+		// this node's assigned server keys only (no node-scoped keys, no :cmds), so
+		// a compromised container can't reach sibling-tenant data or the command
+		// stream. Derived deterministically; Core provisions the matching ACL user.
+		user = aclShipperUsername(nodeID)
+		pass = aclShipperPassword(nodeSecret, nodeID)
+	}
 	env := []string{
 		fmt.Sprintf("REDIS_ADDR=%s", mcRedisAddr),
-		fmt.Sprintf("REDIS_USER=%s", mcRedisUser),
-		fmt.Sprintf("REDIS_PASS=%s", mcRedisPass),
+		fmt.Sprintf("REDIS_USER=%s", user),
+		fmt.Sprintf("REDIS_PASS=%s", pass),
 		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
 		fmt.Sprintf("SERVER_UUID=%s", uuid),
 		"TERM=xterm-256color",

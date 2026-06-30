@@ -21,6 +21,7 @@ export interface FeatureFlagsAdminPayload {
     tickets: boolean;
     modpacks: boolean;
     autoMove: boolean;
+    redisAcl: boolean;
 }
 
 export async function getSystemFeatures(): Promise<{ success: boolean; features?: FeatureFlags; message?: string }> {

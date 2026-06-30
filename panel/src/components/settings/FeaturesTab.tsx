@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
 import { getTelemetrySettings, setTelemetrySettings } from '@/lib/api/telemetry';
 import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload } from '@/lib/api/featureFlags';
-import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle } from 'lucide-react';
+import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { useAppData } from '@/lib/AppDataContext';
@@ -31,7 +31,7 @@ export default function FeaturesTab() {
     // /api/admin/settings/features and save-on-click independently of the
     // proxy/gateway settings above. Each flip persists immediately so the
     // admin doesn't have to remember a Save bar for a dangerous gate.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false, redisAcl: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
     // Snapshot of last-saved settings for dirty detection.
@@ -292,6 +292,32 @@ export default function FeaturesTab() {
                         <span>Requires gateway routing. Switch Game Traffic to Gateway or Both first.</span>
                     </p>
                 )}
+            </div>
+
+            <div className="card p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <ShieldCheck size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">Per-Node Redis Isolation (BYON)</div>
+                            <div className="text-xs text-(--base-06)">
+                                Provisions a scoped Redis ACL per node so untrusted BYON nodes can only access their own keys. Requires Valkey deployed with an ACL file (see deploy docs). Leave off for single-operator setups.
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={platformFlags.redisAcl}
+                        disabled={platformSaving !== null}
+                        onClick={() => savePlatformFlag('redisAcl', !platformFlags.redisAcl)}
+                        className={`toggle-track ${platformFlags.redisAcl ? 'toggle-track-on' : 'toggle-track-off'}`}
+                    >
+                        <span className={`toggle-knob ${platformFlags.redisAcl ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
             </div>
 
             {/* Toast */}

@@ -562,6 +562,17 @@ func (s *PostgresStore) SetNodeOwner(id int, ownerID *string) error {
 	return err
 }
 
+func (s *PostgresStore) GetNodeSecretEnc(id int) (string, error) {
+	var enc string
+	err := s.db.QueryRow("SELECT node_secret_enc FROM nodes WHERE id = $1", id).Scan(&enc)
+	return enc, err
+}
+
+func (s *PostgresStore) SetNodeSecretEnc(id int, enc string) error {
+	_, err := s.db.Exec("UPDATE nodes SET node_secret_enc = $1 WHERE id = $2", enc, id)
+	return err
+}
+
 // SetNodeConfig persists an admin's panel-configured name, region and tags in
 // one update and flips configured=true so the discovery scan stops letting the
 // heartbeat env overwrite these fields. Used by the unconfigured-node flow.

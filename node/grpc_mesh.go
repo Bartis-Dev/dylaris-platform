@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -190,16 +191,22 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 
 	// Step 1: Send auth
 	nodeIPs := getNodeIPs()
-	if err := stream.Send(&pb.NodeMessage{
-		Payload: &pb.NodeMessage_Auth{
-			Auth: &pb.NodeAuth{
-				NodeToken: m.nodeToken,
-				Ips: &pb.NodeIPs{
-					Public:  nodeIPs.Public,
-					Private: nodeIPs.Private,
-				},
-			},
+	auth := &pb.NodeAuth{
+		NodeToken: m.nodeToken,
+		Ips: &pb.NodeIPs{
+			Public:  nodeIPs.Public,
+			Private: nodeIPs.Private,
 		},
+	}
+	// ACL on: the node already holds a secret by the time the mesh runs, so it
+	// MUST present a proof — Core refuses an empty proof for a node with a stored
+	// secret. When ACL is off this stays exactly as before (no new fields set).
+	if redisACLEnabled && nodeSecret != nil {
+		auth.AclSupported = true
+		auth.SecretProof = aclProof(nodeSecret, m.nodeToken)
+	}
+	if err := stream.Send(&pb.NodeMessage{
+		Payload: &pb.NodeMessage_Auth{Auth: auth},
 	}); err != nil {
 		log.Printf("gRPC Mesh: Failed to send auth to Core %s: %v", info.ID, err)
 		cancel()
@@ -229,6 +236,15 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	}
 
 	log.Printf("gRPC Mesh: Connected to Core %s ✓", info.ID)
+
+	// Defensive: persist a refreshed secret if Core handed one back (e.g. ACL
+	// newly enabled for this known node, or a reset). No-op when ACL is off.
+	if authResult.NodeSecret != "" {
+		if raw, derr := hex.DecodeString(authResult.NodeSecret); derr == nil && len(raw) == 32 {
+			_ = saveNodeSecret(nodeSecretDir, raw)
+			nodeSecret = raw
+		}
+	}
 
 	// Register connection
 	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler}

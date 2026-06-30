@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+
+	"dylaris-core/services/redisacl"
 
 	"dylaris-pkg/queue"
 
@@ -13,11 +16,17 @@ import (
 // QueueService handles the safe sending of commands to Nodes
 type QueueService struct {
 	redis *redis.Client
+	// acl is the optional per-node Redis ACL handshake. nil = feature off / not
+	// wired, in which case SendCommand behaves exactly as before.
+	acl *redisacl.Handshake
 }
 
 func NewQueueService(r *redis.Client) *QueueService {
 	return &QueueService{redis: r}
 }
+
+// SetACL wires the optional per-node Redis ACL handshake. nil = feature off.
+func (q *QueueService) SetACL(h *redisacl.Handshake) { q.acl = h }
 
 // nodeCmdStream is the per-node command stream key. It is a Redis Stream
 // (durable, consumer-group based via dylaris-pkg/queue), replacing the old
@@ -38,6 +47,17 @@ type NodeCommand struct {
 // SendCommand pushes a command into the Node's queue (mailbox).
 // Even if the Node is offline, the command remains in Redis until it comes back online.
 func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action string, config interface{}, installer interface{}) error {
+	// Pre-placement ACL ensure: the node keeps a long-lived gRPC connection, so
+	// Core only re-applies its full Redis ACL on (re)connect. For actions that
+	// add/keep server keys, re-apply now so the node has key access by the time
+	// it processes this command. Gated + nil-safe; never fails the command (the
+	// on-connect re-apply is the safety net, and the node retries on NOPERM).
+	if q.acl != nil && q.acl.Enabled(ctx) && aclRelevantAction(action) {
+		if err := q.acl.EnsureForToken(ctx, nodeToken); err != nil {
+			log.Printf("redisacl: pre-placement ACL ensure failed for node %s (action %s): %v — node self-heals on next reconnect", nodeToken, action, err)
+		}
+	}
+
 	stream := nodeCmdStream(nodeToken)
 
 	cmd := NodeCommand{
@@ -58,6 +78,20 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 	}
 
 	return nil
+}
+
+// aclRelevantAction reports whether an action adds/keeps server keys on the node,
+// so the node's ACL must already grant them before the command is processed.
+// Only actions that actually flow through SendCommand are listed. Migration
+// (migrate_in / migrate_pull_r2) uses dedicated Send* methods and is NOT covered
+// here; BYON migration is a future path (Phase 4), and its ACL window will be
+// closed at the node_id cutover when that ships. See the plan's migration note.
+func aclRelevantAction(action string) bool {
+	switch action {
+	case "create", "setup", "reinstall", "switch_server", "update_resources":
+		return true
+	}
+	return false
 }
 
 // SendProxyNetworkCommand queues one of the proxy_network_* lifecycle

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v5.29.5
-// source: proto/node/node.proto
+// source: node/node.proto
 
 package node
 
@@ -119,5 +119,5 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "proto/node/node.proto",
+	Metadata: "node/node.proto",
 }

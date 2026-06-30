@@ -192,6 +192,9 @@ func migrateSchema(db *sql.DB) error {
 		{"users", "can_delete_servers", "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{"users", "can_change_resources", "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{"users", "support_team", "VARCHAR(64)"},
+		// Per-node encrypted secret. Holds AES-256-GCM ciphertext once provisioned;
+		// empty string = no secret yet.
+		{"nodes", "node_secret_enc", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)
