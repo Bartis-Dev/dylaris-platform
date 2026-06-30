@@ -84,8 +84,9 @@ func (h *StoreHandler) LinkStart(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(tokenBytes)
 
-	// Bind the token to uuid+email. Single-use is enforced by GetDel on verify.
-	value := user.ID + "\n" + user.Email
+	// Bind the token to uuid+email+username. Single-use is enforced by GetDel on
+	// verify. Newline-delimited; verify tolerates an absent username (old tokens).
+	value := user.ID + "\n" + user.Email + "\n" + user.Username
 	if err := h.state.Redis.Set(r.Context(), storeLinkTokenPrefix+token, value, storeLinkTokenTTL).Err(); err != nil {
 		sendJSONError(w, "Failed to store token", http.StatusInternalServerError)
 		return
@@ -96,8 +97,8 @@ func (h *StoreHandler) LinkStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // LinkVerify POST /api/store/link/verify — store-key. Body {token}. Validates +
-// consumes the token (single-use) and returns the bound {uuid, email}. Called
-// by dylaris.com during the connect flow.
+// consumes the token (single-use) and returns the bound {uuid, email, username}.
+// Called by dylaris.com during the connect flow.
 func (h *StoreHandler) LinkVerify(w http.ResponseWriter, r *http.Request) {
 	if !h.requireStoreKey(w, r) {
 		return
@@ -116,15 +117,20 @@ func (h *StoreHandler) LinkVerify(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
-	parts := strings.SplitN(value, "\n", 2)
-	if len(parts) != 2 {
+	parts := strings.SplitN(value, "\n", 3)
+	if len(parts) < 2 {
 		sendJSONError(w, "Malformed token", http.StatusInternalServerError)
 		return
 	}
+	username := ""
+	if len(parts) == 3 {
+		username = parts[2]
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"uuid":    parts[0],
-		"email":   parts[1],
+		"success":  true,
+		"uuid":     parts[0],
+		"email":    parts[1],
+		"username": username,
 	})
 }
 
@@ -150,6 +156,35 @@ func (h *StoreHandler) VerifyUser(w http.ResponseWriter, r *http.Request) {
 		"exists":   true,
 		"uuid":     user.ID,
 		"username": user.Username,
+	})
+}
+
+// GetUsage GET /api/store/usage?uuid= — store-key. Returns the linked tenant's
+// metered traffic for the current billing month so the store can compute overage
+// and bill it. edge_bytes is the billable player traffic; the rest are for
+// observability. A tenant with no traffic yet returns zeros (never an error).
+func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
+	if !h.requireStoreKey(w, r) {
+		return
+	}
+	uuid := strings.TrimSpace(r.URL.Query().Get("uuid"))
+	if uuid == "" {
+		sendJSONError(w, "Missing uuid", http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	usage, err := h.state.Store.GetTrafficUsage(uuid, period)
+	if err != nil {
+		sendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"period":      period.Format("2006-01-02"),
+		"edgeBytes":   usage.EdgeBytes,
+		"relayBytes":  usage.RelayBytes,
+		"backupBytes": usage.BackupBytes,
 	})
 }
 
