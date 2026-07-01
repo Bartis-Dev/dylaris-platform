@@ -4,8 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -70,12 +68,6 @@ func zipLoaderProfile(profileJSON []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-// loaderMD5 is the hex MD5 over the complete zip bytes (Solder differential-cache key).
-func loaderMD5(zipBytes []byte) string {
-	sum := md5.Sum(zipBytes)
-	return hex.EncodeToString(sum[:])
 }
 
 func buildQuiltLoader(ctx context.Context, minecraft, loaderVersion string) ([]byte, string, error) {
