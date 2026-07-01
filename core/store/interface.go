@@ -473,6 +473,18 @@ type Store interface {
 	GetModrinthPAT(userID string) (*models.ModrinthPAT, error)
 	ClearModrinthPAT(userID string) error
 
+	// --- Unified packs (Solder + Modrinth) ---
+	CreatePack(p *models.Pack) (int, error)
+	UpdatePack(p *models.Pack) error
+	DeletePack(id int, ownerID string) error
+	GetPack(id int) (*models.Pack, error)
+	ListPacksByOwner(ownerID string) ([]models.Pack, error)
+	CreatePackBuild(b *models.PackBuild) (int, error)
+	UpdatePackBuild(b *models.PackBuild) error
+	DeletePackBuild(id, packID int) error
+	GetPackBuild(id int) (*models.PackBuild, error)
+	ListPackBuilds(packID int) ([]models.PackBuild, error)
+
 	// --- Username history + admin rename ---
 	RenameUser(userID string, newUsername string, changedBy string) error
 	ListUsernameHistory(userID string) ([]models.UsernameHistory, error)
