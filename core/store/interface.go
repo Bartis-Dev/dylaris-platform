@@ -485,6 +485,16 @@ type Store interface {
 	GetPackBuild(id int) (*models.PackBuild, error)
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
 
+	UpsertMod(m *models.Mod) (int, error)
+	GetModBySlug(ownerID, slug string) (*models.Mod, error)
+	CreateModversion(mv *models.Modversion) (int, error)
+	UpdateModversion(mv *models.Modversion) error
+	GetModversion(id int) (*models.Modversion, error)
+	FindModversionBySHA1(ownerID, sha1 string) (*models.Modversion, error)
+	AttachModversionToBuild(buildID, modversionID int, side string) (int, error)
+	DetachFromBuild(buildID, modversionID int) error
+	ListBuildContent(buildID int) ([]models.BuildContentEntry, error)
+
 	// --- Username history + admin rename ---
 	RenameUser(userID string, newUsername string, changedBy string) error
 	ListUsernameHistory(userID string) ([]models.UsernameHistory, error)
