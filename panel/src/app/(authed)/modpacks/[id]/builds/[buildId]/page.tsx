@@ -1,23 +1,20 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
-    Package, ArrowLeft, Plus, Trash2, Search, RefreshCw,
-    CircleCheck, CircleAlert, Box, AlertTriangle, Upload, Lock,
+    Package, ArrowLeft, Trash2, Search,
+    CircleCheck, CircleAlert, Box, Upload, Lock,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listBuilds, listContent, addModrinthContent, removeContent, setContentSide,
     uploadContent, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
-import {
-    searchModrinth, getModrinthVersions,
-    type ModrinthSearchHit, type ModrinthVersion,
-} from '@/lib/api/modrinth';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
+import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
 
 // Build content editor. Two panels:
 //   left:  the build's content list (mods / resource-packs / plugins), with a
@@ -38,15 +35,6 @@ export default function BuildContentEditorPage() {
     const [build, setBuild] = useState<PackBuild | null>(null);
     const [content, setContent] = useState<BuildContentEntry[]>([]);
     const [loading, setLoading] = useState(true);
-
-    // Modrinth search panel state
-    const [query, setQuery] = useState('');
-    const [searchHits, setSearchHits] = useState<ModrinthSearchHit[]>([]);
-    const [searching, setSearching] = useState(false);
-    const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
-    const [versions, setVersions] = useState<ModrinthVersion[]>([]);
-    const [versionsLoading, setVersionsLoading] = useState(false);
-    const [adding, setAdding] = useState(false);
 
     // Upload state
     const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -76,66 +64,8 @@ export default function BuildContentEditorPage() {
         return () => { unsubC(); unsubB(); };
     }, [buildId, refresh]);
 
-    const installedProjectIds = useMemo(
-        () => new Set(content.map(c => c.modrinthProjectId).filter(Boolean)),
-        [content],
-    );
-
     const isFrozen = !!build?.frozen;
     const disabled = modpacksDisabled || isFrozen;
-
-    // ----- Modrinth search (debounced) -----
-    useEffect(() => {
-        if (!build) return;
-        const t = setTimeout(async () => {
-            setSearching(true);
-            const res = await searchModrinth({
-                query: query.trim() || undefined,
-                loaders: build.loader ? [build.loader] : undefined,
-                versions: build.minecraft ? [build.minecraft] : undefined,
-                projectType: 'mod',
-                limit: 20,
-                index: 'relevance',
-            });
-            setSearchHits(res?.hits || []);
-            setSearching(false);
-        }, 350);
-        return () => clearTimeout(t);
-    }, [query, build]);
-
-    const handleExpand = async (hit: ModrinthSearchHit) => {
-        if (expandedSlug === hit.slug) {
-            setExpandedSlug(null);
-            setVersions([]);
-            return;
-        }
-        setExpandedSlug(hit.slug);
-        setVersionsLoading(true);
-        const v = await getModrinthVersions(hit.slug, {
-            loaders: build?.loader ? [build.loader] : undefined,
-            versions: build?.minecraft ? [build.minecraft] : undefined,
-        });
-        setVersions(v);
-        setVersionsLoading(false);
-    };
-
-    const handleAddModrinth = async (hit: ModrinthSearchHit, v: ModrinthVersion) => {
-        setAdding(true);
-        const res = await addModrinthContent(packId, buildId, {
-            projectId: hit.project_id,
-            versionId: v.id,
-            resolveDeps: true,
-        });
-        setAdding(false);
-        if (res.success) {
-            showToast(`Added ${hit.title}`, true);
-            setExpandedSlug(null);
-            setVersions([]);
-            refresh();
-        } else {
-            showToast(res.message || 'Add failed', false);
-        }
-    };
 
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -324,86 +254,23 @@ export default function BuildContentEditorPage() {
                         <Search size={14} className="text-(--accent-light)" />
                         <h2 className="text-sm font-medium text-(--base-09)">Add from Modrinth</h2>
                     </header>
-                    <div className="relative mb-3 shrink-0">
-                        <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
-                        <input
-                            type="text"
-                            value={query}
-                            onChange={e => setQuery(e.target.value)}
-                            placeholder="Search mods…"
-                            className="input-field w-full pl-8 text-sm"
-                        />
-                    </div>
-                    <div className="flex-1 overflow-y-auto space-y-1.5">
-                        {searching ? (
-                            <p className="text-xs text-(--base-06) text-center py-6 flex items-center justify-center gap-1.5">
-                                <RefreshCw size={11} className="animate-spin" />
-                                Searching…
-                            </p>
-                        ) : searchHits.length === 0 ? (
-                            <p className="text-xs text-(--base-06) text-center py-6">No matches.</p>
-                        ) : (
-                            searchHits.map(hit => (
-                                <div key={hit.project_id}>
-                                    <button
-                                        onClick={() => handleExpand(hit)}
-                                        className="w-full flex items-center gap-2 p-2 rounded-md border border-(--base-04) hover:border-(--accent-border) text-left"
-                                    >
-                                        {hit.icon_url ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img src={hit.icon_url} alt="" className="w-8 h-8 rounded-sm shrink-0" />
-                                        ) : (
-                                            <div className="w-8 h-8 rounded-sm bg-(--base-03) flex items-center justify-center shrink-0">
-                                                <Package size={12} className="text-(--base-05)" />
-                                            </div>
-                                        )}
-                                        <div className="min-w-0 flex-1">
-                                            <div className="text-sm font-medium text-(--base-09) truncate">{hit.title}</div>
-                                            <div className="text-[10px] font-mono text-(--base-06) truncate">
-                                                by {hit.author} · {hit.downloads.toLocaleString()}
-                                            </div>
-                                        </div>
-                                        {installedProjectIds.has(hit.project_id) && (
-                                            <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm shrink-0">added</span>
-                                        )}
-                                    </button>
-                                    {expandedSlug === hit.slug && (
-                                        <div className="ml-10 mt-1 mb-2 space-y-1">
-                                            {versionsLoading ? (
-                                                <p className="text-xs text-(--base-06) py-1 flex items-center gap-1">
-                                                    <RefreshCw size={10} className="animate-spin" />
-                                                    Loading versions…
-                                                </p>
-                                            ) : versions.length === 0 ? (
-                                                <p className="text-xs text-(--base-06) py-1">
-                                                    <AlertTriangle size={10} className="inline mr-1 text-(--warning-light)" />
-                                                    No versions match this build's filter.
-                                                </p>
-                                            ) : (
-                                                versions.slice(0, 6).map(v => (
-                                                    <button
-                                                        key={v.id}
-                                                        onClick={() => handleAddModrinth(hit, v)}
-                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-(--base-04) disabled:hover:bg-transparent"
-                                                        disabled={disabled || adding}
-                                                        title={disabled ? (isFrozen ? 'Build is frozen — create a new build to modify content' : 'Modpack authoring is disabled') : undefined}
-                                                    >
-                                                        <Plus size={10} className="text-(--accent-light) shrink-0" />
-                                                        <div className="min-w-0 flex-1">
-                                                            <div className="text-xs text-(--base-09)">{v.version_number}</div>
-                                                            <div className="text-[10px] font-mono text-(--base-06) truncate">
-                                                                {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
-                                                            </div>
-                                                        </div>
-                                                    </button>
-                                                ))
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ))
-                        )}
-                    </div>
+                    <ModrinthVersionBrowser
+                        loader={build.loader || undefined}
+                        mcVersion={build.minecraft || undefined}
+                        projectType="mod"
+                        onPick={(projectId, versionId, hit) => {
+                            if (disabled) return;
+                            addModrinthContent(packId, buildId, { projectId, versionId, resolveDeps: true })
+                                .then(res => {
+                                    if (res.success) {
+                                        showToast(`Added ${hit.title}`, true);
+                                        refresh();
+                                    } else {
+                                        showToast(res.message || 'Add failed', false);
+                                    }
+                                });
+                        }}
+                    />
                 </section>
             </div>
 
