@@ -6,12 +6,15 @@ import Link from 'next/link';
 import {
     Package, ArrowLeft, Trash2, Search,
     CircleCheck, CircleAlert, Box, Upload, Lock,
+    Download, Share2, X, Loader2, Replace, AlertTriangle,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listBuilds, listContent, addModrinthContent, removeContent, setContentSide,
-    uploadContent, type PackBuild, type BuildContentEntry,
+    uploadContent, getPack, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
+import { publishModrinth, replaceWithModrinth, mrpackDownloadUrl } from '@/lib/api/packsPublish';
+import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
@@ -22,9 +25,252 @@ import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser
 //          (green Modrinth = linked, yellow Upload = local file). Remove inline.
 //   right: Modrinth search filtered to the build's loader + MC version, plus a
 //          direct file upload. Frozen builds are read-only.
+//
+// Header actions: Export .mrpack (auth-blob download), Publish to Modrinth dialog.
+// Per-row action: Replace with Modrinth dialog.
+// Badge: Modrinth chip when build.modrinthPublished.
 
 const SIDES: BuildContentEntry['side'][] = ['both', 'client', 'server'];
 
+// ---------------------------------------------------------------------------
+// Publish dialog
+// ---------------------------------------------------------------------------
+interface PublishDialogProps {
+    build: PackBuild;
+    onClose: () => void;
+    onPublished: () => void;
+    showToast: (msg: string, ok?: boolean) => void;
+    packId: number;
+}
+
+function PublishDialog({ build, onClose, onPublished, showToast, packId }: PublishDialogProps) {
+    const [channel, setChannel] = useState<'beta' | 'release'>(
+        (build.channel as 'beta' | 'release') || 'beta',
+    );
+    const [busy, setBusy] = useState(false);
+    const [warnings, setWarnings] = useState<string[]>([]);
+    const [needsAck, setNeedsAck] = useState(false);
+
+    const submit = async (ackNonModrinth = false) => {
+        setBusy(true);
+        setWarnings([]);
+        const res = await publishModrinth(packId, build.id, { channel, ackNonModrinth });
+        setBusy(false);
+        if (res.success) {
+            showToast(res.message || 'Published to Modrinth.', true);
+            onPublished();
+            onClose();
+        } else if (!res.success && res.warnings && res.warnings.length > 0) {
+            // 409 gate: non-Modrinth content warning
+            setWarnings(res.warnings);
+            setNeedsAck(true);
+        } else {
+            showToast(res.message || 'Publish failed.', false);
+        }
+    };
+
+    // Close on Escape
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={onClose}
+        >
+            <div
+                className="card w-full max-w-md mx-4"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="modal-header flex items-center justify-between">
+                    <h3 className="modal-title">Publish to Modrinth</h3>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="text-(--base-07) hover:text-(--error-light) transition-colors"
+                        aria-label="Close"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    {/* Channel selector */}
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Release channel</label>
+                        <select
+                            value={channel}
+                            onChange={e => setChannel(e.target.value as 'beta' | 'release')}
+                            className="input-field w-full"
+                            disabled={busy}
+                        >
+                            <option value="beta">Beta</option>
+                            <option value="release">Release</option>
+                        </select>
+                    </div>
+
+                    {/* Non-Modrinth content warnings */}
+                    {needsAck && warnings.length > 0 && (
+                        <div className="rounded-md border border-(--warning) bg-(--warning-ghost) p-3 space-y-2">
+                            <div className="flex items-center gap-2 text-(--warning-light) text-xs font-medium">
+                                <AlertTriangle size={13} />
+                                Non-Modrinth content detected
+                            </div>
+                            <ul className="space-y-1">
+                                {warnings.map((w, i) => (
+                                    <li key={i} className="text-xs text-(--base-07) font-mono pl-1">
+                                        {w}
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="text-xs text-(--base-06)">
+                                These files will be embedded in the .mrpack under overrides/.
+                                Ensure you have redistribution rights before publishing.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Publish targets */}
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Publish targets</label>
+                        <div className="space-y-2">
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked
+                                    readOnly
+                                    className="accent-(--accent)"
+                                />
+                                <span className="text-sm">Modrinth</span>
+                            </label>
+                            <label
+                                className="flex items-center gap-2 cursor-not-allowed select-none opacity-50"
+                                title="Solder / Technic support is planned for a later phase"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled
+                                    className="accent-(--accent)"
+                                />
+                                <span className="text-sm">Solder (coming in a later phase)</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="modal-footer flex gap-2 justify-end">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={busy}
+                        className="btn btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                        Cancel
+                    </button>
+                    {needsAck ? (
+                        <button
+                            type="button"
+                            onClick={() => submit(true)}
+                            disabled={busy}
+                            className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            {busy && <Loader2 size={14} className="animate-spin" />}
+                            Publish anyway
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => submit(false)}
+                            disabled={busy}
+                            className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            {busy && <Loader2 size={14} className="animate-spin" />}
+                            Publish
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Replace-with-Modrinth dialog (per row)
+// ---------------------------------------------------------------------------
+interface ReplaceDialogProps {
+    entry: BuildContentEntry;
+    build: PackBuild;
+    packId: number;
+    disabled: boolean;
+    isFrozen: boolean;
+    onClose: () => void;
+    onReplaced: () => void;
+    showToast: (msg: string, ok?: boolean) => void;
+}
+
+function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onReplaced, showToast }: ReplaceDialogProps) {
+    // Close on Escape
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={onClose}
+        >
+            <div
+                className="card w-full max-w-2xl mx-4 flex flex-col"
+                style={{ maxHeight: 'min(90vh, 720px)' }}
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="modal-header flex items-center justify-between shrink-0">
+                    <div>
+                        <h3 className="modal-title">Replace with Modrinth</h3>
+                        <p className="text-xs text-(--base-06) mt-0.5">
+                            Replacing <span className="font-mono text-(--accent-light)">{entry.prettyName || entry.modSlug}</span>
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="text-(--base-07) hover:text-(--error-light) transition-colors"
+                        aria-label="Close"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-hidden p-4">
+                    <ModrinthVersionBrowser
+                        loader={build.loader || undefined}
+                        mcVersion={build.minecraft || undefined}
+                        disabled={disabled}
+                        disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
+                        onPick={(projectId, versionId) => {
+                            replaceWithModrinth(packId, build.id, entry.id, versionId).then(r => {
+                                showToast(r.success ? 'Replaced' : (r.message || 'Replace failed'), r.success);
+                                if (r.success) {
+                                    onReplaced();
+                                    onClose();
+                                }
+                            });
+                        }}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
 export default function BuildContentEditorPage() {
     const params = useParams();
     const packId = Number(params?.id);
@@ -32,6 +278,7 @@ export default function BuildContentEditorPage() {
     const { featureFlags } = useAppData();
     const modpacksDisabled = !featureFlags.modpacks;
 
+    const [pack, setPack] = useState<Pack | null>(null);
     const [build, setBuild] = useState<PackBuild | null>(null);
     const [content, setContent] = useState<BuildContentEntry[]>([]);
     const [loading, setLoading] = useState(true);
@@ -40,6 +287,13 @@ export default function BuildContentEditorPage() {
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [uploading, setUploading] = useState(false);
 
+    // Export state
+    const [exporting, setExporting] = useState(false);
+
+    // Dialog state
+    const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+    const [replaceEntry, setReplaceEntry] = useState<BuildContentEntry | null>(null);
+
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -47,7 +301,8 @@ export default function BuildContentEditorPage() {
     }, []);
 
     const refresh = useCallback(async () => {
-        const [bs, list] = await Promise.all([listBuilds(packId), listContent(packId, buildId)]);
+        const [p, bs, list] = await Promise.all([getPack(packId), listBuilds(packId), listContent(packId, buildId)]);
+        setPack(p);
         setBuild(bs.find(b => b.id === buildId) || null);
         setContent(list);
         setLoading(false);
@@ -98,6 +353,35 @@ export default function BuildContentEditorPage() {
             refresh();
         } else {
             showToast(res.message || 'Remove failed', false);
+        }
+    };
+
+    // Auth-blob mrpack download — cannot use a bare <a href> because the route
+    // requires an Authorization header that a plain anchor cannot send.
+    const handleExport = async () => {
+        if (!build || !pack) return;
+        setExporting(true);
+        try {
+            const res = await fetch(mrpackDownloadUrl(packId, buildId), {
+                headers: getAuthHeader(),
+            });
+            if (!res.ok) {
+                showToast(`Export failed: ${res.status}`, false);
+                return;
+            }
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = `${pack.internalSlug}-${build.versionString}.mrpack`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        } catch {
+            showToast('Export failed.', false);
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -158,13 +442,20 @@ export default function BuildContentEditorPage() {
                         <Package size={18} className="text-(--accent-light)" />
                     </div>
                     <div className="min-w-0 flex-1">
-                        <h1 className="text-lg font-display font-bold text-(--base-09) inline-flex items-center gap-2">
+                        <h1 className="text-lg font-display font-bold text-(--base-09) inline-flex items-center gap-2 flex-wrap">
                             Build Content
                             <span className="font-mono text-sm text-(--base-07) font-normal">
                                 {build.versionString}
                             </span>
                             {isFrozen && (
                                 <Lock size={14} className="text-(--accent-light)" aria-label="Frozen" />
+                            )}
+                            {/* Piece 4: Modrinth published badge */}
+                            {build.modrinthPublished && (
+                                <span className="mono-label px-2 py-0.5 rounded-sm bg-(--success-ghost) text-(--success-light) inline-flex items-center gap-1">
+                                    <CircleCheck size={10} />
+                                    Modrinth
+                                </span>
                             )}
                         </h1>
                         <p className="text-xs text-(--base-06)">
@@ -179,6 +470,33 @@ export default function BuildContentEditorPage() {
                         )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {/* Piece 3: Export .mrpack */}
+                        <button
+                            type="button"
+                            onClick={handleExport}
+                            disabled={exporting || !pack}
+                            title="Export .mrpack"
+                            className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            {exporting
+                                ? <Loader2 size={12} className="animate-spin" />
+                                : <Download size={12} />
+                            }
+                            {exporting ? 'Exporting…' : 'Export'}
+                        </button>
+
+                        {/* Piece 1: Publish to Modrinth */}
+                        <button
+                            type="button"
+                            onClick={() => setPublishDialogOpen(true)}
+                            disabled={modpacksDisabled}
+                            title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Publish to Modrinth'}
+                            className="btn btn-primary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            <Share2 size={12} />
+                            Publish
+                        </button>
+
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -210,7 +528,7 @@ export default function BuildContentEditorPage() {
                             <p className="text-xs text-(--base-06) text-center py-8">No content yet. Add some from the search panel →</p>
                         ) : (
                             content.map(entry => (
-                                <article key={entry.id} className="flex items-center gap-3 p-2 rounded-md border border-(--base-04)">
+                                <article key={entry.id} className="flex items-center gap-2 p-2 rounded-md border border-(--base-04)">
                                     <Box size={14} className="text-(--accent-light) shrink-0" />
                                     <div className="min-w-0 flex-1">
                                         <div className="text-sm font-medium text-(--base-09) truncate">{entry.prettyName || entry.modSlug}</div>
@@ -225,6 +543,18 @@ export default function BuildContentEditorPage() {
                                     }`}>
                                         {entry.linked ? 'Modrinth' : 'Upload'}
                                     </span>
+                                    {/* Piece 2: Replace with Modrinth — only for non-linked (uploaded) entries */}
+                                    {!entry.linked && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setReplaceEntry(entry)}
+                                            disabled={disabled}
+                                            title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Replace with a Modrinth version'}
+                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                                        >
+                                            <Replace size={12} />
+                                        </button>
+                                    )}
                                     <select
                                         value={entry.side}
                                         onChange={e => handleSetSide(entry, e.target.value)}
@@ -276,6 +606,31 @@ export default function BuildContentEditorPage() {
                     />
                 </section>
             </div>
+
+            {/* Piece 1: Publish dialog */}
+            {publishDialogOpen && (
+                <PublishDialog
+                    build={build}
+                    packId={packId}
+                    onClose={() => setPublishDialogOpen(false)}
+                    onPublished={refresh}
+                    showToast={showToast}
+                />
+            )}
+
+            {/* Piece 2: Replace-with-Modrinth dialog */}
+            {replaceEntry && (
+                <ReplaceDialog
+                    entry={replaceEntry}
+                    build={build}
+                    packId={packId}
+                    disabled={disabled}
+                    isFrozen={isFrozen}
+                    onClose={() => setReplaceEntry(null)}
+                    onReplaced={refresh}
+                    showToast={showToast}
+                />
+            )}
 
             {toast && (
                 <div className="toast-container">
