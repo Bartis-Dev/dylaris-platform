@@ -14,11 +14,15 @@ import (
 
 type PacksHandler struct {
 	state *AppState
+	pat   PATLoader
 }
 
 func NewPacksHandler(state *AppState) *PacksHandler {
 	return &PacksHandler{state: state}
 }
+
+// SetPATLoader wires the Modrinth PAT loader (set from main after both handlers exist).
+func (h *PacksHandler) SetPATLoader(p PATLoader) { h.pat = p }
 
 var packSlugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{1,62}[a-z0-9])?$`)
 

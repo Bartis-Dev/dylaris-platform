@@ -363,6 +363,7 @@ func main() {
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := handlers.NewPacksHandler(appState)
+	packsHandler.SetPATLoader(modrinthPATHandler)
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
