@@ -98,6 +98,21 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			side          VARCHAR(8)  NOT NULL DEFAULT 'both',
 			UNIQUE (build_id, modversion_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS loaders (
+			id                  SERIAL PRIMARY KEY,
+			minecraft           TEXT NOT NULL,
+			loader              TEXT NOT NULL,
+			loader_version      TEXT NOT NULL,
+			client_storage_key  TEXT NOT NULL DEFAULT '',
+			md5                 TEXT NOT NULL DEFAULT '',
+			filesize            BIGINT NOT NULL DEFAULT 0,
+			build_status        TEXT NOT NULL DEFAULT 'pending',
+			build_error         TEXT NOT NULL DEFAULT '',
+			built_at            TIMESTAMPTZ,
+			created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (minecraft, loader, loader_version)
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

@@ -466,6 +466,10 @@ type Store interface {
 	GetPackBuild(id int) (*models.PackBuild, error)
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
 
+	GetLoader(minecraft, loader, loaderVersion string) (*models.Loader, error)
+	UpsertLoader(l *models.Loader) (int, error)
+	UpdateLoaderStatus(minecraft, loader, loaderVersion, status, buildError string) error
+
 	UpsertMod(m *models.Mod) (int, error)
 	GetModBySlug(ownerID, slug string) (*models.Mod, error)
 	CreateModversion(mv *models.Modversion) (int, error)
