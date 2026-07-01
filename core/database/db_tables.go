@@ -195,6 +195,11 @@ func migrateSchema(db *sql.DB) error {
 		// Per-node encrypted secret. Holds AES-256-GCM ciphertext once provisioned;
 		// empty string = no secret yet.
 		{"nodes", "node_secret_enc", "TEXT NOT NULL DEFAULT ''"},
+		// Exact cdn.modrinth.com download URL for a Modrinth-linked artifact.
+		// Kept separate from url_override (reserved for the Solder mirror zip URL)
+		// so the mrpack render can emit a clean files[] reference; empty => the
+		// content is embedded under overrides/ instead.
+		{"modversions", "modrinth_download_url", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)

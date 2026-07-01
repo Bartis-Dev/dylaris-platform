@@ -123,6 +123,7 @@ type Modversion struct {
 	Source                  string     `json:"source"`
 	TargetPath              string     `json:"targetPath"`
 	ModrinthProjectID       string     `json:"modrinthProjectId"`
+	ModrinthDownloadURL     string     `json:"modrinthDownloadUrl"`
 	ModrinthVersionID       string     `json:"modrinthVersionId"`
 	ModrinthVersionNumber   string     `json:"modrinthVersionNumber"`
 	ModrinthGameVersions    string     `json:"modrinthGameVersions"`

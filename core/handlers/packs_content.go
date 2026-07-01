@@ -118,6 +118,7 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 		SHA1:                  file.Hashes["sha1"],
 		SHA512:                file.Hashes["sha512"],
 		URLOverride:           "",
+		ModrinthDownloadURL:   file.URL,
 		Source:                models.SourceModrinth,
 		TargetPath:            targetPathFor(contentType, file.Filename),
 		ModrinthProjectID:     v.ProjectID,
@@ -230,6 +231,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 			mv.ModrinthVersionID = v.ID
 			mv.ModrinthVersionNumber = v.VersionNum
 			mv.ModrinthGameVersions = strings.Join(v.GameVersions, ",")
+			mv.ModrinthDownloadURL = v.PrimaryFile().URL
 		}
 	}
 	mvID, err := h.state.Store.CreateModversion(mv)

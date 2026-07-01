@@ -47,13 +47,15 @@ func (s *PostgresStore) GetModBySlug(ownerID, slug string) (*models.Mod, error) 
 
 const mvCols = `id, mod_id, version, filesize, storage_key, md5, sha1, sha512, url_override,
 	source, target_path, modrinth_project_id, modrinth_version_id, modrinth_version_number,
-	modrinth_game_versions, modrinth_latest_version_id, modrinth_last_checked, created_at, updated_at`
+	modrinth_game_versions, modrinth_latest_version_id, modrinth_last_checked, created_at, updated_at,
+	modrinth_download_url`
 
 func scanModversion(row interface{ Scan(...interface{}) error }) (*models.Modversion, error) {
 	var v models.Modversion
 	if err := row.Scan(&v.ID, &v.ModID, &v.Version, &v.Filesize, &v.StorageKey, &v.MD5, &v.SHA1, &v.SHA512, &v.URLOverride,
 		&v.Source, &v.TargetPath, &v.ModrinthProjectID, &v.ModrinthVersionID, &v.ModrinthVersionNumber,
-		&v.ModrinthGameVersions, &v.ModrinthLatestVersionID, &v.ModrinthLastChecked, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		&v.ModrinthGameVersions, &v.ModrinthLatestVersionID, &v.ModrinthLastChecked, &v.CreatedAt, &v.UpdatedAt,
+		&v.ModrinthDownloadURL); err != nil {
 		return nil, err
 	}
 	return &v, nil
@@ -67,10 +69,10 @@ func (s *PostgresStore) CreateModversion(mv *models.Modversion) (int, error) {
 	var id int
 	err := s.db.QueryRow(`INSERT INTO modversions
 		(mod_id, version, filesize, storage_key, md5, sha1, sha512, url_override, source, target_path,
-		 modrinth_project_id, modrinth_version_id, modrinth_version_number, modrinth_game_versions)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+		 modrinth_project_id, modrinth_version_id, modrinth_version_number, modrinth_game_versions, modrinth_download_url)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
 		mv.ModID, mv.Version, mv.Filesize, mv.StorageKey, mv.MD5, mv.SHA1, mv.SHA512, mv.URLOverride, src, mv.TargetPath,
-		mv.ModrinthProjectID, mv.ModrinthVersionID, mv.ModrinthVersionNumber, mv.ModrinthGameVersions,
+		mv.ModrinthProjectID, mv.ModrinthVersionID, mv.ModrinthVersionNumber, mv.ModrinthGameVersions, mv.ModrinthDownloadURL,
 	).Scan(&id)
 	return id, err
 }
@@ -79,11 +81,12 @@ func (s *PostgresStore) UpdateModversion(mv *models.Modversion) error {
 	_, err := s.db.Exec(`UPDATE modversions SET
 		version=$1, filesize=$2, storage_key=$3, md5=$4, sha1=$5, sha512=$6, url_override=$7,
 		source=$8, target_path=$9, modrinth_project_id=$10, modrinth_version_id=$11, modrinth_version_number=$12,
-		modrinth_game_versions=$13, modrinth_latest_version_id=$14, modrinth_last_checked=$15, updated_at=NOW()
-		WHERE id=$16`,
+		modrinth_game_versions=$13, modrinth_latest_version_id=$14, modrinth_last_checked=$15,
+		modrinth_download_url=$16, updated_at=NOW()
+		WHERE id=$17`,
 		mv.Version, mv.Filesize, mv.StorageKey, mv.MD5, mv.SHA1, mv.SHA512, mv.URLOverride,
 		mv.Source, mv.TargetPath, mv.ModrinthProjectID, mv.ModrinthVersionID, mv.ModrinthVersionNumber,
-		mv.ModrinthGameVersions, mv.ModrinthLatestVersionID, mv.ModrinthLastChecked, mv.ID)
+		mv.ModrinthGameVersions, mv.ModrinthLatestVersionID, mv.ModrinthLastChecked, mv.ModrinthDownloadURL, mv.ID)
 	return err
 }
 
@@ -148,6 +151,7 @@ func (s *PostgresStore) ListBuildContent(buildID int) ([]models.BuildContentEntr
 		if err := rows.Scan(&v.ID, &v.ModID, &v.Version, &v.Filesize, &v.StorageKey, &v.MD5, &v.SHA1, &v.SHA512, &v.URLOverride,
 			&v.Source, &v.TargetPath, &v.ModrinthProjectID, &v.ModrinthVersionID, &v.ModrinthVersionNumber,
 			&v.ModrinthGameVersions, &v.ModrinthLatestVersionID, &v.ModrinthLastChecked, &v.CreatedAt, &v.UpdatedAt,
+			&v.ModrinthDownloadURL,
 			&e.Side, &e.ModSlug, &e.PrettyName, &e.ContentType); err != nil {
 			return nil, err
 		}
