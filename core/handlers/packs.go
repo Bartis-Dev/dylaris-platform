@@ -84,18 +84,28 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
+	solderSlug := strings.TrimSpace(req.SolderSlug)
+	if solderSlug != "" && !packSlugRe.MatchString(solderSlug) {
+		sendJSONError(w, "Invalid solder slug", http.StatusBadRequest)
+		return
+	}
 	p := &models.Pack{
 		OwnerID:            userID,
 		InternalName:       req.Name,
 		InternalSlug:       slug,
 		Summary:            strings.TrimSpace(req.Summary),
 		SolderDisplayName:  strings.TrimSpace(req.SolderDisplayName),
-		SolderSlug:         strings.TrimSpace(req.SolderSlug),
+		SolderSlug:         solderSlug,
 		ModrinthVisibility: "unlisted",
 	}
 	id, err := h.state.Store.CreatePack(p)
 	if err != nil {
-		sendJSONError(w, "Failed to create (slug may be taken)", http.StatusConflict)
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
+			sendJSONError(w, "A pack with that slug already exists", http.StatusConflict)
+		} else {
+			sendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
+		}
 		return
 	}
 	p.ID = id
