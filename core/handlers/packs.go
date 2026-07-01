@@ -226,6 +226,8 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.ID = id
+	// Kick a best-effort loader build for this build's loader (DB-check-first inside).
+	go h.EnsureLoader(b.Minecraft, b.Loader, b.LoaderVersion)
 	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
@@ -264,6 +266,8 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to update build", http.StatusInternalServerError)
 		return
 	}
+	// Kick a best-effort loader build for this build's loader (DB-check-first inside).
+	go h.EnsureLoader(b.Minecraft, b.Loader, b.LoaderVersion)
 	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
