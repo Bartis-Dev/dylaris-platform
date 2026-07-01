@@ -258,6 +258,9 @@ export default function BuildContentEditorPage() {
                         loader={build.loader || undefined}
                         mcVersion={build.minecraft || undefined}
                         projectType="mod"
+                        installedProjectIds={new Set(content.map(c => c.modrinthProjectId).filter(Boolean) as string[])}
+                        disabled={disabled}
+                        disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
                         onPick={(projectId, versionId, hit) => {
                             if (disabled) return;
                             addModrinthContent(packId, buildId, { projectId, versionId, resolveDeps: true })

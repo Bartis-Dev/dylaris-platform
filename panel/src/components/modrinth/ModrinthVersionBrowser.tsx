@@ -19,6 +19,15 @@ interface ModrinthVersionBrowserProps {
      * The parent is responsible for the actual add/replace API call.
      */
     onPick: (projectId: string, versionId: string, hit: ModrinthSearchHit, version: ModrinthVersion) => void;
+    /**
+     * Set (or array) of Modrinth project IDs already in the build.
+     * When provided, hits whose project_id is in this set show an "added" badge.
+     */
+    installedProjectIds?: ReadonlySet<string> | string[];
+    /** When true, version pick buttons are disabled and show disabledTitle on hover. */
+    disabled?: boolean;
+    /** Tooltip text shown on disabled version buttons. */
+    disabledTitle?: string;
 }
 
 /**
@@ -31,7 +40,16 @@ export default function ModrinthVersionBrowser({
     mcVersion,
     projectType = 'mod',
     onPick,
+    installedProjectIds,
+    disabled,
+    disabledTitle,
 }: ModrinthVersionBrowserProps) {
+    // Normalize installedProjectIds to a Set once for O(1) lookups.
+    const installedSet = React.useMemo<ReadonlySet<string>>(() => {
+        if (!installedProjectIds) return new Set();
+        if (installedProjectIds instanceof Set) return installedProjectIds;
+        return new Set(installedProjectIds);
+    }, [installedProjectIds]);
     const [query, setQuery] = useState('');
     const [searchHits, setSearchHits] = useState<ModrinthSearchHit[]>([]);
     const [searching, setSearching] = useState(false);
@@ -130,6 +148,9 @@ export default function ModrinthVersionBrowser({
                                         by {hit.author} · {hit.downloads.toLocaleString()}
                                     </div>
                                 </div>
+                                {installedSet.has(hit.project_id) && (
+                                    <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm shrink-0">added</span>
+                                )}
                             </button>
 
                             {expandedSlug === hit.slug && (
@@ -149,7 +170,9 @@ export default function ModrinthVersionBrowser({
                                             <button
                                                 key={v.id}
                                                 onClick={() => onPick(hit.project_id, v.id, hit, v)}
-                                                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left transition-colors"
+                                                disabled={disabled}
+                                                title={disabled ? disabledTitle : undefined}
+                                                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                             >
                                                 <Plus size={10} className="text-(--accent-light) shrink-0" />
                                                 <div className="min-w-0 flex-1">
