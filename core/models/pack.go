@@ -32,6 +32,19 @@ const (
 	SourceLoader   = "loader"
 )
 
+// ModrinthPAT mirrors a row of modrinth_pats. Plaintext PAT is never on the
+// struct — the encrypted ciphertext stays in storage and Decrypt produces a
+// short-lived plaintext for outgoing Modrinth API calls only. Kept alongside
+// the unified pack model because Modrinth publishing (a later phase) reuses it.
+type ModrinthPAT struct {
+	UserID           string     `json:"userId"`
+	Ciphertext       string     `json:"-"`
+	ModrinthUsername string     `json:"modrinthUsername"`
+	LastValidatedAt  *time.Time `json:"lastValidatedAt,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
 // Pack is a modpack. It carries separate Solder and Modrinth identities so the
 // same pack can be published to either launcher with its own name/link.
 type Pack struct {

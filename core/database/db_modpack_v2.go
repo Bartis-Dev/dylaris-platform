@@ -104,5 +104,18 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			return fmt.Errorf("unified modpack schema: %w", err)
 		}
 	}
+
+	// One-time cleanup of the retired Phase 14/16 modpack tables. IF EXISTS
+	// makes this a no-op after the first boot; the unified tables above are
+	// the replacement. Clean-slate: no data migration by design.
+	for _, drop := range []string{
+		`DROP TABLE IF EXISTS modpack_mods CASCADE`,
+		`DROP TABLE IF EXISTS modpack_versions CASCADE`,
+		`DROP TABLE IF EXISTS modpacks CASCADE`,
+	} {
+		if _, err := db.Exec(drop); err != nil {
+			return fmt.Errorf("unified modpack schema drop: %w", err)
+		}
+	}
 	return nil
 }

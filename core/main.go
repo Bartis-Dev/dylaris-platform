@@ -362,10 +362,7 @@ func main() {
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
-	modpacksHandler := handlers.NewModpacksHandler(appState)
 	packsHandler := handlers.NewPacksHandler(appState)
-	modpacksPublishHandler := handlers.NewModpacksPublishHandler(appState, modrinthPATHandler, "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
-	collaboratorsHandler := handlers.NewCollaboratorsHandler(appState, modrinthPATHandler, "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
@@ -556,26 +553,6 @@ func main() {
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set)))).Methods("PUT")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear)))).Methods("DELETE")
-	// --- Modpacks CRUD ---
-	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.List))).Methods("GET")
-	api.HandleFunc("/me/modpacks", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Create)))).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.Get))).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Update)))).Methods("PATCH")
-	api.HandleFunc("/modpacks/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.Delete)))).Methods("DELETE")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ListVersions))).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.CreateVersion)))).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.DeleteVersion)))).Methods("DELETE")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ListMods))).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.AddMod)))).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksHandler.RemoveMod)))).Methods("DELETE")
-	// .mrpack export — query-token auth so it can be opened via window.open
-	// without setting custom headers.
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/mrpack", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modpacksHandler.ExportMrpack))).Methods("GET")
-	// --- Modrinth publish + collaborators ---
-	api.HandleFunc("/modpacks/{id:[0-9]+}/versions/{versionId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modpacksPublishHandler.Publish)))).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(collaboratorsHandler.List))).Methods("GET")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Add)))).Methods("POST")
-	api.HandleFunc("/modpacks/{id:[0-9]+}/collaborators/{modrinthUserId}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(collaboratorsHandler.Remove)))).Methods("DELETE")
 	// --- Unified pack builder (Solder + Modrinth). Reuses the modpacks feature gates. ---
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.List))).Methods("GET")
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create)))).Methods("POST")
