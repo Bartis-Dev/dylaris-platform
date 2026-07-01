@@ -211,7 +211,16 @@ type CollaboratorInvite struct {
 	Permissions int    `json:"permissions"` // bitfield, 0 = read-only (Modrinth defaults role-based perms anyway)
 }
 
-func (c *ModrinthClient) ListProjectMembers(ctx context.Context, projectID string) ([]map[string]interface{}, error) {
+// MemberResponse is one entry from GET /v2/project/{id}/members.
+type MemberResponse struct {
+	User struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	} `json:"user"`
+	Role string `json:"role"`
+}
+
+func (c *ModrinthClient) ListProjectMembers(ctx context.Context, projectID string) ([]MemberResponse, error) {
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		ModrinthAPIBase+"/project/"+projectID+"/members", nil)
 	httpReq.Header.Set("Authorization", c.pat)
@@ -225,11 +234,11 @@ func (c *ModrinthClient) ListProjectMembers(ctx context.Context, projectID strin
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("list members: status %d", resp.StatusCode)
 	}
-	var rows []map[string]interface{}
-	if err := json.Unmarshal(body, &rows); err != nil {
+	var members []MemberResponse
+	if err := json.Unmarshal(body, &members); err != nil {
 		return nil, err
 	}
-	return rows, nil
+	return members, nil
 }
 
 func (c *ModrinthClient) InviteMember(ctx context.Context, projectID, username string) error {
