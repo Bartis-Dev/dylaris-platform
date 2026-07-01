@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/sha1"
 	"crypto/sha512"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -17,6 +19,10 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// replaceDownloadClient bounds the cdn.modrinth.com file download so a stalled
+// connection cannot hang the handler goroutine indefinitely.
+var replaceDownloadClient = &http.Client{Timeout: 120 * time.Second}
 
 type replaceModrinthRequest struct {
 	VersionID string `json:"versionId"` // the Modrinth version to align to
@@ -64,7 +70,7 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Download Modrinth's exact jar.
-	jar, err := downloadURL(file.URL)
+	jar, err := downloadURL(r.Context(), file.URL)
 	if err != nil {
 		sendJSONError(w, "Download from Modrinth failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -159,8 +165,12 @@ func verifyModrinthBytes(data []byte, hashes map[string]string) error {
 }
 
 // downloadURL fetches a URL's body with a bounded size (256 MiB) for mod files.
-func downloadURL(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+func downloadURL(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := replaceDownloadClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
