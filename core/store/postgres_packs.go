@@ -38,6 +38,9 @@ func (s *PostgresStore) CreatePack(p *models.Pack) (int, error) {
 }
 
 func (s *PostgresStore) UpdatePack(p *models.Pack) error {
+	// internal_slug is intentionally immutable after creation: it is the stable
+	// UNIQUE (owner_id, internal_slug) handle. Rename the launcher-facing
+	// identity via solder_slug, never the internal slug.
 	_, err := s.db.Exec(`UPDATE packs SET
 		internal_name=$1, summary=$2, solder_display_name=$3, solder_slug=$4,
 		hidden=$5, private=$6, recommended_build=$7, latest_build=$8,
