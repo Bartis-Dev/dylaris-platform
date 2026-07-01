@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -40,6 +41,41 @@ func truncateProfileErr(b []byte) string {
 		return string(b[:300])
 	}
 	return string(b)
+}
+
+// quiltLoaderEntry is one element of the Quilt loader-versions list.
+type quiltLoaderEntry struct {
+	Loader struct {
+		Version string `json:"version"`
+	} `json:"loader"`
+}
+
+// resolveLatestStableQuilt returns the newest stable Quilt loader version for a
+// game version. Quilt omits a stable flag, so "stable" = version has no -beta suffix.
+func resolveLatestStableQuilt(ctx context.Context, gameVersion string) (string, error) {
+	url := fmt.Sprintf("https://meta.quiltmc.org/v3/versions/loader/%s", gameVersion)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := loaderMetaClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("quilt loader list %s: status %d", gameVersion, resp.StatusCode)
+	}
+	var entries []quiltLoaderEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if !strings.Contains(strings.ToLower(e.Loader.Version), "-beta") {
+			return e.Loader.Version, nil
+		}
+	}
+	if len(entries) > 0 {
+		return entries[0].Loader.Version, nil
+	}
+	return "", fmt.Errorf("no quilt loader versions for %s", gameVersion)
 }
 
 // fabricLoaderEntry is one element of the Fabric loader-versions list.

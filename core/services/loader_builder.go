@@ -78,7 +78,23 @@ func loaderMD5(zipBytes []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// buildQuiltLoader is a stub — implemented in Task 3.
 func buildQuiltLoader(ctx context.Context, minecraft, loaderVersion string) ([]byte, string, error) {
-	return nil, "", errors.New("quilt loader build implemented in task 3")
+	resolved := loaderVersion
+	if resolved == "" {
+		v, err := resolveLatestStableQuilt(ctx, minecraft)
+		if err != nil {
+			return nil, "", err
+		}
+		resolved = v
+	}
+	url := fmt.Sprintf("https://meta.quiltmc.org/v3/versions/loader/%s/%s/profile/json", minecraft, resolved)
+	profile, err := fetchLoaderProfile(ctx, url)
+	if err != nil {
+		return nil, "", err
+	}
+	zipBytes, err := zipLoaderProfile(profile)
+	if err != nil {
+		return nil, "", err
+	}
+	return zipBytes, resolved, nil
 }
