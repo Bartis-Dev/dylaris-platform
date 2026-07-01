@@ -4,28 +4,26 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
     Package, Plus, ExternalLink, RefreshCw, CircleCheck, CircleAlert,
-    X, Trash2, Pencil,
+    X, Trash2,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
-import { listModpacks, createModpack, deleteModpack, type Modpack } from '@/lib/api/modpacks';
+import { listPacks, createPack, deletePack, type Pack } from '@/lib/api/packs';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
 
-// top-level Modpacks list. Per-user authored modpacks. The
-// builder UI lives at /modpacks/<id>; this page covers create + list +
+// top-level packs list. Per-user authored packs on the unified pack API.
+// The builder UI lives at /modpacks/<id>; this page covers create + list +
 // delete + jump-to-detail.
 
-const LOADER_OPTIONS = ['fabric', 'forge', 'quilt', 'neoforge', 'paper', 'spigot'];
-
-export default function ModpacksListPage() {
+export default function PacksListPage() {
     const { featureFlags } = useAppData();
     const modpacksDisabled = !featureFlags.modpacks;
-    const [packs, setPacks] = useState<Modpack[]>([]);
+    const [packs, setPacks] = useState<Pack[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState<{
-        name: string; slug: string; loader: string; mcVersion: string; summary: string;
+        internalName: string; solderDisplayName: string; slug: string; summary: string;
     } | null>(null);
-    const [deletePrompt, setDeletePrompt] = useState<Modpack | null>(null);
+    const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     const showToast = useCallback((msg: string, ok = true) => {
@@ -34,7 +32,7 @@ export default function ModpacksListPage() {
     }, []);
 
     const refresh = useCallback(async () => {
-        const list = await listModpacks();
+        const list = await listPacks();
         setPacks(list);
         setLoading(false);
     }, []);
@@ -42,23 +40,22 @@ export default function ModpacksListPage() {
     useEffect(() => { refresh(); }, [refresh]);
 
     useEffect(() => {
-        const unsub = systemEvents.on('modpacks.changed', () => { refresh(); });
+        const unsub = systemEvents.on('packs.changed', () => { refresh(); });
         return () => { unsub(); };
     }, [refresh]);
 
     const handleCreate = async () => {
         if (!creating) return;
-        if (!creating.name.trim()) { showToast('Name required', false); return; }
-        const res = await createModpack({
-            name: creating.name.trim(),
+        if (!creating.internalName.trim()) { showToast('Name required', false); return; }
+        const res = await createPack({
+            name: creating.internalName.trim(),
             slug: creating.slug.trim() || undefined,
-            loader: creating.loader || undefined,
-            mcVersion: creating.mcVersion.trim() || undefined,
             summary: creating.summary.trim() || undefined,
+            solderDisplayName: creating.solderDisplayName.trim() || undefined,
         });
-        if (res.success && res.modpack) {
+        if (res.success && res.pack) {
             setCreating(null);
-            showToast('Modpack created.', true);
+            showToast('Pack created.', true);
             refresh();
         } else {
             showToast(res.message || 'Create failed', false);
@@ -67,10 +64,10 @@ export default function ModpacksListPage() {
 
     const handleDelete = async () => {
         if (!deletePrompt) return;
-        const res = await deleteModpack(deletePrompt.id);
+        const res = await deletePack(deletePrompt.id);
         if (res.success) {
             setDeletePrompt(null);
-            showToast('Modpack deleted.', true);
+            showToast('Pack deleted.', true);
             refresh();
         } else {
             showToast(res.message || 'Delete failed', false);
@@ -87,13 +84,13 @@ export default function ModpacksListPage() {
                         <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button
-                        onClick={() => setCreating({ name: '', slug: '', loader: 'fabric', mcVersion: '', summary: '' })}
+                        onClick={() => setCreating({ internalName: '', solderDisplayName: '', slug: '', summary: '' })}
                         className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         disabled={modpacksDisabled}
                         title={modpacksDisabled ? 'Modpack authoring is disabled' : undefined}
                     >
                         <Plus size={13} />
-                        New Modpack
+                        New Pack
                     </button>
                 </div>
             </header>
@@ -103,7 +100,7 @@ export default function ModpacksListPage() {
                     <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
                     <div className="text-xs text-(--base-09)">
                         Modpack authoring is disabled by the platform admin.
-                        Existing modpacks remain readable and downloadable.
+                        Existing packs remain readable and downloadable.
                     </div>
                 </div>
             )}
@@ -111,12 +108,12 @@ export default function ModpacksListPage() {
             <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
                 <Package size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
                 <div>
-                    Author modpacks here, publish to Modrinth (
+                    Author packs here, then create builds and publish them to Modrinth (
                     <Link href="/account/modrinth" className="text-(--accent-light) inline-flex items-center gap-1">
                         connect your PAT <ExternalLink size={9} />
                     </Link>
-                    ). The 3-stage channel model lets you iterate as Draft (local), test as Beta
-                    (Modrinth unlisted + collaborators), and ship as Release.
+                    ) or Solder. Each build pins a Minecraft version + loader and carries
+                    its own content list.
                 </div>
             </div>
 
@@ -129,7 +126,7 @@ export default function ModpacksListPage() {
             ) : packs.length === 0 ? (
                 <div className="card p-8 flex flex-col items-center text-center gap-2">
                     <Package size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">No modpacks yet.</p>
+                    <p className="text-sm text-(--base-07)">No packs yet.</p>
                     <p className="text-xs text-(--base-06)">Create your first one to get started.</p>
                 </div>
             ) : (
@@ -141,8 +138,8 @@ export default function ModpacksListPage() {
                                     <Package size={18} className="text-(--accent-light)" />
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.name}</div>
-                                    <div className="text-[10px] font-mono text-(--base-06) truncate">/{p.slug}</div>
+                                    <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>
+                                    <div className="text-[10px] font-mono text-(--base-06) truncate">/{p.internalSlug}</div>
                                 </div>
                                 <button
                                     onClick={(e) => { e.preventDefault(); setDeletePrompt(p); }}
@@ -155,8 +152,9 @@ export default function ModpacksListPage() {
                             </div>
                             {p.summary && <p className="text-xs text-(--base-07) line-clamp-2 mt-2">{p.summary}</p>}
                             <div className="mt-3 flex items-center gap-2 flex-wrap text-[10px] font-mono">
-                                {p.loader && <span className="bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">{p.loader}</span>}
-                                {p.mcVersion && <span className="bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">MC {p.mcVersion}</span>}
+                                {p.solderDisplayName && (
+                                    <span className="bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">solder: {p.solderDisplayName}</span>
+                                )}
                                 {p.modrinthProjectId
                                     ? <span className="bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm">on modrinth</span>
                                     : <span className="bg-(--base-03) px-1.5 rounded-sm text-(--base-06)">local only</span>
@@ -174,17 +172,17 @@ export default function ModpacksListPage() {
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Package size={16} />
-                                New modpack
+                                New pack
                             </h3>
                             <button onClick={() => setCreating(null)} className="text-(--base-06)"><X size={16} /></button>
                         </div>
                         <div className="modal-body space-y-4">
                             <div>
-                                <label className="input-label">Name</label>
+                                <label className="input-label">Internal name</label>
                                 <input
                                     type="text"
-                                    value={creating.name}
-                                    onChange={e => setCreating({ ...creating, name: e.target.value })}
+                                    value={creating.internalName}
+                                    onChange={e => setCreating({ ...creating, internalName: e.target.value })}
                                     className="input-field w-full"
                                     placeholder="Skyblock Reborn"
                                     maxLength={128}
@@ -201,27 +199,16 @@ export default function ModpacksListPage() {
                                 />
                                 <p className="text-xs text-(--base-06) mt-1">Lowercase, 2-64 chars, alphanumeric + - / _</p>
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="input-label">Loader</label>
-                                    <select
-                                        value={creating.loader}
-                                        onChange={e => setCreating({ ...creating, loader: e.target.value })}
-                                        className="input-field w-full"
-                                    >
-                                        {LOADER_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="input-label">MC Version</label>
-                                    <input
-                                        type="text"
-                                        value={creating.mcVersion}
-                                        onChange={e => setCreating({ ...creating, mcVersion: e.target.value })}
-                                        className="input-field input-mono w-full"
-                                        placeholder="1.20.2"
-                                    />
-                                </div>
+                            <div>
+                                <label className="input-label">Solder display name (optional)</label>
+                                <input
+                                    type="text"
+                                    value={creating.solderDisplayName}
+                                    onChange={e => setCreating({ ...creating, solderDisplayName: e.target.value })}
+                                    className="input-field w-full"
+                                    placeholder="Name shown in the Technic/Solder launcher"
+                                    maxLength={128}
+                                />
                             </div>
                             <div>
                                 <label className="input-label">Summary (optional)</label>
@@ -250,13 +237,14 @@ export default function ModpacksListPage() {
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <Trash2 size={16} />
-                                Delete {deletePrompt.name}?
+                                Delete {deletePrompt.internalName}?
                             </h3>
                         </div>
                         <div className="modal-body">
                             <p className="text-sm text-(--base-07)">
-                                Removes the local copy. If this pack was published to Modrinth, the
-                                Modrinth project is NOT deleted — manage that on modrinth.com.
+                                Removes the local copy and all its builds. If this pack was
+                                published to Modrinth, the Modrinth project is NOT deleted — manage
+                                that on modrinth.com.
                             </p>
                         </div>
                         <div className="modal-footer">
