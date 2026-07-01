@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
@@ -166,7 +167,13 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = models.ContentTypeMod
 	}
-	fileName := hdr.Filename
+	// Sanitize the client-supplied filename: normalize backslashes, take the
+	// base name, and reject traversal so it cannot escape the zip/target path.
+	fileName := path.Base(strings.ReplaceAll(hdr.Filename, `\`, "/"))
+	if fileName == "." || fileName == "/" || fileName == "" || strings.Contains(fileName, "..") {
+		sendJSONError(w, "Invalid file name", http.StatusBadRequest)
+		return
+	}
 
 	// A raw .jar is wrapped into a Solder zip (mods/<file>.jar); an already-
 	// Solder-format .zip is stored as-is.
