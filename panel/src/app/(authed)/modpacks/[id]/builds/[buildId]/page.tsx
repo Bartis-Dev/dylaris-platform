@@ -14,6 +14,7 @@ import {
     uploadContent, getPack, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
 import { publishModrinth, replaceWithModrinth, mrpackDownloadUrl } from '@/lib/api/packsPublish';
+import { publishSolder } from '@/lib/api/solderPublish';
 import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
@@ -50,6 +51,8 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
     const [busy, setBusy] = useState(false);
     const [warnings, setWarnings] = useState<string[]>([]);
     const [needsAck, setNeedsAck] = useState(false);
+    const [solderPublishing, setSolderPublishing] = useState(false);
+    const [solderMsg, setSolderMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
     const submit = async (ackNonModrinth = false) => {
         setBusy(true);
@@ -146,17 +149,32 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                                 />
                                 <span className="text-sm">Modrinth</span>
                             </label>
-                            <label
-                                className="flex items-center gap-2 cursor-not-allowed select-none opacity-50"
-                                title="Solder / Technic support is planned for a later phase"
-                            >
-                                <input
-                                    type="checkbox"
-                                    disabled
-                                    className="accent-(--accent)"
-                                />
-                                <span className="text-sm">Solder (coming in a later phase)</span>
-                            </label>
+                            <div className="flex flex-col gap-1.5">
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm w-full"
+                                    disabled={solderPublishing}
+                                    onClick={async () => {
+                                        setSolderPublishing(true);
+                                        setSolderMsg(null);
+                                        const r = await publishSolder(packId, build.id);
+                                        setSolderPublishing(false);
+                                        if (r.success) {
+                                            onPublished?.();
+                                            setSolderMsg({ ok: true, text: `Published to Solder as ${r.slug} / ${r.build}` });
+                                        } else {
+                                            setSolderMsg({ ok: false, text: r.message || 'Publish failed' });
+                                        }
+                                    }}
+                                >
+                                    {solderPublishing ? 'Publishing...' : 'Publish to Solder'}
+                                </button>
+                                {solderMsg && (
+                                    <p className={`text-xs ${solderMsg.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                                        {solderMsg.text}
+                                    </p>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -455,6 +473,13 @@ export default function BuildContentEditorPage() {
                                 <span className="mono-label px-2 py-0.5 rounded-sm bg-(--success-ghost) text-(--success-light) inline-flex items-center gap-1">
                                     <CircleCheck size={10} />
                                     Modrinth
+                                </span>
+                            )}
+                            {/* Technic / Solder published badge */}
+                            {build.solderPublished && (
+                                <span className="mono-label px-2 py-0.5 rounded-sm bg-(--accent-ghost) text-(--accent-light) inline-flex items-center gap-1">
+                                    <CircleCheck size={10} />
+                                    Technic
                                 </span>
                             )}
                         </h1>
