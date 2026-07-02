@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"dylaris-core/models"
@@ -43,6 +46,54 @@ func (h *SolderHandler) modpacksEnabled(w http.ResponseWriter, r *http.Request) 
 	return true
 }
 
+// solderKeyHash hashes a plaintext Solder API key the same way the store hashes
+// it at rest (sha256 hex), so GetSolderKeyByHash matches. Kept local to avoid
+// exporting the store's unexported hashAuthToken.
+func solderKeyHash(plaintext string) string {
+	sum := sha256.Sum256([]byte(plaintext))
+	return hex.EncodeToString(sum[:])
+}
+
+// solderAuth is the resolved access context for one public read request.
+type solderAuth struct {
+	hasKey   bool // a valid ?k= was supplied → sees ALL gated packs
+	clientID int  // >0 when a valid ?cid= was supplied → sees whitelisted packs
+}
+
+// resolveSolderAuth reads ?k= and ?cid= and resolves them to an access context.
+// Verification is an indexed DB lookup (hash the key; look up the uuid) — no
+// in-Go secret comparison. Unknown values resolve to no access (never an error
+// to the caller): a bad key/cid simply grants nothing, matching the launcher
+// contract (never 403 on the read path).
+func (h *SolderHandler) resolveSolderAuth(r *http.Request) solderAuth {
+	var a solderAuth
+	if k := r.URL.Query().Get("k"); k != "" {
+		if key, err := h.state.Store.GetSolderKeyByHash(solderKeyHash(k)); err == nil && key != nil {
+			a.hasKey = true
+		}
+	}
+	if cid := r.URL.Query().Get("cid"); cid != "" {
+		if c, err := h.state.Store.GetSolderClientByUUID(cid); err == nil && c != nil {
+			a.clientID = c.ID
+		}
+	}
+	return a
+}
+
+// canAccessPack reports whether this auth context unlocks a gated (private or
+// hidden) pack. A valid key unlocks everything; a client unlocks a pack only if
+// it is on that pack's whitelist. A non-gated pack should not be routed here.
+func (h *SolderHandler) canAccessPack(a solderAuth, packID int) bool {
+	if a.hasKey {
+		return true
+	}
+	if a.clientID > 0 {
+		ok, err := h.state.Store.IsPackClient(packID, a.clientID)
+		return err == nil && ok
+	}
+	return false
+}
+
 // Info is GET /solder/api/ — the root probe. version/stream are our own values;
 // only the KEY NAMES (api/version/stream) are contractual. Not feature-gated.
 func (h *SolderHandler) Info(w http.ResponseWriter, r *http.Request) {
@@ -53,10 +104,28 @@ func (h *SolderHandler) Info(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// VerifyKey is GET /solder/api/verify/{key}. Phase 3b has no key store yet
-// (solder_keys is Phase 3c), so every key is invalid. Not feature-gated.
+// VerifyKey is GET /solder/api/verify/{key}. Validates a Solder API key by hash
+// lookup. 200 {"valid":..,"name":..} on match, 403 {"error":..} otherwise.
 func (h *SolderHandler) VerifyKey(w http.ResponseWriter, r *http.Request) {
-	solderJSONError(w, "Invalid key provided.", http.StatusForbidden)
+	if !h.modpacksEnabled(w, r) {
+		return
+	}
+	key := mux.Vars(r)["key"]
+	if key == "" {
+		solderJSONError(w, "Invalid key provided.", http.StatusForbidden)
+		return
+	}
+	k, err := h.state.Store.GetSolderKeyByHash(solderKeyHash(key))
+	if err != nil {
+		log.Printf("solder VerifyKey: store error: %v", err)
+		solderJSONError(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if k == nil {
+		solderJSONError(w, "Invalid key provided.", http.StatusForbidden)
+		return
+	}
+	solderJSON(w, http.StatusOK, map[string]string{"valid": "Key validated.", "name": k.Name})
 }
 
 // solderModpackObject is the single-modpack object shape (shared by GetModpack
@@ -83,7 +152,17 @@ func (h *SolderHandler) ListModpacks(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
 		return
 	}
-	packs, err := h.state.Store.ListPublicSolderPacks()
+	auth := h.resolveSolderAuth(r)
+	var packs []models.Pack
+	var err error
+	switch {
+	case auth.hasKey:
+		packs, err = h.state.Store.ListAllSolderPacks()
+	case auth.clientID > 0:
+		packs, err = h.state.Store.ListSolderPacksForClient(auth.clientID)
+	default:
+		packs, err = h.state.Store.ListPublicSolderPacks()
+	}
 	if err != nil {
 		solderJSONError(w, "Failed to list modpacks", http.StatusInternalServerError)
 		return
@@ -141,7 +220,7 @@ func (h *SolderHandler) modpackObject(p *models.Pack) (solderModpackObject, erro
 }
 
 // GetModpack is GET /solder/api/modpack/{slug}. 404 (Solder-shaped) when the pack
-// does not exist or is private/hidden.
+// does not exist or is private/hidden without valid auth.
 func (h *SolderHandler) GetModpack(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
 		return
@@ -152,9 +231,15 @@ func (h *SolderHandler) GetModpack(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Failed to load modpack", http.StatusInternalServerError)
 		return
 	}
-	if p == nil || p.Private || p.Hidden {
+	if p == nil {
 		solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
 		return
+	}
+	if p.Private || p.Hidden {
+		if !h.canAccessPack(h.resolveSolderAuth(r), p.ID) {
+			solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
+			return
+		}
 	}
 	obj, err := h.modpackObject(p)
 	if err != nil {
@@ -186,9 +271,15 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Failed to load modpack", http.StatusInternalServerError)
 		return
 	}
-	if p == nil || p.Private || p.Hidden {
+	if p == nil {
 		solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
 		return
+	}
+	if p.Private || p.Hidden {
+		if !h.canAccessPack(h.resolveSolderAuth(r), p.ID) {
+			solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
+			return
+		}
 	}
 	b, err := h.state.Store.GetPackBuildByVersion(p.ID, vars["build"])
 	if err != nil {
