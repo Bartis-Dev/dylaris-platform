@@ -89,7 +89,7 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                 onClick={e => e.stopPropagation()}
             >
                 <div className="modal-header flex items-center justify-between">
-                    <h3 className="modal-title">Publish to Modrinth</h3>
+                    <h3 className="modal-title">Publish</h3>
                     <button
                         type="button"
                         onClick={onClose}

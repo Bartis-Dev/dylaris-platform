@@ -46,13 +46,17 @@ export default function SolderClientsPage() {
     const handleCreate = async () => {
         const trimmed = name.trim();
         if (!trimmed) { showToast('Name required', false); return; }
-        const res = await createClient(trimmed);
-        if (res.success) {
-            setCreating(false);
-            setName('');
-            showToast('Client created.', true);
-            refresh();
-        } else {
+        try {
+            const res = await createClient(trimmed);
+            if (res.success) {
+                setCreating(false);
+                setName('');
+                showToast('Client created.', true);
+                refresh();
+            } else {
+                showToast('Create failed', false);
+            }
+        } catch {
             showToast('Create failed', false);
         }
     };

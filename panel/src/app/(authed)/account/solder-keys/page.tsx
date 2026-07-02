@@ -47,13 +47,17 @@ export default function SolderKeysPage() {
     const handleCreate = async () => {
         const trimmed = name.trim();
         if (!trimmed) { showToast('Name required', false); return; }
-        const res = await createKey(trimmed);
-        if (res.success && res.plaintext) {
-            setCreating(false);
-            setName('');
-            setRevealedKey({ plaintext: res.plaintext, name: trimmed });
-            refresh();
-        } else {
+        try {
+            const res = await createKey(trimmed);
+            if (res.success && res.plaintext) {
+                setCreating(false);
+                setName('');
+                setRevealedKey({ plaintext: res.plaintext, name: trimmed });
+                refresh();
+            } else {
+                showToast('Create failed', false);
+            }
+        } catch {
             showToast('Create failed', false);
         }
     };

@@ -17,7 +17,7 @@ export async function setSolderConfig(
     body: JSON.stringify(input),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return { success: false, message: data.error || "Failed to save Solder config" };
+  if (!res.ok) return { success: false, message: data.message || "Failed to save Solder config" };
   return { success: true, pack: data.pack };
 }
 
@@ -30,6 +30,6 @@ export async function publishSolder(
     headers: getAuthHeader(),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return { success: false, message: data.error || "Failed to publish to Solder" };
+  if (!res.ok) return { success: false, message: data.message || "Failed to publish to Solder" };
   return { success: true, slug: data.slug, build: data.build };
 }

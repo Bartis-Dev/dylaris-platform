@@ -17,7 +17,7 @@ export interface SolderKey {
 
 async function jget<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { headers: getAuthHeader() });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Request failed");
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Request failed");
   return res.json();
 }
 
