@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -51,6 +52,14 @@ func solderManifestKey(ownerID, solderSlug, versionString string) string {
 	return fmt.Sprintf("solder/manifests/%s/%s/%s/build.json", ownerID, solderSlug, versionString)
 }
 
+// safeSolderKeyComponent rejects a storage-key path component that could escape the
+// solder/ namespace at Put time. Modrinth version numbers reach us verbatim (no
+// charset validation), so a crafted "../.." could otherwise clobber another tenant's
+// objects — and the mirror's read-time guard cannot undo a bad write.
+func safeSolderKeyComponent(s string) bool {
+	return s != "" && !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
+}
+
 // renderSolderBuild materializes every content entry of the build into the public
 // solder/ namespace, injects the Phase-3a loader as an ordinary mods[] entry,
 // writes the deterministic manifest, then freezes + marks the build Solder-published.
@@ -75,6 +84,9 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 	mods := make([]solderMod, 0, len(content)+1)
 
 	for _, e := range content {
+		if !safeSolderKeyComponent(e.ModSlug) || !safeSolderKeyComponent(e.Version) {
+			return fmt.Errorf("content %q has an invalid slug or version (path characters not allowed)", e.ModSlug)
+		}
 		solderKey := solderModStorageKey(pack.OwnerID, e.ModSlug, e.Version)
 		var md5hex string
 		var size int64
@@ -180,6 +192,9 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
+	if !safeSolderKeyComponent(build.VersionString) {
+		return fmt.Errorf("build version %q has path characters not allowed in a Solder key", build.VersionString)
+	}
 	manifestKey := solderManifestKey(pack.OwnerID, pack.SolderSlug, build.VersionString)
 	if err := prov.Put(manifestKey, manifestJSON); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
@@ -217,7 +232,8 @@ func (h *PacksHandler) PublishSolder(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("PublishSolder render error (build %d): %v", build.ID, err)
+		sendJSONError(w, "Failed to publish build", http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": pack.OwnerID})
