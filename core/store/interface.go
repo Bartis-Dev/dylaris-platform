@@ -465,6 +465,11 @@ type Store interface {
 	DeletePackBuild(id, packID int) error
 	GetPackBuild(id int) (*models.PackBuild, error)
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
+	// Public Solder lookups (addressed by SolderSlug + version string, not numeric ID).
+	GetPackBySolderSlug(slug string) (*models.Pack, error)
+	GetPackBuildByVersion(packID int, versionString string) (*models.PackBuild, error)
+	ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error)
+	ListPublicSolderPacks() ([]models.Pack, error)
 
 	GetLoader(minecraft, loader, loaderVersion string) (*models.Loader, error)
 	UpsertLoader(l *models.Loader) (int, error)

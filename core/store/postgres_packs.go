@@ -164,3 +164,66 @@ func (s *PostgresStore) ListPackBuilds(packID int) ([]models.PackBuild, error) {
 	}
 	return out, rows.Err()
 }
+
+// GetPackBySolderSlug resolves a pack by its public Solder slug (index-supported
+// by packs_solder_slug_uniq). Returns (nil, nil) when no pack has that slug.
+func (s *PostgresStore) GetPackBySolderSlug(slug string) (*models.Pack, error) {
+	row := s.db.QueryRow(`SELECT `+packCols+` FROM packs WHERE solder_slug = $1`, slug)
+	p, err := scanPack(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return p, err
+}
+
+// GetPackBuildByVersion resolves one build inside a pack by its version string
+// (unique per pack via pack_builds_pack_version_uniq). (nil, nil) when absent.
+func (s *PostgresStore) GetPackBuildByVersion(packID int, versionString string) (*models.PackBuild, error) {
+	row := s.db.QueryRow(`SELECT `+buildCols+` FROM pack_builds
+		WHERE pack_id = $1 AND version_string = $2`, packID, versionString)
+	b, err := scanBuild(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return b, err
+}
+
+// ListSolderPublishedBuilds returns the pack's Solder-published builds, newest first.
+func (s *PostgresStore) ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error) {
+	rows, err := s.db.Query(`SELECT `+buildCols+` FROM pack_builds
+		WHERE pack_id = $1 AND solder_published = true ORDER BY created_at DESC`, packID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.PackBuild
+	for rows.Next() {
+		b, err := scanBuild(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
+// ListPublicSolderPacks returns every pack that has a Solder slug and is neither
+// private nor hidden, alphabetically by internal name (the public Solder listing).
+func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
+	rows, err := s.db.Query(`SELECT `+packCols+` FROM packs
+		WHERE solder_slug <> '' AND private = false AND hidden = false
+		ORDER BY internal_name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Pack
+	for rows.Next() {
+		p, err := scanPack(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
