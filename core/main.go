@@ -589,6 +589,20 @@ func main() {
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth)))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder)))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig)))).Methods("PATCH")
+
+	// --- Solder client/key management (authed) ---
+	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListClients)))).Methods("GET")
+	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateClient)))).Methods("POST")
+	api.HandleFunc("/solder/clients/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteClient)))).Methods("DELETE")
+
+	api.HandleFunc("/packs/{id:[0-9]+}/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListPackClientsHandler)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.AddPackClient)))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.RemovePackClient)))).Methods("DELETE")
+
+	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListKeys)))).Methods("GET")
+	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateKey)))).Methods("POST")
+	api.HandleFunc("/solder/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteKey)))).Methods("DELETE")
+
 	// --- Username history + account policy ---
 	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
 	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(usageHandler.GetAllUsage)).Methods("GET")
