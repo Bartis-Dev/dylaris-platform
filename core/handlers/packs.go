@@ -211,6 +211,11 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "versionString is required", http.StatusBadRequest)
 		return
 	}
+	// reject path chars: VersionString feeds storage keys (mrpack + solder manifest) and a download filename
+	if !safeSolderKeyComponent(strings.TrimSpace(req.VersionString)) {
+		sendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
+		return
+	}
 	b := &models.PackBuild{
 		PackID:        packID,
 		VersionString: strings.TrimSpace(req.VersionString),
@@ -256,6 +261,10 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if v := strings.TrimSpace(req.VersionString); v != "" {
+		if !safeSolderKeyComponent(v) {
+			sendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
+			return
+		}
 		b.VersionString = v
 	}
 	b.Minecraft = strings.TrimSpace(req.Minecraft)
