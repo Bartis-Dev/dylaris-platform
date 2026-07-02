@@ -227,3 +227,45 @@ func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListAllSolderPacks returns every pack with a Solder slug regardless of
+// private/hidden. Used by the public read path ONLY when a valid ?k= is present.
+func (s *PostgresStore) ListAllSolderPacks() ([]models.Pack, error) {
+	rows, err := s.db.Query(`SELECT ` + packCols + ` FROM packs
+		WHERE solder_slug <> '' ORDER BY internal_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	packs := make([]models.Pack, 0)
+	for rows.Next() {
+		p, err := scanPack(rows)
+		if err != nil {
+			return nil, err
+		}
+		packs = append(packs, *p)
+	}
+	return packs, rows.Err()
+}
+
+// ListSolderPacksForClient returns the Solder packs assigned to a client via
+// pack_clients. Used by the public read path when a valid ?cid= is present.
+// Uses an IN subquery so the bare packCols list has no ambiguous column reference.
+func (s *PostgresStore) ListSolderPacksForClient(clientID int) ([]models.Pack, error) {
+	rows, err := s.db.Query(`SELECT `+packCols+` FROM packs
+		WHERE solder_slug <> '' AND id IN (SELECT pack_id FROM pack_clients WHERE client_id = $1)
+		ORDER BY internal_name`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	packs := make([]models.Pack, 0)
+	for rows.Next() {
+		p, err := scanPack(rows)
+		if err != nil {
+			return nil, err
+		}
+		packs = append(packs, *p)
+	}
+	return packs, rows.Err()
+}

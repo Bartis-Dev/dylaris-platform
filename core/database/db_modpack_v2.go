@@ -113,6 +113,26 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE (minecraft, loader, loader_version)
 		)`,
+		`CREATE TABLE IF NOT EXISTS solder_clients (
+			id         SERIAL       PRIMARY KEY,
+			uuid       UUID         NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+			name       VARCHAR(128) NOT NULL DEFAULT '',
+			owner_id   UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS pack_clients (
+			id        SERIAL  PRIMARY KEY,
+			pack_id   INTEGER NOT NULL REFERENCES packs(id) ON DELETE CASCADE,
+			client_id INTEGER NOT NULL REFERENCES solder_clients(id) ON DELETE CASCADE,
+			UNIQUE (pack_id, client_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS solder_keys (
+			id         SERIAL       PRIMARY KEY,
+			key_hash   VARCHAR(64)  NOT NULL UNIQUE,
+			name       VARCHAR(128) NOT NULL DEFAULT '',
+			owner_id   UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
