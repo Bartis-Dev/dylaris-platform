@@ -364,6 +364,7 @@ func main() {
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := handlers.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
+	solderHandler := handlers.NewSolderHandler(appState)
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
@@ -478,6 +479,19 @@ func main() {
 	// can toggle maintenance back off.
 	api.Use(handlers.MaintenanceMuxMiddleware(appState, authHandler.IsAdminToken))
 
+	// --- PUBLIC SOLDER API (Technic Launcher) ---
+	// Registered on the ROOT router with NO .Use(...) — it deliberately bypasses
+	// the setup-lock, maintenance, and auth middleware so the launcher can reach
+	// published packs at all times. The modpacks feature is gated IN-HANDLER
+	// (Solder-shaped {"error":...} JSON), not by the 503 feature middleware.
+	solder := r.PathPrefix("/solder").Subrouter()
+	solder.HandleFunc("/api/", solderHandler.Info).Methods("GET")
+	solder.HandleFunc("/api/modpack", solderHandler.ListModpacks).Methods("GET")
+	solder.HandleFunc("/api/modpack/{slug}", solderHandler.GetModpack).Methods("GET")
+	solder.HandleFunc("/api/modpack/{slug}/{build}", solderHandler.GetBuild).Methods("GET")
+	solder.HandleFunc("/api/verify/{key}", solderHandler.VerifyKey).Methods("GET")
+	solder.HandleFunc("/mirror/{rest:.*}", solderHandler.SolderMirror).Methods("GET")
+
 	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
 	authLimiter := handlers.NewIPRateLimiter()
@@ -573,6 +587,8 @@ func main() {
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.GetBuildLoader))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth)))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder)))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig)))).Methods("PATCH")
 	// --- Username history + account policy ---
 	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
 	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(usageHandler.GetAllUsage)).Methods("GET")
