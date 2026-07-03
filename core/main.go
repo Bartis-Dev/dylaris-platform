@@ -248,6 +248,13 @@ func main() {
 	serverAuditRetention.SetLeader(coreLeader)
 	serverAuditRetention.Start(context.Background())
 
+	// Modpack auto-update checker — hourly, leader-gated. Pauses when the
+	// modpacks feature is off; per-row staleness governed by the admin cadence
+	// setting (modpack_update_check_interval_hours, default 24h).
+	modpackUpdateChecker := services.NewModpackUpdateChecker(pgStore, appState.FeatureFlags)
+	modpackUpdateChecker.SetLeader(coreLeader)
+	modpackUpdateChecker.Start(context.Background())
+
 	// Fallback cleanup if TimescaleDB retention policy is not active.
 	// Leader-gated so under multi-Core only one instance
 	// fires the hourly DELETE — the followers idle on the tick.

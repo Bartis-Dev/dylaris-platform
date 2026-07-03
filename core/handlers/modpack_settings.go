@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -19,14 +20,15 @@ func NewModpackSettingsHandler(state *AppState) *ModpackSettingsHandler {
 // write-only from the panel's perspective: GET omits it (returns the empty
 // string) so it never lands in the panel state or browser devtools.
 type modpackSettings struct {
-	FeatureEnabled bool     `json:"featureEnabled"`
-	Provider       string   `json:"provider"` // "local" | "s3"
-	Paths          []string `json:"paths"`    // local: absolute paths
-	S3Endpoint     string   `json:"s3Endpoint"`
-	S3Bucket       string   `json:"s3Bucket"`
-	S3Region       string   `json:"s3Region"`
-	S3AccessKey    string   `json:"s3AccessKey"`
-	S3SecretKey    string   `json:"s3SecretKey,omitempty"` // write-only
+	FeatureEnabled           bool     `json:"featureEnabled"`
+	Provider                 string   `json:"provider"` // "local" | "s3"
+	Paths                    []string `json:"paths"`    // local: absolute paths
+	S3Endpoint               string   `json:"s3Endpoint"`
+	S3Bucket                 string   `json:"s3Bucket"`
+	S3Region                 string   `json:"s3Region"`
+	S3AccessKey              string   `json:"s3AccessKey"`
+	S3SecretKey              string   `json:"s3SecretKey,omitempty"` // write-only
+	UpdateCheckIntervalHours int      `json:"updateCheckIntervalHours"`
 }
 
 // Get GET /api/admin/settings/modpacks
@@ -58,6 +60,13 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if out.Paths == nil {
 		out.Paths = []string{}
 	}
+	interval := 24
+	if v := get("modpack_update_check_interval_hours"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			interval = n
+		}
+	}
+	out.UpdateCheckIntervalHours = interval
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": out,
@@ -107,6 +116,11 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	pathsJSON, _ := json.Marshal(cleaned)
 
+	uch := req.UpdateCheckIntervalHours
+	if uch <= 0 {
+		uch = 24
+	}
+
 	writes := []struct{ k, v string }{
 		{"feature_modpacks_enabled", boolStr(req.FeatureEnabled)},
 		{"modpack_storage_provider", req.Provider},
@@ -115,6 +129,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_storage_s3_bucket", req.S3Bucket},
 		{"modpack_storage_s3_region", req.S3Region},
 		{"modpack_storage_s3_access_key", req.S3AccessKey},
+		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
