@@ -51,6 +51,14 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
+	// GetModversion is a globally unscoped by-id lookup; loadOwnedBuild only proves
+	// pack/build ownership, not that this modversion belongs to it. Without this
+	// check a caller could pass another tenant's modversionId and repoint their
+	// storage_key/hashes to this caller's storage path.
+	if ok, _ := h.state.Store.IsModversionInBuild(build.ID, mvID); !ok {
+		sendJSONError(w, "Content not found", http.StatusNotFound)
+		return
+	}
 	var req replaceModrinthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VersionID == "" {
 		sendJSONError(w, "versionId required", http.StatusBadRequest)

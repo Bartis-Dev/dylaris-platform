@@ -66,6 +66,15 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Content not found", http.StatusNotFound)
 			return
 		}
+		// GetModversion is a globally unscoped by-id lookup; loadOwnedBuild only
+		// proves pack/build ownership, not that this modversion belongs to it.
+		// Without this check a caller could pass another tenant's modversionId and
+		// repoint their storage_key/hashes to this caller's storage path. Batch
+		// mode is already safe (it iterates ListBuildContent(build.ID)).
+		if ok, _ := h.state.Store.IsModversionInBuild(build.ID, req.ModversionID); !ok {
+			sendJSONError(w, "Content not found", http.StatusNotFound)
+			return
+		}
 		if mv.ModrinthProjectID == "" {
 			sendJSONError(w, "Content is not linked to Modrinth", http.StatusUnprocessableEntity)
 			return

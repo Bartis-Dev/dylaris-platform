@@ -133,6 +133,16 @@ func (s *PostgresStore) DetachFromBuild(buildID, modversionID int) error {
 	return err
 }
 
+// IsModversionInBuild reports whether the modversion is attached to the build.
+// Guards mutation handlers against a caller passing a modversion id that belongs
+// to someone else's build (loadOwnedBuild only proves pack/build ownership).
+func (s *PostgresStore) IsModversionInBuild(buildID, modversionID int) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM build_modversions WHERE build_id=$1 AND modversion_id=$2)`,
+		buildID, modversionID).Scan(&exists)
+	return exists, err
+}
+
 func (s *PostgresStore) ListBuildContent(buildID int) ([]models.BuildContentEntry, error) {
 	rows, err := s.db.Query(`SELECT `+prefixCols("mv", mvCols)+`,
 		bmv.side, m.slug, m.pretty_name, m.content_type

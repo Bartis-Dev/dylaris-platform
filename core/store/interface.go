@@ -505,6 +505,7 @@ type Store interface {
 	FindModversionBySHA1(ownerID, sha1 string) (*models.Modversion, error)
 	AttachModversionToBuild(buildID, modversionID int, side string) (int, error)
 	DetachFromBuild(buildID, modversionID int) error
+	IsModversionInBuild(buildID, modversionID int) (bool, error)
 	ListBuildContent(buildID int) ([]models.BuildContentEntry, error)
 	ListModversionsDueForCheck(before time.Time) ([]ModversionCheckRow, error)
 	SetModversionCheckResult(id int, latestVersionID string, checkedAt time.Time) error
