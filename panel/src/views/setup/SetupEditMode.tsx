@@ -8,6 +8,7 @@ import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
 import ModpackPicker from './ModpackPicker';
+import PackPicker from './PackPicker';
 
 interface SetupEditModeProps {
     subName: string;
@@ -19,10 +20,12 @@ interface SetupEditModeProps {
     onFlagsChange: (flags: string) => void;
     ramMB: number;
     // Install tab
-    installTab: 'online' | 'library' | 'upload' | 'modpack';
-    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'modpack') => void;
+    installTab: 'online' | 'library' | 'upload' | 'modpack' | 'pack';
+    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'modpack' | 'pack') => void;
     modpackSelection?: import('@/views/setup/ModpackPicker').ModpackSelection | null;
     onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
+    packSelection?: import('@/views/setup/PackPicker').PackSelection | null;
+    onPackSelect?: (s: import('@/views/setup/PackPicker').PackSelection | null) => void;
     libraryEnabled?: boolean;
     // Server type
     serverType?: 'game' | 'proxy';
@@ -146,6 +149,10 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Modpack
                         </button>
+                        <button type="button" onClick={() => props.onInstallTabChange('pack')}
+                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            Pack
+                        </button>
                     </div>
 
                     {/* Tab content */}
@@ -193,6 +200,13 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                         <ModpackPicker
                             selection={props.modpackSelection ?? null}
                             onSelect={(s) => props.onModpackSelect?.(s)}
+                        />
+                    )}
+
+                    {props.installTab === 'pack' && (
+                        <PackPicker
+                            selection={props.packSelection ?? null}
+                            onSelect={(s) => props.onPackSelect?.(s)}
                         />
                     )}
                 </div>

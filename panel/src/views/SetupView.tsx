@@ -49,10 +49,13 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [subNameError, setSubNameError] = useState('');
     const [javaImage, setJavaImage] = useState(JAVA_IMAGES[0].id);
     const [extraFlags, setExtraFlags] = useState('');
-    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'modpack'>('online');
+    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'modpack' | 'pack'>('online');
     // Selected Modrinth modpack (project + version + .mrpack URL).
     // Cleared on tab change or on submit.
     const [modpackSelection, setModpackSelection] = useState<import('@/views/setup/ModpackPicker').ModpackSelection | null>(null);
+    // Selected unified-builder pack + build (Core pack/build IDs).
+    // Cleared on tab change or on submit.
+    const [packSelection, setPackSelection] = useState<import('@/views/setup/PackPicker').PackSelection | null>(null);
 
     // Software list from API
     const [softwareCatalog, setSoftwareCatalog] = useState<{ name: string; type: string }[]>([]);
@@ -327,6 +330,12 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             installer.modrinthProjectSlug = modpackSelection.projectSlug;
             if (modpackSelection.loader) installer.loader = modpackSelection.loader;
             if (modpackSelection.mcVersion) installer.mcVersion = modpackSelection.mcVersion;
+        } else if (installTab === 'pack' && packSelection) {
+            installer.type = 'pack';
+            installer.packId = packSelection.packId;
+            installer.buildId = packSelection.buildId;
+            if (packSelection.loader) installer.loader = packSelection.loader;
+            if (packSelection.mcVersion) installer.mcVersion = packSelection.mcVersion;
         } else if (installTab === 'upload' && uploadFile) {
             installer.type = 'upload-zip';
             installer.structure = uploadStructure;
@@ -525,6 +534,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         onUploadStatusChange: setUploadStatus,
         modpackSelection,
         onModpackSelect: setModpackSelection,
+        packSelection,
+        onPackSelect: setPackSelection,
         serverId: server.id,
         onFileTooLarge: setFileTooLarge,
     };
