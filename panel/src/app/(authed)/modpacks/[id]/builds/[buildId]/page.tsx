@@ -6,14 +6,14 @@ import Link from 'next/link';
 import {
     Package, ArrowLeft, Trash2, Search,
     CircleCheck, CircleAlert, Box, Upload, Lock,
-    Download, Share2, X, Loader2, Replace, AlertTriangle,
+    Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listBuilds, listContent, addModrinthContent, removeContent, setContentSide,
     uploadContent, getPack, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
-import { publishModrinth, replaceWithModrinth, mrpackDownloadUrl } from '@/lib/api/packsPublish';
+import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
 import { publishSolder } from '@/lib/api/solderPublish';
 import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
@@ -32,6 +32,13 @@ import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser
 // Badge: Modrinth chip when build.modrinthPublished.
 
 const SIDES: BuildContentEntry['side'][] = ['both', 'client', 'server'];
+
+// A linked entry has an update available when Modrinth's cached latest version
+// differs from what's currently installed. modrinthLatestVersionId is only
+// populated once the auto-update cron has checked the entry at least once.
+function hasUpdateAvailable(entry: BuildContentEntry): boolean {
+    return !!(entry.linked && entry.modrinthLatestVersionId && entry.modrinthLatestVersionId !== entry.modrinthVersionId);
+}
 
 // ---------------------------------------------------------------------------
 // Publish dialog
@@ -287,6 +294,79 @@ function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onRe
 }
 
 // ---------------------------------------------------------------------------
+// Update-mods dialog (per row) — same scaffold as ReplaceDialog, but hits the
+// update-mods endpoint scoped to a single modversion instead of the generic
+// replace endpoint.
+// ---------------------------------------------------------------------------
+interface UpdateModsDialogProps {
+    entry: BuildContentEntry;
+    build: PackBuild;
+    packId: number;
+    disabled: boolean;
+    isFrozen: boolean;
+    onClose: () => void;
+    onUpdated: () => void;
+    showToast: (msg: string, ok?: boolean) => void;
+}
+
+function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, onUpdated, showToast }: UpdateModsDialogProps) {
+    // Close on Escape
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={onClose}
+        >
+            <div
+                className="card w-full max-w-2xl mx-4 flex flex-col"
+                style={{ maxHeight: 'min(90vh, 720px)' }}
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="modal-header flex items-center justify-between shrink-0">
+                    <div>
+                        <h3 className="modal-title">Upgrade</h3>
+                        <p className="text-xs text-(--base-06) mt-0.5">
+                            Choose a version for <span className="font-mono text-(--accent-light)">{entry.prettyName || entry.modSlug}</span>
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="text-(--base-07) hover:text-(--error-light) transition-colors"
+                        aria-label="Close"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-hidden p-4">
+                    <ModrinthVersionBrowser
+                        loader={build.loader || undefined}
+                        mcVersion={build.minecraft || undefined}
+                        disabled={disabled}
+                        disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
+                        onPick={(projectId, versionId) => {
+                            updateMods(packId, build.id, { modversionId: entry.id, versionId }).then(res => {
+                                showToast(res.success ? 'Upgraded' : (res.message || 'Upgrade failed'), res.success);
+                                if (res.success) {
+                                    onUpdated();
+                                    onClose();
+                                }
+                            });
+                        }}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 export default function BuildContentEditorPage() {
@@ -311,6 +391,8 @@ export default function BuildContentEditorPage() {
     // Dialog state
     const [publishDialogOpen, setPublishDialogOpen] = useState(false);
     const [replaceEntry, setReplaceEntry] = useState<BuildContentEntry | null>(null);
+    const [upgradeEntry, setUpgradeEntry] = useState<BuildContentEntry | null>(null);
+    const [updatingAll, setUpdatingAll] = useState(false);
 
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const showToast = useCallback((msg: string, ok = true) => {
@@ -339,6 +421,7 @@ export default function BuildContentEditorPage() {
 
     const isFrozen = !!build?.frozen;
     const disabled = modpacksDisabled || isFrozen;
+    const hasAnyUpdate = content.some(hasUpdateAvailable);
 
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -372,6 +455,24 @@ export default function BuildContentEditorPage() {
         } else {
             showToast(res.message || 'Remove failed', false);
         }
+    };
+
+    const handleUpdateAll = async () => {
+        setUpdatingAll(true);
+        const res = await updateMods(packId, buildId, { all: true });
+        setUpdatingAll(false);
+        if (!res.success) {
+            showToast(res.message || 'Update all failed', false);
+            return;
+        }
+        const failed = (res.results || []).filter(r => r.error);
+        const upgraded = res.upgraded ?? ((res.results?.length || 0) - failed.length);
+        if (failed.length > 0) {
+            showToast(`${upgraded} upgraded, ${failed.length} failed`, false);
+        } else {
+            showToast(`${upgraded} upgraded`, true);
+        }
+        refresh();
     };
 
     // Auth-blob mrpack download — cannot use a bare <a href> because the route
@@ -495,6 +596,23 @@ export default function BuildContentEditorPage() {
                         )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {/* Update all — only shown when at least one linked entry has a newer Modrinth version cached */}
+                        {hasAnyUpdate && (
+                            <button
+                                type="button"
+                                onClick={handleUpdateAll}
+                                disabled={disabled || updatingAll}
+                                title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Upgrade all mods with an available update'}
+                                className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {updatingAll
+                                    ? <Loader2 size={12} className="animate-spin" />
+                                    : <ArrowUpCircle size={12} />
+                                }
+                                {updatingAll ? 'Updating…' : 'Update all'}
+                            </button>
+                        )}
+
                         {/* Piece 3: Export .mrpack */}
                         <button
                             type="button"
@@ -568,6 +686,12 @@ export default function BuildContentEditorPage() {
                                     }`}>
                                         {entry.linked ? 'Modrinth' : 'Upload'}
                                     </span>
+                                    {/* Auto-update: badge shown once the cron has cached a newer Modrinth version */}
+                                    {hasUpdateAvailable(entry) && (
+                                        <span className="inline-flex items-center gap-1 rounded-sm bg-(--accent-ghost) px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide text-(--accent-light) shrink-0">
+                                            Update available
+                                        </span>
+                                    )}
                                     {/* Piece 2: Replace with Modrinth — only for non-linked (uploaded) entries */}
                                     {!entry.linked && (
                                         <button
@@ -578,6 +702,17 @@ export default function BuildContentEditorPage() {
                                             className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                                         >
                                             <Replace size={12} />
+                                        </button>
+                                    )}
+                                    {/* Auto-update: Upgrade — only for linked entries with an update available */}
+                                    {hasUpdateAvailable(entry) && !disabled && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setUpgradeEntry(entry)}
+                                            title="Upgrade to the latest Modrinth version"
+                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors shrink-0"
+                                        >
+                                            <ArrowUpCircle size={12} />
                                         </button>
                                     )}
                                     <select
@@ -653,6 +788,20 @@ export default function BuildContentEditorPage() {
                     isFrozen={isFrozen}
                     onClose={() => setReplaceEntry(null)}
                     onReplaced={refresh}
+                    showToast={showToast}
+                />
+            )}
+
+            {/* Auto-update: per-row Upgrade dialog */}
+            {upgradeEntry && (
+                <UpdateModsDialog
+                    entry={upgradeEntry}
+                    build={build}
+                    packId={packId}
+                    disabled={disabled}
+                    isFrozen={isFrozen}
+                    onClose={() => setUpgradeEntry(null)}
+                    onUpdated={refresh}
                     showToast={showToast}
                 />
             )}

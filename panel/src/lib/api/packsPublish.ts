@@ -51,12 +51,14 @@ export async function updateMods(
     results?: { modversionId: number; error?: string }[];
     message?: string;
 }> {
-    const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/update-mods`, {
-        method: 'POST',
-        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(opts),
-    });
-    return handleResponse(res) as any;
+    try {
+        const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/update-mods`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(opts),
+        });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
 }
 
 // mrpackDownloadUrl builds the authenticated export URL; the browser fetches it
