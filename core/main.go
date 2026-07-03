@@ -578,6 +578,8 @@ func main() {
 	// --- Unified pack builder (Solder + Modrinth). Reuses the modpacks feature gates. ---
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.List))).Methods("GET")
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create)))).Methods("POST")
+	api.HandleFunc("/me/packs/import-solder/preview", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolderPreview)))).Methods("POST")
+	api.HandleFunc("/me/packs/import-solder", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolder)))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.Get))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Update)))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Delete)))).Methods("DELETE")
