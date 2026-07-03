@@ -13,6 +13,15 @@ import (
 	"dylaris-core/storage/modpack"
 )
 
+// Size caps bound the memory a single server-pack render can consume, since it
+// is reachable from the public share endpoint. A deflate zip-bomb inside an
+// owner-uploaded stored zip could otherwise decompress fully into RAM. These
+// mirror the 512 MiB per-entry cap the sibling unzip helpers already apply.
+const (
+	maxServerPackEntryBytes = 512 << 20 // 512 MiB per inner file
+	maxServerPackTotalBytes = 2 << 30   // 2 GiB assembled pack
+)
+
 // renderServerPack builds a plain .zip of a build's SERVER-SIDE content + configs
 // (every entry whose side is not client-only), each file placed at its
 // .minecraft-relative path so a server operator can extract it into the server
@@ -34,6 +43,7 @@ func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.Bu
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	var total int64 // bounds the assembled pack across both source branches
 	for _, e := range content {
 		if e.Side == models.SideClient {
 			continue // client-only content is not part of a server pack
@@ -60,14 +70,24 @@ func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.Bu
 				if f.FileInfo().IsDir() {
 					continue
 				}
+				if f.UncompressedSize64 > maxServerPackEntryBytes {
+					return nil, fmt.Errorf("stored content %q entry %q exceeds the size cap", e.ModSlug, f.Name)
+				}
 				rc, err := f.Open()
 				if err != nil {
 					return nil, err
 				}
-				b, err := io.ReadAll(rc)
+				b, err := io.ReadAll(io.LimitReader(rc, maxServerPackEntryBytes+1))
 				rc.Close()
 				if err != nil {
 					return nil, err
+				}
+				if int64(len(b)) > maxServerPackEntryBytes {
+					return nil, fmt.Errorf("stored content %q entry %q exceeds the size cap", e.ModSlug, f.Name)
+				}
+				total += int64(len(b))
+				if total > maxServerPackTotalBytes {
+					return nil, fmt.Errorf("server pack exceeds the total size cap")
 				}
 				if err := writeServerPackEntry(zw, f.Name, b); err != nil {
 					return nil, err
@@ -83,6 +103,10 @@ func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.Bu
 			jar, err := services.DownloadModrinthJar(ctx, e.ModrinthDownloadURL, e.SHA1, e.SHA512)
 			if err != nil {
 				return nil, fmt.Errorf("download %q: %w", e.ModSlug, err)
+			}
+			total += int64(len(jar))
+			if total > maxServerPackTotalBytes {
+				return nil, fmt.Errorf("server pack exceeds the total size cap")
 			}
 			if err := writeServerPackEntry(zw, e.TargetPath, jar); err != nil {
 				return nil, err
