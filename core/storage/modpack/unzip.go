@@ -63,6 +63,12 @@ func HasUnsafeZipEntry(zipBytes []byte) bool {
 		if strings.HasPrefix(name, "/") {
 			return true
 		}
+		// Windows drive-letter path (e.g. "C:\evil" -> "C:/evil") is absolute on
+		// the Windows launchers Technic targets; treat it as unsafe too.
+		if len(name) >= 2 && name[1] == ':' &&
+			((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) {
+			return true
+		}
 		for _, seg := range strings.Split(name, "/") {
 			if seg == ".." {
 				return true
