@@ -493,6 +493,12 @@ type Store interface {
 	DeleteSolderKey(id int, ownerID string) error
 	GetSolderKeyByHash(keyHash string) (*SolderKey, error)
 
+	// --- Share links (tokenized build download links) ---
+	CreateShareLink(l *models.ShareLink) (int, error)
+	GetShareLinkByToken(token string) (*models.ShareLink, error)
+	ListShareLinksByBuild(buildID int) ([]models.ShareLink, error)
+	RevokeShareLink(id int, createdBy string) error
+
 	GetLoader(minecraft, loader, loaderVersion string) (*models.Loader, error)
 	UpsertLoader(l *models.Loader) (int, error)
 	UpdateLoaderStatus(minecraft, loader, loaderVersion, status, buildError string) error

@@ -133,6 +133,17 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			owner_id   UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS share_links (
+			id          SERIAL PRIMARY KEY,
+			build_id    INTEGER      NOT NULL REFERENCES pack_builds(id) ON DELETE CASCADE,
+			kind        VARCHAR(16)  NOT NULL,
+			token       VARCHAR(128) NOT NULL,
+			expires_at  TIMESTAMPTZ,
+			created_by  UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+			revoked     BOOLEAN      NOT NULL DEFAULT FALSE
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS share_links_token_uniq ON share_links (token)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

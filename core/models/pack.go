@@ -145,3 +145,23 @@ type BuildContentEntry struct {
 	// files[] reference + auto-update). false => manual upload (Modrinth warn).
 	Linked bool `json:"linked"`
 }
+
+// Share link kinds (tokenized build download links).
+const (
+	ShareLinkClientMrpack = "client-mrpack"
+	ShareLinkServerPack   = "server-pack"
+)
+
+// ShareLink is a tokenized, optionally-expiring download link for one build.
+// The raw token is the bearer credential (whoever holds the URL can download);
+// it is stored verbatim (not hashed) per the spec and looked up by unique index.
+type ShareLink struct {
+	ID        int        `json:"id"`
+	BuildID   int        `json:"buildId"`
+	Kind      string     `json:"kind"` // client-mrpack | server-pack
+	Token     string     `json:"token"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	CreatedBy string     `json:"createdBy"`
+	CreatedAt time.Time  `json:"createdAt"`
+	Revoked   bool       `json:"revoked"`
+}
