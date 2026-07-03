@@ -6,7 +6,7 @@ import Link from 'next/link';
 import {
     Package, ArrowLeft, Trash2, Search,
     CircleCheck, CircleAlert, Box, Upload, Lock,
-    Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle,
+    Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -19,6 +19,7 @@ import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
+import ConfigEditorModal from '@/components/modpacks/ConfigEditorModal';
 import { Badge } from '@/components/ui/Badge';
 
 // Build content editor. Two panels:
@@ -402,6 +403,7 @@ export default function BuildContentEditorPage() {
     const [replaceEntry, setReplaceEntry] = useState<BuildContentEntry | null>(null);
     const [upgradeEntry, setUpgradeEntry] = useState<BuildContentEntry | null>(null);
     const [updatingAll, setUpdatingAll] = useState(false);
+    const [editing, setEditing] = useState<{ modversionId: number; title: string } | null>(null);
 
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const showToast = useCallback((msg: string, ok = true) => {
@@ -728,6 +730,17 @@ export default function BuildContentEditorPage() {
                                             <ArrowUpCircle size={12} />
                                         </button>
                                     )}
+                                    {/* In-panel config text editor — config content only */}
+                                    {entry.contentType === 'config' && !disabled && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditing({ modversionId: entry.id, title: entry.prettyName || entry.modSlug })}
+                                            title="Edit config text"
+                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors shrink-0"
+                                        >
+                                            <FileText size={12} />
+                                        </button>
+                                    )}
                                     <select
                                         value={entry.side}
                                         onChange={e => handleSetSide(entry, e.target.value)}
@@ -828,6 +841,21 @@ export default function BuildContentEditorPage() {
                     onClose={() => setUpgradeEntry(null)}
                     onUpdated={refresh}
                     showToast={showToast}
+                />
+            )}
+
+            {/* In-panel config text editor */}
+            {editing && (
+                <ConfigEditorModal
+                    packId={packId}
+                    buildId={buildId}
+                    modversionId={editing.modversionId}
+                    title={editing.title}
+                    onClose={() => setEditing(null)}
+                    onSaved={() => {
+                        setEditing(null);
+                        refresh();
+                    }}
                 />
             )}
 

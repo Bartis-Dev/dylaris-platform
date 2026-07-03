@@ -66,3 +66,23 @@ export async function updateMods(
 export function mrpackDownloadUrl(packId: number, buildId: number): string {
     return `${API_URL}/packs/${packId}/builds/${buildId}/export`;
 }
+
+export async function getContentText(packId: number, buildId: number, modversionId: number) {
+    try {
+        const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/content/${modversionId}/text`, {
+            headers: getAuthHeader(),
+        });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}
+
+export async function setContentText(packId: number, buildId: number, modversionId: number, text: string) {
+    try {
+        const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/content/${modversionId}/text`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}
