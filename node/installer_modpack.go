@@ -69,6 +69,27 @@ const (
 	mrpackTempDir       = ".dylaris-mrpack"
 )
 
+// loadExtraModpackHosts merges operator-trusted hosts from MODPACK_MIRROR_HOSTS
+// (comma-separated, e.g. the operator's Core public domain / S3 mirror host)
+// into modpackAllowedHosts. This lets the Node fetch Core-minted pack-build
+// .mrpack files without a blanket allowlist bypass. Call once at startup,
+// before any command processing — modpackAllowedHosts is a package-level map
+// with no synchronization, so mutating it concurrently with validateMrpackURL
+// reads would race.
+func loadExtraModpackHosts() {
+	raw := os.Getenv("MODPACK_MIRROR_HOSTS")
+	if raw == "" {
+		return
+	}
+	for _, h := range strings.Split(raw, ",") {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h != "" {
+			modpackAllowedHosts[h] = true
+			log.Printf("modpack: allowlisted extra mirror host %q via MODPACK_MIRROR_HOSTS", h)
+		}
+	}
+}
+
 func installModpack(destDir string, cfg InstallerConfig) error {
 	if cfg.URL == "" {
 		return fmt.Errorf("modpack installer requires URL")

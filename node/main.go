@@ -480,6 +480,11 @@ func parseConfig() {
 	if sftpPort == "" {
 		sftpPort = "25520"
 	}
+
+	// Extra hosts operators trust for Core-minted pack-build .mrpack mirror
+	// URLs (installer_modpack.go). Merged once here, before any command
+	// processing, so there's no concurrent-write race on modpackAllowedHosts.
+	loadExtraModpackHosts()
 }
 
 // firstPersistedStoragePath resolves the directory used to cache .node_secret.

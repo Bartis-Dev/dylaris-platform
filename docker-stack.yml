@@ -65,6 +65,9 @@ services:
       REDIS_ADDR: "redis:6379"
       PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
       PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
+      # Comma-separated hosts the Node may download Core-minted pack mrpacks
+      # from, e.g. app.example.com
+      MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data
