@@ -10,6 +10,8 @@ import { systemEvents } from '@/lib/systemEvents';
 import { listPacks, createPack, deletePack, type Pack } from '@/lib/api/packs';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
+import ImportSolderDialog from '@/components/modpacks/ImportSolderDialog';
+import { DownloadCloud } from 'lucide-react';
 
 // top-level packs list. Per-user authored packs on the unified pack API.
 // The builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -23,6 +25,7 @@ export default function PacksListPage() {
     const [creating, setCreating] = useState<{
         internalName: string; solderDisplayName: string; slug: string; summary: string;
     } | null>(null);
+    const [importOpen, setImportOpen] = useState(false);
     const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -82,6 +85,15 @@ export default function PacksListPage() {
                 <div className="ml-auto flex items-center gap-2">
                     <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
                         <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                    </button>
+                    <button
+                        onClick={() => setImportOpen(true)}
+                        className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={modpacksDisabled}
+                        title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Import a modpack from a Solder instance'}
+                    >
+                        <DownloadCloud size={13} />
+                        Import
                     </button>
                     <button
                         onClick={() => setCreating({ internalName: '', solderDisplayName: '', slug: '', summary: '' })}
@@ -263,6 +275,17 @@ export default function PacksListPage() {
                         <span className="text-sm text-(--base-09)">{toast.msg}</span>
                     </div>
                 </div>
+            )}
+
+            {importOpen && (
+                <ImportSolderDialog
+                    onClose={() => setImportOpen(false)}
+                    onImported={(_packId, imported, builds) => {
+                        setImportOpen(false);
+                        showToast(`Imported ${imported} mods across ${builds} builds.`, true);
+                        refresh();
+                    }}
+                />
             )}
         </main>
     );
