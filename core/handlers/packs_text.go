@@ -57,7 +57,7 @@ func (h *PacksHandler) GetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return
 	}
-	data, found := modpack.ReadZipEntry(raw, mv.TargetPath)
+	data, found := modpack.ReadZipEntry(raw, mv.TargetPath, maxEditableTextBytes)
 	if !found {
 		sendJSONError(w, "No editable file at the content path", http.StatusUnprocessableEntity)
 		return
@@ -89,6 +89,16 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	}
 	if mv.StorageKey == "" {
 		sendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
+		return
+	}
+	curRaw, err := prov.Get(mv.StorageKey)
+	if err != nil {
+		sendJSONError(w, "Failed to read content", http.StatusInternalServerError)
+		return
+	}
+	cur, found := modpack.ReadZipEntry(curRaw, mv.TargetPath, maxEditableTextBytes)
+	if !found || !utf8.Valid(cur) {
+		sendJSONError(w, "This content is not an editable text file", http.StatusUnprocessableEntity)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxEditableTextBytes+1))
@@ -123,6 +133,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	mv.SHA512 = innerSha512
 	// An edited file diverges from its upstream Modrinth version -> unlink.
 	mv.Source = models.SourceUpload
+	mv.URLOverride = ""
 	mv.ModrinthProjectID = ""
 	mv.ModrinthVersionID = ""
 	mv.ModrinthVersionNumber = ""
