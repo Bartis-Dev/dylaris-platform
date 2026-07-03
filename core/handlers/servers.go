@@ -112,7 +112,7 @@ type SetupServerRequest struct {
 	JavaImage     string `json:"javaImage"`
 	ExtraJvmFlags string `json:"extraJvmFlags"`
 	Installer     struct {
-		Type      string `json:"type"`      // "paper","vanilla","fabric","forge","neoforge","library","upload","upload-zip","modpack"
+		Type      string `json:"type"`      // "paper","vanilla","fabric","forge","neoforge","library","upload","upload-zip","modpack","pack"
 		Version   string `json:"version"`   // build/version identifier (Paper build, Forge build, etc.)
 		McVersion string `json:"mcVersion"` // major MC version (e.g. "1.21.4")
 		Loader    string `json:"loader"`    // Fabric loader / Forge build / NeoForge version (optional)
@@ -125,6 +125,12 @@ type SetupServerRequest struct {
 		ModrinthProjectID   string `json:"modrinthProjectId,omitempty"`
 		ModrinthVersionID   string `json:"modrinthVersionId,omitempty"`
 		ModrinthProjectSlug string `json:"modrinthProjectSlug,omitempty"`
+		// Unified pack reference; installer.type=="pack" carries these instead
+		// of a raw URL. SetupServer resolves+authorizes the pack/build, renders
+		// its .mrpack, and rewrites Installer in place to type="modpack" before
+		// dispatch — the Node never sees type="pack".
+		PackID  int `json:"packId,omitempty"`
+		BuildID int `json:"buildId,omitempty"`
 	} `json:"installer"`
 }
 

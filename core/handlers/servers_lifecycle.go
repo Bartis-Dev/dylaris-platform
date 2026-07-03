@@ -300,6 +300,56 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Unified pack install: authorize + materialize the build's .mrpack,
+		// then rewrite req.Installer in place so the Node only ever sees the
+		// existing "modpack" installer path. A foreign pack must never reach
+		// the dispatch below.
+		if req.Installer.Type == "pack" {
+			if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
+				sendJSONError(w, "Modpacks are disabled", http.StatusForbidden)
+				return
+			}
+
+			pack, err := h.state.Store.GetPack(req.Installer.PackID)
+			if err != nil || pack == nil {
+				sendJSONError(w, "Pack not found", 404)
+				return
+			}
+			packUserID, _ := r.Context().Value("userID").(string)
+			if pack.OwnerID != packUserID && !isAdmin {
+				sendJSONError(w, "Forbidden", 403)
+				return
+			}
+
+			build, err := h.state.Store.GetPackBuild(req.Installer.BuildID)
+			if err != nil || build == nil || build.PackID != pack.ID {
+				sendJSONError(w, "Build not found", 404)
+				return
+			}
+
+			ph := NewPacksHandler(h.state)
+			key, err := ph.ensureInstallMrpack(pack, build)
+			if err != nil {
+				log.Printf("ensureInstallMrpack failed for pack %d build %d: %v", pack.ID, build.ID, err)
+				sendJSONError(w, "Failed to prepare pack for install", 500)
+				return
+			}
+			base, err := solderMirrorBase(h.state.Store.GetSetting)
+			if err != nil {
+				log.Printf("solderMirrorBase failed: %v", err)
+				sendJSONError(w, "Failed to prepare pack for install", 500)
+				return
+			}
+
+			req.Installer.Type = "modpack"
+			req.Installer.URL = base + key
+			req.Installer.Loader = build.Loader
+			req.Installer.McVersion = build.Minecraft
+			req.Installer.ModrinthProjectID = ""
+			req.Installer.ModrinthVersionID = ""
+			req.Installer.ModrinthProjectSlug = ""
+		}
+
 		configPayload := map[string]interface{}{
 			"uuid": srv.UUID,
 			"docker": map[string]interface{}{
