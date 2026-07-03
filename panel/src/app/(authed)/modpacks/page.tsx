@@ -12,6 +12,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
 import ImportSolderDialog from '@/components/modpacks/ImportSolderDialog';
 import { DownloadCloud } from 'lucide-react';
+import { Badge } from '@/components/ui/Badge';
 
 // top-level packs list. Per-user authored packs on the unified pack API.
 // The builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -163,13 +164,13 @@ export default function PacksListPage() {
                                 </button>
                             </div>
                             {p.summary && <p className="text-xs text-(--base-07) line-clamp-2 mt-2">{p.summary}</p>}
-                            <div className="mt-3 flex items-center gap-2 flex-wrap text-[10px] font-mono">
+                            <div className="mt-3 flex items-center gap-2 flex-wrap">
                                 {p.solderDisplayName && (
-                                    <span className="bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">solder: {p.solderDisplayName}</span>
+                                    <Badge variant="neutral">solder: {p.solderDisplayName}</Badge>
                                 )}
                                 {p.modrinthProjectId
-                                    ? <span className="bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm">on modrinth</span>
-                                    : <span className="bg-(--base-03) px-1.5 rounded-sm text-(--base-06)">local only</span>
+                                    ? <Badge variant="success">on modrinth</Badge>
+                                    : <Badge variant="neutral">local only</Badge>
                                 }
                             </div>
                         </Link>

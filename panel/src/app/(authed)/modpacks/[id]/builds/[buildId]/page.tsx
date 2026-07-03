@@ -19,6 +19,7 @@ import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
+import { Badge } from '@/components/ui/Badge';
 
 // Build content editor. Two panels:
 //   left:  the build's content list (mods / resource-packs / plugins), with a
@@ -575,17 +576,11 @@ export default function BuildContentEditorPage() {
                             )}
                             {/* Piece 4: Modrinth published badge */}
                             {build.modrinthPublished && (
-                                <span className="mono-label px-2 py-0.5 rounded-sm bg-(--success-ghost) text-(--success-light) inline-flex items-center gap-1">
-                                    <CircleCheck size={10} />
-                                    Modrinth
-                                </span>
+                                <Badge variant="success" icon={<CircleCheck size={10} />}>Modrinth</Badge>
                             )}
                             {/* Technic / Solder published badge */}
                             {build.solderPublished && (
-                                <span className="mono-label px-2 py-0.5 rounded-sm bg-(--accent-ghost) text-(--accent-light) inline-flex items-center gap-1">
-                                    <CircleCheck size={10} />
-                                    Technic
-                                </span>
+                                <Badge variant="accent" icon={<CircleCheck size={10} />}>Technic</Badge>
                             )}
                         </h1>
                         <p className="text-xs text-(--base-06)">
@@ -683,18 +678,12 @@ export default function BuildContentEditorPage() {
                                             {entry.version || entry.contentType}
                                         </div>
                                     </div>
-                                    <span className={`mono-label px-1.5 rounded-sm shrink-0 ${
-                                        entry.linked
-                                            ? 'bg-(--success-ghost) text-(--success-light)'
-                                            : 'bg-(--warning-ghost) text-(--warning-light)'
-                                    }`}>
+                                    <Badge variant={entry.linked ? 'success' : 'warning'} className="shrink-0">
                                         {entry.linked ? 'Modrinth' : 'Upload'}
-                                    </span>
+                                    </Badge>
                                     {/* Auto-update: badge shown once the cron has cached a newer Modrinth version */}
                                     {hasUpdateAvailable(entry) && (
-                                        <span className="inline-flex items-center gap-1 rounded-sm bg-(--accent-ghost) px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide text-(--accent-light) shrink-0">
-                                            Update available
-                                        </span>
+                                        <Badge variant="accent" className="shrink-0">Update available</Badge>
                                     )}
                                     {/* Piece 2: Replace with Modrinth — only for non-linked (uploaded) entries */}
                                     {!entry.linked && (

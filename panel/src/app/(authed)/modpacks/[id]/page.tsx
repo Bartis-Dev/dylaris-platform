@@ -20,6 +20,7 @@ import {
 } from '@/lib/api/solderAccess';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
+import { Badge } from '@/components/ui/Badge';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
@@ -265,29 +266,23 @@ export default function PackDetailPage() {
                 </button>
             </header>
 
-            <div className="flex items-center gap-2 flex-wrap mb-4 text-[10px] font-mono">
+            <div className="flex items-center gap-2 flex-wrap mb-4">
                 {pack.solderDisplayName && (
-                    <span className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-07)">solder: {pack.solderDisplayName}</span>
+                    <Badge variant="neutral">solder: {pack.solderDisplayName}</Badge>
                 )}
-                <span className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-07)">visibility: {pack.modrinthVisibility}</span>
+                <Badge variant="neutral">visibility: {pack.modrinthVisibility}</Badge>
                 {pack.modrinthProjectId ? (
                     <a
                         href={`https://modrinth.com/modpack/${pack.internalSlug}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 bg-(--success-ghost) text-(--success-light) px-1.5 py-0.5 rounded-sm"
                     >
-                        on modrinth <ExternalLink size={9} />
+                        <Badge variant="success" icon={<ExternalLink size={9} />}>on modrinth</Badge>
                     </a>
                 ) : (
-                    <span className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-06)">local only</span>
+                    <Badge variant="neutral">local only</Badge>
                 )}
-                {pack.private && (
-                    <span className="bg-(--accent-ghost) px-1.5 py-0.5 rounded-sm text-(--accent-light) inline-flex items-center gap-1">
-                        <Lock size={8} />
-                        private
-                    </span>
-                )}
+                {pack.private && <Badge variant="accent" icon={<Lock size={8} />}>private</Badge>}
             </div>
 
             <section>
@@ -328,15 +323,9 @@ export default function PackDetailPage() {
                                     </div>
                                     <div className="text-xs text-(--base-06) mt-0.5 flex items-center gap-2 flex-wrap">
                                         <span>Created {new Date(b.createdAt).toLocaleString()}</span>
-                                        <span className={`mono-label px-1.5 rounded-sm ${b.solderPublished ? 'bg-(--success-ghost) text-(--success-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
-                                            solder: {b.solderPublished ? 'published' : 'not published'}
-                                        </span>
-                                        <span className={`mono-label px-1.5 rounded-sm ${b.modrinthPublished ? 'bg-(--success-ghost) text-(--success-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
-                                            modrinth: {b.modrinthPublished ? 'published' : 'not published'}
-                                        </span>
-                                        {b.frozen && (
-                                            <span className="mono-label px-1.5 rounded-sm bg-(--warning-ghost) text-(--warning-light)">frozen</span>
-                                        )}
+                                        <Badge variant={b.solderPublished ? 'success' : 'neutral'}>solder: {b.solderPublished ? 'published' : 'not published'}</Badge>
+                                        <Badge variant={b.modrinthPublished ? 'success' : 'neutral'}>modrinth: {b.modrinthPublished ? 'published' : 'not published'}</Badge>
+                                        {b.frozen && <Badge variant="warning">frozen</Badge>}
                                     </div>
                                 </div>
                                 <Link
