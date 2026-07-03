@@ -35,9 +35,10 @@ func solderMirrorBase(getSetting func(string) (string, error)) (string, error) {
 	return strings.TrimRight(base, "/") + "/solder/mirror/", nil
 }
 
-// SolderMirror streams a stored public artifact (a Solder mod zip or a loader zip).
-// SECURITY: it serves ONLY keys under solder/ or loaders/ after path.Clean, and
-// rejects any traversal (..). It must never read an arbitrary storage object.
+// SolderMirror streams a stored public artifact (a Solder mod zip, a loader
+// zip, or a rendered pack .mrpack). SECURITY: it serves ONLY keys under
+// solder/, loaders/, or modpacks/ after path.Clean, and rejects any
+// traversal (..). It must never read an arbitrary storage object.
 func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 	if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
 		solderJSONError(w, "Modpacks are disabled", http.StatusForbidden)
@@ -45,7 +46,7 @@ func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 	}
 	rest := mux.Vars(r)["rest"]
 	key := path.Clean(rest)
-	if strings.Contains(key, "..") || !(strings.HasPrefix(key, "solder/") || strings.HasPrefix(key, "loaders/")) {
+	if strings.Contains(key, "..") || !(strings.HasPrefix(key, "solder/") || strings.HasPrefix(key, "loaders/") || strings.HasPrefix(key, "modpacks/")) {
 		solderJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}

@@ -202,6 +202,11 @@ func (h *PacksHandler) renderMrpack(pack *models.Pack, build *models.PackBuild, 
 	return buf.Bytes(), nil
 }
 
+// mrpackStorageKey is the storage key for a build's rendered .mrpack.
+func mrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
+	return fmt.Sprintf("modpacks/%s/%s/%s/pack.mrpack", pack.OwnerID, pack.InternalSlug, build.VersionString)
+}
+
 // persistMrpackForBuild renders + (for beta/release) persists the mrpack to
 // storage and freezes the build. Drafts are rendered fresh, never persisted.
 func (h *PacksHandler) persistMrpackForBuild(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
@@ -219,7 +224,7 @@ func (h *PacksHandler) persistMrpackForBuild(pack *models.Pack, build *models.Pa
 	if prov == nil {
 		return nil, fmt.Errorf("no modpack storage configured (Settings -> Modpacks)")
 	}
-	key := fmt.Sprintf("modpacks/%s/%s/%s/pack.mrpack", pack.OwnerID, pack.InternalSlug, build.VersionString)
+	key := mrpackStorageKey(pack, build)
 	if err := prov.Put(key, data); err != nil {
 		return nil, fmt.Errorf("mrpack storage put: %w", err)
 	}
@@ -231,6 +236,37 @@ func (h *PacksHandler) persistMrpackForBuild(pack *models.Pack, build *models.Pa
 		return nil, fmt.Errorf("mrpack persisted but stamp failed: %w", err)
 	}
 	return data, nil
+}
+
+// ensureInstallMrpack returns the storage key of a mrpack the Node can download
+// for a server install. If the build is already published (MrpackStorageKey set)
+// it reuses that. Otherwise it renders the build's mrpack on the fly and stores it
+// under the deterministic key WITHOUT mutating the build record or freezing it —
+// so draft builds stay installable and editable (owner decision, Phase 5).
+func (h *PacksHandler) ensureInstallMrpack(pack *models.Pack, build *models.PackBuild) (string, error) {
+	if build.MrpackStorageKey != "" {
+		return build.MrpackStorageKey, nil
+	}
+	content, err := h.state.Store.ListBuildContent(build.ID)
+	if err != nil {
+		return "", err
+	}
+	data, err := h.renderMrpack(pack, build, content)
+	if err != nil {
+		return "", err
+	}
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	if err != nil {
+		return "", err
+	}
+	if prov == nil {
+		return "", fmt.Errorf("modpack storage not configured")
+	}
+	key := mrpackStorageKey(pack, build)
+	if err := prov.Put(key, data); err != nil {
+		return "", err
+	}
+	return key, nil
 }
 
 // ExportMrpack streams the .mrpack for a build (self-distributed download).
