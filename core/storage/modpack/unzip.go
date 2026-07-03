@@ -80,6 +80,29 @@ func ReadZipEntry(zipBytes []byte, innerPath string, maxBytes int64) (data []byt
 	return nil, false
 }
 
+// IsUnsafeEntryPath reports whether a single archive entry name, after
+// normalizing backslashes, is absolute (leading "/" or a Windows drive letter)
+// or escapes the archive root via a ".." segment. Used to reject an entry name
+// before it is written into an archive a downstream launcher/operator extracts.
+func IsUnsafeEntryPath(name string) bool {
+	name = strings.ReplaceAll(name, `\`, "/")
+	if strings.HasPrefix(name, "/") {
+		return true
+	}
+	// Windows drive-letter path (e.g. "C:\evil" -> "C:/evil") is absolute on
+	// the Windows launchers Technic targets; treat it as unsafe too.
+	if len(name) >= 2 && name[1] == ':' &&
+		((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) {
+		return true
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // HasUnsafeZipEntry reports whether any file entry in the zip has a path that,
 // after normalizing backslashes, is absolute or escapes the archive root via a
 // ".." segment. Such an archive must not be stored: the Solder render copies
@@ -91,20 +114,8 @@ func HasUnsafeZipEntry(zipBytes []byte) bool {
 		return true
 	}
 	for _, f := range zr.File {
-		name := strings.ReplaceAll(f.Name, `\`, "/")
-		if strings.HasPrefix(name, "/") {
+		if IsUnsafeEntryPath(f.Name) {
 			return true
-		}
-		// Windows drive-letter path (e.g. "C:\evil" -> "C:/evil") is absolute on
-		// the Windows launchers Technic targets; treat it as unsafe too.
-		if len(name) >= 2 && name[1] == ':' &&
-			((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) {
-			return true
-		}
-		for _, seg := range strings.Split(name, "/") {
-			if seg == ".." {
-				return true
-			}
 		}
 	}
 	return false
