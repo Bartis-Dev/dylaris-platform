@@ -352,8 +352,12 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
                         disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
                         onPick={(projectId, versionId) => {
                             updateMods(packId, build.id, { modversionId: entry.id, versionId }).then(res => {
-                                showToast(res.success ? 'Upgraded' : (res.message || 'Upgrade failed'), res.success);
-                                if (res.success) {
+                                // UpdateMods returns success:true unconditionally once past its guards;
+                                // a failed single swap still yields success:true with upgraded:0 and the
+                                // real error in results[0]. Only treat it as success when something upgraded.
+                                const ok = !!(res.success && res.upgraded && res.upgraded > 0);
+                                showToast(ok ? 'Upgraded' : (res.results?.[0]?.error || res.message || 'Upgrade failed'), ok);
+                                if (ok) {
                                     onUpdated();
                                     onClose();
                                 }
