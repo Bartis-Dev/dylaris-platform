@@ -26,6 +26,7 @@ export default function ConfigEditorModal({
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
 
     useEffect(() => {
         let live = true;
@@ -36,12 +37,20 @@ export default function ConfigEditorModal({
             if (res.success && typeof res.text === 'string') {
                 setText(res.text);
                 setTargetPath(res.targetPath || '');
+                setLoadFailed(false);
             } else {
                 setError(res.message || 'This content cannot be edited as text.');
+                setLoadFailed(true);
             }
         })();
         return () => { live = false; };
     }, [packId, buildId, modversionId]);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
 
     const save = async () => {
         setError(null);
@@ -71,7 +80,7 @@ export default function ConfigEditorModal({
                         <div className="flex items-center gap-2 text-sm text-(--base-06)">
                             <Loader2 size={14} className="animate-spin" /> Loading...
                         </div>
-                    ) : error && !text ? (
+                    ) : loadFailed ? (
                         <p className="text-xs text-(--error-light)">{error}</p>
                     ) : (
                         <textarea
@@ -81,14 +90,14 @@ export default function ConfigEditorModal({
                             className="input-field input-mono w-full h-80 resize-y"
                         />
                     )}
-                    {error && text && <p className="text-xs text-(--error-light)">{error}</p>}
+                    {error && !loadFailed && <p className="text-xs text-(--error-light)">{error}</p>}
                 </div>
                 <div className="modal-footer">
                     <button onClick={onClose} className="btn btn-secondary">Cancel</button>
                     <button
                         onClick={save}
                         className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={loading || saving || !!(error && !text)}
+                        disabled={loading || saving || loadFailed}
                     >
                         {saving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
                     </button>
