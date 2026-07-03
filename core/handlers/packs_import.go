@@ -152,6 +152,7 @@ importLoop:
 			continue
 		}
 		report.Builds++
+		attached := map[int]bool{}
 
 		mods := bd.Mods
 		if len(mods) > solderImportMaxModsPerBuild {
@@ -174,8 +175,17 @@ importLoop:
 				report.Skipped = append(report.Skipped, "mod "+m.Name+": attach failed")
 				continue
 			}
-			report.Imported++
+			if !attached[mvID] {
+				attached[mvID] = true
+				report.Imported++
+			}
 		}
+	}
+
+	if report.Builds == 0 && report.Imported == 0 {
+		_ = h.state.Store.DeletePack(packID, userID)
+		sendJSONError(w, "Nothing could be imported from that modpack", http.StatusBadGateway)
+		return
 	}
 
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
@@ -227,10 +237,18 @@ func (h *PacksHandler) importOneSolderMod(ctx context.Context, prov modpack.Modp
 		slug = "mod"
 	}
 	version := strings.TrimSpace(m.Version)
-	if version == "" {
-		version = "s-" + md5hex[:8]
+	// The storage key must never contain raw remote text (path-traversal / key
+	// injection). Sanitize for the key and make it unique via the zip md5; keep
+	// the raw version only for the display field below.
+	keyVersion := slugify(version)
+	if keyVersion == "" {
+		keyVersion = "s"
 	}
-	key := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + version + ".zip"
+	keyVersion = keyVersion + "-" + md5hex[:8]
+	if version == "" {
+		version = keyVersion
+	}
+	key := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + keyVersion + ".zip"
 	if err := prov.Put(key, zipBytes); err != nil {
 		return 0, 0, fmt.Errorf("storage put failed")
 	}
