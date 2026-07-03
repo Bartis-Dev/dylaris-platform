@@ -13,6 +13,7 @@ export interface ModpackSettings {
     s3Region: string;
     s3AccessKey: string;
     s3SecretKey?: string;
+    updateCheckIntervalHours: number;
 }
 
 export interface GetModpackSettingsResponse {

@@ -23,6 +23,7 @@ const DEFAULTS: ModpackSettings = {
     s3Region: '',
     s3AccessKey: '',
     s3SecretKey: '',
+    updateCheckIntervalHours: 24,
 };
 
 export default function ModpacksTab() {
@@ -121,6 +122,26 @@ export default function ModpacksTab() {
                     >
                         <span className={`toggle-knob ${settings.featureEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
+                </div>
+            </div>
+
+            {/* Auto-update cadence */}
+            <div className="card p-5">
+                <div className="flex items-center justify-between gap-4">
+                    <div>
+                        <div className="font-medium text-sm text-(--base-09)">Auto-update check interval</div>
+                        <div className="text-xs text-(--base-06) mt-0.5 max-w-md">
+                            How often the background worker re-checks Modrinth-linked mods for a newer
+                            version (hours). Applies per mod since it was last checked.
+                        </div>
+                    </div>
+                    <input
+                        type="number"
+                        min={1}
+                        value={settings.updateCheckIntervalHours}
+                        onChange={e => setSettings(s => ({ ...s, updateCheckIntervalHours: Math.max(1, parseInt(e.target.value || '24', 10)) }))}
+                        className="input-mono w-24 text-right"
+                    />
                 </div>
             </div>
 

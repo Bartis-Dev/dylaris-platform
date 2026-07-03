@@ -51,6 +51,9 @@ export interface BuildContentEntry {
     targetPath: string;
     modrinthProjectId: string;
     linked: boolean;
+    modrinthVersionId: string;
+    modrinthLatestVersionId: string;
+    modrinthLastChecked: string | null;
 }
 
 async function get<T>(path: string, fallback: T, key: string): Promise<T> {

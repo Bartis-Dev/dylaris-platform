@@ -41,6 +41,24 @@ export async function replaceWithModrinth(
     } catch (err) { return handleError(err) as any; }
 }
 
+export async function updateMods(
+    packId: number,
+    buildId: number,
+    opts: { modversionId?: number; versionId?: string; all?: boolean },
+): Promise<{
+    success: boolean;
+    upgraded?: number;
+    results?: { modversionId: number; error?: string }[];
+    message?: string;
+}> {
+    const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/update-mods`, {
+        method: 'POST',
+        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+    });
+    return handleResponse(res) as any;
+}
+
 // mrpackDownloadUrl builds the authenticated export URL; the browser fetches it
 // with the auth header via an anchor+fetch blob in the UI layer.
 export function mrpackDownloadUrl(packId: number, buildId: number): string {
