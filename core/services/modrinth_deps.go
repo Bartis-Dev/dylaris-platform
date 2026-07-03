@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,6 +80,40 @@ func ModrinthByHash(sha1hex string) *modrinthVersion {
 		return nil
 	}
 	return &v
+}
+
+// CheckLatestVersions batch-queries Modrinth for the latest version matching the
+// given loaders + game versions for each file hash. loaders and game_versions are
+// REQUIRED by the endpoint. The result map is keyed by the ORIGINAL input hash.
+// Unauthenticated (public read).
+func CheckLatestVersions(hashes []string, algorithm string, loaders, gameVersions []string) (map[string]ModrinthVersion, error) {
+	payload := map[string]interface{}{
+		"hashes":        hashes,
+		"algorithm":     algorithm,
+		"loaders":       loaders,
+		"game_versions": gameVersions,
+	}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest("POST", modrinthAPI+"/version_files/update", bytes.NewReader(buf))
+	req.Header.Set("User-Agent", modrinthUA)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := modrinthHTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		b, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("modrinth version_files/update: %d %s", res.StatusCode, string(b))
+	}
+	out := map[string]ModrinthVersion{}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ProjectSlugOrID returns a slug source (Modrinth version carries project_id;
