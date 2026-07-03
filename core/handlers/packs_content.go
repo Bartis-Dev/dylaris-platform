@@ -282,6 +282,12 @@ func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid side", http.StatusBadRequest)
 		return
 	}
+	// AttachModversionToBuild is an upsert: without this check a caller could pass
+	// another tenant's modversionId and pull it into their own build.
+	if ok, _ := h.state.Store.IsModversionInBuild(b.ID, mvID); !ok {
+		sendJSONError(w, "Content not found", http.StatusNotFound)
+		return
+	}
 	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, req.Side); err != nil {
 		sendJSONError(w, "Failed to set side", http.StatusInternalServerError)
 		return
