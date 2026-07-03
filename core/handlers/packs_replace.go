@@ -57,84 +57,79 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
-
-	v, err := services.FetchModrinthVersion(req.VersionID)
-	if err != nil {
-		sendJSONError(w, "Modrinth version lookup failed", http.StatusBadGateway)
+	if err := h.swapModversionToModrinth(r.Context(), userID, mv, req.VersionID); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
+	}
+	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": build.ID})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "modversionId": mv.ID, "linked": true})
+}
+
+// swapModversionToModrinth aligns a modversion to a specific Modrinth version:
+// fetch the version, download + integrity-verify its primary file against
+// Modrinth's published hashes, re-wrap + store under a fresh key, rewrite the
+// modversion refs, then delete the old object (safe-cutover ordering). Shared by
+// ReplaceWithModrinth and UpdateMods. Sets modrinth_latest_version_id to the
+// aligned version and stamps modrinth_last_checked so "update available" clears.
+func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID string, mv *models.Modversion, versionID string) error {
+	v, err := services.FetchModrinthVersion(versionID)
+	if err != nil {
+		return fmt.Errorf("modrinth version lookup failed: %w", err)
 	}
 	file := v.PrimaryFile()
 	if file.URL == "" {
-		sendJSONError(w, "Modrinth version has no downloadable file", http.StatusBadGateway)
-		return
+		return fmt.Errorf("modrinth version has no downloadable file")
 	}
-
-	// Download Modrinth's exact jar.
-	jar, err := downloadURL(r.Context(), file.URL)
+	jar, err := downloadURL(ctx, file.URL)
 	if err != nil {
-		sendJSONError(w, "Download from Modrinth failed: "+err.Error(), http.StatusBadGateway)
-		return
+		return fmt.Errorf("download from modrinth failed: %w", err)
 	}
-
-	// Integrity gate: the whole point of Replace is byte-identity with Modrinth.
-	// Verify the downloaded bytes against Modrinth's published hashes BEFORE we
-	// wrap, store, or delete anything. A mismatch aborts with nothing touched.
 	if err := verifyModrinthBytes(jar, file.Hashes); err != nil {
-		sendJSONError(w, "Modrinth download integrity check failed: "+err.Error(), http.StatusBadGateway)
-		return
+		return fmt.Errorf("modrinth download integrity check failed: %w", err)
 	}
-
-	// Re-wrap + store under a fresh key; delete the old one.
 	fileName := file.Filename
 	if fileName == "" {
 		fileName = mv.TargetPath[strings.LastIndex(mv.TargetPath, "/")+1:]
 	}
 	zipBytes, err := modpack.WrapJarAsSolderZip(fileName, jar)
 	if err != nil {
-		sendJSONError(w, "Wrap failed", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("wrap failed: %w", err)
 	}
 	md5hex, _, _ := modpack.Hashes(zipBytes)
 	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
 	if err != nil || prov == nil {
-		sendJSONError(w, "No pack storage configured", http.StatusFailedDependency)
-		return
+		return fmt.Errorf("no pack storage configured")
 	}
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
-	newKey := "packs/" + userID + "/mods/" + slug + "/" + slug + "-" + v.VersionNum + ".zip"
-	// Safe-cutover ordering: store the new artifact first. The old key is only
-	// deleted after the DB row is repointed, so nothing references a missing
-	// object at any point and an early failure leaves the old artifact intact.
+	newKey := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + v.VersionNum + ".zip"
 	if err := prov.Put(newKey, zipBytes); err != nil {
-		sendJSONError(w, "Storage put failed", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("storage put failed: %w", err)
 	}
 	oldKey := mv.StorageKey
 
-	// Rewrite the modversion to Modrinth's exact file.
+	now := time.Now()
 	mv.Version = v.VersionNum
 	mv.Filesize = int64(len(zipBytes))
 	mv.StorageKey = newKey
-	mv.MD5 = md5hex             // md5 of the stored Solder-wrapped zip
-	mv.SHA1 = file.Hashes["sha1"]     // sha1 of the inner Modrinth file (mrpack files[])
-	mv.SHA512 = file.Hashes["sha512"] // sha512 of the inner Modrinth file (mrpack files[])
-	mv.ModrinthDownloadURL = file.URL // cdn.modrinth.com — clean mrpack files[] reference
-	mv.URLOverride = ""               // Solder uses the mirror URL from storage_key, not the Modrinth jar
+	mv.MD5 = md5hex
+	mv.SHA1 = file.Hashes["sha1"]
+	mv.SHA512 = file.Hashes["sha512"]
+	mv.ModrinthDownloadURL = file.URL
+	mv.URLOverride = ""
 	mv.Source = models.SourceModrinth
 	mv.ModrinthProjectID = v.ProjectID
 	mv.ModrinthVersionID = v.ID
 	mv.ModrinthVersionNumber = v.VersionNum
 	mv.ModrinthGameVersions = strings.Join(v.GameVersions, ",")
+	mv.ModrinthLatestVersionID = v.ID // aligned: current == latest-known -> clears "update available"
+	mv.ModrinthLastChecked = &now
 	if err := h.state.Store.UpdateModversion(mv); err != nil {
-		sendJSONError(w, "Failed to update content", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("failed to update content: %w", err)
 	}
 	if oldKey != "" && oldKey != newKey {
 		_ = prov.Delete(oldKey) // best-effort; the DB no longer references it
 	}
-
-	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": build.ID})
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "modversionId": mv.ID, "linked": true})
+	return nil
 }
 
 // verifyModrinthBytes checks the downloaded bytes against Modrinth's published
