@@ -11,7 +11,7 @@ import {
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listBuilds, listContent, addModrinthContent, removeContent, setContentSide,
-    uploadContent, getPack, type Pack, type PackBuild, type BuildContentEntry,
+    uploadContent, getPack, modrinthTypeToContentType, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
 import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
 import { publishSolder } from '@/lib/api/solderPublish';
@@ -389,6 +389,10 @@ export default function BuildContentEditorPage() {
     // Upload state
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [uploading, setUploading] = useState(false);
+    const [uploadType, setUploadType] = useState<'mod' | 'resourcepack' | 'shaderpack' | 'config'>('mod');
+
+    // Modrinth search state
+    const [modrinthType, setModrinthType] = useState<'mod' | 'resourcepack' | 'shader'>('mod');
 
     // Export state
     const [exporting, setExporting] = useState(false);
@@ -433,7 +437,7 @@ export default function BuildContentEditorPage() {
         if (fileInputRef.current) fileInputRef.current.value = '';
         if (!file) return;
         setUploading(true);
-        const res = await uploadContent(packId, buildId, file, 'both', 'mod');
+        const res = await uploadContent(packId, buildId, file, 'both', uploadType);
         setUploading(false);
         if (res.success) {
             showToast(`Uploaded ${file.name}`, true);
@@ -639,6 +643,18 @@ export default function BuildContentEditorPage() {
                             Publish
                         </button>
 
+                        <select
+                            value={uploadType}
+                            onChange={e => setUploadType(e.target.value as typeof uploadType)}
+                            className="input-field py-1.5 text-xs w-auto"
+                            disabled={disabled || uploading}
+                            title="Content type for the uploaded file"
+                        >
+                            <option value="mod">Mod</option>
+                            <option value="resourcepack">Resource pack</option>
+                            <option value="shaderpack">Shader pack</option>
+                            <option value="config">Config</option>
+                        </select>
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -681,6 +697,10 @@ export default function BuildContentEditorPage() {
                                     <Badge variant={entry.linked ? 'success' : 'warning'} className="shrink-0">
                                         {entry.linked ? 'Modrinth' : 'Upload'}
                                     </Badge>
+                                    {/* Content-type chip — only shown for non-mod types to avoid noise on the common case */}
+                                    {entry.contentType && entry.contentType !== 'mod' && (
+                                        <Badge variant="neutral" className="shrink-0">{entry.contentType}</Badge>
+                                    )}
                                     {/* Auto-update: badge shown once the cron has cached a newer Modrinth version */}
                                     {hasUpdateAvailable(entry) && (
                                         <Badge variant="accent" className="shrink-0">Update available</Badge>
@@ -736,17 +756,29 @@ export default function BuildContentEditorPage() {
                     <header className="flex items-center gap-2 mb-3 shrink-0">
                         <Search size={14} className="text-(--accent-light)" />
                         <h2 className="text-sm font-medium text-(--base-09)">Add from Modrinth</h2>
+                        <select
+                            value={modrinthType}
+                            onChange={e => setModrinthType(e.target.value as typeof modrinthType)}
+                            className="input-field py-1.5 text-xs w-auto ml-auto"
+                            disabled={disabled}
+                            title="Project type to search for"
+                        >
+                            <option value="mod">Mods</option>
+                            <option value="resourcepack">Resource packs</option>
+                            <option value="shader">Shaders</option>
+                        </select>
                     </header>
                     <ModrinthVersionBrowser
                         loader={build.loader || undefined}
                         mcVersion={build.minecraft || undefined}
-                        projectType="mod"
+                        projectType={modrinthType}
                         installedProjectIds={new Set(content.map(c => c.modrinthProjectId).filter(Boolean) as string[])}
                         disabled={disabled}
                         disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
                         onPick={(projectId, versionId, hit) => {
                             if (disabled) return;
-                            addModrinthContent(packId, buildId, { projectId, versionId, resolveDeps: true })
+                            const contentType = modrinthTypeToContentType(hit.project_type);
+                            addModrinthContent(packId, buildId, { projectId, versionId, contentType, resolveDeps: contentType === 'mod' })
                                 .then(res => {
                                     if (res.success) {
                                         showToast(`Added ${hit.title}`, true);

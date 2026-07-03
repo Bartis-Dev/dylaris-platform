@@ -105,3 +105,13 @@ export async function uploadContent(packId: number, buildId: number, file: File,
         return handleResponse(res) as any;
     } catch (err) { return handleError(err) as any; }
 }
+
+// Maps Modrinth's project_type vocabulary to our internal ContentType.
+// "resourcepack" matches verbatim; "shader" -> "shaderpack"; anything else -> "mod".
+export const modrinthTypeToContentType = (projectType: string): string => {
+    switch (projectType) {
+        case 'resourcepack': return 'resourcepack';
+        case 'shader': return 'shaderpack';
+        default: return 'mod';
+    }
+};
