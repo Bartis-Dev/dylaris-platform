@@ -48,6 +48,33 @@ func FirstInnerJar(zipBytes []byte) (name string, data []byte, ok bool) {
 	return "", nil, false
 }
 
+// ReadZipEntry returns the bytes of the entry whose name equals innerPath (a
+// content's TargetPath) inside a stored Solder zip. ok is false when the zip is
+// unreadable, has no such entry, or the entry exceeds the decompression cap.
+func ReadZipEntry(zipBytes []byte, innerPath string) (data []byte, ok bool) {
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return nil, false
+	}
+	want := strings.ReplaceAll(innerPath, `\`, "/")
+	for _, f := range zr.File {
+		if strings.ReplaceAll(f.Name, `\`, "/") != want {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, false
+		}
+		b, err := io.ReadAll(io.LimitReader(rc, maxInnerJarBytes+1))
+		rc.Close()
+		if err != nil || int64(len(b)) > maxInnerJarBytes {
+			return nil, false
+		}
+		return b, true
+	}
+	return nil, false
+}
+
 // HasUnsafeZipEntry reports whether any file entry in the zip has a path that,
 // after normalizing backslashes, is absolute or escapes the archive root via a
 // ".." segment. Such an archive must not be stored: the Solder render copies

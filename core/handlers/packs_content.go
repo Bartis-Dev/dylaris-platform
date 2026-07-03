@@ -177,16 +177,25 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A raw .jar is wrapped into a Solder zip (mods/<file>.jar); an already-
-	// Solder-format .zip is stored as-is.
+	// Solder-format .zip is stored as-is; any other single raw file (e.g. a
+	// config text file) is wrapped at its in-.minecraft target path so the
+	// stored artifact is always a valid Solder zip.
 	var zipBytes []byte
-	if strings.HasSuffix(strings.ToLower(fileName), ".jar") {
+	switch {
+	case strings.HasSuffix(strings.ToLower(fileName), ".jar"):
 		zipBytes, err = modpack.WrapJarAsSolderZip(fileName, data)
 		if err != nil {
 			sendJSONError(w, "Failed to wrap jar", http.StatusInternalServerError)
 			return
 		}
-	} else {
+	case strings.HasSuffix(strings.ToLower(fileName), ".zip"):
 		zipBytes = data
+	default:
+		zipBytes, err = modpack.BuildSolderContentZip(targetPathFor(contentType, fileName), data)
+		if err != nil {
+			sendJSONError(w, "Failed to wrap file", http.StatusInternalServerError)
+			return
+		}
 	}
 	md5hex, sha1hex, _ := modpack.Hashes(zipBytes)
 	// sha1 of the inner jar drives Modrinth auto-link; for a wrapped jar hash the jar itself.
