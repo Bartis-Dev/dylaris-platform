@@ -33,6 +33,9 @@ export interface PackBuild {
     frozen: boolean;
     solderPublished: boolean;
     modrinthPublished: boolean;
+    // Storage key of the rendered .mrpack once persisted (beta/release publish).
+    // Empty on drafts — those are still installable, Core renders on the fly.
+    mrpackStorageKey: string;
     createdAt: string;
 }
 
