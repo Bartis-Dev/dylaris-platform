@@ -68,7 +68,7 @@ func (s *PostgresStore) ListShareLinksByBuild(buildID int) ([]models.ShareLink, 
 	return out, rows.Err()
 }
 
-// RevokeShareLink is owner-scoped (created_by) — a user can only revoke their own
+// RevokeShareLink is owner-scoped (created_by): a user can only revoke their own
 // links. Stamps revoked=TRUE instead of deleting so the row survives for audit.
 func (s *PostgresStore) RevokeShareLink(id int, createdBy string) error {
 	res, err := s.db.Exec(`UPDATE share_links SET revoked=TRUE
