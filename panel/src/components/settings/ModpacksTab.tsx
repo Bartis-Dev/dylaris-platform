@@ -24,6 +24,7 @@ const DEFAULTS: ModpackSettings = {
     s3AccessKey: '',
     s3SecretKey: '',
     updateCheckIntervalHours: 24,
+    shareLinksEnabled: false,
 };
 
 export default function ModpacksTab() {
