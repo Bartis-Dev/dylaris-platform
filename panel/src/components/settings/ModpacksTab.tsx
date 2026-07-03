@@ -126,6 +126,29 @@ export default function ModpacksTab() {
                 </div>
             </div>
 
+            {/* Share links toggle */}
+            <div className="card p-5">
+                <div className="flex items-center justify-between gap-4">
+                    <div>
+                        <div className="font-medium text-sm text-(--base-09)">Share Links</div>
+                        <div className="text-xs text-(--base-06) mt-0.5 max-w-md">
+                            When on, pack authors can mint tokenized download links for a build
+                            (client .mrpack or server pack). Off hides the create UI and blocks minting
+                            new links; existing links keep serving while modpack authoring is on.
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={settings.shareLinksEnabled}
+                        onClick={() => setSettings(s => ({ ...s, shareLinksEnabled: !s.shareLinksEnabled }))}
+                        className={`toggle-track ${settings.shareLinksEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
+                    >
+                        <span className={`toggle-knob ${settings.shareLinksEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+            </div>
+
             {/* Auto-update cadence */}
             <div className="card p-5">
                 <div className="flex items-center justify-between gap-4">

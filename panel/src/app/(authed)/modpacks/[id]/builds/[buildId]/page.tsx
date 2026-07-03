@@ -6,7 +6,7 @@ import Link from 'next/link';
 import {
     Package, ArrowLeft, Trash2, Search,
     CircleCheck, CircleAlert, Box, Upload, Lock,
-    Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText,
+    Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText, Copy,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -15,6 +15,7 @@ import {
 } from '@/lib/api/packs';
 import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
 import { publishSolder } from '@/lib/api/solderPublish';
+import { createShareLink, listShareLinks, revokeShareLink, publicShareUrl, type ShareLink, type ShareLinkKind } from '@/lib/api/packsShare';
 import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
@@ -405,6 +406,12 @@ export default function BuildContentEditorPage() {
     const [updatingAll, setUpdatingAll] = useState(false);
     const [editing, setEditing] = useState<{ modversionId: number; title: string } | null>(null);
 
+    // Share-link state
+    const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
+    const [shareKind, setShareKind] = useState<ShareLinkKind>('client-mrpack');
+    const [shareExpiry, setShareExpiry] = useState(0);
+    const [creatingShare, setCreatingShare] = useState(false);
+
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -412,10 +419,16 @@ export default function BuildContentEditorPage() {
     }, []);
 
     const refresh = useCallback(async () => {
-        const [p, bs, list] = await Promise.all([getPack(packId), listBuilds(packId), listContent(packId, buildId)]);
+        const [p, bs, list, sl] = await Promise.all([
+            getPack(packId),
+            listBuilds(packId),
+            listContent(packId, buildId),
+            listShareLinks(packId, buildId).catch(() => ({ success: false, links: [] as ShareLink[] })),
+        ]);
         setPack(p);
         setBuild(bs.find(b => b.id === buildId) || null);
         setContent(list);
+        setShareLinks(sl.links || []);
         setLoading(false);
     }, [packId, buildId]);
 
@@ -513,6 +526,31 @@ export default function BuildContentEditorPage() {
         } finally {
             setExporting(false);
         }
+    };
+
+    const handleCreateShareLink = async () => {
+        setCreatingShare(true);
+        try {
+            const res = await createShareLink(packId, buildId, shareKind, shareExpiry);
+            if (res.success) { showToast('Share link created'); refresh(); }
+            else showToast(res.message || 'Create failed', false);
+        } catch { showToast('Create failed', false); }
+        finally { setCreatingShare(false); }
+    };
+
+    const handleCopyShareLink = async (token: string) => {
+        try {
+            await navigator.clipboard.writeText(publicShareUrl(token));
+            showToast('Copied to clipboard');
+        } catch { showToast('Copy failed', false); }
+    };
+
+    const handleRevokeShareLink = async (linkId: number) => {
+        try {
+            const res = await revokeShareLink(packId, buildId, linkId);
+            if (res.success) { showToast('Link revoked'); refresh(); }
+            else showToast(res.message || 'Revoke failed', false);
+        } catch { showToast('Revoke failed', false); }
     };
 
     if (loading) return (
@@ -675,6 +713,96 @@ export default function BuildContentEditorPage() {
                     </div>
                 </div>
             </header>
+
+            {(featureFlags.shareLinks || shareLinks.length > 0) && (
+                <section className="card p-4 mx-6 mb-4 max-w-6xl">
+                    <header className="flex items-center gap-2 mb-3">
+                        <Share2 size={14} className="text-(--accent-light)" />
+                        <h2 className="text-sm font-medium text-(--base-09)">Share links</h2>
+                    </header>
+
+                    {featureFlags.shareLinks ? (
+                        <div className="flex flex-wrap items-end gap-3 mb-3">
+                            <label className="flex flex-col gap-1">
+                                <span className="mono-label text-(--base-06)">Kind</span>
+                                <select
+                                    value={shareKind}
+                                    onChange={e => setShareKind(e.target.value as ShareLinkKind)}
+                                    className="input-field text-sm"
+                                >
+                                    <option value="client-mrpack">Client (.mrpack)</option>
+                                    <option value="server-pack">Server pack (.zip)</option>
+                                </select>
+                            </label>
+                            <label className="flex flex-col gap-1">
+                                <span className="mono-label text-(--base-06)">Expires (days, 0 = never)</span>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    value={shareExpiry}
+                                    onChange={e => setShareExpiry(Math.max(0, Number(e.target.value) || 0))}
+                                    className="input-field text-sm w-40"
+                                />
+                            </label>
+                            <button
+                                type="button"
+                                onClick={handleCreateShareLink}
+                                disabled={creatingShare}
+                                className="btn btn-primary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {creatingShare ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />}
+                                Create link
+                            </button>
+                        </div>
+                    ) : (
+                        <p className="text-xs text-(--base-06) mb-3">
+                            Creating new share links is disabled by the platform admin. Existing links stay usable.
+                        </p>
+                    )}
+
+                    {shareLinks.length === 0 ? (
+                        <p className="text-xs text-(--base-06)">No share links yet.</p>
+                    ) : (
+                        <ul className="space-y-2">
+                            {shareLinks.map(link => (
+                                <li key={link.id} className="flex items-center gap-2 text-xs">
+                                    <Badge variant={link.kind === 'server-pack' ? 'accent' : 'success'} className="shrink-0">
+                                        {link.kind === 'server-pack' ? 'Server' : 'Client'}
+                                    </Badge>
+                                    <code className="font-mono text-(--base-07) truncate flex-1">{publicShareUrl(link.token)}</code>
+                                    {link.revoked ? (
+                                        <Badge variant="neutral" className="shrink-0">revoked</Badge>
+                                    ) : (
+                                        <>
+                                            {link.expiresAt && (
+                                                <span className="text-(--base-06) shrink-0">
+                                                    expires {new Date(link.expiresAt).toLocaleDateString()}
+                                                </span>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleCopyShareLink(link.token)}
+                                                title="Copy link"
+                                                className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+                                            >
+                                                <Copy size={11} /> Copy
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRevokeShareLink(link.id)}
+                                                title="Revoke link"
+                                                className="btn btn-secondary btn-sm text-(--error-light)"
+                                            >
+                                                <X size={11} />
+                                            </button>
+                                        </>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </section>
+            )}
 
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 px-6 pb-6 max-w-6xl w-full overflow-hidden">
                 {/* Current content */}
