@@ -29,6 +29,7 @@ type modpackSettings struct {
 	S3AccessKey              string   `json:"s3AccessKey"`
 	S3SecretKey              string   `json:"s3SecretKey,omitempty"` // write-only
 	UpdateCheckIntervalHours int      `json:"updateCheckIntervalHours"`
+	ShareLinksEnabled        bool     `json:"shareLinksEnabled"`
 }
 
 // Get GET /api/admin/settings/modpacks
@@ -67,6 +68,7 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out.UpdateCheckIntervalHours = interval
+	out.ShareLinksEnabled = get("modpack_share_links_enabled") == "true"
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": out,
@@ -130,6 +132,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_storage_s3_region", req.S3Region},
 		{"modpack_storage_s3_access_key", req.S3AccessKey},
 		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
+		{"modpack_share_links_enabled", boolStr(req.ShareLinksEnabled)},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
@@ -148,6 +151,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// pick up the new value instantly; cross-Core staleness is bounded by
 	// the 60s cache TTL.
 	h.state.FeatureFlags.Invalidate("feature_modpacks_enabled")
+	h.state.FeatureFlags.Invalidate("modpack_share_links_enabled")
 
 	// Publish events: features.changed re-renders the panel banner/gating;
 	// modpack_settings.changed wakes the Settings → Modpacks tab.

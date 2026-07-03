@@ -86,6 +86,14 @@ func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_byon_enabled", false)
 }
 
+// IsShareLinksEnabled gates CREATION of tokenized modpack share/download links.
+// Default = false (opt-in distribution surface; the admin enables it in
+// Settings -> Modpacks). Existing links keep serving while the parent modpacks
+// feature is on; this only gates minting new links.
+func (f *FeatureFlags) IsShareLinksEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "modpack_share_links_enabled", false)
+}
+
 // IsRedisACLEnabled gates per-node Redis ACL provisioning for untrusted BYON
 // nodes. Default = false: the platform keeps the shared-password Redis setup.
 // Enabling REQUIRES Valkey deployed with an aclfile (see docs/superpowers/

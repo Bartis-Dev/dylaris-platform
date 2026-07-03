@@ -499,6 +499,14 @@ func main() {
 	solder.HandleFunc("/api/verify/{key}", solderHandler.VerifyKey).Methods("GET")
 	solder.HandleFunc("/mirror/{rest:.*}", solderHandler.SolderMirror).Methods("GET")
 
+	// --- PUBLIC SHARE-LINK DOWNLOAD ---
+	// Sibling of the /solder block on the ROOT router: bypasses the /api
+	// subrouter's setup-lock + maintenance middleware AND auth, because the
+	// token is the credential (like /solder/api/verify/{key}). Per-IP rate
+	// limited; the modpacks feature is gated in-handler with a uniform 404.
+	shareLimiter := handlers.NewIPRateLimiter()
+	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeShare)).Methods("GET")
+
 	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
 	authLimiter := handlers.NewIPRateLimiter()
@@ -601,6 +609,9 @@ func main() {
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateMods)))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder)))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig)))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RevokeShareLink)))).Methods("DELETE")
 
 	// --- Solder client/key management (authed) ---
 	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListClients)))).Methods("GET")
