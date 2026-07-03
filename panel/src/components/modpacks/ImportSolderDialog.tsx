@@ -66,11 +66,11 @@ export default function ImportSolderDialog({
                             <input
                                 type="text"
                                 value={url}
-                                onChange={e => { setUrl(e.target.value); setPacks(null); }}
+                                onChange={e => { setUrl(e.target.value); setPacks(null); setSelected(''); setError(null); }}
                                 className="input-field input-mono w-full"
                                 placeholder="https://solder.example.com/api"
                             />
-                            <button onClick={loadList} className="btn btn-secondary btn-sm shrink-0" disabled={loading}>
+                            <button onClick={loadList} className="btn btn-secondary btn-sm shrink-0" disabled={loading || importing}>
                                 {loading ? <Loader2 size={13} className="animate-spin" /> : 'Load'}
                             </button>
                         </div>
@@ -105,7 +105,7 @@ export default function ImportSolderDialog({
                     <button
                         onClick={runImport}
                         className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={!selected || importing || loading}
+                        disabled={!packs || !selected || importing || loading}
                     >
                         {importing ? <Loader2 size={14} className="animate-spin" /> : 'Import'}
                     </button>
