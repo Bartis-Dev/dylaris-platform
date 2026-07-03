@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"strings"
+	"time"
 
 	"dylaris-core/models"
 )
@@ -159,4 +160,56 @@ func (s *PostgresStore) ListBuildContent(buildID int) ([]models.BuildContentEntr
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ModversionCheckRow is a linked modversion plus the build context (loader + mc)
+// the Modrinth update endpoint requires as filters.
+type ModversionCheckRow struct {
+	Modversion models.Modversion
+	Loader     string
+	Minecraft  string
+}
+
+// ListModversionsDueForCheck returns Modrinth-linked modversions (with a sha1)
+// whose build has a concrete loader + minecraft and which have not been checked
+// since `before`. A modversion attached to several builds yields one row per
+// build so each (loader, mc) context is checked; the shared row's cached result
+// reflects the last context processed (acceptable — the signal is a hint).
+func (s *PostgresStore) ListModversionsDueForCheck(before time.Time) ([]ModversionCheckRow, error) {
+	rows, err := s.db.Query(`SELECT `+prefixCols("mv", mvCols)+`, b.loader, b.minecraft
+		FROM modversions mv
+		JOIN build_modversions bmv ON bmv.modversion_id = mv.id
+		JOIN pack_builds b ON b.id = bmv.build_id
+		WHERE mv.modrinth_project_id <> ''
+		  AND mv.sha1 <> ''
+		  AND b.loader <> '' AND b.minecraft <> ''
+		  AND (mv.modrinth_last_checked IS NULL OR mv.modrinth_last_checked < $1)`, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ModversionCheckRow{}
+	for rows.Next() {
+		var r ModversionCheckRow
+		v := &r.Modversion
+		if err := rows.Scan(&v.ID, &v.ModID, &v.Version, &v.Filesize, &v.StorageKey, &v.MD5, &v.SHA1, &v.SHA512, &v.URLOverride,
+			&v.Source, &v.TargetPath, &v.ModrinthProjectID, &v.ModrinthVersionID, &v.ModrinthVersionNumber,
+			&v.ModrinthGameVersions, &v.ModrinthLatestVersionID, &v.ModrinthLastChecked, &v.CreatedAt, &v.UpdatedAt,
+			&v.ModrinthDownloadURL,
+			&r.Loader, &r.Minecraft); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetModversionCheckResult stamps only the auto-update cache columns. A targeted
+// UPDATE (not the full-row UpdateModversion) so a concurrent user edit to other
+// fields is not clobbered by a stale cron read.
+func (s *PostgresStore) SetModversionCheckResult(id int, latestVersionID string, checkedAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE modversions
+		SET modrinth_latest_version_id=$2, modrinth_last_checked=$3, updated_at=NOW()
+		WHERE id=$1`, id, latestVersionID, checkedAt)
+	return err
 }

@@ -506,6 +506,8 @@ type Store interface {
 	AttachModversionToBuild(buildID, modversionID int, side string) (int, error)
 	DetachFromBuild(buildID, modversionID int) error
 	ListBuildContent(buildID int) ([]models.BuildContentEntry, error)
+	ListModversionsDueForCheck(before time.Time) ([]ModversionCheckRow, error)
+	SetModversionCheckResult(id int, latestVersionID string, checkedAt time.Time) error
 
 	// --- Username history + admin rename ---
 	RenameUser(userID string, newUsername string, changedBy string) error
