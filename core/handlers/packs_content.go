@@ -188,9 +188,19 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to wrap jar", http.StatusInternalServerError)
 			return
 		}
-	case strings.HasSuffix(strings.ToLower(fileName), ".zip"):
+	case strings.HasSuffix(strings.ToLower(fileName), ".zip") && contentType == models.ContentTypeMod:
+		// A pre-structured Solder-format bundle (config/, resourcepacks/, ...):
+		// store as-is, but reject traversal-bearing entries since the render
+		// re-serves these bytes verbatim.
+		if modpack.HasUnsafeZipEntry(data) {
+			sendJSONError(w, "Zip contains unsafe entry paths", http.StatusBadRequest)
+			return
+		}
 		zipBytes = data
 	default:
+		// A resourcepack/shaderpack/config file (incl. a raw .zip resourcepack
+		// or a raw config text file): wrap at its target path so it lands in the
+		// right in-.minecraft folder instead of the instance root.
 		zipBytes, err = modpack.BuildSolderContentZip(targetPathFor(contentType, fileName), data)
 		if err != nil {
 			sendJSONError(w, "Failed to wrap file", http.StatusInternalServerError)
