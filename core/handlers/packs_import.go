@@ -212,6 +212,9 @@ func (h *PacksHandler) importOneSolderMod(ctx context.Context, prov modpack.Modp
 		return 0, 0, err
 	}
 	n := int64(len(zipBytes))
+	if modpack.HasUnsafeZipEntry(zipBytes) {
+		return 0, 0, fmt.Errorf("unsafe zip entry path")
+	}
 	md5hex, _, _ := modpack.Hashes(zipBytes)
 
 	innerName, innerJar, hasJar := modpack.FirstInnerJar(zipBytes)

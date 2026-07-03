@@ -39,7 +39,35 @@ func FirstInnerJar(zipBytes []byte) (name string, data []byte, ok bool) {
 		if err != nil || int64(len(b)) > maxInnerJarBytes {
 			return "", nil, false
 		}
-		return path.Base(f.Name), b, true
+		name := path.Base(strings.ReplaceAll(f.Name, `\`, "/"))
+		if name == "." || name == "/" || name == "" || strings.Contains(name, "..") {
+			name = ""
+		}
+		return name, b, true
 	}
 	return "", nil, false
+}
+
+// HasUnsafeZipEntry reports whether any file entry in the zip has a path that,
+// after normalizing backslashes, is absolute or escapes the archive root via a
+// ".." segment. Such an archive must not be stored: the Solder render copies
+// the bytes verbatim (to keep md5 stable), so a traversal-bearing entry name
+// would zip-slip a downstream launcher. An unreadable zip is treated as unsafe.
+func HasUnsafeZipEntry(zipBytes []byte) bool {
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return true
+	}
+	for _, f := range zr.File {
+		name := strings.ReplaceAll(f.Name, `\`, "/")
+		if strings.HasPrefix(name, "/") {
+			return true
+		}
+		for _, seg := range strings.Split(name, "/") {
+			if seg == ".." {
+				return true
+			}
+		}
+	}
+	return false
 }

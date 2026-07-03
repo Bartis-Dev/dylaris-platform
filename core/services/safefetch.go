@@ -26,6 +26,11 @@ func isDisallowedIP(ip net.IP) bool {
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
 	}
+	// 100.64.0.0/10 (CGNAT, RFC 6598) is a standard SSRF blocklist range that
+	// IsPrivate does not cover.
+	if len(ip) == net.IPv4len && ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127 {
+		return true
+	}
 	return ip.IsLoopback() ||
 		ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() ||
