@@ -2,6 +2,8 @@ package nodegrpc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -83,6 +85,16 @@ func tokenPrefix(t string) string {
 	return t
 }
 
+// newChallengeNonce returns a fresh 32-byte random nonce as lowercase hex for the
+// per-connection reconnect challenge.
+func newChallengeNonce() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // Flow: Node connects → sends NodeAuth → Core validates → stream stays open.
 func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	// Step 1: Wait for auth message (first message must be NodeAuth)
@@ -112,7 +124,8 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		}})
 	}
 
-	aclOn := s.acl != nil && s.acl.Enabled(ctx) && auth.AclSupported
+	featureOn := s.acl != nil && s.acl.Enabled(ctx)
+	aclOn := featureOn && auth.AclSupported
 
 	var node *Node
 	if aclOn {
@@ -146,18 +159,34 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				return fmt.Errorf("acl: secret-state lookup failed for node %d: %w", node.ID, serr)
 			}
 			if hasSecret {
-				// A provisioned node MUST prove possession of its secret. We never
-				// re-hand the secret to a bare token holder. A node that genuinely
-				// lost its cached secret recovers via operator action (delete +
-				// re-enroll, or clearing node_secret_enc), not a silent re-issue.
-				if auth.SecretProof == "" {
-					sendFail("secret proof required")
-					return fmt.Errorf("acl: node %d has a secret but presented no proof", node.ID)
+				// A provisioned node MUST prove possession of its secret against a
+				// fresh single-use nonce, so a captured proof cannot be replayed. We
+				// never re-hand the secret to a bare token holder; a node that
+				// genuinely lost its cached secret recovers via operator action, not
+				// a silent re-issue.
+				nonce, nerr := newChallengeNonce()
+				if nerr != nil {
+					sendFail("challenge init failed")
+					return fmt.Errorf("acl: nonce generation failed for node %d: %w", node.ID, nerr)
 				}
-				ok, verr := s.acl.VerifyProof(ctx, node.ID, node.Token, auth.SecretProof)
+				if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_Challenge{
+					Challenge: &pb.NodeChallenge{Nonce: nonce},
+				}}); err != nil {
+					return fmt.Errorf("failed to send challenge: %w", err)
+				}
+				respMsg, rerr := stream.Recv()
+				if rerr != nil {
+					return fmt.Errorf("failed to receive challenge response: %w", rerr)
+				}
+				cr := respMsg.GetChallengeResponse()
+				if cr == nil {
+					sendFail("challenge response required")
+					return fmt.Errorf("acl: node %d sent no challenge response", node.ID)
+				}
+				ok, verr := s.acl.VerifyChallenge(ctx, node.ID, nonce, cr.Response)
 				if verr != nil || !ok {
-					sendFail("bad secret proof")
-					return fmt.Errorf("acl: bad proof for node %d", node.ID)
+					sendFail("bad challenge response")
+					return fmt.Errorf("acl: bad challenge response for node %d", node.ID)
 				}
 			} else {
 				// First issuance for a known node: require a cluster_proof (HMAC under
@@ -184,11 +213,21 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			}
 		}
 	} else {
-		// OFF PATH — byte-identical to the original handshake.
+		// OFF PATH: byte-identical to the original handshake when the feature is off.
 		n, lookErr := s.nodeLookup.GetNodeByToken(auth.NodeToken)
 		if lookErr != nil {
 			sendFail("invalid node token")
 			return fmt.Errorf("auth failed for token %s: %w", tokenPrefix(auth.NodeToken), lookErr)
+		}
+		// Downgrade guard: with feature_redis_acl on, a provisioned node (one that
+		// has a per-node secret) MUST authenticate via the ACL challenge path.
+		// Refuse a bare-token connection (AclSupported=false) for such a node so an
+		// attacker cannot skip the possession proof by clearing AclSupported.
+		if featureOn {
+			if has, herr := s.acl.HasSecret(ctx, n.ID); herr == nil && has {
+				sendFail("node must use ACL auth")
+				return fmt.Errorf("acl: node %d has a secret but connected without ACL support", n.ID)
+			}
 		}
 		node = n
 		if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
