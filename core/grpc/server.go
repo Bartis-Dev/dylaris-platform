@@ -231,7 +231,9 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 }
 
 // StartGRPCServer starts the gRPC server on the given port.
-// Blocks until the server is stopped.
+// Blocks until the server is stopped. When tlsEnabled is set, it presents the
+// cluster-wide certificate derived from clusterSecret (CLUSTER_SECRET) so nodes
+// can pin its fingerprint; otherwise it serves plaintext (unchanged behavior).
 func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, tlsEnabled bool, clusterSecret string) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
