@@ -88,11 +88,10 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 	if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_Auth{Auth: auth}}); err != nil {
 		return nil, fmt.Errorf("send auth: %w", err)
 	}
-	resp, err := stream.Recv()
+	res, err := recvAuthResult(stream, cached)
 	if err != nil {
 		return nil, fmt.Errorf("recv auth result: %w", err)
 	}
-	res := resp.GetAuthResult()
 	if res == nil || !res.Ok {
 		msg := "rejected"
 		if res != nil {

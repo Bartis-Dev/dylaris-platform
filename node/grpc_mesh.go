@@ -218,8 +218,8 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		return
 	}
 
-	// Step 2: Wait for auth result
-	authResp, err := stream.Recv()
+	// Step 2: Wait for auth result (answering a challenge nonce if Core sends one)
+	authResult, err := recvAuthResult(stream, nodeSecret)
 	if err != nil {
 		log.Printf("gRPC Mesh: Failed to receive auth result from Core %s: %v", info.ID, err)
 		cancel()
@@ -227,7 +227,6 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		return
 	}
 
-	authResult := authResp.GetAuthResult()
 	if authResult == nil || !authResult.Ok {
 		msg := "unknown"
 		if authResult != nil {
