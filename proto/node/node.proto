@@ -19,6 +19,10 @@ message NodeMessage {
     NodeAuth          auth          = 10;
     AuthResult        auth_result   = 11;
 
+    // Reconnect challenge-response (Core->Node nonce, Node->Core HMAC of it)
+    NodeChallenge         challenge          = 12;
+    NodeChallengeResponse challenge_response = 13;
+
     // File Listing
     ListFilesReq      list_req      = 20;
     ListFilesResp     list_resp     = 21;
@@ -95,6 +99,16 @@ message AuthResult {
   string node_secret = 5;   // hex per-node secret (returned once on first issue / enroll)
   // field 6 reserved (was redis_addr; removed as unused — node keeps its env REDIS_ADDR)
   reserved 6;
+}
+
+// Reconnect challenge: Core issues a fresh single-use nonce; the node returns
+// HMAC-SHA256(per-node-secret, "dylaris-redis-acl:v1:challenge:"+nonce).
+message NodeChallenge {
+  string nonce = 1;
+}
+
+message NodeChallengeResponse {
+  string response = 1;
 }
 
 message NodeIPs {
