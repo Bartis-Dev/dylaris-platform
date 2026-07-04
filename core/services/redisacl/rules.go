@@ -9,14 +9,16 @@ var commandCats = []string{
 	"-@dangerous", "-@admin", "-@scripting", "+scan",
 }
 
-// globalReadKeys are the shared keys the node reads (NOT the shipper).
+// globalReadKeys are the shared keys the node accesses (NOT the shipper). The
+// three the node only ever reads are read-only (%R~); dylaris:migration:* stays
+// read+write because the node writes its own migration status/meta/endpoint keys.
 func globalReadKeys() []string {
 	return []string{
 		"~dylaris:routing_mode", "~dylaris:file_access_mode",
-		"~dylaris:placement:*",
+		"%R~dylaris:placement:*",
 		"~beam:bw_limit", "~beam:bw_up_internal", "~beam:bw_down_internal",
-		"~dylaris:core:*",
-		"~sftp:auth:*",
+		"%R~dylaris:core:*",
+		"%R~sftp:auth:*",
 		"~dylaris:migration:*",
 	}
 }
