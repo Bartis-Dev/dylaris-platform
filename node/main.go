@@ -78,6 +78,12 @@ var (
 // platform-global routing/file-access setting (spec §9 per-node override).
 var nodeExternal bool
 
+// grpcTLSEnabled gates node<->core gRPC TLS with Core-cert fingerprint pinning.
+// Off (default) = plaintext, byte-identical to before. Must match Core's
+// GRPC_TLS_ENABLED; skew makes the control channel fail to connect (management
+// plane only - running MC servers are unaffected).
+var grpcTLSEnabled bool
+
 // Redis ACL bootstrap config (BYON Redis ACL hardening). All inert when
 // redisACLEnabled is false — the OFF path is byte-identical to before.
 var (
@@ -443,6 +449,11 @@ func parseConfig() {
 		if coreGRPCAddr == "" {
 			log.Println("WARNING: REDIS_ACL_ENABLED but CORE_GRPC_ADDR is empty — the node can still run on a cached secret, but first-boot bootstrap and ACL re-confirm need a reachable Core gRPC endpoint.")
 		}
+	}
+
+	grpcTLSEnabled = os.Getenv("GRPC_TLS_ENABLED") == "true"
+	if grpcTLSEnabled {
+		log.Println("gRPC TLS ENABLED - node pins the Core control-channel cert fingerprint (must match Core GRPC_TLS_ENABLED).")
 	}
 
 	// Port range stays env-only because firewall rules on the host must
