@@ -7,9 +7,11 @@ import (
 	"log"
 	"net"
 
+	beamauth "dylaris-pkg/beam/auth"
 	pb "dylaris-proto/node"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"time"
 )
@@ -230,13 +232,13 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 
 // StartGRPCServer starts the gRPC server on the given port.
 // Blocks until the server is stopped.
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake) error {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, tlsEnabled bool, clusterSecret string) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", port, err)
 	}
 
-	grpcServer := grpc.NewServer(
+	opts := []grpc.ServerOption{
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    30 * time.Second,
 			Timeout: 10 * time.Second,
@@ -246,7 +248,18 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(128*1024), // 128KB max message (64KB chunks + overhead)
-	)
+	}
+
+	if tlsEnabled {
+		cert, fp, cerr := beamauth.DeriveClusterGRPCCert(clusterSecret)
+		if cerr != nil {
+			return fmt.Errorf("derive cluster gRPC cert: %w", cerr)
+		}
+		opts = append(opts, grpc.Creds(credentials.NewServerTLSFromCert(&cert)))
+		log.Printf("gRPC: NodeService TLS enabled (fingerprint pinning), cert fp=%s...", fp[:16])
+	}
+
+	grpcServer := grpc.NewServer(opts...)
 
 	srv := NewServer(registry, lookup, coreID, acl)
 	pb.RegisterNodeServiceServer(grpcServer, srv)
