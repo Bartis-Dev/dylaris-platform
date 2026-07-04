@@ -19,6 +19,10 @@ type Config struct {
 	ClusterSecret string
 	CoreID        string
 	GRPCPort      int
+	// GRPCTLSEnabled turns on server-authenticated TLS + fingerprint pinning on
+	// the node<->core NodeService channel. Off (default) = plaintext, exactly as
+	// before. Must be flipped together with every node's GRPC_TLS_ENABLED.
+	GRPCTLSEnabled bool
 	// Region — which logical region this Core lives in. Stamped
 	// into heartbeat + the system info endpoint so the panel can show a
 	// "Connected to <region> Core" chip and downstream consumers can attribute
@@ -88,6 +92,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	dnsUpdaterEnabled, _ := strconv.ParseBool(getEnv("DNS_UPDATER_ENABLED", "false"))
+	grpcTLSEnabled, _ := strconv.ParseBool(getEnv("GRPC_TLS_ENABLED", "false"))
 
 	storeURL := strings.TrimSpace(getEnv("STORE_URL", ""))
 	storeSharedKey := getSecret("STORE_SHARED_KEY", "")
@@ -97,9 +102,10 @@ func LoadConfig() (Config, error) {
 		FrontendURL:   getEnv("FRONTEND_URL", "http://localhost:25510"),
 		JWTSecret:     getSecret("JWT_SECRET", "change-this-secret"),
 		ClusterSecret: getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
-		CoreID:        coreID,
-		GRPCPort:      grpcPort,
-		Region:        getEnv("DYLARIS_REGION", "default"),
+		CoreID:         coreID,
+		GRPCPort:       grpcPort,
+		GRPCTLSEnabled: grpcTLSEnabled,
+		Region:         getEnv("DYLARIS_REGION", "default"),
 
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnv("DB_PORT", "5432"),
