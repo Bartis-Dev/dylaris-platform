@@ -25,6 +25,12 @@ func aclProof(secret []byte, token string) string {
 	return aclDerive(secret, "dylaris-redis-acl:v1:proof:"+token)
 }
 
+// aclChallengeResponse mirrors core redisacl.ChallengeResponse: HMAC(secret,
+// "dylaris-redis-acl:v1:challenge:"+nonce). Byte-identical to the Core side.
+func aclChallengeResponse(secret []byte, nonce string) string {
+	return aclDerive(secret, "dylaris-redis-acl:v1:challenge:"+nonce)
+}
+
 // aclClusterProof mirrors core redisacl.ClusterProof: HMAC(CLUSTER_SECRET, token).
 func aclClusterProof(clusterSecret, token string) string {
 	m := hmac.New(sha256.New, []byte(clusterSecret))
