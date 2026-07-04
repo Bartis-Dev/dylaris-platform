@@ -222,9 +222,15 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		// Downgrade guard: with feature_redis_acl on, a provisioned node (one that
 		// has a per-node secret) MUST authenticate via the ACL challenge path.
 		// Refuse a bare-token connection (AclSupported=false) for such a node so an
-		// attacker cannot skip the possession proof by clearing AclSupported.
+		// attacker cannot skip the possession proof by clearing AclSupported. Fail
+		// closed on a lookup error, consistent with the ACL-path HasSecret check.
 		if featureOn {
-			if has, herr := s.acl.HasSecret(ctx, n.ID); herr == nil && has {
+			has, herr := s.acl.HasSecret(ctx, n.ID)
+			if herr != nil {
+				sendFail("acl state error")
+				return fmt.Errorf("acl: secret-state lookup failed for node %d: %w", n.ID, herr)
+			}
+			if has {
 				sendFail("node must use ACL auth")
 				return fmt.Errorf("acl: node %d has a secret but connected without ACL support", n.ID)
 			}
