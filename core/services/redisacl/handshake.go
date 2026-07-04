@@ -120,6 +120,16 @@ func (h *Handshake) VerifyProof(ctx context.Context, nodeID int, token, proof st
 	return VerifyProof(secret, token, proof), nil
 }
 
+// VerifyChallenge loads the node's stored secret (no mint) and checks the
+// response against the Core-issued nonce.
+func (h *Handshake) VerifyChallenge(ctx context.Context, nodeID int, nonce, response string) (bool, error) {
+	secret, ok, err := LoadNodeSecret(h.store, h.clusterSecret, nodeID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return VerifyChallenge(secret, nonce, response), nil
+}
+
 // VerifyClusterProof checks a node's cluster_proof against CLUSTER_SECRET.
 func (h *Handshake) VerifyClusterProof(token, proof string) bool {
 	if proof == "" {

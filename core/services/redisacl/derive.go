@@ -38,6 +38,18 @@ func VerifyProof(secret []byte, token, got string) bool {
 	return hmac.Equal([]byte(Proof(secret, token)), []byte(got))
 }
 
+// ChallengeResponse is the HMAC the node returns for a Core-issued nonce, proving
+// possession of the per-node secret without a replayable static value.
+func ChallengeResponse(secret []byte, nonce string) string {
+	return derive(secret, "dylaris-redis-acl:v1:challenge:"+nonce)
+}
+
+// VerifyChallenge constant-time compares a presented challenge response against
+// the expected one for the given nonce.
+func VerifyChallenge(secret []byte, nonce, got string) bool {
+	return hmac.Equal([]byte(ChallengeResponse(secret, nonce)), []byte(got))
+}
+
 // ClusterProof is the HMAC a node presents to prove it holds CLUSTER_SECRET,
 // used to gate first-issuance of a known node's per-node secret. Keyed by
 // CLUSTER_SECRET (NOT the per-node secret), so a bare-token attacker without

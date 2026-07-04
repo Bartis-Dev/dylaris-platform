@@ -29,6 +29,7 @@ type ACLHandshake interface {
 	EnsureExisting(ctx context.Context, nodeID int, token string) (secretHex string, err error)
 	Enroll(ctx context.Context, token, enrollToken, address string) (nodeID int, secretHex string, err error)
 	VerifyProof(ctx context.Context, nodeID int, token, proof string) (ok bool, err error)
+	VerifyChallenge(ctx context.Context, nodeID int, nonce, response string) (ok bool, err error)
 	VerifyClusterProof(token, proof string) bool
 	HasSecret(ctx context.Context, nodeID int) (ok bool, err error)
 }
