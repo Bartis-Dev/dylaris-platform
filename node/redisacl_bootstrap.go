@@ -80,6 +80,9 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 	} else if nodeEnrollToken != "" {
 		auth.EnrollToken = nodeEnrollToken
 	}
+	if clusterSecret != "" {
+		auth.ClusterProof = aclClusterProof(clusterSecret, nodeID)
+	}
 	ips := getNodeIPs()
 	auth.Ips = &pb.NodeIPs{Public: ips.Public, Private: ips.Private}
 

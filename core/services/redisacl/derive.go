@@ -38,6 +38,16 @@ func VerifyProof(secret []byte, token, got string) bool {
 	return hmac.Equal([]byte(Proof(secret, token)), []byte(got))
 }
 
+// ClusterProof is the HMAC a node presents to prove it holds CLUSTER_SECRET,
+// used to gate first-issuance of a known node's per-node secret. Keyed by
+// CLUSTER_SECRET (NOT the per-node secret), so a bare-token attacker without
+// CLUSTER_SECRET cannot forge it.
+func ClusterProof(clusterSecret, token string) string {
+	m := hmac.New(sha256.New, []byte(clusterSecret))
+	m.Write([]byte("dylaris-node-cluster-proof:v1:" + token))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 func derive(secret []byte, domain string) string {
 	m := hmac.New(sha256.New, secret)
 	m.Write([]byte(domain))

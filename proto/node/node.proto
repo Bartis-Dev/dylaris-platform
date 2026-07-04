@@ -81,6 +81,9 @@ message NodeAuth {
   string enroll_token = 3;   // first enrollment only
   string secret_proof = 4;   // HMAC proof of possession on later connects
   bool   acl_supported = 5;  // node advertises it can use scoped creds
+  // Proof the caller holds CLUSTER_SECRET (HMAC over the node token). Required
+  // before Core hands a known node its per-node secret for the first time.
+  string cluster_proof = 6;
 }
 
 message AuthResult {

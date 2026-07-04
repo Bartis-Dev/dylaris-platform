@@ -2,6 +2,7 @@ package redisacl
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/hex"
 	"errors"
 )
@@ -117,4 +118,12 @@ func (h *Handshake) VerifyProof(ctx context.Context, nodeID int, token, proof st
 		return false, err
 	}
 	return VerifyProof(secret, token, proof), nil
+}
+
+// VerifyClusterProof checks a node's cluster_proof against CLUSTER_SECRET.
+func (h *Handshake) VerifyClusterProof(token, proof string) bool {
+	if proof == "" {
+		return false
+	}
+	return hmac.Equal([]byte(ClusterProof(h.clusterSecret, token)), []byte(proof))
 }

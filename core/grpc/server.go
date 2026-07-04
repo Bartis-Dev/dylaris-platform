@@ -27,6 +27,7 @@ type ACLHandshake interface {
 	EnsureExisting(ctx context.Context, nodeID int, token string) (secretHex string, err error)
 	Enroll(ctx context.Context, token, enrollToken, address string) (nodeID int, secretHex string, err error)
 	VerifyProof(ctx context.Context, nodeID int, token, proof string) (ok bool, err error)
+	VerifyClusterProof(token, proof string) bool
 	HasSecret(ctx context.Context, nodeID int) (ok bool, err error)
 }
 
@@ -154,6 +155,14 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				if verr != nil || !ok {
 					sendFail("bad secret proof")
 					return fmt.Errorf("acl: bad proof for node %d", node.ID)
+				}
+			} else {
+				// First issuance for a known node: require a cluster_proof (HMAC under
+				// CLUSTER_SECRET). Closes the window where flipping feature_redis_acl on
+				// (or a secret reset) would hand the secret to any bare-token holder.
+				if !s.acl.VerifyClusterProof(node.Token, auth.ClusterProof) {
+					sendFail("cluster proof required")
+					return fmt.Errorf("acl: node %d first-issuance without valid cluster proof", node.ID)
 				}
 			}
 			secretHex, perr := s.acl.EnsureExisting(ctx, node.ID, node.Token)

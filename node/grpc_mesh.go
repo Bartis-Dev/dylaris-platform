@@ -205,6 +205,11 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		auth.AclSupported = true
 		auth.SecretProof = aclProof(nodeSecret, m.nodeToken)
 	}
+	// Prove we hold CLUSTER_SECRET so Core will issue this known node its secret
+	// on first ACL enablement. Harmless when the node already has a secret.
+	if clusterSecret != "" {
+		auth.ClusterProof = aclClusterProof(clusterSecret, m.nodeToken)
+	}
 	if err := stream.Send(&pb.NodeMessage{
 		Payload: &pb.NodeMessage_Auth{Auth: auth},
 	}); err != nil {

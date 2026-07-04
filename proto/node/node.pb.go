@@ -528,9 +528,12 @@ type NodeAuth struct {
 	NodeToken string                 `protobuf:"bytes,1,opt,name=node_token,json=nodeToken,proto3" json:"node_token,omitempty"`
 	Ips       *NodeIPs               `protobuf:"bytes,2,opt,name=ips,proto3" json:"ips,omitempty"`
 	// BYON Redis-ACL bootstrap (only set when the node runs REDIS_ACL_ENABLED):
-	EnrollToken   string `protobuf:"bytes,3,opt,name=enroll_token,json=enrollToken,proto3" json:"enroll_token,omitempty"`     // first enrollment only
-	SecretProof   string `protobuf:"bytes,4,opt,name=secret_proof,json=secretProof,proto3" json:"secret_proof,omitempty"`     // HMAC proof of possession on later connects
-	AclSupported  bool   `protobuf:"varint,5,opt,name=acl_supported,json=aclSupported,proto3" json:"acl_supported,omitempty"` // node advertises it can use scoped creds
+	EnrollToken  string `protobuf:"bytes,3,opt,name=enroll_token,json=enrollToken,proto3" json:"enroll_token,omitempty"`     // first enrollment only
+	SecretProof  string `protobuf:"bytes,4,opt,name=secret_proof,json=secretProof,proto3" json:"secret_proof,omitempty"`     // HMAC proof of possession on later connects
+	AclSupported bool   `protobuf:"varint,5,opt,name=acl_supported,json=aclSupported,proto3" json:"acl_supported,omitempty"` // node advertises it can use scoped creds
+	// Proof the caller holds CLUSTER_SECRET (HMAC over the node token). Required
+	// before Core hands a known node its per-node secret for the first time.
+	ClusterProof  string `protobuf:"bytes,6,opt,name=cluster_proof,json=clusterProof,proto3" json:"cluster_proof,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -598,6 +601,13 @@ func (x *NodeAuth) GetAclSupported() bool {
 		return x.AclSupported
 	}
 	return false
+}
+
+func (x *NodeAuth) GetClusterProof() string {
+	if x != nil {
+		return x.ClusterProof
+	}
+	return ""
 }
 
 type AuthResult struct {
@@ -2180,14 +2190,15 @@ const file_node_node_proto_rawDesc = "" +
 	"\x0ercon_exec_resp\x18o \x01(\v2\x1a.dylaris.node.RconExecRespH\x00R\frconExecResp\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
-	"\apayload\"\xbd\x01\n" +
+	"\apayload\"\xe2\x01\n" +
 	"\bNodeAuth\x12\x1d\n" +
 	"\n" +
 	"node_token\x18\x01 \x01(\tR\tnodeToken\x12'\n" +
 	"\x03ips\x18\x02 \x01(\v2\x15.dylaris.node.NodeIPsR\x03ips\x12!\n" +
 	"\fenroll_token\x18\x03 \x01(\tR\venrollToken\x12!\n" +
 	"\fsecret_proof\x18\x04 \x01(\tR\vsecretProof\x12#\n" +
-	"\racl_supported\x18\x05 \x01(\bR\faclSupported\"\x97\x01\n" +
+	"\racl_supported\x18\x05 \x01(\bR\faclSupported\x12#\n" +
+	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\"\x97\x01\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +

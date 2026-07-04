@@ -24,6 +24,14 @@ func aclShipperPassword(secret []byte, token string) string {
 func aclProof(secret []byte, token string) string {
 	return aclDerive(secret, "dylaris-redis-acl:v1:proof:"+token)
 }
+
+// aclClusterProof mirrors core redisacl.ClusterProof: HMAC(CLUSTER_SECRET, token).
+func aclClusterProof(clusterSecret, token string) string {
+	m := hmac.New(sha256.New, []byte(clusterSecret))
+	m.Write([]byte("dylaris-node-cluster-proof:v1:" + token))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 func aclDerive(secret []byte, domain string) string {
 	m := hmac.New(sha256.New, secret)
 	m.Write([]byte(domain))
