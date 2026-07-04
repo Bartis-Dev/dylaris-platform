@@ -10,7 +10,6 @@ import (
 	pb "dylaris-proto/node"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // nodeSecret is the node's per-node Redis secret once obtained. Read by
@@ -62,7 +61,7 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	conn, err := grpc.NewClient(coreGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(coreGRPCAddr, coreDialCreds())
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}

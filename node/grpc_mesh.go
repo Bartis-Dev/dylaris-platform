@@ -17,7 +17,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -166,7 +165,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	log.Printf("gRPC Mesh: Connecting to Core %s at %s", info.ID, targetAddr)
 
 	conn, err := grpc.NewClient(targetAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		coreDialCreds(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                20 * time.Second,
 			Timeout:             10 * time.Second,
