@@ -9,11 +9,12 @@ import (
 // node. The plaintext is never stored (only its hash); these structs never carry
 // the plaintext or the hash to the client.
 type NodeEnrollToken struct {
-	ID        string     `json:"id"`
-	UserID    string     `json:"userId"`
-	Label     string     `json:"label"`
-	CreatedAt time.Time  `json:"createdAt"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	ID         string     `json:"id"`
+	UserID     string     `json:"userId"`
+	Label      string     `json:"label"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+	ConsumedAt *time.Time `json:"consumedAt,omitempty"`
 }
 
 // CreateNodeEnrollToken stores a new enroll token (hashed) for a user.
@@ -29,7 +30,26 @@ func (s *PostgresStore) CreateNodeEnrollToken(userID, plaintext, label string, e
 func (s *PostgresStore) ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error) {
 	err = s.db.QueryRow(
 		`SELECT user_id FROM node_enroll_tokens
-		 WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
+		 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+		hashAuthToken(plaintext)).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return userID, true, nil
+}
+
+// ConsumeNodeEnrollToken atomically marks a valid, unexpired, still-unconsumed
+// token as used and returns its owner. ok=false (no error) when the token is
+// unknown, expired, or already consumed. Single-use: a replay or a second
+// concurrent caller gets ok=false, because the UPDATE matches at most one row.
+func (s *PostgresStore) ConsumeNodeEnrollToken(plaintext string) (userID string, ok bool, err error) {
+	err = s.db.QueryRow(
+		`UPDATE node_enroll_tokens SET consumed_at = NOW()
+		 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+		 RETURNING user_id`,
 		hashAuthToken(plaintext)).Scan(&userID)
 	if err == sql.ErrNoRows {
 		return "", false, nil
@@ -43,7 +63,7 @@ func (s *PostgresStore) ResolveNodeEnrollToken(plaintext string) (userID string,
 // ListNodeEnrollTokens returns a user's tokens (metadata only, never the hash).
 func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, label, created_at, expires_at
+		`SELECT id, user_id, label, created_at, expires_at, consumed_at
 		 FROM node_enroll_tokens WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -52,12 +72,15 @@ func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, 
 	var out []NodeEnrollToken
 	for rows.Next() {
 		var t NodeEnrollToken
-		var exp sql.NullTime
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Label, &t.CreatedAt, &exp); err != nil {
+		var exp, consumed sql.NullTime
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Label, &t.CreatedAt, &exp, &consumed); err != nil {
 			return nil, err
 		}
 		if exp.Valid {
 			t.ExpiresAt = &exp.Time
+		}
+		if consumed.Valid {
+			t.ConsumedAt = &consumed.Time
 		}
 		out = append(out, t)
 	}

@@ -19,10 +19,12 @@ func applyBYONSchema(db *sql.DB) error {
 		token_hash  TEXT NOT NULL UNIQUE,
 		label       TEXT NOT NULL DEFAULT '',
 		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		expires_at  TIMESTAMPTZ
+		expires_at  TIMESTAMPTZ,
+		consumed_at TIMESTAMPTZ
 	)`); err != nil {
 		return fmt.Errorf("byon: create node_enroll_tokens: %w", err)
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_node_enroll_tokens_user ON node_enroll_tokens(user_id)`)
+	db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ`)
 	return nil
 }

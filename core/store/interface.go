@@ -48,6 +48,7 @@ type Store interface {
 	// --- BYON node enrollment ---
 	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error
 	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
+	ConsumeNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	DeleteNodeEnrollToken(id, userID string) error
 	// --- BYON traffic metering ---

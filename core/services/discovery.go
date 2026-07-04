@@ -242,18 +242,18 @@ func (s *DiscoveryService) scanNodes() {
 			if createErr := s.store.CreateNode(newNode); createErr != nil {
 				log.Printf("Failed to create node '%s': %v", hb.Name, createErr)
 			} else if hb.EnrollToken != "" {
-				// BYON: a new node presenting a valid enroll token is bound to the
-				// token's user (owner_id). Harmless if the feature is later off.
-				if uid, ok, terr := s.store.ResolveNodeEnrollToken(hb.EnrollToken); terr == nil && ok {
-					if created, gerr := s.store.GetNodeByToken(hb.ID); gerr == nil {
+				// BYON: bind a still-unowned node to the enroll token's user, then
+				// consume the token (single-use). Once the node is owned, skip.
+				if created, gerr := s.store.GetNodeByToken(hb.ID); gerr == nil && created.OwnerID == nil {
+					if uid, ok, terr := s.store.ResolveNodeEnrollToken(hb.EnrollToken); terr == nil && ok {
 						if s.nodeLimitReached(uid) {
-							// HARD max_nodes cap: leave the node unowned (not adopted)
-							// so the tenant must raise their plan or free a node.
 							log.Printf("Node %s NOT adopted: user %s is at their node limit", hb.Name, uid)
-						} else if serr := s.store.SetNodeOwner(created.ID, &uid); serr != nil {
-							log.Printf("node %s: bind owner failed: %v", hb.Name, serr)
-						} else {
-							log.Printf("Node %s enrolled to user %s (BYON)", hb.Name, uid)
+						} else if cuid, cok, cerr := s.store.ConsumeNodeEnrollToken(hb.EnrollToken); cerr == nil && cok {
+							if serr := s.store.SetNodeOwner(created.ID, &cuid); serr != nil {
+								log.Printf("node %s: bind owner failed: %v", hb.Name, serr)
+							} else {
+								log.Printf("Node %s enrolled to user %s (BYON)", hb.Name, cuid)
+							}
 						}
 					}
 				}

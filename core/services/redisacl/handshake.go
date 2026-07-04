@@ -20,6 +20,7 @@ type HandshakeStore interface {
 	SetNodeSecretEnc(id int, enc string) error
 	ServerUUIDsByNode(nodeID int) ([]string, error)
 	ResolveEnrollToken(plaintext string) (ownerID string, ok bool, err error)
+	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	NodeLimitReached(ownerID string) bool
 	CreateBYONNode(token, address, ownerID string) (id int, err error)
 	NodeIDByToken(token string) (id int, found bool, err error)
@@ -86,7 +87,16 @@ func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address stri
 	if h.store.NodeLimitReached(ownerID) {
 		return 0, "", ErrNodeLimit
 	}
-	id, err := h.store.CreateBYONNode(token, address, ownerID)
+	// Single-use: atomically consume now. If a concurrent connect (or the
+	// discovery path) already consumed it, this returns ok=false and we reject.
+	consumedOwner, cok, cerr := h.store.ConsumeEnrollToken(enrollToken)
+	if cerr != nil {
+		return 0, "", cerr
+	}
+	if !cok {
+		return 0, "", ErrEnrollInvalid
+	}
+	id, err := h.store.CreateBYONNode(token, address, consumedOwner)
 	if err != nil {
 		return 0, "", err
 	}

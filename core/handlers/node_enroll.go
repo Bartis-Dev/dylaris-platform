@@ -50,11 +50,15 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(b)
 
-	var exp *time.Time
-	if req.ExpiresDays > 0 {
-		t := time.Now().AddDate(0, 0, req.ExpiresDays)
-		exp = &t
+	// Default a 7-day expiry when none is given, so a leaked token is not valid
+	// forever. Single-use (consumed on enroll) already limits reuse; 7 days is
+	// enough to set a node up.
+	days := req.ExpiresDays
+	if days <= 0 {
+		days = 7
 	}
+	t := time.Now().AddDate(0, 0, days)
+	exp := &t
 	if err := h.state.Store.CreateNodeEnrollToken(userID, token, strings.TrimSpace(req.Label), exp); err != nil {
 		sendJSONError(w, "Failed to create token", http.StatusInternalServerError)
 		return

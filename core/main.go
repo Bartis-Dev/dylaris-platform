@@ -76,6 +76,10 @@ func (a *aclHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, 
 	return a.store.ResolveNodeEnrollToken(plaintext)
 }
 
+func (a *aclHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, error) {
+	return a.store.ConsumeNodeEnrollToken(plaintext)
+}
+
 func (a *aclHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	n, err := a.store.GetNodeByToken(token)
 	if err != nil {
