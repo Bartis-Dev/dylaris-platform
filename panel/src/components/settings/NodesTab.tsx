@@ -5,7 +5,7 @@ import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement, configureNode, Region,
-    getNodeCpu, getNodeStorage, updateNodeCpuset, type NodeCpuTopology,
+    getNodeCpu, getNodeStorage, getNodeDeployBundle, updateNodeCpuset, type NodeCpuTopology,
 } from '@/lib/api';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
@@ -13,8 +13,17 @@ import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu,
+    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound,
 } from 'lucide-react';
+
+// Shape of GET /nodes/{id}/deploy-bundle — the secret-free node + link deploy
+// ENV for an already-enrolled node (see WarpTab's mint+reveal pattern).
+interface DeployBundle {
+    nodeId: string;
+    grpcTlsFingerprint: string;
+    linkSecret: string;
+    linkDiscoveryProof: string;
+}
 
 type SubTab = 'nodes' | 'placement';
 
@@ -90,6 +99,8 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     const [nodes, setNodes] = useState<Node[]>([]);
     const [editingPlacement, setEditingPlacement] = useState<number | null>(null);
     const [editingConfig, setEditingConfig] = useState<number | null>(null);
+    const [revealed, setRevealed] = useState<DeployBundle | null>(null);
+    const [revealingId, setRevealingId] = useState<number | null>(null);
 
     useEffect(() => {
         loadNodes();
@@ -100,6 +111,22 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     const loadNodes = async () => {
         const res = await getNodes();
         if (res.success) setNodes(res.nodes);
+    };
+
+    const revealDeployBundle = async (nodeId: number) => {
+        setRevealingId(nodeId);
+        const res = await getNodeDeployBundle(nodeId);
+        setRevealingId(null);
+        if (res.success) {
+            setRevealed({
+                nodeId: res.nodeId,
+                grpcTlsFingerprint: res.grpcTlsFingerprint,
+                linkSecret: res.linkSecret,
+                linkDiscoveryProof: res.linkDiscoveryProof,
+            });
+        } else {
+            showToast(res.message || res.error || 'Failed to load deploy bundle', false);
+        }
     };
 
     return (
@@ -140,11 +167,38 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
                                 onConfigSaved={() => { setEditingConfig(null); loadNodes(); showToast('Node configured'); }}
                                 onCpuPoolSaved={() => { loadNodes(); showToast('Container CPU pool updated'); }}
                                 onError={msg => showToast(msg, false)}
+                                onRevealDeployBundle={() => revealDeployBundle(node.id)}
+                                revealingDeployBundle={revealingId === node.id}
                             />
                         ))
                     )}
                 </div>
             </div>
+
+            {revealed && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
+                    <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Deploy bundle — {revealed.nodeId.slice(0, 8)}</h3></div>
+                        <div className="modal-body space-y-3">
+                            <div className="space-y-1">
+                                <label className="mono-label">Node deploy ENV (secret-free)</label>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{`REDIS_ACL_ENABLED=true
+GRPC_TLS_ENABLED=true
+GRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}
+NODE_ENROLL_TOKEN=<your enroll token>
+CORE_GRPC_ADDR=<core-host:25520>`}</pre>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="mono-label">Link deploy ENV</label>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{`NODE_ID=${revealed.nodeId}
+LINK_SECRET=${revealed.linkSecret}
+LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}`}</pre>
+                            </div>
+                        </div>
+                        <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary">Done</button></div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -165,9 +219,11 @@ interface NodeCardProps {
     onConfigSaved: () => void;
     onCpuPoolSaved: () => void;
     onError: (msg: string) => void;
+    onRevealDeployBundle: () => void;
+    revealingDeployBundle: boolean;
 }
 
-function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError }: NodeCardProps) {
+function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -307,6 +363,15 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                             Placement
                         </button>
                     )}
+                    <button
+                        onClick={onRevealDeployBundle}
+                        disabled={revealingDeployBundle}
+                        className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+                        title="Reveal this node's secret-free node + link deploy ENV"
+                    >
+                        <KeyRound size={11} />
+                        {revealingDeployBundle ? 'Loading…' : 'Deploy bundle'}
+                    </button>
                 </div>
             </div>
 

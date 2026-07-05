@@ -263,6 +263,9 @@ export interface NodeCpuTopology { logicalCount: number; physicalCount: number; 
 export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
 // Returns { success, storage: StorageInfo[] } (path/total_bytes/free_bytes/used_bytes/server_count).
 export const getNodeStorage = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/storage`);
+// Returns { success, nodeId, grpcTlsFingerprint, linkSecret, linkDiscoveryProof }.
+// The secret-free BYON deploy bundle for an already-enrolled node.
+export const getNodeDeployBundle = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/deploy-bundle`);
 
 export const getNodes = () => fetchAPI('/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
