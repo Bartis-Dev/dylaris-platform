@@ -135,7 +135,9 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 GRPC_TLS_ENABLED=true
 GRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}
 NODE_ENROLL_TOKEN=<your enroll token>
-CORE_GRPC_ADDR=<core-host:25520>` : '';
+CORE_GRPC_ADDR=<core-host:25520>
+NODE_MANAGES_LINK=true
+LINK_IMAGE=<public link image, e.g. ghcr.io/callmebartis/dylaris/link:latest>` : '';
     const linkEnv = revealed ? `NODE_ID=${revealed.nodeId}
 LINK_SECRET=${revealed.linkSecret}
 LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
@@ -199,7 +201,8 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                                 </button>
                             </div>
                             <div className="space-y-1">
-                                <label className="mono-label">Link deploy ENV</label>
+                                <label className="mono-label">Link deploy ENV (manual / DC only)</label>
+                                <p className="text-xs text-(--base-06)">A secret-free node auto-provisions its own Link sidecar (set LINK_IMAGE + NODE_MANAGES_LINK). Use this only for a manually deployed / DC Link.</p>
                                 <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{linkEnv}</pre>
                                 <button onClick={() => { navigator.clipboard.writeText(linkEnv); showToast('Link deploy ENV copied.', true); }} className="btn btn-secondary btn-sm">
                                     <Copy size={12} /> Copy link ENV
