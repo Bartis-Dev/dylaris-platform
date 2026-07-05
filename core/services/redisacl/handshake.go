@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"encoding/hex"
 	"errors"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -23,7 +25,7 @@ type HandshakeStore interface {
 	ResolveEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	NodeLimitReached(ownerID string) bool
-	CreateBYONNode(token, address, ownerID string) (id int, err error)
+	CreateBYONNode(token, address, ownerID, displayName string) (id int, err error)
 	NodeIDByToken(token string) (id int, found bool, err error)
 }
 
@@ -75,34 +77,37 @@ func (h *Handshake) EnsureForToken(ctx context.Context, token string) error {
 	return err
 }
 
-// Enroll creates a BYON node row bound to the enroll token's owner, then
-// provisions its ACL. Returns the new node id + secret hex.
-func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address string) (int, string, error) {
+// Enroll creates a BYON node row bound to the enroll token's owner with a
+// Core-minted, unguessable identity, then provisions its ACL. The node-supplied
+// token (its hostname) is kept only as a cosmetic display name. Returns the
+// assigned id + new node id + secret hex.
+func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address string) (string, int, string, error) {
 	ownerID, ok, err := h.store.ResolveEnrollToken(enrollToken)
 	if err != nil {
-		return 0, "", err
+		return "", 0, "", err
 	}
 	if !ok {
-		return 0, "", ErrEnrollInvalid
+		return "", 0, "", ErrEnrollInvalid
 	}
 	if h.store.NodeLimitReached(ownerID) {
-		return 0, "", ErrNodeLimit
+		return "", 0, "", ErrNodeLimit
 	}
 	// Single-use: atomically consume now. If a concurrent connect (or the
 	// discovery path) already consumed it, this returns ok=false and we reject.
 	consumedOwner, cok, cerr := h.store.ConsumeEnrollToken(enrollToken)
 	if cerr != nil {
-		return 0, "", cerr
+		return "", 0, "", cerr
 	}
 	if !cok {
-		return 0, "", ErrEnrollInvalid
+		return "", 0, "", ErrEnrollInvalid
 	}
-	id, err := h.store.CreateBYONNode(token, address, consumedOwner)
+	assignedID := uuid.New().String()
+	id, err := h.store.CreateBYONNode(assignedID, address, consumedOwner, token)
 	if err != nil {
-		return 0, "", err
+		return "", 0, "", err
 	}
-	secretHex, err := h.ensure(ctx, id, token)
-	return id, secretHex, err
+	secretHex, err := h.ensure(ctx, id, assignedID)
+	return assignedID, id, secretHex, err
 }
 
 // HasSecret reports whether a non-mint-able secret is already stored for the node.

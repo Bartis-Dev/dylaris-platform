@@ -29,7 +29,7 @@ type NodeLookup interface {
 type ACLHandshake interface {
 	Enabled(ctx context.Context) bool
 	EnsureExisting(ctx context.Context, nodeID int, token string) (secretHex string, err error)
-	Enroll(ctx context.Context, token, enrollToken, address string) (nodeID int, secretHex string, err error)
+	Enroll(ctx context.Context, token, enrollToken, address string) (assignedID string, nodeID int, secretHex string, err error)
 	VerifyProof(ctx context.Context, nodeID int, token, proof string) (ok bool, err error)
 	VerifyChallenge(ctx context.Context, nodeID int, nonce, response string) (ok bool, err error)
 	VerifyClusterProof(token, proof string) bool
@@ -140,14 +140,14 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("unknown node and no enroll token")
 				return fmt.Errorf("acl: unknown node %s without enroll token", tokenPrefix(auth.NodeToken))
 			}
-			id, secretHex, eerr := s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
+			assignedID, id, secretHex, eerr := s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
 			if eerr != nil {
 				sendFail("enrollment failed")
 				return fmt.Errorf("acl: enroll failed for %s: %w", tokenPrefix(auth.NodeToken), eerr)
 			}
-			node = &Node{ID: id, Token: auth.NodeToken}
+			node = &Node{ID: id, Token: assignedID}
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
-				AuthResult: &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex},
+				AuthResult: &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID},
 			}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
 			}
@@ -244,8 +244,8 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	}
 
 	// Step 4: Register connection
-	conn := s.registry.Register(node.ID, auth.NodeToken, stream)
-	log.Printf("gRPC: Node %d connected (token=%s...)", node.ID, tokenPrefix(auth.NodeToken))
+	conn := s.registry.Register(node.ID, node.Token, stream)
+	log.Printf("gRPC: Node %d connected (token=%s...)", node.ID, tokenPrefix(node.Token))
 
 	defer func() {
 		s.registry.Unregister(node.ID)

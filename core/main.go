@@ -105,13 +105,18 @@ func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
 	return int64(cnt) >= lim.MaxNodes
 }
 
-func (a *aclHandshakeStore) CreateBYONNode(token, address, ownerID string) (int, error) {
+func (a *aclHandshakeStore) CreateBYONNode(token, address, ownerID, displayName string) (int, error) {
 	n := &models.Node{Name: token, Token: token, Address: address, Status: "offline"}
 	if err := a.store.CreateNode(n); err != nil {
 		return 0, err
 	}
 	if err := a.store.SetNodeOwner(n.ID, &ownerID); err != nil {
 		return 0, err
+	}
+	if displayName != "" {
+		if err := a.store.SetNodeDisplayName(n.ID, displayName); err != nil {
+			return 0, err
+		}
 	}
 	return n.ID, nil
 }
