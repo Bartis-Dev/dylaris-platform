@@ -654,9 +654,14 @@ type AuthResult struct {
 	// Core-minted, unguessable node identity. Set ONLY on the enroll (first-issuance)
 	// response; the node persists it and uses it as its token on every later connect.
 	// Empty on reconnect and on the OFF path. (field 6 was the removed redis_addr.)
-	AssignedId    string `protobuf:"bytes,6,opt,name=assigned_id,json=assignedId,proto3" json:"assigned_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AssignedId string `protobuf:"bytes,6,opt,name=assigned_id,json=assignedId,proto3" json:"assigned_id,omitempty"`
+	// Per-node Link sidecar tunnel credentials, delivered on every ACL auth so a
+	// secret-free node can spawn + run its Link sidecar without holding CLUSTER_SECRET.
+	// Empty on the OFF path. Derived by Core from CLUSTER_SECRET; validated by the Hub.
+	LinkSecret         string `protobuf:"bytes,7,opt,name=link_secret,json=linkSecret,proto3" json:"link_secret,omitempty"`                           // = DeriveLinkToken(assigned_id, CLUSTER_SECRET)
+	LinkDiscoveryProof string `protobuf:"bytes,8,opt,name=link_discovery_proof,json=linkDiscoveryProof,proto3" json:"link_discovery_proof,omitempty"` // = DeriveDiscoveryProof(assigned_id, CLUSTER_SECRET)
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AuthResult) Reset() {
@@ -727,6 +732,20 @@ func (x *AuthResult) GetNodeSecret() string {
 func (x *AuthResult) GetAssignedId() string {
 	if x != nil {
 		return x.AssignedId
+	}
+	return ""
+}
+
+func (x *AuthResult) GetLinkSecret() string {
+	if x != nil {
+		return x.LinkSecret
+	}
+	return ""
+}
+
+func (x *AuthResult) GetLinkDiscoveryProof() string {
+	if x != nil {
+		return x.LinkDiscoveryProof
 	}
 	return ""
 }
@@ -2334,7 +2353,7 @@ const file_node_node_proto_rawDesc = "" +
 	"\fenroll_token\x18\x03 \x01(\tR\venrollToken\x12!\n" +
 	"\fsecret_proof\x18\x04 \x01(\tR\vsecretProof\x12#\n" +
 	"\racl_supported\x18\x05 \x01(\bR\faclSupported\x12#\n" +
-	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\"\xb2\x01\n" +
+	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\"\x85\x02\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +
@@ -2345,7 +2364,10 @@ const file_node_node_proto_rawDesc = "" +
 	"\vnode_secret\x18\x05 \x01(\tR\n" +
 	"nodeSecret\x12\x1f\n" +
 	"\vassigned_id\x18\x06 \x01(\tR\n" +
-	"assignedId\"%\n" +
+	"assignedId\x12\x1f\n" +
+	"\vlink_secret\x18\a \x01(\tR\n" +
+	"linkSecret\x120\n" +
+	"\x14link_discovery_proof\x18\b \x01(\tR\x12linkDiscoveryProof\"%\n" +
 	"\rNodeChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"3\n" +
 	"\x15NodeChallengeResponse\x12\x1a\n" +
