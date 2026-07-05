@@ -16,6 +16,14 @@ import (
 // grpc_mesh (proof) and docker_mgr (shipper creds). nil when ACL is off.
 var nodeSecret []byte
 
+// linkSecret / linkDiscoveryProof are the Core-delivered Link tunnel credentials
+// (empty when this node isn't gateway-relevant or ACL is off). Read by the link
+// reconciler (docker_mgr) to spawn the Link sidecar.
+var (
+	linkSecret         string
+	linkDiscoveryProof string
+)
+
 // ensureNodeSecret returns the per-node secret (REDIS_ACL_ENABLED path). Uses the
 // cached .node_secret when present (no Core contact needed — resilience); else
 // bootstraps it from Core via a one-shot gRPC handshake. Loops until success or
@@ -26,6 +34,9 @@ func ensureNodeSecret(ctx context.Context) []byte {
 	// it and the ACL creds match the node-{assignedID} user Core provisioned.
 	if id, ok := loadNodeID(nodeSecretDir); ok {
 		nodeID = id
+	}
+	if s, p, ok := loadLinkCreds(nodeSecretDir); ok {
+		linkSecret, linkDiscoveryProof = s, p
 	}
 	if s, ok := loadNodeSecret(nodeSecretDir); ok {
 		nodeSecret = s
@@ -111,6 +122,12 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 			log.Printf("redisacl: WARN failed to persist assigned node id: %v", werr)
 		}
 		log.Println("redisacl: adopted server-assigned node identity")
+	}
+	if res.LinkSecret != "" && res.LinkDiscoveryProof != "" {
+		linkSecret, linkDiscoveryProof = res.LinkSecret, res.LinkDiscoveryProof
+		if werr := saveLinkCreds(nodeSecretDir, res.LinkSecret, res.LinkDiscoveryProof); werr != nil {
+			log.Printf("redisacl: WARN failed to persist link creds: %v", werr)
+		}
 	}
 	if res.NodeSecret != "" {
 		raw, derr := hex.DecodeString(res.NodeSecret)

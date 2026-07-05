@@ -22,6 +22,10 @@ func aclNodePassword(secret []byte, token string) string {
 func aclShipperPassword(secret []byte, token string) string {
 	return aclDerive(secret, "dylaris-redis-acl:v1:shipper:"+token)
 }
+func aclLinkUsername(token string) string { return "node-" + token + "-link" }
+func aclLinkPassword(secret []byte, token string) string {
+	return aclDerive(secret, "dylaris-redis-acl:v1:link:"+token)
+}
 func aclProof(secret []byte, token string) string {
 	return aclDerive(secret, "dylaris-redis-acl:v1:proof:"+token)
 }
@@ -87,4 +91,31 @@ func loadNodeID(workdir string) (string, bool) {
 // saveNodeID persists the server-assigned node id with 0600 perms.
 func saveNodeID(workdir, id string) error {
 	return os.WriteFile(filepath.Join(workdir, ".node_id"), []byte(id), 0600)
+}
+
+// loadLinkCreds reads the cached Core-delivered Link tunnel token + discovery proof
+// from <workdir>/.link_secret and .link_discovery_proof. ok=false if either missing.
+func loadLinkCreds(workdir string) (secret, proof string, ok bool) {
+	s, err := os.ReadFile(filepath.Join(workdir, ".link_secret"))
+	if err != nil {
+		return "", "", false
+	}
+	p, err := os.ReadFile(filepath.Join(workdir, ".link_discovery_proof"))
+	if err != nil {
+		return "", "", false
+	}
+	secret = strings.TrimSpace(string(s))
+	proof = strings.TrimSpace(string(p))
+	if secret == "" || proof == "" {
+		return "", "", false
+	}
+	return secret, proof, true
+}
+
+// saveLinkCreds persists the Link tunnel token + discovery proof (0600).
+func saveLinkCreds(workdir, secret, proof string) error {
+	if err := os.WriteFile(filepath.Join(workdir, ".link_secret"), []byte(secret), 0600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(workdir, ".link_discovery_proof"), []byte(proof), 0600)
 }

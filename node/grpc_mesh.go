@@ -248,6 +248,10 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 			nodeSecret = raw
 		}
 	}
+	if authResult.LinkSecret != "" && authResult.LinkDiscoveryProof != "" {
+		linkSecret, linkDiscoveryProof = authResult.LinkSecret, authResult.LinkDiscoveryProof
+		_ = saveLinkCreds(nodeSecretDir, authResult.LinkSecret, authResult.LinkDiscoveryProof)
+	}
 
 	// Register connection
 	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler}
