@@ -39,7 +39,13 @@ func StartMigrationServer(ctx context.Context, rdb *redis.Client, clusterSecret,
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		claims, err := migration.VerifyToken(clusterSecret, token)
+		// Mirror Core's keying: verify with the per-node secret on the hardened
+		// path, else with CLUSTER_SECRET (read nodeSecret fresh per request).
+		verifyKey := clusterSecret
+		if redisACLEnabled && nodeSecret != nil {
+			verifyKey = string(nodeSecret)
+		}
+		claims, err := migration.VerifyToken(verifyKey, token)
 		if err != nil {
 			// Don't echo the underlying reason (expired vs forged) to callers.
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

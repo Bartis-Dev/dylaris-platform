@@ -35,12 +35,13 @@ type Claims struct {
 	ExpiresAt    int64  `json:"expires_at"` // unix seconds
 }
 
-// deriveKey produces the 32-byte HMAC key from the cluster secret + purpose.
-// Same construction as core/pkg/crypto.DeriveKey (sha256 of secret|sep|purpose),
-// duplicated here to keep the shared module dependency-free of core.
-func deriveKey(clusterSecret string) []byte {
+// deriveKey produces the 32-byte HMAC key from the caller-supplied secret +
+// purpose. Same construction as core/pkg/crypto.DeriveKey (sha256 of
+// secret|sep|purpose), duplicated here to keep the shared module
+// dependency-free of core.
+func deriveKey(secret string) []byte {
 	h := sha256.New()
-	h.Write([]byte(clusterSecret))
+	h.Write([]byte(secret))
 	h.Write([]byte{0x1f}) // separator byte
 	h.Write([]byte(tokenPurpose))
 	return h.Sum(nil)
@@ -48,8 +49,8 @@ func deriveKey(clusterSecret string) []byte {
 
 // MintToken produces a one-time pull token: base64url(JSON claims) + "." +
 // base64url(HMAC-SHA256(key, payload)). TTL sets the ExpiresAt claim.
-func MintToken(clusterSecret, serverUUID, sourceNodeID string, ttl time.Duration) (string, error) {
-	if clusterSecret == "" {
+func MintToken(secret, serverUUID, sourceNodeID string, ttl time.Duration) (string, error) {
+	if secret == "" {
 		return "", errors.New("migration: empty cluster secret")
 	}
 	c := Claims{
@@ -62,15 +63,15 @@ func MintToken(clusterSecret, serverUUID, sourceNodeID string, ttl time.Duration
 		return "", err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(raw)
-	sig := sign(deriveKey(clusterSecret), payload)
+	sig := sign(deriveKey(secret), payload)
 	return payload + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
 // VerifyToken checks the HMAC in constant time, then enforces expiry. A bad
 // signature returns ErrTokenInvalid; an authentic-but-stale token returns
 // ErrTokenExpired.
-func VerifyToken(clusterSecret, token string) (Claims, error) {
-	if clusterSecret == "" {
+func VerifyToken(secret, token string) (Claims, error) {
+	if secret == "" {
 		return Claims{}, errors.New("migration: empty cluster secret")
 	}
 	dot := -1
@@ -90,7 +91,7 @@ func VerifyToken(clusterSecret, token string) (Claims, error) {
 	if err != nil {
 		return Claims{}, ErrTokenInvalid
 	}
-	wantSig := sign(deriveKey(clusterSecret), payload)
+	wantSig := sign(deriveKey(secret), payload)
 	if !hmac.Equal(gotSig, wantSig) {
 		return Claims{}, ErrTokenInvalid
 	}

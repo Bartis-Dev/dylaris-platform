@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
+	"dylaris-core/services/redisacl"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
@@ -40,10 +41,16 @@ type MigrationOrchestrator struct {
 	// cpuPinning re-resolves a server's CPU pinning for the TARGET node at
 	// cutover (auto recomputed, manual reset when the hardware differs). nil-safe.
 	cpuPinning *CPUPinningService
+	// flags gates the per-node-secret migration keying (feature_redis_acl). nil =
+	// OFF = key the pull token with CLUSTER_SECRET (byte-identical to before).
+	flags *FeatureFlags
 }
 
 // SetCPUPinning wires the CPU-pinning service. Call once at boot (optional).
 func (o *MigrationOrchestrator) SetCPUPinning(c *CPUPinningService) { o.cpuPinning = c }
+
+// SetFeatureFlags wires the feature-flag reader for the migration token keying.
+func (o *MigrationOrchestrator) SetFeatureFlags(f *FeatureFlags) { o.flags = f }
 
 // migrationStreamKey is the durable Redis Stream the manual endpoint (and the
 // rebalance worker) publish requests onto; the elected leader consumes them via
@@ -315,7 +322,20 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "meta read failed")
 		return
 	}
-	token, err := migration.MintToken(o.clusterSecret, srv.UUID, strconv.Itoa(sourceNode.ID), migrationTokenTTL)
+	// On the hardened path, key the pull token with the SOURCE node's per-node
+	// secret so a stolen token is scoped to that one node, not the whole cluster.
+	// OFF path keys with CLUSTER_SECRET (byte-identical to before).
+	migKey := o.clusterSecret
+	if o.flags != nil && o.flags.IsRedisACLEnabled(ctx) {
+		secret, ok, serr := redisacl.LoadNodeSecret(o.store, o.clusterSecret, sourceNode.ID)
+		if serr != nil || !ok {
+			log.Printf("migration %s: source node secret unavailable: %v", srv.UUID, serr)
+			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "source node secret unavailable")
+			return
+		}
+		migKey = string(secret)
+	}
+	token, err := migration.MintToken(migKey, srv.UUID, strconv.Itoa(sourceNode.ID), migrationTokenTTL)
 	if err != nil {
 		log.Printf("migration %s: mint token failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "token mint failed")
