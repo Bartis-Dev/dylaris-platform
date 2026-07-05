@@ -13,7 +13,7 @@ import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound,
+    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound, Copy,
 } from 'lucide-react';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node + link deploy
@@ -129,6 +129,17 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
         }
     };
 
+    // Extracted so the copy buttons below can send the exact same string that
+    // is rendered in the <pre> blocks, with no duplication.
+    const nodeEnv = revealed ? `REDIS_ACL_ENABLED=true
+GRPC_TLS_ENABLED=true
+GRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}
+NODE_ENROLL_TOKEN=<your enroll token>
+CORE_GRPC_ADDR=<core-host:25520>` : '';
+    const linkEnv = revealed ? `NODE_ID=${revealed.nodeId}
+LINK_SECRET=${revealed.linkSecret}
+LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
+
     return (
         <div className="space-y-6">
             <div className="card border-(--accent-border) p-6">
@@ -182,17 +193,17 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
                         <div className="modal-body space-y-3">
                             <div className="space-y-1">
                                 <label className="mono-label">Node deploy ENV (secret-free)</label>
-                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{`REDIS_ACL_ENABLED=true
-GRPC_TLS_ENABLED=true
-GRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}
-NODE_ENROLL_TOKEN=<your enroll token>
-CORE_GRPC_ADDR=<core-host:25520>`}</pre>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{nodeEnv}</pre>
+                                <button onClick={() => { navigator.clipboard.writeText(nodeEnv); showToast('Node deploy ENV copied.', true); }} className="btn btn-secondary btn-sm">
+                                    <Copy size={12} /> Copy node ENV
+                                </button>
                             </div>
                             <div className="space-y-1">
                                 <label className="mono-label">Link deploy ENV</label>
-                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{`NODE_ID=${revealed.nodeId}
-LINK_SECRET=${revealed.linkSecret}
-LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}`}</pre>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{linkEnv}</pre>
+                                <button onClick={() => { navigator.clipboard.writeText(linkEnv); showToast('Link deploy ENV copied.', true); }} className="btn btn-secondary btn-sm">
+                                    <Copy size={12} /> Copy link ENV
+                                </button>
                             </div>
                         </div>
                         <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary">Done</button></div>
