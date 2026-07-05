@@ -71,6 +71,13 @@ var (
 	// Relative fair-share, not a hard cap; effective only with a blkio-weight
 	// scheduler (BFQ/CFQ).
 	ioWeight uint16
+
+	// linkImage is the image the node-managed Link sidecar runs (LINK_IMAGE).
+	linkImage string
+	// nodeManagesLink: when true, the node spawns + manages its own Link sidecar
+	// instead of relying on an operator-deployed one. Defaults to nodeExternal;
+	// NODE_MANAGES_LINK overrides.
+	nodeManagesLink bool
 )
 
 // nodeExternal is set at startup: an external/home node forces gateway+beam
@@ -315,6 +322,9 @@ func main() {
 	// archivePathFor serves only a staged archive produced by migrate_out.
 	go StartMigrationServer(ctx, rdb, clusterSecret, nodeID, migrationArchivePathFor(storageMgr))
 
+	// Node-managed Link sidecar (no-op unless NODE_MANAGES_LINK).
+	go startLinkReconciler(ctx, dockerMgr)
+
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
@@ -457,6 +467,16 @@ func parseConfig() {
 		if coreGRPCAddr == "" {
 			log.Println("WARNING: REDIS_ACL_ENABLED but CORE_GRPC_ADDR is empty — the node can still run on a cached secret, but first-boot bootstrap and ACL re-confirm need a reachable Core gRPC endpoint.")
 		}
+	}
+
+	linkImage = os.Getenv("LINK_IMAGE")
+	if v := os.Getenv("NODE_MANAGES_LINK"); v != "" {
+		nodeManagesLink = v == "true"
+	} else {
+		nodeManagesLink = nodeExternal
+	}
+	if nodeManagesLink && linkImage == "" {
+		log.Println("NODE_MANAGES_LINK is on but LINK_IMAGE is empty — the node will not spawn a Link sidecar.")
 	}
 
 	grpcTLSEnabled = os.Getenv("GRPC_TLS_ENABLED") == "true"

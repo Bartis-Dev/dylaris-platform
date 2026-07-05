@@ -196,6 +196,66 @@ func buildRedisEnv(uuid, subServer string) []string {
 	return env
 }
 
+const linkContainerName = "dylaris_link"
+
+// buildLinkEnv builds the env for a node-managed Link sidecar. Link authenticates
+// to Redis with its own per-node ACL user (derived from nodeSecret, provisioned by
+// Core), and presents the Core-delivered tunnel token + discovery proof. Redis addr
+// uses the SIDECAR (mc) address for the same non-Swarm-DNS reason as MC containers.
+func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof string) []string {
+	user, pass := mcRedisUser, mcRedisPass
+	if redisACLEnabled && nodeSecret != nil {
+		user = aclLinkUsername(nodeID)
+		pass = aclLinkPassword(nodeSecret, nodeID)
+	}
+	return []string{
+		fmt.Sprintf("NODE_ID=%s", nodeID),
+		fmt.Sprintf("LINK_SECRET=%s", linkSecret),
+		fmt.Sprintf("LINK_DISCOVERY_PROOF=%s", linkDiscoveryProof),
+		fmt.Sprintf("REDIS_ADDR=%s", mcRedisAddr),
+		fmt.Sprintf("REDIS_USER=%s", user),
+		fmt.Sprintf("REDIS_PASS=%s", pass),
+		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
+	}
+}
+
+// EnsureLinkContainer (re)creates the node-managed Link sidecar on dylaris_net.
+// Idempotent recreate: always force-removes any stale same-name container first.
+func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof string) error {
+	dm.pullImage(image)
+	netID, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		return err
+	}
+	cc := &container.Config{
+		Image:    image,
+		Hostname: linkContainerName,
+		Env:      buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof),
+	}
+	hc := &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: "no"}}
+	nc := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"dylaris_net": {NetworkID: netID},
+		},
+	}
+	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
+	resp, err := dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, linkContainerName)
+	if err != nil {
+		return fmt.Errorf("link container create error: %v", err)
+	}
+	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("link container start error: %v", err)
+	}
+	return nil
+}
+
+// StopLinkContainer stops + removes the node-managed Link sidecar (best-effort).
+func (dm *DockerManager) StopLinkContainer() {
+	timeout := 15
+	dm.cli.ContainerStop(dm.ctx, linkContainerName, container.StopOptions{Timeout: &timeout})
+	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
+}
+
 func (dm *DockerManager) ensureGlobalNetwork() (string, error) {
 	netName := "dylaris_net"
 	nets, err := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
