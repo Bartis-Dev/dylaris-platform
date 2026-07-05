@@ -97,8 +97,10 @@ message AuthResult {
   // BYON Redis-ACL bootstrap response (only set when feature_redis_acl is on):
   bool   acl_enabled = 4;   // informational: Core provisioned this node's ACL (node still gates on its own REDIS_ACL_ENABLED)
   string node_secret = 5;   // hex per-node secret (returned once on first issue / enroll)
-  // field 6 reserved (was redis_addr; removed as unused — node keeps its env REDIS_ADDR)
-  reserved 6;
+  // Core-minted, unguessable node identity. Set ONLY on the enroll (first-issuance)
+  // response; the node persists it and uses it as its token on every later connect.
+  // Empty on reconnect and on the OFF path. (field 6 was the removed redis_addr.)
+  string assigned_id = 6;
 }
 
 // Reconnect challenge: Core issues a fresh single-use nonce; the node returns

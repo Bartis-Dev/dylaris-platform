@@ -649,8 +649,12 @@ type AuthResult struct {
 	CoreId  string                 `protobuf:"bytes,2,opt,name=core_id,json=coreId,proto3" json:"core_id,omitempty"`
 	Message string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
 	// BYON Redis-ACL bootstrap response (only set when feature_redis_acl is on):
-	AclEnabled    bool   `protobuf:"varint,4,opt,name=acl_enabled,json=aclEnabled,proto3" json:"acl_enabled,omitempty"` // informational: Core provisioned this node's ACL (node still gates on its own REDIS_ACL_ENABLED)
-	NodeSecret    string `protobuf:"bytes,5,opt,name=node_secret,json=nodeSecret,proto3" json:"node_secret,omitempty"`  // hex per-node secret (returned once on first issue / enroll)
+	AclEnabled bool   `protobuf:"varint,4,opt,name=acl_enabled,json=aclEnabled,proto3" json:"acl_enabled,omitempty"` // informational: Core provisioned this node's ACL (node still gates on its own REDIS_ACL_ENABLED)
+	NodeSecret string `protobuf:"bytes,5,opt,name=node_secret,json=nodeSecret,proto3" json:"node_secret,omitempty"`  // hex per-node secret (returned once on first issue / enroll)
+	// Core-minted, unguessable node identity. Set ONLY on the enroll (first-issuance)
+	// response; the node persists it and uses it as its token on every later connect.
+	// Empty on reconnect and on the OFF path. (field 6 was the removed redis_addr.)
+	AssignedId    string `protobuf:"bytes,6,opt,name=assigned_id,json=assignedId,proto3" json:"assigned_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -716,6 +720,13 @@ func (x *AuthResult) GetAclEnabled() bool {
 func (x *AuthResult) GetNodeSecret() string {
 	if x != nil {
 		return x.NodeSecret
+	}
+	return ""
+}
+
+func (x *AuthResult) GetAssignedId() string {
+	if x != nil {
+		return x.AssignedId
 	}
 	return ""
 }
@@ -2323,7 +2334,7 @@ const file_node_node_proto_rawDesc = "" +
 	"\fenroll_token\x18\x03 \x01(\tR\venrollToken\x12!\n" +
 	"\fsecret_proof\x18\x04 \x01(\tR\vsecretProof\x12#\n" +
 	"\racl_supported\x18\x05 \x01(\bR\faclSupported\x12#\n" +
-	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\"\x97\x01\n" +
+	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\"\xb2\x01\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +
@@ -2332,7 +2343,9 @@ const file_node_node_proto_rawDesc = "" +
 	"\vacl_enabled\x18\x04 \x01(\bR\n" +
 	"aclEnabled\x12\x1f\n" +
 	"\vnode_secret\x18\x05 \x01(\tR\n" +
-	"nodeSecretJ\x04\b\x06\x10\a\"%\n" +
+	"nodeSecret\x12\x1f\n" +
+	"\vassigned_id\x18\x06 \x01(\tR\n" +
+	"assignedId\"%\n" +
 	"\rNodeChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"3\n" +
 	"\x15NodeChallengeResponse\x12\x1a\n" +
