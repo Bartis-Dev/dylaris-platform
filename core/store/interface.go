@@ -45,6 +45,7 @@ type Store interface {
 	SetNodeOwner(id int, ownerID *string) error
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
+	SetNodeDisplayName(id int, name string) error
 	// --- BYON node enrollment ---
 	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error
 	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)

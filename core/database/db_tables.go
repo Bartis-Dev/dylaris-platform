@@ -200,6 +200,7 @@ func migrateSchema(db *sql.DB) error {
 		// so the mrpack render can emit a clean files[] reference; empty => the
 		// content is embedded under overrides/ instead.
 		{"modversions", "modrinth_download_url", "TEXT NOT NULL DEFAULT ''"},
+		{"nodes", "display_name", "TEXT"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)
@@ -208,6 +209,11 @@ func migrateSchema(db *sql.DB) error {
 
 	// Unique constraints (idempotent)
 	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_unique ON nodes (name)`)
+
+	// token is the load-bearing node identity (server-assigned uuid on the
+	// hardened path). Enforce uniqueness now that it is authoritative. Existing
+	// rows have token=hostname, already kept distinct by idx_nodes_name_unique.
+	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_token_unique ON nodes (token)`)
 
 	// Backfill: existing admins (is_admin=TRUE) get role='admin'
 	// so the new role column matches their legacy capability. Idempotent —

@@ -266,8 +266,11 @@ type Node struct {
 	Address string `json:"address"`
 	Status  string `json:"status"`
 	Tags    string `json:"tags"`
-	Region  string `json:"region"`
-	IsLocal bool   `json:"isLocal"`
+	// DisplayName is an optional, non-unique human label. Defaults to the node's
+	// reported hostname at enroll; editable in the Panel. Empty = fall back to Name.
+	DisplayName string `json:"displayName,omitempty"`
+	Region      string `json:"region"`
+	IsLocal     bool   `json:"isLocal"`
 	// OwnerID is the BYON tenant who owns this node. nil = platform node
 	// (operator-owned). Only meaningful when feature_byon_enabled is on.
 	OwnerID    *string  `json:"ownerId,omitempty"`

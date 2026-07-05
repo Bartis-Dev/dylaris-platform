@@ -333,7 +333,8 @@ const nodeSelectCols = `id, name, address, token, status, is_local, COALESCE(tag
 	link_enabled, link_instances, COALESCE(link_secret, ''), COALESCE(cpuset_cpus, ''), created_at,
 	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at,
 	COALESCE(cpu_overcommit_ratio, 1.0), COALESCE(ram_overcommit_ratio, 1.0),
-	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, ''), COALESCE(configured, false), owner_id`
+	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, ''), COALESCE(configured, false), owner_id,
+	COALESCE(display_name, '')`
 
 func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var n models.Node
@@ -341,7 +342,8 @@ func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var ownerID sql.NullString
 	err := scan(&n.ID, &n.Name, &n.Address, &n.Token, &n.Status, &n.IsLocal, &n.Tags,
 		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt,
-		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region, &n.Configured, &ownerID)
+		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region, &n.Configured, &ownerID,
+		&n.DisplayName)
 	if err != nil {
 		return nil, err
 	}
@@ -559,6 +561,13 @@ func (s *PostgresStore) SetNodeRegion(id int, region string) error {
 // node when ownerID is nil). Only used in BYON mode.
 func (s *PostgresStore) SetNodeOwner(id int, ownerID *string) error {
 	_, err := s.db.Exec(`UPDATE nodes SET owner_id = $1 WHERE id = $2`, ownerID, id)
+	return err
+}
+
+// SetNodeDisplayName sets the optional human label shown in the Panel. Does not
+// touch the identity (token) or the unique name.
+func (s *PostgresStore) SetNodeDisplayName(id int, name string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET display_name = $1 WHERE id = $2`, name, id)
 	return err
 }
 
