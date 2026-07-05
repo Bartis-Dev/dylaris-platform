@@ -28,7 +28,7 @@ func globalReadKeys() []string {
 // reads + pub/sub channels + command categories.
 func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
-	rules = append(rules, "~dylaris:node:"+token+":*", "~dylaris:discovery:"+token)
+	rules = append(rules, "~dylaris:node:"+token+":*", "~dylaris:discovery:"+token, "~beam:node-endpoint:"+token)
 	for _, u := range serverUUIDs {
 		rules = append(rules, "~dylaris:server:"+u+":*")
 	}
@@ -54,6 +54,28 @@ func BuildShipperACLRules(password string, serverUUIDs []string) []interface{} {
 		rules = append(rules, "~dylaris:server:"+u+":*")
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}
+	for _, c := range commandCats {
+		rules = append(rules, c)
+	}
+	return rules
+}
+
+// BuildLinkACLRules returns the ACL rules for a node's Link sidecar user: its own
+// registration keys (by tunnel token), its discovery + beam-node + beam-endpoint
+// keys (by node token), and read-only edge/relay registries. No node-scoped or
+// server keys. tunnelToken = DeriveLinkToken(nodeToken, clusterSecret) (the Link's
+// AgentSecret, the exact value it writes link:<tunnelToken> under).
+func BuildLinkACLRules(password, nodeToken, tunnelToken string) []interface{} {
+	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
+	rules = append(rules,
+		"~link:"+tunnelToken,
+		"~online_link:"+tunnelToken,
+		"~hub:link:discovery:"+nodeToken,
+		"~beam:node:"+nodeToken,
+		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
+		"%R~sys:beams", "%R~beam:registry:*",
+		"%R~beam:node-endpoint:"+nodeToken,
+	)
 	for _, c := range commandCats {
 		rules = append(rules, c)
 	}

@@ -54,7 +54,8 @@ func (h *Handshake) ensure(ctx context.Context, nodeID int, token string) (strin
 	if err != nil {
 		return "", err
 	}
-	if err := h.prov.EnsureNodeACL(ctx, token, secret, uuids); err != nil {
+	tunnelToken := LinkTunnelToken(token, h.clusterSecret)
+	if err := h.prov.EnsureNodeACL(ctx, token, tunnelToken, secret, uuids); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(secret), nil

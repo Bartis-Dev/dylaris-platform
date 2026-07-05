@@ -29,6 +29,25 @@ func ShipperPassword(secret []byte, token string) string {
 	return derive(secret, "dylaris-redis-acl:v1:shipper:"+token)
 }
 
+// LinkUsername is the ACL username for a node's Link sidecar.
+func LinkUsername(token string) string { return "node-" + token + "-link" }
+
+// LinkPassword derives the Link sidecar's Redis password from the per-node secret.
+func LinkPassword(secret []byte, token string) string {
+	return derive(secret, "dylaris-redis-acl:v1:link:"+token)
+}
+
+// LinkTunnelToken derives the Link tunnel token (AgentSecret) = SHA256(nodeToken +
+// clusterSecret). Used ONLY to scope the Link ACL user's own registration keys.
+// MUST stay byte-identical to services.DeriveLinkToken and the gateway Link/Hub
+// deriveLinkToken - a drift silently breaks Link's edge auth. Duplicated here (not
+// imported) because services already imports redisacl (a back-import would cycle).
+func LinkTunnelToken(nodeToken, clusterSecret string) string {
+	h := sha256.New()
+	h.Write([]byte(nodeToken + clusterSecret))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // Proof is the HMAC the node presents to prove it holds the per-node secret.
 func Proof(secret []byte, token string) string {
 	return derive(secret, "dylaris-redis-acl:v1:proof:"+token)
