@@ -356,8 +356,11 @@ func parseConfig() {
 	}
 	nodeRegion = os.Getenv("NODE_REGION")
 
-	if clusterSecret == "" {
-		log.Fatal("FATAL: CLUSTER_SECRET is missing!")
+	// CLUSTER_SECRET is required UNLESS the hardened path is on: a BYON/secret-free
+	// node boots on its enroll token + cached per-node secret and never holds it.
+	redisACLEnabled = os.Getenv("REDIS_ACL_ENABLED") == "true"
+	if clusterSecret == "" && !redisACLEnabled {
+		log.Fatal("FATAL: CLUSTER_SECRET is missing (required unless REDIS_ACL_ENABLED=true)!")
 	}
 	if nodeID == "" {
 		hostname, err := os.Hostname()
@@ -438,7 +441,6 @@ func parseConfig() {
 
 	// Redis ACL bootstrap config. nodeEnrollToken is read here (mirrors the
 	// heartbeat's NODE_ENROLL_TOKEN) so the gRPC bootstrap can reuse it.
-	redisACLEnabled = os.Getenv("REDIS_ACL_ENABLED") == "true"
 	coreGRPCAddr = os.Getenv("CORE_GRPC_ADDR")
 	nodeEnrollToken = os.Getenv("NODE_ENROLL_TOKEN")
 	// Cache the per-node secret on the first persisted storage path so it
