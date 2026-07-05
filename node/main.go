@@ -84,6 +84,12 @@ var nodeExternal bool
 // plane only - running MC servers are unaffected).
 var grpcTLSEnabled bool
 
+// grpcTLSFingerprint pins the Core control-channel cert for a node that does NOT
+// hold CLUSTER_SECRET (BYON). Delivered out-of-band at enroll (the fingerprint is
+// public pinning material, not a secret). Platform nodes leave it empty and derive
+// the fingerprint from CLUSTER_SECRET instead.
+var grpcTLSFingerprint string
+
 // Redis ACL bootstrap config (BYON Redis ACL hardening). All inert when
 // redisACLEnabled is false — the OFF path is byte-identical to before.
 var (
@@ -452,6 +458,7 @@ func parseConfig() {
 	}
 
 	grpcTLSEnabled = os.Getenv("GRPC_TLS_ENABLED") == "true"
+	grpcTLSFingerprint = os.Getenv("GRPC_TLS_FINGERPRINT")
 	if grpcTLSEnabled {
 		log.Println("gRPC TLS ENABLED - node pins the Core control-channel cert fingerprint (must match Core GRPC_TLS_ENABLED).")
 	}

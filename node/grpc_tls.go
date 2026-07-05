@@ -24,11 +24,21 @@ func coreDialCreds() grpc.DialOption {
 	if !grpcTLSEnabled {
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
-	pinnedFP, err := beamauth.ClusterGRPCCertFingerprint(clusterSecret)
-	if err != nil {
-		// CLUSTER_SECRET is fatal-checked at boot, so this cannot happen in
-		// practice; fail closed rather than downgrade to plaintext.
-		log.Fatalf("FATAL: cannot derive core gRPC cert fingerprint: %v", err)
+	// Platform node (CLUSTER_SECRET present): derive the pin, exactly as P0b-2.
+	// BYON node (no CLUSTER_SECRET): pin the fingerprint delivered out-of-band via
+	// GRPC_TLS_FINGERPRINT. Fail closed if neither source is available.
+	var pinnedFP string
+	switch {
+	case clusterSecret != "":
+		fp, err := beamauth.ClusterGRPCCertFingerprint(clusterSecret)
+		if err != nil {
+			log.Fatalf("FATAL: cannot derive core gRPC cert fingerprint: %v", err)
+		}
+		pinnedFP = fp
+	case grpcTLSFingerprint != "":
+		pinnedFP = grpcTLSFingerprint
+	default:
+		log.Fatalf("FATAL: GRPC_TLS_ENABLED but no fingerprint source (set CLUSTER_SECRET or GRPC_TLS_FINGERPRINT)")
 	}
 	cfg := &tls.Config{
 		InsecureSkipVerify: true, // we pin instead of CA/hostname chain-verify
