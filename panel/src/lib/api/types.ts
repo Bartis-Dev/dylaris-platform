@@ -76,6 +76,9 @@ export interface Node {
     // the node has no region yet (booted with only a CLUSTER_SECRET).
     configured?: boolean;
     needsConfiguration?: boolean;
+    // Optional, non-unique human label. Defaults to the node's hostname on
+    // enroll; editable via configureNode independently of the unique `name`.
+    displayName?: string;
 }
 
 export interface TabPermissions {
@@ -258,6 +261,8 @@ export interface CpuCore { id: number; type: 'P' | 'E' | 'standard'; sibling: nu
 export interface NodeCpuTopology { logicalCount: number; physicalCount: number; hybrid: boolean; cores: CpuCore[]; scannedAt: number; }
 // Returns { success, topology: NodeCpuTopology | null, load: { [coreId]: number } }.
 export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
+// Returns { success, storage: StorageInfo[] } (path/total_bytes/free_bytes/used_bytes/server_count).
+export const getNodeStorage = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/storage`);
 
 export const getNodes = () => fetchAPI('/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
@@ -265,7 +270,7 @@ export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
 export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { method: 'DELETE' });
 // Adopt an auto-discovered node: persist name/region/tags to the DB. After this
 // the heartbeat env no longer overwrites them.
-export const configureNode = (id: number, data: { name?: string; region: string; tags?: string }) =>
+export const configureNode = (id: number, data: { name?: string; region: string; tags?: string; displayName?: string }) =>
     fetchAPI(`/nodes/${id}/config`, { method: 'PATCH', body: JSON.stringify(data) });
 // Set the node's container CPU pool (which host cores its containers may use).
 // "" clears the restriction (all cores allowed).

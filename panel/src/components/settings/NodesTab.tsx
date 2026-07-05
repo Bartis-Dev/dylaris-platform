@@ -5,7 +5,7 @@ import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement, configureNode, Region,
-    getNodeCpu, updateNodeCpuset, type NodeCpuTopology,
+    getNodeCpu, getNodeStorage, updateNodeCpuset, type NodeCpuTopology,
 } from '@/lib/api';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
@@ -177,6 +177,9 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
     // The node's allowed container core pool ("" = all cores). Drives the pool
     // editor below; refetched whenever the node prop changes (the tab polls).
     const [nodeCpuset, setNodeCpuset] = useState('');
+    // Best-effort per-path storage summary for the Storage stat. Non-fatal:
+    // falls back to '—' when the node hasn't reported (offline / no heartbeat).
+    const [nodeStorage, setNodeStorage] = useState<{ total_bytes: number; free_bytes: number }[] | null>(null);
 
     useEffect(() => {
         setCpuRatio(node.cpuOvercommitRatio ?? 1.0);
@@ -190,6 +193,14 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                 setCpuTopology(res.topology ?? null);
                 setNodeCpuset(res.nodeCpuset ?? '');
             }
+        }).catch(() => { /* non-fatal */ });
+        return () => { cancelled = true; };
+    }, [node.id]);
+
+    useEffect(() => {
+        let cancelled = false;
+        getNodeStorage(node.id).then(res => {
+            if (!cancelled && res?.success) setNodeStorage(res.storage ?? []);
         }).catch(() => { /* non-fatal */ });
         return () => { cancelled = true; };
     }, [node.id]);
@@ -225,7 +236,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     </div>
                     <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 min-w-0">
                         <div className="font-medium text-sm text-(--base-09) whitespace-nowrap truncate">
-                            {node.token || node.name}
+                            {node.displayName || node.name || (node.token ? node.token.slice(0, 8) : '')}
                         </div>
                         <div className="h-4 w-px bg-(--base-04) hidden md:block"></div>
                         <div className="text-xs font-mono text-(--base-06) flex items-center bg-(--base-01) px-2 py-1 rounded-sm border border-(--base-04) w-fit whitespace-nowrap">
@@ -311,7 +322,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
             )}
 
             {/* Placement summary / editor */}
-            <div className="mt-3 pt-3 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+            <div className="mt-3 pt-3 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
                 <Stat label="Total CPU" value={node.totalCpu ? `${node.totalCpu.toFixed(1)} cores` : '—'} />
                 <Stat
                     label="CPU cores"
@@ -325,6 +336,12 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     ) : '—'}
                 />
                 <Stat label="Total RAM" value={node.totalRamMb ? `${(node.totalRamMb / 1024).toFixed(1)} GB` : '—'} />
+                <Stat
+                    label="Storage"
+                    value={nodeStorage && nodeStorage.length > 0
+                        ? `${(nodeStorage.reduce((a, s) => a + s.free_bytes, 0) / 1e9).toFixed(0)} / ${(nodeStorage.reduce((a, s) => a + s.total_bytes, 0) / 1e9).toFixed(0)} GB free`
+                        : '—'}
+                />
                 <Stat
                     label="CPU Overcommit"
                     value={isEditing ? (
@@ -510,9 +527,9 @@ function NodeCpuPoolEditor({
 }
 
 // NodeConfigForm lets an admin adopt an auto-discovered node by setting its
-// display name, region and tags. Saving persists to the DB (PATCH
-// /nodes/{id}/config); from then on the node's heartbeat env no longer
-// overwrites these fields.
+// name, region and tags, plus an optional human display name. Saving persists
+// to the DB (PATCH /nodes/{id}/config); from then on the node's heartbeat env
+// no longer overwrites name/region/tags.
 function NodeConfigForm({
     node, regions, onSaved, onCancel, onError,
 }: {
@@ -523,6 +540,7 @@ function NodeConfigForm({
     onError: (msg: string) => void;
 }) {
     const [name, setName] = useState(node.name || node.token || '');
+    const [displayName, setDisplayName] = useState(node.displayName || '');
     const [region, setRegion] = useState(node.region || '');
     const [tags, setTags] = useState(node.tags && node.tags !== 'auto-discovered' ? node.tags : '');
     const [saving, setSaving] = useState(false);
@@ -530,7 +548,7 @@ function NodeConfigForm({
     const handleSave = async () => {
         if (!region) { onError('Please select a region'); return; }
         setSaving(true);
-        const res = await configureNode(node.id, { name: name.trim(), region, tags: tags.trim() });
+        const res = await configureNode(node.id, { name: name.trim(), region, tags: tags.trim(), displayName: displayName.trim() });
         setSaving(false);
         if (res.success) onSaved();
         else onError(res.message || res.error || 'Save failed');
@@ -538,14 +556,23 @@ function NodeConfigForm({
 
     return (
         <div className="mt-3 pt-3 border-t border-(--base-03) space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Display Name</label>
+                    <label className="input-label">Node Name</label>
                     <input
                         value={name}
                         onChange={e => setName(e.target.value)}
                         className="input-field text-sm"
                         placeholder={node.token}
+                    />
+                </div>
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Display Name</label>
+                    <input
+                        value={displayName}
+                        onChange={e => setDisplayName(e.target.value)}
+                        className="input-field text-sm"
+                        placeholder={node.name || node.token}
                     />
                 </div>
                 <div className="flex flex-col gap-[5px]">
@@ -572,7 +599,7 @@ function NodeConfigForm({
                 </div>
             </div>
             <p className="text-xs text-(--base-06)">
-                Saving adopts this node: its name, region and tags are managed here from now on and the node&apos;s env values no longer overwrite them. Keep the <code className="font-mono bg-(--base-03) px-1 py-0.5 rounded text-(--base-08)">external</code> tag if this is a home/Warp node.
+                Saving adopts this node: its name, region and tags are managed here from now on and the node&apos;s env values no longer overwrite them. Display name is a purely cosmetic label shown on the card. Keep the <code className="font-mono bg-(--base-03) px-1 py-0.5 rounded text-(--base-08)">external</code> tag if this is a home/Warp node.
             </p>
             <div className="flex items-center gap-2 justify-end">
                 <button onClick={onCancel} className="btn btn-secondary btn-sm">

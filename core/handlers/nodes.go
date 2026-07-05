@@ -184,9 +184,10 @@ func (h *NodeHandler) ConfigureNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name   string `json:"name"`   // optional; keeps current name when empty
-		Region string `json:"region"` // required — clears the needs-configuration state
-		Tags   string `json:"tags"`   // optional, comma-separated
+		Name        string  `json:"name"`   // optional; keeps current name when empty
+		Region      string  `json:"region"` // required — clears the needs-configuration state
+		Tags        string  `json:"tags"`   // optional, comma-separated
+		DisplayName *string `json:"displayName"` // optional; nil = leave unchanged
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON body", 400)
@@ -222,6 +223,14 @@ func (h *NodeHandler) ConfigureNode(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ConfigureNode: SetNodeConfig failed (id=%d): %v", id, err)
 		sendJSONError(w, "Failed to save node configuration (name may already be in use)", 500)
 		return
+	}
+
+	if req.DisplayName != nil {
+		if err := h.state.Store.SetNodeDisplayName(id, *req.DisplayName); err != nil {
+			log.Printf("ConfigureNode: SetNodeDisplayName failed (id=%d): %v", id, err)
+			sendJSONError(w, "Failed to save display name", 500)
+			return
+		}
 	}
 
 	updated, _ := h.state.Store.GetNodeByID(id)
