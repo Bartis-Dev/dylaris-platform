@@ -210,6 +210,16 @@ func (s *DiscoveryService) scanNodes() {
 		if err != nil {
 			// Node does not exist -> Create new!
 
+			// Server-assigned identity: on the hardened path, gRPC enroll (gated by
+			// a single-use enroll token) is the ONLY node-creation path. A heartbeat
+			// for an id the Core never assigned must NOT auto-register a node, or the
+			// Core-minted identity would be trivially bypassable. Liveness updates for
+			// already-enrolled nodes (the else branch) are unaffected. nil flags =
+			// no gating = OFF path = create as before (byte-identical).
+			if s.flags != nil && s.flags.IsRedisACLEnabled(ctx) {
+				continue
+			}
+
 			// Reject duplicate node names
 			if existing, nameErr := s.store.GetNodeByName(hb.Name); nameErr == nil && existing.Token != hb.ID {
 				log.Printf("Rejected Node '%s': name already in use by node token '%s'", hb.Name, existing.Token)
