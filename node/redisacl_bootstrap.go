@@ -21,6 +21,12 @@ var nodeSecret []byte
 // bootstraps it from Core via a one-shot gRPC handshake. Loops until success or
 // ctx cancel; never fatal.
 func ensureNodeSecret(ctx context.Context) []byte {
+	// Adopt a previously assigned identity before any credential/key derivation.
+	// On a re-boot the node presents this id (not its hostname) so Core recognizes
+	// it and the ACL creds match the node-{assignedID} user Core provisioned.
+	if id, ok := loadNodeID(nodeSecretDir); ok {
+		nodeID = id
+	}
 	if s, ok := loadNodeSecret(nodeSecretDir); ok {
 		nodeSecret = s
 		log.Println("redisacl: using cached node secret")
@@ -98,6 +104,13 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 			msg = res.Message
 		}
 		return nil, fmt.Errorf("auth rejected: %s", msg)
+	}
+	if res.AssignedId != "" && res.AssignedId != nodeID {
+		nodeID = res.AssignedId
+		if werr := saveNodeID(nodeSecretDir, res.AssignedId); werr != nil {
+			log.Printf("redisacl: WARN failed to persist assigned node id: %v", werr)
+		}
+		log.Println("redisacl: adopted server-assigned node identity")
 	}
 	if res.NodeSecret != "" {
 		raw, derr := hex.DecodeString(res.NodeSecret)

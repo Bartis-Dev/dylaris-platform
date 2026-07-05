@@ -62,3 +62,22 @@ func loadNodeSecret(workdir string) ([]byte, bool) {
 func saveNodeSecret(workdir string, secret []byte) error {
 	return os.WriteFile(filepath.Join(workdir, ".node_secret"), []byte(hex.EncodeToString(secret)), 0600)
 }
+
+// loadNodeID reads the cached server-assigned node id from <workdir>/.node_id.
+// Returns ok=false when the file is missing or empty.
+func loadNodeID(workdir string) (string, bool) {
+	b, err := os.ReadFile(filepath.Join(workdir, ".node_id"))
+	if err != nil {
+		return "", false
+	}
+	id := strings.TrimSpace(string(b))
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
+// saveNodeID persists the server-assigned node id with 0600 perms.
+func saveNodeID(workdir, id string) error {
+	return os.WriteFile(filepath.Join(workdir, ".node_id"), []byte(id), 0600)
+}
