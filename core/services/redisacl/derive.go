@@ -12,6 +12,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 )
 
 // NodeUsername / ShipperUsername are the ACL usernames for a node.
@@ -48,6 +49,19 @@ func ChallengeResponse(secret []byte, nonce string) string {
 // the expected one for the given nonce.
 func VerifyChallenge(secret []byte, nonce, got string) bool {
 	return hmac.Equal([]byte(ChallengeResponse(secret, nonce)), []byte(got))
+}
+
+// HeartbeatSig is the HMAC a node stamps on its Redis discovery heartbeat to
+// prove it authored it, replacing the raw-CLUSTER_SECRET compare on the
+// hardened path. Keyed by the per-node secret; scoped by the node token + unix
+// timestamp so a captured heartbeat cannot be replayed past the freshness window.
+func HeartbeatSig(secret []byte, token string, ts int64) string {
+	return derive(secret, "dylaris-redis-acl:v1:heartbeat:"+token+":"+strconv.FormatInt(ts, 10))
+}
+
+// VerifyHeartbeatSig constant-time compares a presented heartbeat signature.
+func VerifyHeartbeatSig(secret []byte, token string, ts int64, got string) bool {
+	return hmac.Equal([]byte(HeartbeatSig(secret, token, ts)), []byte(got))
 }
 
 // ClusterProof is the HMAC a node presents to prove it holds CLUSTER_SECRET,

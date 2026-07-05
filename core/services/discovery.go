@@ -4,6 +4,7 @@ import (
 	"context"
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 	"encoding/json"
 	"fmt"
@@ -68,6 +69,10 @@ type NodeHeartbeat struct {
 	// NEW node presents a valid one, it is bound to that user (owner_id). Empty
 	// for platform nodes.
 	EnrollToken string `json:"enrollToken,omitempty"`
+	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
+	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
+	Timestamp int64  `json:"timestamp"`
+	Sig       string `json:"sig,omitempty"`
 }
 
 // HeartbeatStoragePath is one storage path reported by the node.
@@ -196,10 +201,16 @@ func (s *DiscoveryService) scanNodes() {
 			continue
 		}
 
-		// 2. Security Check
-		if hb.ClusterSecret != s.clusterSecret {
-			log.Printf("Unauthorized Node detected: %s (Wrong Secret)", hb.Name)
-			continue
+		// 2. Security Check. OFF path: raw-secret compare, byte-identical. ON path
+		// (feature_redis_acl): the raw secret is absent; the per-node signature is
+		// verified in the existing-node branch below (a new node is created only via
+		// gRPC enroll, never from a heartbeat).
+		featureOn := s.flags != nil && s.flags.IsRedisACLEnabled(ctx)
+		if !featureOn {
+			if hb.ClusterSecret != s.clusterSecret {
+				log.Printf("Unauthorized Node detected: %s (Wrong Secret)", hb.Name)
+				continue
+			}
 		}
 
 		// 3. Find or create Node in DB
@@ -271,6 +282,19 @@ func (s *DiscoveryService) scanNodes() {
 			// Gateway link auto-creation is handled by Hub's link discovery loop
 			// (hub:link:discovery:{nodeID} heartbeat from the Link binary)
 		} else {
+			if featureOn {
+				now := time.Now().Unix()
+				secret, ok, lerr := redisacl.LoadNodeSecret(s.store, s.clusterSecret, node.ID)
+				if lerr != nil || !ok || hb.Sig == "" ||
+					hb.Timestamp < now-30 || hb.Timestamp > now+30 ||
+					!redisacl.VerifyHeartbeatSig(secret, node.Token, hb.Timestamp, hb.Sig) {
+					log.Printf("Heartbeat rejected for %s: bad or stale signature", node.Name)
+					// Undo the active-mark from step above so a rejected heartbeat
+					// cannot keep a node online.
+					delete(activeNodeTokens, hb.ID)
+					continue
+				}
+			}
 			// Node exists -> Status Update + refresh last_seen_at
 			s.store.SetNodeLastSeen(node.ID)
 			if node.Status != "online" {

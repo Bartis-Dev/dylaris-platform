@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +30,12 @@ func aclProof(secret []byte, token string) string {
 // "dylaris-redis-acl:v1:challenge:"+nonce). Byte-identical to the Core side.
 func aclChallengeResponse(secret []byte, nonce string) string {
 	return aclDerive(secret, "dylaris-redis-acl:v1:challenge:"+nonce)
+}
+
+// aclHeartbeatSig mirrors core redisacl.HeartbeatSig: HMAC(perNodeSecret,
+// "dylaris-redis-acl:v1:heartbeat:"+token+":"+ts). Byte-identical to Core.
+func aclHeartbeatSig(secret []byte, token string, ts int64) string {
+	return aclDerive(secret, "dylaris-redis-acl:v1:heartbeat:"+token+":"+strconv.FormatInt(ts, 10))
 }
 
 // aclClusterProof mirrors core redisacl.ClusterProof: HMAC(CLUSTER_SECRET, token).

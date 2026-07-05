@@ -626,13 +626,22 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, reg
 		publicIP = getOutboundIP()
 	}
 
+	ts := time.Now().Unix()
 	data := map[string]interface{}{
 		"id": id, "name": id, "ip": publicIP,
-		"clusterSecret": secret, "tags": tags, "region": region, "timestamp": time.Now().Unix(),
+		"tags": tags, "region": region, "timestamp": ts,
 		"ips": map[string]interface{}{
 			"public":  publicIP,
 			"private": getPrivateIPs(),
 		},
+	}
+	// Auth: on the hardened path (feature_redis_acl) the node stamps a per-node
+	// HMAC signature instead of shipping the raw CLUSTER_SECRET over Redis every
+	// 5s. OFF path is byte-identical (raw secret in the payload).
+	if redisACLEnabled && nodeSecret != nil {
+		data["sig"] = aclHeartbeatSig(nodeSecret, id, ts)
+	} else {
+		data["clusterSecret"] = secret
 	}
 
 	// BYON: advertise the per-user enroll token so Core can bind this node to its
