@@ -232,7 +232,11 @@ func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDisc
 		Hostname: linkContainerName,
 		Env:      buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof),
 	}
-	hc := &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: "no"}}
+	// Unlike MC containers, the Link sidecar has no node-side liveness reconciler,
+	// so Docker's own restart policy is what keeps it alive across an internal crash.
+	// StopLinkContainer still does an explicit ContainerStop+ContainerRemove, which
+	// tears it down regardless of restart policy whenever the node wants it gone.
+	hc := &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: "unless-stopped"}}
 	nc := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			"dylaris_net": {NetworkID: netID},
