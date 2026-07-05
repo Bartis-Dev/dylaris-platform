@@ -36,6 +36,15 @@ type ACLHandshake interface {
 	HasSecret(ctx context.Context, nodeID int) (ok bool, err error)
 }
 
+// LinkCredSource supplies the per-node Link sidecar credentials (tunnel token +
+// discovery proof), derived by the gateway from the cluster secret. Delivered in
+// AuthResult so a secret-free node can spawn its Link sidecar without CLUSTER_SECRET.
+// Satisfied structurally by services.GatewayProvider.
+type LinkCredSource interface {
+	LinkToken(nodeID string) string
+	DiscoveryProof(nodeID string) string
+}
+
 // Node is a minimal representation used by the gRPC layer.
 // Matches the fields needed from models.Node.
 type Node struct {
@@ -63,15 +72,17 @@ type Server struct {
 	nodeLookup NodeLookup
 	coreID     string
 	acl        ACLHandshake
+	linkCreds  LinkCredSource
 }
 
 // NewServer creates a new gRPC server for Node connections.
-func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake) *Server {
+func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource) *Server {
 	return &Server{
 		registry:   registry,
 		nodeLookup: lookup,
 		coreID:     coreID,
 		acl:        acl,
+		linkCreds:  linkCreds,
 	}
 }
 
@@ -146,9 +157,12 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				return fmt.Errorf("acl: enroll failed for %s: %w", tokenPrefix(auth.NodeToken), eerr)
 			}
 			node = &Node{ID: id, Token: assignedID}
-			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
-				AuthResult: &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID},
-			}}); err != nil {
+			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID}
+			if s.linkCreds != nil {
+				ar.LinkSecret = s.linkCreds.LinkToken(assignedID)
+				ar.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(assignedID)
+			}
+			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: ar}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
 			}
 		} else {
@@ -207,6 +221,10 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// First-time issue for this known node (feature newly enabled, or
 				// the secret was reset). Deliver once; later connects must prove it.
 				res.NodeSecret = secretHex
+			}
+			if s.linkCreds != nil {
+				res.LinkSecret = s.linkCreds.LinkToken(node.Token)
+				res.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(node.Token)
 			}
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: res}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
@@ -280,7 +298,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // Blocks until the server is stopped. When tlsEnabled is set, it presents the
 // cluster-wide certificate derived from clusterSecret (CLUSTER_SECRET) so nodes
 // can pin its fingerprint; otherwise it serves plaintext (unchanged behavior).
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, tlsEnabled bool, clusterSecret string) error {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, tlsEnabled bool, clusterSecret string) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -309,7 +327,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 
 	grpcServer := grpc.NewServer(opts...)
 
-	srv := NewServer(registry, lookup, coreID, acl)
+	srv := NewServer(registry, lookup, coreID, acl, linkCreds)
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)

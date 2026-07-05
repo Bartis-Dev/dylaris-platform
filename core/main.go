@@ -429,7 +429,7 @@ func main() {
 	// server's keys are NOPERM for the node until its next reconnect. nil-safe.
 	appState.Queue.SetACL(aclHandshake)
 	go func() {
-		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, cfg.GRPCTLSEnabled, cfg.ClusterSecret); err != nil {
+		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, cfg.GRPCTLSEnabled, cfg.ClusterSecret); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()
