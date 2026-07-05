@@ -64,9 +64,10 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"token":   token,
-		"note":    "Shown once. Start your node with NODE_ENROLL_TOKEN set to this value.",
+		"success":            true,
+		"token":              token,
+		"grpcTlsFingerprint": h.state.GRPCTLSFingerprint,
+		"note":               "Shown once. Start your node with NODE_ENROLL_TOKEN set to this value. When GRPC_TLS_ENABLED, also set GRPC_TLS_FINGERPRINT.",
 	})
 }
 

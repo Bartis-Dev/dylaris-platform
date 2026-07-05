@@ -69,4 +69,9 @@ type AppState struct {
 	// authenticates store->core calls (link/verify, verify-user) and core->store
 	// calls (link-status). NOT a user proof.
 	StoreSharedKey string
+
+	// GRPCTLSFingerprint is the cluster-wide Core control-channel cert fingerprint
+	// (public pinning material). Surfaced to BYON operators so a secret-free node
+	// can pin it via GRPC_TLS_FINGERPRINT. Empty string if derivation failed.
+	GRPCTLSFingerprint string
 }

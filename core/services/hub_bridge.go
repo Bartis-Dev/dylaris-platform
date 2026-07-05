@@ -120,6 +120,10 @@ type GatewayProvider interface {
 	// (a warp key's node_id). Core holds the cluster secret; tenants receive only
 	// the derived token via their kit, never the secret itself.
 	LinkToken(nodeID string) string
+	// DiscoveryProof derives the Link discovery-heartbeat proof for a link
+	// identity, so a secret-free BYON Link can prove its identity without ever
+	// holding CLUSTER_SECRET.
+	DiscoveryProof(nodeID string) string
 }
 
 // --- RedisGateway (active in gateway / both routing modes) ---
@@ -259,6 +263,11 @@ func (g *RedisGateway) LinkToken(nodeID string) string {
 	return DeriveLinkToken(nodeID, g.clusterSecret)
 }
 
+// DiscoveryProof derives the Link discovery-heartbeat proof for a link identity.
+func (g *RedisGateway) DiscoveryProof(nodeID string) string {
+	return DeriveDiscoveryProof(nodeID, g.clusterSecret)
+}
+
 func (g *RedisGateway) pushToQueue(msg hubQueueMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -273,6 +282,15 @@ func (g *RedisGateway) pushToQueue(msg hubQueueMessage) error {
 func DeriveLinkToken(nodeID, clusterSecret string) string {
 	h := sha256.New()
 	h.Write([]byte(nodeID + clusterSecret))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// DeriveDiscoveryProof computes SHA256("discovery:"+nodeID+":"+clusterSecret) -
+// byte-identical to the Link + Hub binaries' deriveDiscoveryProof. Delivered to a
+// BYON Link so it never needs the raw CLUSTER_SECRET for its discovery heartbeat.
+func DeriveDiscoveryProof(nodeID, clusterSecret string) string {
+	h := sha256.New()
+	h.Write([]byte("discovery:" + nodeID + ":" + clusterSecret))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

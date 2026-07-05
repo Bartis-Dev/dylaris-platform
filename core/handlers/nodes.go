@@ -386,6 +386,32 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetDeployBundle GET /api/nodes/{id}/deploy-bundle returns the values a secret-free
+// BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and
+// discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it).
+func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	node, err := h.state.Store.GetNodeByID(id)
+	if err != nil || node == nil {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
+	if !canManageNode(h.state, r, node) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":            true,
+		"nodeId":             node.Token,
+		"grpcTlsFingerprint": h.state.GRPCTLSFingerprint,
+		"linkSecret":         h.state.Gateway.LinkToken(node.Token),
+		"linkDiscoveryProof": h.state.Gateway.DiscoveryProof(node.Token),
+	})
+}
+
 // storageHeartbeatEntry is used to parse storage entries from the node discovery heartbeat.
 type storageHeartbeatEntry struct {
 	Path        string   `json:"path"`

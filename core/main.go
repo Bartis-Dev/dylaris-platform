@@ -18,6 +18,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
+	beamauth "dylaris-pkg/beam/auth"
 
 	gorillaHandlers "github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -150,6 +151,12 @@ func main() {
 		StoreEnabled:        cfg.StoreEnabled,
 		StoreURL:            cfg.StoreURL,
 		StoreSharedKey:      cfg.StoreSharedKey,
+	}
+
+	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it
+	// to BYON operators without re-deriving. Non-secret; safe to expose.
+	if fp, ferr := beamauth.ClusterGRPCCertFingerprint(cfg.ClusterSecret); ferr == nil {
+		appState.GRPCTLSFingerprint = fp
 	}
 
 	redisClient, err := database.InitRedis(cfg)
@@ -820,6 +827,7 @@ func main() {
 	api.HandleFunc("/nodes/{id:[0-9]+}/servers", authHandler.AuthMiddleware(nodeHandler.GetNodeServers)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(nodeHandler.ForceDeleteNode)).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
+	api.HandleFunc("/nodes/{id:[0-9]+}/deploy-bundle", authHandler.AuthMiddleware(nodeHandler.GetDeployBundle)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/cpu", authHandler.AuthMiddleware(cpuPinningHandler.GetNodeCPU)).Methods("GET")
 	// BYON per-user node enrollment tokens (feature-gated inside the handlers).
 	api.HandleFunc("/nodes/enroll-token", authHandler.AuthMiddleware(nodeEnrollHandler.MintToken)).Methods("POST")
