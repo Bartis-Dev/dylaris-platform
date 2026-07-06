@@ -59,6 +59,26 @@ func (s *PostgresStore) ConsumeNodeEnrollToken(plaintext string) (userID string,
 	return userID, recoversNodeToken, true, nil
 }
 
+// ResolveRecoveryToken reads a valid, unexpired, still-unconsumed RECOVERY token
+// WITHOUT consuming it, returning the node token it re-pairs. ok=false if the token
+// is unknown/expired/consumed or is a plain enroll token (empty recovers_node_token).
+func (s *PostgresStore) ResolveRecoveryToken(plaintext string) (recoversNodeToken string, ok bool, err error) {
+	err = s.db.QueryRow(
+		`SELECT COALESCE(recovers_node_token, '') FROM node_enroll_tokens
+		 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+		hashAuthToken(plaintext)).Scan(&recoversNodeToken)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if recoversNodeToken == "" {
+		return "", false, nil
+	}
+	return recoversNodeToken, true, nil
+}
+
 // ListNodeEnrollTokens returns a user's tokens (metadata only, never the hash).
 func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error) {
 	rows, err := s.db.Query(

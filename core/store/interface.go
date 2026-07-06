@@ -53,6 +53,7 @@ type Store interface {
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	DeleteNodeEnrollToken(id, userID string) error
 	CreateRecoveryToken(userID, plaintext, nodeToken string, expiresAt *time.Time) error
+	ResolveRecoveryToken(plaintext string) (recoversNodeToken string, ok bool, err error)
 	// --- P0b-5 node admission ---
 	ConsumeOneShotJoin() (won bool, err error)
 	AddAdmissionCIDR(cidr, label string) error

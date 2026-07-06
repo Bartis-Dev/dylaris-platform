@@ -73,6 +73,7 @@ func peerIP(ctx context.Context) net.IP {
 // known-node recovery branch. Satisfied by *store.PostgresStore. nil = recovery off.
 type RecoveryTokenConsumer interface {
 	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
+	ResolveRecoveryToken(plaintext string) (recoversNodeToken string, ok bool, err error)
 }
 
 // Node is a minimal representation used by the gRPC layer.
@@ -262,12 +263,19 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				if !s.acl.VerifyClusterProof(node.Token, auth.ClusterProof) {
 					recovered := false
 					if s.recovery != nil && auth.EnrollToken != "" {
-						_, recoversNodeToken, ok, cerr := s.recovery.ConsumeNodeEnrollToken(auth.EnrollToken)
-						if cerr != nil {
+						recoversNodeToken, ok, rerr := s.recovery.ResolveRecoveryToken(auth.EnrollToken)
+						if rerr != nil {
 							sendFail("recovery check failed")
-							return fmt.Errorf("acl: node %d recovery check failed: %w", node.ID, cerr)
+							return fmt.Errorf("acl: node %d recovery check failed: %w", node.ID, rerr)
 						}
-						recovered = ok && recoversNodeToken != "" && recoversNodeToken == node.Token
+						if ok && recoversNodeToken == node.Token {
+							_, _, consumedOk, cerr := s.recovery.ConsumeNodeEnrollToken(auth.EnrollToken)
+							if cerr != nil {
+								sendFail("recovery check failed")
+								return fmt.Errorf("acl: node %d recovery check failed: %w", node.ID, cerr)
+							}
+							recovered = consumedOk
+						}
 					}
 					if !recovered {
 						sendFail("cluster proof or recovery token required")
