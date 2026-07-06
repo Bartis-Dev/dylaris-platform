@@ -269,7 +269,7 @@ func (s *DiscoveryService) scanNodes() {
 					if uid, ok, terr := s.store.ResolveNodeEnrollToken(hb.EnrollToken); terr == nil && ok {
 						if s.nodeLimitReached(uid) {
 							log.Printf("Node %s NOT adopted: user %s is at their node limit", hb.Name, uid)
-						} else if cuid, cok, cerr := s.store.ConsumeNodeEnrollToken(hb.EnrollToken); cerr == nil && cok {
+						} else if cuid, _, cok, cerr := s.store.ConsumeNodeEnrollToken(hb.EnrollToken); cerr == nil && cok {
 							if serr := s.store.SetNodeOwner(created.ID, &cuid); serr != nil {
 								log.Printf("node %s: bind owner failed: %v", hb.Name, serr)
 							} else {

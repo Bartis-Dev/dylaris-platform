@@ -42,22 +42,21 @@ func (s *PostgresStore) ResolveNodeEnrollToken(plaintext string) (userID string,
 }
 
 // ConsumeNodeEnrollToken atomically marks a valid, unexpired, still-unconsumed
-// token as used and returns its owner. ok=false (no error) when the token is
-// unknown, expired, or already consumed. Single-use: a replay or a second
-// concurrent caller gets ok=false, because the UPDATE matches at most one row.
-func (s *PostgresStore) ConsumeNodeEnrollToken(plaintext string) (userID string, ok bool, err error) {
+// token as used and returns its owner + the node token it recovers (empty for a
+// normal enroll token). Single-use.
+func (s *PostgresStore) ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error) {
 	err = s.db.QueryRow(
 		`UPDATE node_enroll_tokens SET consumed_at = NOW()
 		 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
-		 RETURNING user_id`,
-		hashAuthToken(plaintext)).Scan(&userID)
+		 RETURNING user_id, COALESCE(recovers_node_token, '')`,
+		hashAuthToken(plaintext)).Scan(&userID, &recoversNodeToken)
 	if err == sql.ErrNoRows {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
-	return userID, true, nil
+	return userID, recoversNodeToken, true, nil
 }
 
 // ListNodeEnrollTokens returns a user's tokens (metadata only, never the hash).
@@ -91,5 +90,54 @@ func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, 
 // delete their own.
 func (s *PostgresStore) DeleteNodeEnrollToken(id, userID string) error {
 	_, err := s.db.Exec(`DELETE FROM node_enroll_tokens WHERE id = $1 AND user_id = $2`, id, userID)
+	return err
+}
+
+// CreateRecoveryToken stores a single-use recovery token (hashed) bound to an
+// EXISTING node identity (nodeToken = nodes.token). On consume, the recovery
+// branch of the gRPC handshake re-pairs that node under the same identity.
+func (s *PostgresStore) CreateRecoveryToken(userID, plaintext, nodeToken string, expiresAt *time.Time) error {
+	_, err := s.db.Exec(
+		`INSERT INTO node_enroll_tokens (user_id, token_hash, label, expires_at, recovers_node_token)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		userID, hashAuthToken(plaintext), "recovery", expiresAt, nodeToken)
+	return err
+}
+
+// AdmissionCIDR is one global-scope allowlist entry for NEW node registrations.
+type AdmissionCIDR struct {
+	ID        string    `json:"id"`
+	CIDR      string    `json:"cidr"`
+	Label     string    `json:"label"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// AddAdmissionCIDR inserts a normalized CIDR (validated by the handler).
+func (s *PostgresStore) AddAdmissionCIDR(cidr, label string) error {
+	_, err := s.db.Exec(`INSERT INTO node_admission_cidrs (cidr, label) VALUES ($1, $2)`, cidr, label)
+	return err
+}
+
+// ListAdmissionCIDRs returns all admission CIDRs, newest first.
+func (s *PostgresStore) ListAdmissionCIDRs() ([]AdmissionCIDR, error) {
+	rows, err := s.db.Query(`SELECT id, cidr, label, created_at FROM node_admission_cidrs ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdmissionCIDR
+	for rows.Next() {
+		var c AdmissionCIDR
+		if err := rows.Scan(&c.ID, &c.CIDR, &c.Label, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DeleteAdmissionCIDR removes one CIDR by id.
+func (s *PostgresStore) DeleteAdmissionCIDR(id string) error {
+	_, err := s.db.Exec(`DELETE FROM node_admission_cidrs WHERE id = $1`, id)
 	return err
 }

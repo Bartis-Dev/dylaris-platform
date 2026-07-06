@@ -1091,6 +1091,24 @@ func (s *PostgresStore) SetSetting(key, value string) error {
 	return err
 }
 
+// ConsumeOneShotJoin atomically flips node_join_mode from 'one-shot' to
+// 'disabled' and reports whether THIS caller won the single slot. Row returned
+// -> won (proceed); no row -> a concurrent enroll already consumed it (reject).
+func (s *PostgresStore) ConsumeOneShotJoin() (bool, error) {
+	var v string
+	err := s.db.QueryRow(
+		`UPDATE settings SET value = 'disabled'
+		 WHERE key = 'node_join_mode' AND value = 'one-shot'
+		 RETURNING value`).Scan(&v)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ==========================================
 // STATS
 // ==========================================

@@ -49,9 +49,15 @@ type Store interface {
 	// --- BYON node enrollment ---
 	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error
 	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
-	ConsumeNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
+	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	DeleteNodeEnrollToken(id, userID string) error
+	CreateRecoveryToken(userID, plaintext, nodeToken string, expiresAt *time.Time) error
+	// --- P0b-5 node admission ---
+	ConsumeOneShotJoin() (won bool, err error)
+	AddAdmissionCIDR(cidr, label string) error
+	ListAdmissionCIDRs() ([]AdmissionCIDR, error)
+	DeleteAdmissionCIDR(id string) error
 	// --- BYON traffic metering ---
 	TenantServerOwners() (map[string]string, error)
 	TenantBackupBytes() (map[string]int64, error)
