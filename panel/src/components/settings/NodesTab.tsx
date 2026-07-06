@@ -6,7 +6,10 @@ import {
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement, configureNode, Region,
     getNodeCpu, getNodeStorage, getNodeDeployBundle, updateNodeCpuset, type NodeCpuTopology,
+    getNodeAdmission, updateNodeAdmission, addAdmissionCIDR, deleteAdmissionCIDR, resetNodePairing,
+    mintEnrollToken, listEnrollTokens, revokeEnrollToken, type AdmissionCIDR, type NodeEnrollToken,
 } from '@/lib/api';
+import { getSystemFeatures } from '@/lib/api/featureFlags';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
@@ -14,6 +17,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound, Copy,
+    ShieldCheck, Plus, Trash2, Ticket, RotateCcw,
 } from 'lucide-react';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node + link deploy
@@ -101,6 +105,8 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     const [editingConfig, setEditingConfig] = useState<number | null>(null);
     const [revealed, setRevealed] = useState<DeployBundle | null>(null);
     const [revealingId, setRevealingId] = useState<number | null>(null);
+    const [resettingId, setResettingId] = useState<number | null>(null);
+    const [resetReveal, setResetReveal] = useState<{ nodeId: string; token: string; env: string } | null>(null);
 
     useEffect(() => {
         loadNodes();
@@ -126,6 +132,18 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
             });
         } else {
             showToast(res.message || res.error || 'Failed to load deploy bundle', false);
+        }
+    };
+
+    const resetPairing = async (node: Node) => {
+        if (!window.confirm(`Reset pairing for "${node.name}"? Its current secret is invalidated immediately; the node must re-pair with the one-time recovery token you are about to receive. Server data is preserved.`)) return;
+        setResettingId(node.id);
+        const res = await resetNodePairing(node.id);
+        setResettingId(null);
+        if (res.success && res.token) {
+            setResetReveal({ nodeId: node.token, token: res.token, env: res.env || `NODE_RECOVERY_TOKEN=${res.token}` });
+        } else {
+            showToast(res.message || 'Reset failed.', false);
         }
     };
 
@@ -182,11 +200,35 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                                 onError={msg => showToast(msg, false)}
                                 onRevealDeployBundle={() => revealDeployBundle(node.id)}
                                 revealingDeployBundle={revealingId === node.id}
+                                onResetPairing={() => resetPairing(node)}
+                                resettingPairing={resettingId === node.id}
                             />
                         ))
                     )}
                 </div>
             </div>
+
+            <AdmissionCard showToast={showToast} />
+            <EnrollTokensSection showToast={showToast} />
+
+            {resetReveal && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setResetReveal(null)}>
+                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Recovery token — {resetReveal.nodeId.slice(0, 8)}</h3></div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">The node&apos;s secret is now invalidated. Deliver this token to the node and restart it. Shown once.</p>
+                            <div className="space-y-1">
+                                <label className="mono-label">Recovery ENV</label>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{resetReveal.env}</pre>
+                                <button onClick={() => { navigator.clipboard.writeText(resetReveal.env); showToast('Recovery ENV copied.', true); }} className="btn btn-secondary btn-sm">
+                                    <Copy size={12} /> Copy recovery ENV
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-footer"><button onClick={() => setResetReveal(null)} className="btn btn-primary">Done</button></div>
+                    </div>
+                </div>
+            )}
 
             {revealed && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
@@ -235,9 +277,11 @@ interface NodeCardProps {
     onError: (msg: string) => void;
     onRevealDeployBundle: () => void;
     revealingDeployBundle: boolean;
+    onResetPairing: () => void;
+    resettingPairing: boolean;
 }
 
-function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle }: NodeCardProps) {
+function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -385,6 +429,15 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     >
                         <KeyRound size={11} />
                         {revealingDeployBundle ? 'Loading…' : 'Deploy bundle'}
+                    </button>
+                    <button
+                        onClick={onResetPairing}
+                        disabled={resettingPairing}
+                        className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+                        title="Invalidate this node's secret and mint a one-time recovery token"
+                    >
+                        <RotateCcw size={11} />
+                        {resettingPairing ? 'Resetting…' : 'Reset pairing'}
                     </button>
                 </div>
             </div>
@@ -929,6 +982,250 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                     {saving ? 'Saving...' : 'Save Settings'}
                 </button>
             </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Node Admission (P0b-5): join-mode + IP allowlist gate on a node's FIRST
+// registration. Always available regardless of BYON — this guards the
+// existing auto-discovery flow too.
+// ─────────────────────────────────────────────
+
+function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    const [joinMode, setJoinMode] = useState<string>('open');
+    const [ipMode, setIpMode] = useState<string>('allow');
+    const [cidrs, setCidrs] = useState<AdmissionCIDR[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [newCidr, setNewCidr] = useState('');
+    const [newLabel, setNewLabel] = useState('');
+
+    const load = async () => {
+        const res = await getNodeAdmission();
+        if (res.success) {
+            setJoinMode(res.joinMode || 'open');
+            setIpMode(res.ipMode || 'allow');
+            setCidrs(res.cidrs || []);
+        }
+        setLoading(false);
+    };
+    useEffect(() => { load(); }, []);
+
+    const save = async (nextJoin: string, nextIp: string) => {
+        setSaving(true);
+        const res = await updateNodeAdmission({ joinMode: nextJoin, ipMode: nextIp });
+        setSaving(false);
+        if (res.success) {
+            setJoinMode(nextJoin);
+            setIpMode(nextIp);
+            showToast('Admission updated.');
+        } else {
+            showToast(res.message || 'Save failed.', false);
+        }
+    };
+
+    const addCidr = async () => {
+        const cidr = newCidr.trim();
+        if (!cidr) return;
+        const res = await addAdmissionCIDR({ cidr, label: newLabel.trim() });
+        if (res.success) {
+            setNewCidr(''); setNewLabel('');
+            showToast('CIDR added.');
+            load();
+        } else {
+            showToast(res.message || 'Invalid CIDR.', false);
+        }
+    };
+
+    const removeCidr = async (id: string) => {
+        const res = await deleteAdmissionCIDR(id);
+        if (res.success) { showToast('CIDR removed.'); load(); }
+        else showToast(res.message || 'Remove failed.', false);
+    };
+
+    if (loading) return <SkeletonCard />;
+
+    const selectCls = "w-full bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none";
+    const inputCls = "flex-1 bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none";
+
+    return (
+        <div className="card p-6 space-y-5">
+            <div className="flex items-center gap-2">
+                <ShieldCheck size={18} className="text-(--accent-light)" />
+                <h3 className="text-base font-display font-bold text-(--base-09)">Node Admission</h3>
+            </div>
+            <p className="text-sm text-(--base-06)">
+                Gates a node&apos;s FIRST registration (network + join), before any auth. Known nodes always reconnect. Inert defaults: join <code className="font-mono text-xs">open</code>, IP <code className="font-mono text-xs">allow</code>.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                    <label className="mono-label">Join mode</label>
+                    <select value={joinMode} disabled={saving} onChange={e => save(e.target.value, ipMode)} className={selectCls}>
+                        <option value="open">open — any new node may join</option>
+                        <option value="one-shot">one-shot — admit exactly one, then disable</option>
+                        <option value="disabled">disabled — reject all new nodes</option>
+                    </select>
+                </div>
+                <div className="space-y-1">
+                    <label className="mono-label">IP mode</label>
+                    <select value={ipMode} disabled={saving} onChange={e => save(joinMode, e.target.value)} className={selectCls}>
+                        <option value="allow">allow — CIDR list advisory (any IP)</option>
+                        <option value="deny">deny — only IPs inside a listed CIDR</option>
+                    </select>
+                </div>
+            </div>
+
+            <div className="space-y-2">
+                <label className="mono-label">Allowed CIDRs {ipMode === 'allow' && <span className="text-(--base-06) normal-case">(advisory while IP mode is allow)</span>}</label>
+                {cidrs.length === 0 ? (
+                    <div className="text-sm text-(--base-06)">No CIDRs configured.</div>
+                ) : (
+                    <div className="space-y-2">
+                        {cidrs.map(c => (
+                            <div key={c.id} className="flex items-center justify-between bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2">
+                                <div className="flex items-center gap-3">
+                                    <code className="font-mono text-xs text-(--base-09)">{c.cidr}</code>
+                                    {c.label && <span className="text-xs text-(--base-06)">{c.label}</span>}
+                                </div>
+                                <button onClick={() => removeCidr(c.id)} className="text-(--base-06) hover:text-(--error-light) transition-colors" title="Remove CIDR">
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <div className="flex items-center gap-2 pt-1">
+                    <input value={newCidr} onChange={e => setNewCidr(e.target.value)} placeholder="10.0.0.0/24" className={`${inputCls} font-mono`} />
+                    <input value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder="label (optional)" className={inputCls} />
+                    <button onClick={addCidr} className="btn btn-secondary btn-sm shrink-0">
+                        <Plus size={14} /> Add
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Enroll tokens (P0b-5): single-use tokens authorizing a NEW node's first
+// pairing. BYON-gated on the backend (byonActive) — this section renders
+// visibly disabled with a "Requires BYON" note when the byon flag is off.
+// ─────────────────────────────────────────────
+
+function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
+    const [label, setLabel] = useState('');
+    const [expiresDays, setExpiresDays] = useState(7);
+    const [minting, setMinting] = useState(false);
+    const [revealed, setRevealed] = useState<{ token: string } | null>(null);
+    // The enroll-token backend is BYON-gated (byonActive). Read the byon flag and
+    // render this section visibly disabled when BYON is off.
+    const [byonEnabled, setByonEnabled] = useState(false);
+
+    const load = async () => {
+        const res = await listEnrollTokens();
+        if (res.success) setTokens(res.tokens || []);
+    };
+    useEffect(() => {
+        getSystemFeatures().then(res => {
+            const on = !!(res.success && res.features && res.features.byon);
+            setByonEnabled(on);
+            if (on) load();
+        });
+    }, []);
+
+    const mint = async () => {
+        setMinting(true);
+        const res = await mintEnrollToken({ label: label.trim(), expiresDays });
+        setMinting(false);
+        if (res.success && res.token) {
+            setRevealed({ token: res.token });
+            setLabel('');
+            load();
+        } else {
+            showToast(res.message || 'Mint failed.', false);
+        }
+    };
+
+    const revoke = async (id: string) => {
+        const res = await revokeEnrollToken(id);
+        if (res.success) { showToast('Token revoked.'); load(); }
+        else showToast(res.message || 'Revoke failed.', false);
+    };
+
+    const fmt = (s?: string) => (s ? new Date(s).toLocaleString() : '—');
+    const inputCls = "w-full bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none";
+
+    return (
+        <div className="card p-6 space-y-5">
+            <div className="flex items-center gap-2">
+                <Ticket size={18} className="text-(--accent-light)" />
+                <h3 className="text-base font-display font-bold text-(--base-09)">Enroll tokens</h3>
+            </div>
+            <p className="text-sm text-(--base-06)">
+                Single-use tokens that authorize a NEW node&apos;s first pairing. Shown once at mint time; start the node with <code className="font-mono text-xs">NODE_ENROLL_TOKEN</code> set.
+            </p>
+
+            {!byonEnabled ? (
+                <p className="text-sm text-(--base-06)">Requires BYON — enable it in Settings → Features to mint node enroll tokens.</p>
+            ) : (
+              <>
+            <div className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                    <label className="mono-label">Label</label>
+                    <input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. home-pc" className={inputCls} />
+                </div>
+                <div className="w-28 space-y-1">
+                    <label className="mono-label">Expires (days)</label>
+                    <input type="number" min={1} value={expiresDays} onChange={e => setExpiresDays(parseInt(e.target.value) || 7)} className={inputCls} />
+                </div>
+                <button onClick={mint} disabled={minting} className="btn btn-primary btn-sm shrink-0 disabled:opacity-40">
+                    <Plus size={14} /> {minting ? 'Minting…' : 'Mint token'}
+                </button>
+            </div>
+
+            {tokens.length === 0 ? (
+                <div className="text-sm text-(--base-06)">No enroll tokens.</div>
+            ) : (
+                <div className="space-y-2">
+                    {tokens.map(t => (
+                        <div key={t.id} className="flex items-center justify-between bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2">
+                            <div className="flex flex-col">
+                                <span className="text-sm text-(--base-09)">{t.label || <span className="text-(--base-06)">(no label)</span>}</span>
+                                <span className="text-xs text-(--base-06)">
+                                    created {fmt(t.createdAt)} · expires {fmt(t.expiresAt)} · {t.consumedAt ? `consumed ${fmt(t.consumedAt)}` : 'unused'}
+                                </span>
+                            </div>
+                            <button onClick={() => revoke(t.id)} className="text-(--base-06) hover:text-(--error-light) transition-colors" title="Revoke token">
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+              </>
+            )}
+
+            {revealed && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
+                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Enroll token</h3></div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">Shown once. Copy it now — it cannot be retrieved later.</p>
+                            <div className="space-y-1">
+                                <label className="mono-label">NODE_ENROLL_TOKEN</label>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{revealed.token}</pre>
+                                <button onClick={() => { navigator.clipboard.writeText(revealed.token); showToast('Enroll token copied.', true); }} className="btn btn-secondary btn-sm">
+                                    <Copy size={12} /> Copy token
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary">Done</button></div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
