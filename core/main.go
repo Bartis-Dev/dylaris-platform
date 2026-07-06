@@ -425,12 +425,14 @@ func main() {
 		cfg.ClusterSecret,
 		func(ctx context.Context) bool { return appState.FeatureFlags.IsRedisACLEnabled(ctx) },
 	)
+	// P0b-5 admission gate: consulted only on the ACL-on enroll path for unknown nodes.
+	admissionGate := services.NewAdmissionGate(pgStore)
 	// Pre-placement ACL hook: re-apply a node's Redis ACL right before sending a
 	// server-placement command, closing the window where a freshly created
 	// server's keys are NOPERM for the node until its next reconnect. nil-safe.
 	appState.Queue.SetACL(aclHandshake)
 	go func() {
-		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, cfg.GRPCTLSEnabled, cfg.ClusterSecret); err != nil {
+		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, cfg.GRPCTLSEnabled, cfg.ClusterSecret); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()

@@ -13,8 +13,11 @@ import (
 	pb "dylaris-proto/node"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 	"time"
 )
 
@@ -45,6 +48,26 @@ type LinkCredSource interface {
 	DiscoveryProof(nodeID string) string
 }
 
+// AdmissionChecker gates NEW node registrations (network + join) before enroll.
+// nil = admission off. Satisfied structurally by *services.AdmissionGate.
+type AdmissionChecker interface {
+	CheckNewRegistration(ctx context.Context, ip net.IP) (allowed bool, reason string, err error)
+}
+
+// peerIP returns the TCP source IP of the gRPC connection (NOT the self-reported
+// auth.Ips value and NOT the overlay IP), or nil if it cannot be resolved.
+func peerIP(ctx context.Context) net.IP {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(p.Addr.String())
+	if err != nil {
+		return net.ParseIP(p.Addr.String())
+	}
+	return net.ParseIP(host)
+}
+
 // Node is a minimal representation used by the gRPC layer.
 // Matches the fields needed from models.Node.
 type Node struct {
@@ -73,16 +96,18 @@ type Server struct {
 	coreID     string
 	acl        ACLHandshake
 	linkCreds  LinkCredSource
+	admission  AdmissionChecker
 }
 
 // NewServer creates a new gRPC server for Node connections.
-func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource) *Server {
+func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker) *Server {
 	return &Server{
 		registry:   registry,
 		nodeLookup: lookup,
 		coreID:     coreID,
 		acl:        acl,
 		linkCreds:  linkCreds,
+		admission:  admission,
 	}
 }
 
@@ -146,6 +171,21 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		}
 		existing, lookErr := s.nodeLookup.GetNodeByToken(auth.NodeToken)
 		if lookErr != nil {
+			// P0b-5 admission gate: network + join, for NEW registrations only.
+			// Runs BEFORE the enroll-token check (network -> join -> enroll token).
+			// The known-node branch below is NEVER gated (paired nodes always reconnect).
+			if s.admission != nil {
+				ip := peerIP(ctx)
+				allowed, reason, aerr := s.admission.CheckNewRegistration(ctx, ip)
+				if aerr != nil {
+					sendFail("admission unavailable")
+					return status.Errorf(codes.Internal, "acl: admission check failed for %s: %v", tokenPrefix(auth.NodeToken), aerr)
+				}
+				if !allowed {
+					sendFail(reason)
+					return status.Errorf(codes.PermissionDenied, "acl: admission denied (%s) for %s from %v", reason, tokenPrefix(auth.NodeToken), ip)
+				}
+			}
 			// Unknown node: enroll only with a valid enroll token.
 			if auth.EnrollToken == "" {
 				sendFail("unknown node and no enroll token")
@@ -298,7 +338,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // Blocks until the server is stopped. When tlsEnabled is set, it presents the
 // cluster-wide certificate derived from clusterSecret (CLUSTER_SECRET) so nodes
 // can pin its fingerprint; otherwise it serves plaintext (unchanged behavior).
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, tlsEnabled bool, clusterSecret string) error {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, tlsEnabled bool, clusterSecret string) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -327,7 +367,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 
 	grpcServer := grpc.NewServer(opts...)
 
-	srv := NewServer(registry, lookup, coreID, acl, linkCreds)
+	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission)
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)
