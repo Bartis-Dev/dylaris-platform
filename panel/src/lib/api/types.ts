@@ -81,6 +81,23 @@ export interface Node {
     displayName?: string;
 }
 
+// P0b-5 node admission + enroll/recovery tokens.
+export interface AdmissionCIDR {
+    id: string;
+    cidr: string;
+    label: string;
+    createdAt: string;
+}
+
+export interface NodeEnrollToken {
+    id: string;
+    userId: string;
+    label: string;
+    createdAt: string;
+    expiresAt?: string;
+    consumedAt?: string;
+}
+
 export interface TabPermissions {
     console: boolean;
     files: boolean;
