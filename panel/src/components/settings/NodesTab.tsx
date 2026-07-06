@@ -9,7 +9,6 @@ import {
     getNodeAdmission, updateNodeAdmission, addAdmissionCIDR, deleteAdmissionCIDR, resetNodePairing,
     mintEnrollToken, listEnrollTokens, revokeEnrollToken, type AdmissionCIDR, type NodeEnrollToken,
 } from '@/lib/api';
-import { getSystemFeatures } from '@/lib/api/featureFlags';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { regionLabel, regionFlag } from '@/lib/regions';
@@ -141,7 +140,7 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
         const res = await resetNodePairing(node.id);
         setResettingId(null);
         if (res.success && res.token) {
-            setResetReveal({ nodeId: node.token, token: res.token, env: res.env || `NODE_RECOVERY_TOKEN=${res.token}` });
+            setResetReveal({ nodeId: node.name, token: res.token, env: res.env || `NODE_RECOVERY_TOKEN=${res.token}` });
         } else {
             showToast(res.message || 'Reset failed.', false);
         }
@@ -214,7 +213,7 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
             {resetReveal && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setResetReveal(null)}>
                     <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Recovery token — {resetReveal.nodeId.slice(0, 8)}</h3></div>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Recovery token — {resetReveal.nodeId}</h3></div>
                         <div className="modal-body space-y-3">
                             <p className="text-sm text-(--base-07)">The node&apos;s secret is now invalidated. Deliver this token to the node and restart it. Shown once.</p>
                             <div className="space-y-1">
@@ -1000,6 +999,7 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
     const [saving, setSaving] = useState(false);
     const [newCidr, setNewCidr] = useState('');
     const [newLabel, setNewLabel] = useState('');
+    const [cidrBusy, setCidrBusy] = useState(false);
 
     const load = async () => {
         const res = await getNodeAdmission();
@@ -1028,7 +1028,9 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
     const addCidr = async () => {
         const cidr = newCidr.trim();
         if (!cidr) return;
+        setCidrBusy(true);
         const res = await addAdmissionCIDR({ cidr, label: newLabel.trim() });
+        setCidrBusy(false);
         if (res.success) {
             setNewCidr(''); setNewLabel('');
             showToast('CIDR added.');
@@ -1039,15 +1041,14 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
     };
 
     const removeCidr = async (id: string) => {
+        setCidrBusy(true);
         const res = await deleteAdmissionCIDR(id);
+        setCidrBusy(false);
         if (res.success) { showToast('CIDR removed.'); load(); }
         else showToast(res.message || 'Remove failed.', false);
     };
 
     if (loading) return <SkeletonCard />;
-
-    const selectCls = "w-full bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none";
-    const inputCls = "flex-1 bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none";
 
     return (
         <div className="card p-6 space-y-5">
@@ -1061,16 +1062,16 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                    <label className="mono-label">Join mode</label>
-                    <select value={joinMode} disabled={saving} onChange={e => save(e.target.value, ipMode)} className={selectCls}>
+                    <label className="input-label">Join mode</label>
+                    <select value={joinMode} disabled={saving} onChange={e => save(e.target.value, ipMode)} className="input-field w-full text-sm">
                         <option value="open">open — any new node may join</option>
                         <option value="one-shot">one-shot — admit exactly one, then disable</option>
                         <option value="disabled">disabled — reject all new nodes</option>
                     </select>
                 </div>
                 <div className="space-y-1">
-                    <label className="mono-label">IP mode</label>
-                    <select value={ipMode} disabled={saving} onChange={e => save(joinMode, e.target.value)} className={selectCls}>
+                    <label className="input-label">IP mode</label>
+                    <select value={ipMode} disabled={saving} onChange={e => save(joinMode, e.target.value)} className="input-field w-full text-sm">
                         <option value="allow">allow — CIDR list advisory (any IP)</option>
                         <option value="deny">deny — only IPs inside a listed CIDR</option>
                     </select>
@@ -1089,7 +1090,7 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
                                     <code className="font-mono text-xs text-(--base-09)">{c.cidr}</code>
                                     {c.label && <span className="text-xs text-(--base-06)">{c.label}</span>}
                                 </div>
-                                <button onClick={() => removeCidr(c.id)} className="text-(--base-06) hover:text-(--error-light) transition-colors" title="Remove CIDR">
+                                <button onClick={() => removeCidr(c.id)} disabled={cidrBusy} className="text-(--base-06) hover:text-(--error-light) transition-colors disabled:opacity-40" title="Remove CIDR">
                                     <Trash2 size={14} />
                                 </button>
                             </div>
@@ -1097,9 +1098,9 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
                     </div>
                 )}
                 <div className="flex items-center gap-2 pt-1">
-                    <input value={newCidr} onChange={e => setNewCidr(e.target.value)} placeholder="10.0.0.0/24" className={`${inputCls} font-mono`} />
-                    <input value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder="label (optional)" className={inputCls} />
-                    <button onClick={addCidr} className="btn btn-secondary btn-sm shrink-0">
+                    <input value={newCidr} onChange={e => setNewCidr(e.target.value)} placeholder="10.0.0.0/24" disabled={cidrBusy} className="input-field flex-1 font-mono text-sm disabled:opacity-40" />
+                    <input value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder="label (optional)" disabled={cidrBusy} className="input-field flex-1 text-sm disabled:opacity-40" />
+                    <button onClick={addCidr} disabled={cidrBusy} className="btn btn-secondary btn-sm shrink-0 disabled:opacity-40">
                         <Plus size={14} /> Add
                     </button>
                 </div>
@@ -1115,26 +1116,26 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
 // ─────────────────────────────────────────────
 
 function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    // The enroll-token backend is BYON-gated (byonActive). Read the already-loaded,
+    // SSE-reactive flag from the app context (same idiom as GatewayTab/UserManagementTab)
+    // instead of a one-shot fetch, so this section reacts live and never flashes
+    // "Requires BYON" on initial load.
+    const { featureFlags } = useAppData();
+    const byonEnabled = featureFlags.byon;
+
     const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
     const [label, setLabel] = useState('');
     const [expiresDays, setExpiresDays] = useState(7);
     const [minting, setMinting] = useState(false);
     const [revealed, setRevealed] = useState<{ token: string } | null>(null);
-    // The enroll-token backend is BYON-gated (byonActive). Read the byon flag and
-    // render this section visibly disabled when BYON is off.
-    const [byonEnabled, setByonEnabled] = useState(false);
 
     const load = async () => {
         const res = await listEnrollTokens();
         if (res.success) setTokens(res.tokens || []);
     };
     useEffect(() => {
-        getSystemFeatures().then(res => {
-            const on = !!(res.success && res.features && res.features.byon);
-            setByonEnabled(on);
-            if (on) load();
-        });
-    }, []);
+        if (byonEnabled) load();
+    }, [byonEnabled]);
 
     const mint = async () => {
         setMinting(true);
@@ -1156,7 +1157,6 @@ function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: bool
     };
 
     const fmt = (s?: string) => (s ? new Date(s).toLocaleString() : '—');
-    const inputCls = "w-full bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none";
 
     return (
         <div className="card p-6 space-y-5">
@@ -1174,12 +1174,12 @@ function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: bool
               <>
             <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
-                    <label className="mono-label">Label</label>
-                    <input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. home-pc" className={inputCls} />
+                    <label className="input-label">Label</label>
+                    <input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. home-pc" className="input-field w-full text-sm" />
                 </div>
                 <div className="w-28 space-y-1">
-                    <label className="mono-label">Expires (days)</label>
-                    <input type="number" min={1} value={expiresDays} onChange={e => setExpiresDays(parseInt(e.target.value) || 7)} className={inputCls} />
+                    <label className="input-label">Expires (days)</label>
+                    <input type="number" min={1} value={expiresDays} onChange={e => setExpiresDays(parseInt(e.target.value) || 7)} className="input-field w-full text-sm" />
                 </div>
                 <button onClick={mint} disabled={minting} className="btn btn-primary btn-sm shrink-0 disabled:opacity-40">
                     <Plus size={14} /> {minting ? 'Minting…' : 'Mint token'}
