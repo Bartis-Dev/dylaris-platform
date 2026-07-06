@@ -403,6 +403,7 @@ func main() {
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
+	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -680,6 +681,11 @@ func main() {
 	// (still works for back-compat; this is the new canonical surface).
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
+	// P0b-5 node admission (admin-gated inside the handler; read directly per enroll).
+	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(nodeAdmissionHandler.GetAdmission)).Methods("GET")
+	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(nodeAdmissionHandler.SetAdmission)).Methods("PUT")
+	api.HandleFunc("/admin/settings/node-admission/cidrs", authHandler.AuthMiddleware(nodeAdmissionHandler.AddCIDR)).Methods("POST")
+	api.HandleFunc("/admin/settings/node-admission/cidrs/{id}", authHandler.AuthMiddleware(nodeAdmissionHandler.DeleteCIDR)).Methods("DELETE")
 	// --- Platform status / health (admin Status page) ---
 	api.HandleFunc("/admin/health", authHandler.AuthMiddleware(healthHandler.GetStatus)).Methods("GET")
 
@@ -842,6 +848,7 @@ func main() {
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/owner", authHandler.AuthMiddleware(serverHandler.AdminUpdateServerOwner)).Methods("PATCH")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(nodeHandler.GetDiskAnalysis)).Methods("GET")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(nodeHandler.DeleteOrphanedFolder)).Methods("DELETE")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(nodeAdmissionHandler.ResetPairing)).Methods("POST")
 
 	// Orphan file browser (admin-only, read-only — no DB servers row required)
 	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/files", authHandler.AuthMiddleware(nodeHandler.ListOrphanFiles)).Methods("GET")
