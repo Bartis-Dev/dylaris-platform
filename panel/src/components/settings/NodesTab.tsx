@@ -359,7 +359,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center flex-wrap gap-3 gap-y-2 shrink-0">
                     {node.region && (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title="Region (DYLARIS_REGION env)">
                             <span>{regionFlag(node.region)}</span>
