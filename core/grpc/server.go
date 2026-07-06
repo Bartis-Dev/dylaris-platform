@@ -68,6 +68,13 @@ func peerIP(ctx context.Context) net.IP {
 	return net.ParseIP(host)
 }
 
+// RecoveryTokenConsumer single-use-consumes a recovery/enroll token and returns
+// the node token it re-pairs (empty for a normal enroll token). Used ONLY by the
+// known-node recovery branch. Satisfied by *store.PostgresStore. nil = recovery off.
+type RecoveryTokenConsumer interface {
+	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
+}
+
 // Node is a minimal representation used by the gRPC layer.
 // Matches the fields needed from models.Node.
 type Node struct {
@@ -97,10 +104,11 @@ type Server struct {
 	acl        ACLHandshake
 	linkCreds  LinkCredSource
 	admission  AdmissionChecker
+	recovery   RecoveryTokenConsumer
 }
 
 // NewServer creates a new gRPC server for Node connections.
-func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker) *Server {
+func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer) *Server {
 	return &Server{
 		registry:   registry,
 		nodeLookup: lookup,
@@ -108,6 +116,7 @@ func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHand
 		acl:        acl,
 		linkCreds:  linkCreds,
 		admission:  admission,
+		recovery:   recovery,
 	}
 }
 
@@ -243,12 +252,27 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					return fmt.Errorf("acl: bad challenge response for node %d", node.ID)
 				}
 			} else {
-				// First issuance for a known node: require a cluster_proof (HMAC under
-				// CLUSTER_SECRET). Closes the window where flipping feature_redis_acl on
-				// (or a secret reset) would hand the secret to any bare-token holder.
+				// First issuance for a known node. Accept EITHER:
+				//  (1) a cluster_proof (HMAC under CLUSTER_SECRET) — original path; or
+				//  (2) P0b-5 recovery: a single-use recovery token bound to THIS node
+				//      token, presented as auth.EnrollToken (fed via NODE_RECOVERY_TOKEN).
+				// EnsureExisting below re-issues the secret + re-provisions the ACL under
+				// the SAME token/id (node_secret_enc was cleared -> a fresh secret is minted).
+				// Recovery is NOT gated by admission (known id, not a new registration).
 				if !s.acl.VerifyClusterProof(node.Token, auth.ClusterProof) {
-					sendFail("cluster proof required")
-					return fmt.Errorf("acl: node %d first-issuance without valid cluster proof", node.ID)
+					recovered := false
+					if s.recovery != nil && auth.EnrollToken != "" {
+						_, recoversNodeToken, ok, cerr := s.recovery.ConsumeNodeEnrollToken(auth.EnrollToken)
+						if cerr != nil {
+							sendFail("recovery check failed")
+							return fmt.Errorf("acl: node %d recovery check failed: %w", node.ID, cerr)
+						}
+						recovered = ok && recoversNodeToken != "" && recoversNodeToken == node.Token
+					}
+					if !recovered {
+						sendFail("cluster proof or recovery token required")
+						return fmt.Errorf("acl: node %d first-issuance without valid cluster proof or recovery token", node.ID)
+					}
 				}
 			}
 			secretHex, perr := s.acl.EnsureExisting(ctx, node.ID, node.Token)
@@ -338,7 +362,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // Blocks until the server is stopped. When tlsEnabled is set, it presents the
 // cluster-wide certificate derived from clusterSecret (CLUSTER_SECRET) so nodes
 // can pin its fingerprint; otherwise it serves plaintext (unchanged behavior).
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, tlsEnabled bool, clusterSecret string) error {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer, tlsEnabled bool, clusterSecret string) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -367,7 +391,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 
 	grpcServer := grpc.NewServer(opts...)
 
-	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission)
+	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission, recovery)
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)
