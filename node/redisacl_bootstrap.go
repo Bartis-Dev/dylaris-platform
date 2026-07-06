@@ -30,10 +30,10 @@ var (
 // ctx cancel; never fatal.
 func ensureNodeSecret(ctx context.Context) []byte {
 	// Adopt a previously assigned identity before any credential/key derivation.
-	// On a re-boot the node presents this id (not its hostname) so Core recognizes
-	// it and the ACL creds match the node-{assignedID} user Core provisioned.
+	hadAssignedID := false
 	if id, ok := loadNodeID(nodeSecretDir); ok {
 		nodeID = id
+		hadAssignedID = true
 	}
 	if s, p, ok := loadLinkCreds(nodeSecretDir); ok {
 		linkSecret, linkDiscoveryProof = s, p
@@ -42,6 +42,18 @@ func ensureNodeSecret(ctx context.Context) []byte {
 		nodeSecret = s
 		log.Println("redisacl: using cached node secret")
 		return s
+	}
+	// P0b-5 hard guard: a node that already holds a server-assigned identity but has
+	// no cached secret must NOT silently re-pair as if it were new. It has to prove
+	// authority to re-pair. Accepted bootstrap credentials: a recovery token
+	// (NODE_RECOVERY_TOKEN), an enroll token (NODE_ENROLL_TOKEN), or — for platform
+	// nodes not yet migrated off CLUSTER_SECRET — the cluster secret (cluster proof).
+	// Without any of these, fail loudly instead of spinning on a rejected handshake.
+	if hadAssignedID && nodeRecoveryToken == "" && nodeEnrollToken == "" && clusterSecret == "" {
+		log.Printf("redisacl: FATAL paired node id %s has no cached secret and no way to re-pair. "+
+			"Obtain a recovery token from the panel (Settings -> Nodes -> Reset pairing) and start the node "+
+			"with NODE_RECOVERY_TOKEN set to re-pair under this identity.", nodeID)
+		return nil // caller (main.go) log.Fatal's on a nil secret -> process stops.
 	}
 	backoff := time.Second
 	for {
@@ -93,6 +105,9 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 	cached, hasCached := loadNodeSecret(nodeSecretDir)
 	if hasCached {
 		auth.SecretProof = aclProof(cached, nodeID)
+	} else if nodeRecoveryToken != "" {
+		// Re-pair under the existing identity via an admin-minted recovery token.
+		auth.EnrollToken = nodeRecoveryToken
 	} else if nodeEnrollToken != "" {
 		auth.EnrollToken = nodeEnrollToken
 	}
