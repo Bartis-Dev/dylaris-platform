@@ -65,7 +65,7 @@ export async function testHubRedisConnection(
 }
 
 export async function provisionHubRedisAdmin(
-    body: { mode: 'same' | 'external' | 'manual'; db: number; external?: { addr: string; username: string; password?: string } },
+    body: { mode: 'same' | 'external' | 'manual'; db: number; external?: HubRedisExternalTarget },
 ): Promise<HubRedisProvisionResult> {
     try {
         const res = await fetch(`${API_URL}/settings/gateway/hub-redis-admin`, {
