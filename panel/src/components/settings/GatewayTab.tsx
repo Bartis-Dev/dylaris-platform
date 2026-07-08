@@ -7,8 +7,10 @@ import {
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
     API_URL,
+    getHubRedisAdminStatus, testHubRedisConnection, provisionHubRedisAdmin, rollHubRedisAdmin,
+    HubRedisAdminStatus, HubRedisProvisionResult, HubEnv,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Radio, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network, KeyRound, Database } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
@@ -93,7 +95,7 @@ async function saveBeamSettings(settings: BeamSettings): Promise<{ success: bool
 
 type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc' | 'portHttps' | 'portHttp';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
-type SubTab = 'gateway' | 'beam' | 'xdp';
+type SubTab = 'gateway' | 'beam' | 'xdp' | 'hub';
 
 const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
     { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
@@ -111,6 +113,7 @@ const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'gateway', label: 'Gateway', icon: Router },
     { id: 'beam', label: 'Beam', icon: Radio },
     { id: 'xdp', label: 'DDoS Protection', icon: Shield },
+    { id: 'hub', label: 'Hub Admin', icon: KeyRound },
 ];
 
 // ─────────────────────────────────────────────
@@ -1703,6 +1706,284 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 }
 
 // ─────────────────────────────────────────────
+// Hub Admin panel (TP2b)
+// ─────────────────────────────────────────────
+
+// buildHubEnvText renders the one-time Hub deploy ENV block. REDIS_ADDR is a
+// placeholder in manual mode (the operator runs the SETUSER wherever their
+// gateway Redis lives).
+function buildHubEnvText(e?: HubEnv): string {
+    if (!e) return '';
+    const addr = e.REDIS_ADDR && e.REDIS_ADDR.trim() !== '' ? e.REDIS_ADDR : '<your-redis-host:port>';
+    const lines = [
+        `REDIS_ADDR=${addr}`,
+        `REDIS_USER=${e.REDIS_USER}`,
+        `REDIS_PASS=${e.REDIS_PASS}`,
+    ];
+    if (e.REDIS_DB !== undefined) lines.push(`REDIS_DB=${e.REDIS_DB}`);
+    return lines.join('\n');
+}
+
+const HUB_MODES: { value: 'same' | 'external' | 'manual'; label: string; desc: string }[] = [
+    { value: 'same', label: 'Same Redis', desc: 'Provision on the platform Redis using its existing admin.' },
+    { value: 'external', label: 'External Redis', desc: 'Provision on a different Redis you supply admin credentials for.' },
+    { value: 'manual', label: 'Show Command Only', desc: 'Generate the password + ACL command to run yourself.' },
+];
+
+function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    const [loading, setLoading] = useState(true);
+    const [status, setStatus] = useState<HubRedisAdminStatus | null>(null);
+
+    const [mode, setMode] = useState<'same' | 'external' | 'manual'>('same');
+    const [db, setDb] = useState(0);
+    const [ext, setExt] = useState({ addr: '', username: '', password: '' });
+    const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+    const [testing, setTesting] = useState(false);
+    const [provisioning, setProvisioning] = useState(false);
+
+    const [revealed, setRevealed] = useState<HubRedisProvisionResult | null>(null);
+
+    const [rolling, setRolling] = useState(false);
+    const [rollPrompt, setRollPrompt] = useState(false);
+    const [rollPassword, setRollPassword] = useState('');
+
+    const load = async () => {
+        setLoading(true);
+        const res = await getHubRedisAdminStatus();
+        if (res.success) setStatus(res);
+        setLoading(false);
+    };
+
+    useEffect(() => { load(); }, []);
+
+    const runTest = async () => {
+        if (!ext.addr.trim() || !ext.username.trim()) { showToast('Address and username are required.', false); return; }
+        setTesting(true);
+        setTestResult(null);
+        const res = await testHubRedisConnection({ addr: ext.addr.trim(), db, username: ext.username.trim(), password: ext.password || undefined });
+        setTesting(false);
+        if (res.success && res.ok) setTestResult({ ok: true, msg: `Connected as ${res.whoami || ext.username.trim()}.` });
+        else setTestResult({ ok: false, msg: res.message || 'Connection failed.' });
+    };
+
+    const provision = async () => {
+        if (mode === 'external' && (!ext.addr.trim() || !ext.username.trim())) {
+            showToast('Address and username are required.', false);
+            return;
+        }
+        setProvisioning(true);
+        // NOTE: for external mode, Core reads the target DB from req.External.DB
+        // (not the top-level db), so the external DB selection must travel inside
+        // body.external.db here — the top-level db is only consulted for same/manual.
+        const body: { mode: 'same' | 'external' | 'manual'; db: number; external?: { addr: string; db: number; username: string; password?: string } } = { mode, db };
+        if (mode === 'external') {
+            body.external = { addr: ext.addr.trim(), db, username: ext.username.trim(), password: ext.password || undefined };
+        }
+        const res = await provisionHubRedisAdmin(body);
+        setProvisioning(false);
+        if (res.success && res.password) {
+            setRevealed(res);
+            load();
+        } else {
+            showToast(res.message || 'Provision failed.', false);
+        }
+    };
+
+    const doRoll = async (externalPassword?: string) => {
+        setRolling(true);
+        const res = await rollHubRedisAdmin(externalPassword !== undefined ? { external: { password: externalPassword } } : {});
+        setRolling(false);
+        setRollPrompt(false);
+        setRollPassword('');
+        if (res.success && res.password) {
+            setRevealed(res);
+            load();
+        } else {
+            showToast(res.message || 'Roll failed.', false);
+        }
+    };
+
+    const onRollClick = () => {
+        if (status?.mode === 'external') setRollPrompt(true);
+        else doRoll();
+    };
+
+    const copyEnv = (r: HubRedisProvisionResult) => {
+        navigator.clipboard.writeText(buildHubEnvText(r.hubEnv)).then(() => showToast('Hub ENV copied.', true)).catch(() => { /* clipboard blocked */ });
+    };
+
+    if (loading) {
+        return <div className="space-y-6"><div className="h-8 w-48 bg-(--base-03) rounded animate-pulse" /><div className="h-48 bg-(--base-02) rounded animate-pulse" /></div>;
+    }
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Hub Admin Redis User</h2>
+                <p className="text-sm text-(--base-07)">Create the gateway Hub&apos;s admin Redis ACL user (<span className="font-mono">gw-hub-admin</span>, full rights) and reveal its password once.</p>
+            </div>
+
+            {/* Status card */}
+            <div className="card p-5 space-y-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <KeyRound size={18} className="text-(--accent-light)" />
+                    </div>
+                    <div className="flex-1">
+                        <div className="font-medium text-sm text-(--base-09)">Provisioning Status</div>
+                        <div className="text-xs text-(--base-06)">The generated password is never stored and shown only once.</div>
+                    </div>
+                    {status?.provisioned && (
+                        <button onClick={onRollClick} disabled={rolling} className="btn btn-secondary btn-sm disabled:opacity-40">
+                            {rolling ? <Spinner size="xs" /> : <RefreshCw size={12} />} Roll password
+                        </button>
+                    )}
+                </div>
+
+                {status?.provisioned ? (
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-(--base-06)">User</span><span className="font-mono text-(--base-09)">gw-hub-admin</span></div>
+                        <div className="flex justify-between"><span className="text-(--base-06)">Mode</span><span className="text-(--base-09)">{status.mode}</span></div>
+                        <div className="flex justify-between"><span className="text-(--base-06)">Target</span><span className="font-mono text-(--base-09)">{status.addr || '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-(--base-06)">DB</span><span className="text-(--base-09)">{status.db ?? 0}</span></div>
+                        {status.adminUser && <div className="flex justify-between"><span className="text-(--base-06)">Admin user</span><span className="font-mono text-(--base-09)">{status.adminUser}</span></div>}
+                        {status.provisionedAt && <div className="flex justify-between"><span className="text-(--base-06)">Provisioned</span><span className="text-(--base-09)">{new Date(status.provisionedAt).toLocaleString()}</span></div>}
+                        {status.lastRolledAt && <div className="flex justify-between"><span className="text-(--base-06)">Last rolled</span><span className="text-(--base-09)">{new Date(status.lastRolledAt).toLocaleString()}</span></div>}
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-2 text-sm text-(--base-06) py-2">
+                        <Database size={15} /> Not provisioned yet. Configure a target below.
+                    </div>
+                )}
+            </div>
+
+            {/* Configure card */}
+            <div className="card p-5 space-y-5">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <Database size={18} className="text-(--accent-light)" />
+                    </div>
+                    <div>
+                        <div className="font-medium text-sm text-(--base-09)">Provision Target</div>
+                        <div className="text-xs text-(--base-06)">Choose where the gw-hub-admin user is created.</div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                    {HUB_MODES.map(opt => (
+                        <button key={opt.value} type="button" onClick={() => { setMode(opt.value); setTestResult(null); }}
+                            className={`p-3 rounded-md border text-left transition-colors ${mode === opt.value ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
+                            <div className={`text-sm font-medium ${mode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
+                            <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                        </button>
+                    ))}
+                </div>
+
+                {mode === 'same' && (
+                    <div className="max-w-xs">
+                        <label className="input-label">Hub DB number (advanced)</label>
+                        <input type="number" min={0} max={15} className="input-field" value={db} onChange={e => setDb(parseInt(e.target.value) || 0)} />
+                        <p className="text-xs text-(--base-06) mt-1">ACL users are instance-wide; this only becomes the Hub&apos;s REDIS_DB.</p>
+                    </div>
+                )}
+
+                {mode === 'external' && (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="input-label">Address (host:port)</label>
+                                <input className="input-field" value={ext.addr} onChange={e => { setExt(s => ({ ...s, addr: e.target.value })); setTestResult(null); }} placeholder="redis.example.com:6379" />
+                            </div>
+                            <div>
+                                <label className="input-label">DB number</label>
+                                <input type="number" min={0} max={15} className="input-field" value={db} onChange={e => setDb(parseInt(e.target.value) || 0)} />
+                            </div>
+                            <div>
+                                <label className="input-label">Admin username</label>
+                                <input className="input-field" value={ext.username} onChange={e => { setExt(s => ({ ...s, username: e.target.value })); setTestResult(null); }} placeholder="default" />
+                            </div>
+                            <div>
+                                <label className="input-label">Admin password (optional)</label>
+                                <input type="password" className="input-field" value={ext.password} onChange={e => { setExt(s => ({ ...s, password: e.target.value })); setTestResult(null); }} placeholder="Leave blank if nopass" />
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button onClick={runTest} disabled={testing} className="btn btn-secondary disabled:opacity-40">
+                                {testing ? <Spinner size="xs" /> : <Network size={14} />} Test Connection
+                            </button>
+                            {testResult && (
+                                <span className={`text-sm flex items-center gap-1.5 ${testResult.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                                    {testResult.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />} {testResult.msg}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex items-center gap-3 border-t border-(--base-04) pt-4">
+                    <button onClick={provision} disabled={provisioning} className="btn btn-primary disabled:opacity-40">
+                        {provisioning ? <Spinner size="xs" /> : <KeyRound size={14} />} {mode === 'manual' ? 'Generate Command' : 'Provision gw-hub-admin'}
+                    </button>
+                    <p className="text-xs text-(--base-06)">The password is displayed once. If you lose it, roll a new one.</p>
+                </div>
+            </div>
+
+            {/* One-time reveal modal */}
+            {revealed && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
+                    <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">gw-hub-admin — copy now</h3></div>
+                        <div className="modal-body space-y-4">
+                            <p className="text-sm text-(--base-07) flex items-start gap-2">
+                                <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
+                                This password is shown once and never stored. Put the Hub ENV below into your gateway Hub deployment. If you lose it, roll a new one.
+                            </p>
+                            <div className="space-y-1">
+                                <label className="mono-label">Password</label>
+                                <CopyValue value={revealed.password || ''} />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="mono-label">Hub deploy ENV</label>
+                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{buildHubEnvText(revealed.hubEnv)}</pre>
+                                <button onClick={() => copyEnv(revealed)} className="btn btn-secondary btn-sm mt-1"><Copy size={12} /> Copy ENV</button>
+                            </div>
+                            {revealed.aclCommand && (
+                                <div className="space-y-1">
+                                    <label className="mono-label">Run this on your Redis</label>
+                                    <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{revealed.aclCommand}</pre>
+                                    <button onClick={() => { navigator.clipboard.writeText(revealed.aclCommand || ''); showToast('Command copied.', true); }} className="btn btn-secondary btn-sm mt-1"><Copy size={12} /> Copy command</button>
+                                </div>
+                            )}
+                        </div>
+                        <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary"><EyeOff size={12} /> Done</button></div>
+                    </div>
+                </div>
+            )}
+
+            {/* External roll re-prompt modal */}
+            {rollPrompt && (
+                <div className="modal-overlay animate-fade-in" onClick={() => { setRollPrompt(false); setRollPassword(''); }}>
+                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header"><h3 className="modal-title">Roll gw-hub-admin</h3></div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">Re-enter the external Redis admin password for <span className="font-mono">{status?.adminUser}</span> at <span className="font-mono">{status?.addr}</span>. It is used once and not stored.</p>
+                            <div>
+                                <label className="input-label">Admin password</label>
+                                <input type="password" className="input-field" value={rollPassword} onChange={e => setRollPassword(e.target.value)} autoFocus />
+                            </div>
+                        </div>
+                        <div className="modal-footer flex gap-2">
+                            <button onClick={() => { setRollPrompt(false); setRollPassword(''); }} className="btn btn-secondary">Cancel</button>
+                            <button onClick={() => doRoll(rollPassword)} disabled={rolling} className="btn btn-primary disabled:opacity-40">{rolling ? <Spinner size="xs" /> : <RefreshCw size={12} />} Roll</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
 // Main export: Gateway + Beam with left-nav
 // ─────────────────────────────────────────────
 
@@ -1721,7 +2002,7 @@ export default function GatewayTab() {
     useEffect(() => {
         if (typeof window === 'undefined') return;
         const hash = window.location.hash.replace(/^#/, '');
-        if (hash === 'gateway' || hash === 'beam' || hash === 'xdp') {
+        if (hash === 'gateway' || hash === 'beam' || hash === 'xdp' || hash === 'hub') {
             setSubTab(hash as SubTab);
         }
     }, []);
@@ -1784,6 +2065,7 @@ export default function GatewayTab() {
                 {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
                 {subTab === 'beam' && <BeamPanel showToast={showToast} />}
                 {subTab === 'xdp' && <XDPPanel showToast={showToast} />}
+                {subTab === 'hub' && <HubAdminPanel showToast={showToast} />}
             </div>
 
             {/* Sub-tab switch confirm dialog */}
