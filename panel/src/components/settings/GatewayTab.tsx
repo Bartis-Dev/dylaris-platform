@@ -1774,7 +1774,7 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
         setProvisioning(true);
         // NOTE: for external mode, Core reads the target DB from req.External.DB
         // (not the top-level db), so the external DB selection must travel inside
-        // body.external.db here — the top-level db is only consulted for same/manual.
+        // body.external.db here: the top-level db is only consulted for same/manual.
         const body: { mode: 'same' | 'external' | 'manual'; db: number; external?: { addr: string; db: number; username: string; password?: string } } = { mode, db };
         if (mode === 'external') {
             body.external = { addr: ext.addr.trim(), db, username: ext.username.trim(), password: ext.password || undefined };
@@ -1844,7 +1844,7 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
                     <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                         <div className="flex justify-between"><span className="text-(--base-06)">User</span><span className="font-mono text-(--base-09)">gw-hub-admin</span></div>
                         <div className="flex justify-between"><span className="text-(--base-06)">Mode</span><span className="text-(--base-09)">{status.mode}</span></div>
-                        <div className="flex justify-between"><span className="text-(--base-06)">Target</span><span className="font-mono text-(--base-09)">{status.addr || '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-(--base-06)">Target</span><span className="font-mono text-(--base-09)">{status.addr || 'not set'}</span></div>
                         <div className="flex justify-between"><span className="text-(--base-06)">DB</span><span className="text-(--base-09)">{status.db ?? 0}</span></div>
                         {status.adminUser && <div className="flex justify-between"><span className="text-(--base-06)">Admin user</span><span className="font-mono text-(--base-09)">{status.adminUser}</span></div>}
                         {status.provisionedAt && <div className="flex justify-between"><span className="text-(--base-06)">Provisioned</span><span className="text-(--base-09)">{new Date(status.provisionedAt).toLocaleString()}</span></div>}
@@ -1932,7 +1932,7 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
             {revealed && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
                     <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">gw-hub-admin — copy now</h3></div>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">gw-hub-admin: copy now</h3></div>
                         <div className="modal-body space-y-4">
                             <p className="text-sm text-(--base-07) flex items-start gap-2">
                                 <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
