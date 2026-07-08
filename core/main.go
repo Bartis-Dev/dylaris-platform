@@ -404,6 +404,7 @@ func main() {
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
+	hubRedisAdminHandler := handlers.NewHubRedisAdminHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -958,6 +959,14 @@ func main() {
 	api.HandleFunc("/settings/features", authHandler.AuthMiddleware(settingsHandler.SaveFeatureSettings)).Methods("POST")
 	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(settingsHandler.GetGatewaySettings)).Methods("GET")
 	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(settingsHandler.SaveGatewaySettings)).Methods("POST")
+
+	// Hub-admin Redis provisioner (TP2b): admin-only create/test/roll of the
+	// gw-hub-admin ACL user. GET status carries no secret; the password is
+	// returned once by POST provision/roll.
+	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(hubRedisAdminHandler.GetStatus)).Methods("GET")
+	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(hubRedisAdminHandler.Provision)).Methods("POST")
+	api.HandleFunc("/settings/gateway/hub-redis-admin/test-connection", authHandler.AuthMiddleware(hubRedisAdminHandler.TestConnection)).Methods("POST")
+	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(hubRedisAdminHandler.Roll)).Methods("POST")
 
 	// Placement / Scheduling
 	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(settingsHandler.GetPlacementSettings)).Methods("GET")
