@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Server, Circle } from 'lucide-react';
+import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Server, Circle, Shield } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getWarpRegions, upsertWarpRegion, deleteWarpRegion,
     upsertWarpLeader, deleteWarpLeader, mintWarpKey,
+    getWarpFirewallSettings, saveWarpFirewallSettings,
     type WarpRegionView,
 } from '@/lib/api/types';
 import { API_URL } from '@/lib/api/core';
@@ -28,11 +29,16 @@ export default function WarpTab() {
     const [minting, setMinting] = useState(false);
     const [revealed, setRevealed] = useState<{ name: string; apiKey: string } | null>(null);
 
+    const [fwPorts, setFwPorts] = useState('');
+    const [fwLoaded, setFwLoaded] = useState(false);
+    const [savingFw, setSavingFw] = useState(false);
+
     const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
     const load = useCallback(async () => {
-        const res = await getWarpRegions();
+        const [res, fw] = await Promise.all([getWarpRegions(), getWarpFirewallSettings()]);
         if (res.success) setRegions(res.regions || []);
+        if (fw.success) { setFwPorts(fw.settings.allowedPorts); setFwLoaded(true); }
         setLoading(false);
     }, []);
 
@@ -89,6 +95,18 @@ export default function WarpTab() {
         }
     };
 
+    const saveFw = async () => {
+        setSavingFw(true);
+        const res = await saveWarpFirewallSettings({ allowedPorts: fwPorts.trim() });
+        setSavingFw(false);
+        if (res.success) {
+            if (res.settings) setFwPorts(res.settings.allowedPorts);
+            showToast('Spoke firewall allowlist saved.');
+        } else {
+            showToast(res.message || res.error || 'Save failed.', false);
+        }
+    };
+
     if (loading) return <div className="space-y-6"><div className="h-8 w-40 bg-(--base-03) rounded animate-pulse" /><div className="h-64 bg-(--base-02) rounded animate-pulse" /></div>;
 
     return (
@@ -131,6 +149,39 @@ export default function WarpTab() {
                     </button>
                 </div>
                 <p className="text-xs text-(--base-06)">Subnets must be disjoint from your DC + overlay ranges and from each other. The first host (.1) is reserved for the region&apos;s leaders.</p>
+            </div>
+
+            {/* Overlay segmentation: spoke firewall allowlist */}
+            <div className="card p-5 space-y-4">
+                <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Shield size={15} /> Overlay Segmentation</h3>
+                <p className="text-xs text-(--base-07)">
+                    Each region&apos;s leader firewalls spoke (external/home node) traffic. Spokes are always isolated
+                    from one another and may reach ONLY these destination TCP ports. Everything else (Postgres, the Hub,
+                    Core REST, other tenants&apos; servers and nodes) is denied.
+                </p>
+                <div>
+                    <label className="input-label">Allowed spoke ports (comma-separated)</label>
+                    <input
+                        className="input-field input-mono"
+                        value={fwPorts}
+                        onChange={e => setFwPorts(e.target.value)}
+                        placeholder="6379,25560,25551,25501"
+                        disabled={!fwLoaded}
+                    />
+                    <p className="text-xs text-(--base-06) mt-1">
+                        Defaults: <span className="font-mono">6379</span> Redis, <span className="font-mono">25560</span> edge tunnel, <span className="font-mono">25551</span> beam relay, <span className="font-mono">25501</span> Core gRPC.
+                    </p>
+                </div>
+                <div className="flex items-start gap-2 p-3 rounded-md border border-(--warning)/40 bg-(--warning)/5">
+                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
+                    <p className="text-xs text-(--base-07)">
+                        Adding ports widens what an untrusted external host can reach inside your network. Only add a port
+                        you fully understand. Peer isolation (spoke to spoke) is always enforced and cannot be changed here.
+                    </p>
+                </div>
+                <button onClick={saveFw} disabled={savingFw || !fwLoaded} className="btn btn-primary disabled:opacity-40">
+                    Save allowlist
+                </button>
             </div>
 
             {/* Mint enrollment key */}

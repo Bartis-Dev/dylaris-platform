@@ -813,6 +813,18 @@ export const deleteWarpLeader = (leaderId: string) =>
 export const mintWarpKey = (data: MintWarpKeyInput) =>
     fetchAPI('/admin/warp/keys', { method: 'POST', body: JSON.stringify(data) });
 
+// Warp overlay segmentation: the admin-configurable spoke destination-port
+// allowlist the region leaders enforce (comma-separated TCP ports).
+export interface WarpFirewallSettings {
+    allowedPorts: string;
+}
+export const getWarpFirewallSettings = (): Promise<{ success: boolean; settings: WarpFirewallSettings }> =>
+    fetchAPI('/settings/warp-firewall');
+export const saveWarpFirewallSettings = (
+    data: WarpFirewallSettings,
+): Promise<{ success: boolean; settings?: WarpFirewallSettings; error?: string; message?: string }> =>
+    fetchAPI('/settings/warp-firewall', { method: 'POST', body: JSON.stringify(data) });
+
 // Gateway User API (per-server routes)
 export const getServerRoutes = (serverId: number) => fetchAPI(`/servers/${serverId}/routes`);
 export interface CreateRouteRequest {
