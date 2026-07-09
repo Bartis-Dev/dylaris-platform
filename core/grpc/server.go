@@ -159,10 +159,9 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		return fmt.Errorf("first message was not NodeAuth")
 	}
 
-	// Step 2 + 3: Authenticate + send auth result.
-	// When the ACL feature is on AND the node advertises support, the handshake
-	// mints/provisions per-node Redis creds (and enrolls unknown BYON nodes).
-	// Otherwise the OFF path below is byte-identical to the original handshake.
+	// Step 2 + 3: Authenticate + send auth result. Redis ACL is mandatory: every
+	// node connect mints/provisions per-node scoped Redis creds and enrolls unknown
+	// BYON nodes (with a valid enroll token). There is no OFF path anymore.
 	ctx := stream.Context()
 	sendFail := func(msg string) {
 		_ = stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
@@ -170,11 +169,8 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		}})
 	}
 
-	featureOn := s.acl != nil && s.acl.Enabled(ctx)
-	aclOn := featureOn && auth.AclSupported
-
 	var node *Node
-	if aclOn {
+	{
 		address := ""
 		if ips := auth.GetIps(); ips != nil {
 			address = ips.GetPublic()
@@ -301,35 +297,6 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: res}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
 			}
-		}
-	} else {
-		// OFF PATH: byte-identical to the original handshake when the feature is off.
-		n, lookErr := s.nodeLookup.GetNodeByToken(auth.NodeToken)
-		if lookErr != nil {
-			sendFail("invalid node token")
-			return fmt.Errorf("auth failed for token %s: %w", tokenPrefix(auth.NodeToken), lookErr)
-		}
-		// Downgrade guard: with feature_redis_acl on, a provisioned node (one that
-		// has a per-node secret) MUST authenticate via the ACL challenge path.
-		// Refuse a bare-token connection (AclSupported=false) for such a node so an
-		// attacker cannot skip the possession proof by clearing AclSupported. Fail
-		// closed on a lookup error, consistent with the ACL-path HasSecret check.
-		if featureOn {
-			has, herr := s.acl.HasSecret(ctx, n.ID)
-			if herr != nil {
-				sendFail("acl state error")
-				return fmt.Errorf("acl: secret-state lookup failed for node %d: %w", n.ID, herr)
-			}
-			if has {
-				sendFail("node must use ACL auth")
-				return fmt.Errorf("acl: node %d has a secret but connected without ACL support", n.ID)
-			}
-		}
-		node = n
-		if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
-			AuthResult: &pb.AuthResult{Ok: true, CoreId: s.coreID},
-		}}); err != nil {
-			return fmt.Errorf("failed to send auth result: %w", err)
 		}
 	}
 
