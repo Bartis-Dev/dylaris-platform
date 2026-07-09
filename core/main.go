@@ -355,6 +355,12 @@ func main() {
 		}
 	}
 
+	// Publish the spoke firewall allowlist to the central Redis key the warp
+	// leaders read and poll, so a freshly (re)started leader gets the admin value
+	// rather than only its compiled-in fail-closed default. Always write (even
+	// the default) so a stale value from a previous install cannot linger.
+	redisClient.Set(context.Background(), "dylaris:warp:firewall:allowed_ports", settingsHandler.LoadWarpSpokeAllowedPorts(), 0)
+
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
 	statsHandler := handlers.NewStatsHandler(appState)
@@ -1009,6 +1015,8 @@ func main() {
 	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.SaveRoutingMode)).Methods("POST")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.GetBackupConfig)).Methods("GET")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.SaveBackupConfig)).Methods("POST")
+	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(settingsHandler.GetWarpFirewallSettings)).Methods("GET")
+	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(settingsHandler.SaveWarpFirewallSettings)).Methods("POST")
 
 	// --- Regions ---
 	// User-facing: list of enabled regions (drives region pickers).

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -1173,5 +1175,111 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":        true,
 		"serversQueued":  queued,
+	})
+}
+
+// --- Warp Spoke Firewall Settings ---
+
+// warpFirewallRedisKey is the fixed central-Redis key the warp leaders read and
+// poll for the admin-configured spoke destination-port allowlist. MUST stay
+// byte-identical to gateway/warp firewallAllowedPortsKey.
+const warpFirewallRedisKey = "dylaris:warp:firewall:allowed_ports"
+
+// defaultWarpSpokeAllowedPorts is the compiled-in default allowlist (6379 Redis,
+// 25560 edge tunnel, 25551 beam relay, 25501 Core gRPC). MUST match gateway/warp
+// defaultSpokeAllowedPorts.
+const defaultWarpSpokeAllowedPorts = "6379,25560,25551,25501"
+
+type WarpFirewallSettings struct {
+	AllowedPorts string `json:"allowedPorts"` // comma-separated destination TCP ports the overlay leaders allow spokes to reach
+}
+
+// normalizeWarpPorts validates and normalizes a comma-separated port list into a
+// sorted, deduped CSV. It rejects any non-numeric or out-of-range (1..65535)
+// entry so a bad value never reaches the leaders (which trust this key).
+func normalizeWarpPorts(csv string) (string, error) {
+	seen := map[int]bool{}
+	var ports []int
+	for _, part := range strings.Split(csv, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return "", fmt.Errorf("invalid port %q", p)
+		}
+		if n < 1 || n > 65535 {
+			return "", fmt.Errorf("port %d out of range 1-65535", n)
+		}
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		ports = append(ports, n)
+	}
+	sort.Ints(ports)
+	strs := make([]string, len(ports))
+	for i, p := range ports {
+		strs[i] = strconv.Itoa(p)
+	}
+	return strings.Join(strs, ","), nil
+}
+
+// LoadWarpSpokeAllowedPorts returns the persisted allowlist, or the compiled-in
+// default when unset. The stored value is already normalized on save.
+func (h *SettingsHandler) LoadWarpSpokeAllowedPorts() string {
+	v, _ := h.state.Store.GetSetting("warp_spoke_allowed_ports")
+	if v == "" {
+		return defaultWarpSpokeAllowedPorts
+	}
+	return v
+}
+
+// GetWarpFirewallSettings GET /api/settings/warp-firewall - admin only.
+func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"settings": WarpFirewallSettings{AllowedPorts: h.LoadWarpSpokeAllowedPorts()},
+	})
+}
+
+// SaveWarpFirewallSettings POST /api/settings/warp-firewall - admin only.
+// Validates + normalizes the port list, persists it, and publishes it to the
+// central-Redis key the warp leaders poll. Requires at least one port: an empty
+// allowlist would silently lock every spoke out of all internal services.
+func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
+	var req WarpFirewallSettings
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	norm, err := normalizeWarpPorts(req.AllowedPorts)
+	if err != nil {
+		sendJSONError(w, "Invalid ports: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if norm == "" {
+		sendJSONError(w, "At least one port is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetSetting("warp_spoke_allowed_ports", norm); err != nil {
+		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		return
+	}
+	if h.state.Redis != nil {
+		h.state.Redis.Set(r.Context(), warpFirewallRedisKey, norm, 0)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"settings": WarpFirewallSettings{AllowedPorts: norm},
 	})
 }
