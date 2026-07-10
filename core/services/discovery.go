@@ -201,17 +201,10 @@ func (s *DiscoveryService) scanNodes() {
 			continue
 		}
 
-		// 2. Security Check. OFF path: raw-secret compare, byte-identical. ON path
-		// (feature_redis_acl): the raw secret is absent; the per-node signature is
-		// verified in the existing-node branch below (a new node is created only via
-		// gRPC enroll, never from a heartbeat).
-		featureOn := s.flags != nil && s.flags.IsRedisACLEnabled(ctx)
-		if !featureOn {
-			if hb.ClusterSecret != s.clusterSecret {
-				log.Printf("Unauthorized Node detected: %s (Wrong Secret)", hb.Name)
-				continue
-			}
-		}
+		// 2. Security Check. Redis ACL is mandatory: the raw cluster secret is never
+		// on the wire. A new node is created only via the gRPC enroll path (never from
+		// a heartbeat), and an existing node's per-node HMAC signature is verified in
+		// the existing-node branch below.
 
 		// 3. Find or create Node in DB
 		activeNodeTokens[hb.ID] = true
@@ -221,79 +214,23 @@ func (s *DiscoveryService) scanNodes() {
 		if err != nil {
 			// Node does not exist -> Create new!
 
-			// Server-assigned identity: on the hardened path, gRPC enroll (gated by
-			// a single-use enroll token) is the ONLY node-creation path. A heartbeat
-			// for an id the Core never assigned must NOT auto-register a node, or the
-			// Core-minted identity would be trivially bypassable. Liveness updates for
-			// already-enrolled nodes (the else branch) are unaffected. nil flags =
-			// no gating = OFF path = create as before (byte-identical).
-			if s.flags != nil && s.flags.IsRedisACLEnabled(ctx) {
-				continue
-			}
-
-			// Reject duplicate node names
-			if existing, nameErr := s.store.GetNodeByName(hb.Name); nameErr == nil && existing.Token != hb.ID {
-				log.Printf("Rejected Node '%s': name already in use by node token '%s'", hb.Name, existing.Token)
-				continue
-			}
-
-			log.Printf("New Node Discovered: %s (%s)", hb.Name, hb.IP)
-
-			tags := hb.Tags
-			if tags == "" {
-				tags = "auto-discovered"
-			}
-
-			address := hb.IP
-			if address == "" || address == "auto" {
-				address = "127.0.0.1"
-			}
-
-			newNode := &models.Node{
-				Name:          hb.Name,
-				Address:       address,
-				Token:         hb.ID,
-				Status:        "online",
-				IsLocal:       false,
-				Tags:          tags,
-				Region:        hb.Region,
-				LinkEnabled:   true,
-				LinkInstances: 1,
-			}
-			if createErr := s.store.CreateNode(newNode); createErr != nil {
-				log.Printf("Failed to create node '%s': %v", hb.Name, createErr)
-			} else if hb.EnrollToken != "" {
-				// BYON: bind a still-unowned node to the enroll token's user, then
-				// consume the token (single-use). Once the node is owned, skip.
-				if created, gerr := s.store.GetNodeByToken(hb.ID); gerr == nil && created.OwnerID == nil {
-					if uid, ok, terr := s.store.ResolveNodeEnrollToken(hb.EnrollToken); terr == nil && ok {
-						if s.nodeLimitReached(uid) {
-							log.Printf("Node %s NOT adopted: user %s is at their node limit", hb.Name, uid)
-						} else if cuid, _, cok, cerr := s.store.ConsumeNodeEnrollToken(hb.EnrollToken); cerr == nil && cok {
-							if serr := s.store.SetNodeOwner(created.ID, &cuid); serr != nil {
-								log.Printf("node %s: bind owner failed: %v", hb.Name, serr)
-							} else {
-								log.Printf("Node %s enrolled to user %s (BYON)", hb.Name, cuid)
-							}
-						}
-					}
-				}
-			}
-			// Gateway link auto-creation is handled by Hub's link discovery loop
-			// (hub:link:discovery:{nodeID} heartbeat from the Link binary)
+			// Server-assigned identity: gRPC enroll (gated by a single-use enroll
+			// token) is the ONLY node-creation path. A heartbeat for an id the Core
+			// never assigned must NOT auto-register a node, or the Core-minted identity
+			// would be trivially bypassable. Liveness updates for already-enrolled
+			// nodes (the else branch) are unaffected.
+			continue
 		} else {
-			if featureOn {
-				now := time.Now().Unix()
-				secret, ok, lerr := redisacl.LoadNodeSecret(s.store, s.clusterSecret, node.ID)
-				if lerr != nil || !ok || hb.Sig == "" ||
-					hb.Timestamp < now-30 || hb.Timestamp > now+30 ||
-					!redisacl.VerifyHeartbeatSig(secret, node.Token, hb.Timestamp, hb.Sig) {
-					log.Printf("Heartbeat rejected for %s: bad or stale signature", node.Name)
-					// Undo the active-mark from step above so a rejected heartbeat
-					// cannot keep a node online.
-					delete(activeNodeTokens, hb.ID)
-					continue
-				}
+			now := time.Now().Unix()
+			secret, ok, lerr := redisacl.LoadNodeSecret(s.store, s.clusterSecret, node.ID)
+			if lerr != nil || !ok || hb.Sig == "" ||
+				hb.Timestamp < now-30 || hb.Timestamp > now+30 ||
+				!redisacl.VerifyHeartbeatSig(secret, node.Token, hb.Timestamp, hb.Sig) {
+				log.Printf("Heartbeat rejected for %s: bad or stale signature", node.Name)
+				// Undo the active-mark from step above so a rejected heartbeat
+				// cannot keep a node online.
+				delete(activeNodeTokens, hb.ID)
+				continue
 			}
 			// Node exists -> Status Update + refresh last_seen_at
 			s.store.SetNodeLastSeen(node.ID)

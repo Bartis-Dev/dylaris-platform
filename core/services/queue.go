@@ -52,7 +52,7 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 	// add/keep server keys, re-apply now so the node has key access by the time
 	// it processes this command. Gated + nil-safe; never fails the command (the
 	// on-connect re-apply is the safety net, and the node retries on NOPERM).
-	if q.acl != nil && q.acl.Enabled(ctx) && aclRelevantAction(action) {
+	if q.acl != nil && aclRelevantAction(action) {
 		if err := q.acl.EnsureForToken(ctx, nodeToken); err != nil {
 			log.Printf("redisacl: pre-placement ACL ensure failed for node %s (action %s): %v — node self-heals on next reconnect", nodeToken, action, err)
 		}

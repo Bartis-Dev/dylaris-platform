@@ -178,9 +178,9 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	}
 	// Hard-cut the live Redis ACL so a possibly-compromised node loses access at
 	// once (ACL DELUSER disconnects live clients) instead of only at its next
-	// reconnect. Best-effort; only meaningful on the ACL path. Recovery re-provisions
-	// all three users under the new secret via EnsureNodeACL when the node re-pairs.
-	if h.state.Redis != nil && h.state.FeatureFlags != nil && h.state.FeatureFlags.IsRedisACLEnabled(r.Context()) {
+	// reconnect. Best-effort. Recovery re-provisions all three users under the new
+	// secret via EnsureNodeACL when the node re-pairs.
+	if h.state.Redis != nil {
 		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
 	if uid != "" {

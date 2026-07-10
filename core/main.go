@@ -296,7 +296,6 @@ func main() {
 	// AppState so the manual-move endpoint can EnqueueMigration.
 	migrationOrchestrator := services.NewMigrationOrchestrator(pgStore, redisClient, appState.Queue, appState.Gateway, cfg.ClusterSecret)
 	migrationOrchestrator.SetLeader(coreLeader)
-	migrationOrchestrator.SetFeatureFlags(appState.FeatureFlags)
 	migrationOrchestrator.Start(context.Background())
 	appState.Migration = migrationOrchestrator
 	migrationOrchestrator.SetCPUPinning(appState.CPUPinning)
