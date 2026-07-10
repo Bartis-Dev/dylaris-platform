@@ -22,34 +22,10 @@ type DiscoveryService struct {
 	// (single-Core dev mode); non-nil = only run when this Core holds the
 	// global lease. See pkg/leader.
 	leader leader.Election
-	// flags gates BYON-only behavior (max_nodes adoption cap). nil = no gating.
-	flags *FeatureFlags
 }
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (s *DiscoveryService) SetLeader(l leader.Election) { s.leader = l }
-
-// SetFeatureFlags wires the feature-flag gate. Call once at boot.
-func (s *DiscoveryService) SetFeatureFlags(f *FeatureFlags) { s.flags = f }
-
-// nodeLimitReached reports whether adopting one more node would exceed the
-// tenant's effective max_nodes cap. Only enforced when BYON is enabled; a 0 cap
-// (no plan/override) means unlimited. Fail-open on store errors so a transient
-// glitch never silently strands a node unadopted.
-func (s *DiscoveryService) nodeLimitReached(uid string) bool {
-	if s.flags == nil || !s.flags.IsBYONEnabled(context.Background()) {
-		return false
-	}
-	lim, err := EffectiveLimits(s.store, uid)
-	if err != nil || lim.MaxNodes <= 0 {
-		return false
-	}
-	cnt, err := s.store.CountNodesByOwner(uid)
-	if err != nil {
-		return false
-	}
-	return int64(cnt) >= lim.MaxNodes
-}
 
 // Payload that the Node writes to Redis
 type NodeHeartbeat struct {

@@ -90,8 +90,9 @@ func (a *aclHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	return n.ID, true, nil
 }
 
-// NodeLimitReached mirrors discovery.nodeLimitReached: only when BYON is on; a
-// 0 / missing cap means unlimited; fail-open on store errors.
+// NodeLimitReached enforces the BYON node-adoption cap on the gRPC enroll
+// path: only enforced when BYON is on; a 0 / missing cap means unlimited;
+// fail-open on store errors.
 func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
 	if a.flags == nil || !a.flags.IsBYONEnabled(context.Background()) {
 		return false
@@ -201,7 +202,6 @@ func main() {
 
 	discovery := services.NewDiscoveryService(pgStore, redisClient, cfg.ClusterSecret)
 	discovery.SetLeader(coreLeader)
-	discovery.SetFeatureFlags(appState.FeatureFlags)
 	discovery.Start()
 
 	nodeCleanup := services.NewNodeCleanupService(pgStore, 24*time.Hour)
