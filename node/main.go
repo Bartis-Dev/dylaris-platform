@@ -31,14 +31,10 @@ var (
 
 	// Node Redis
 	redisAddr string
-	redisUser string
-	redisPass string
 	redisDB   int
 
 	// Redis address passed to MC containers (non-Swarm, can't resolve Swarm DNS)
 	mcRedisAddr string
-	mcRedisUser string
-	mcRedisPass string
 	mcRedisDB   string
 
 	nodeTags          string
@@ -97,11 +93,9 @@ var grpcTLSEnabled bool
 // the fingerprint from CLUSTER_SECRET instead.
 var grpcTLSFingerprint string
 
-// Redis ACL bootstrap config (BYON Redis ACL hardening). All inert when
-// redisACLEnabled is false — the OFF path is byte-identical to before.
+// Redis ACL bootstrap config. Redis ACL is mandatory: the node always fetches its
+// per-node secret and derives scoped credentials.
 var (
-	// redisACLEnabled gates the entire scoped-credentials path. Off = today.
-	redisACLEnabled bool
 	// coreGRPCAddr is host:port of a Core gRPC endpoint, used for the one-shot
 	// secret-bootstrap handshake. Required only when ACL is on AND no cached
 	// secret exists (first boot) or after a Redis auth failure.
@@ -171,20 +165,17 @@ func main() {
 	parseConfig()
 
 	log.Printf("Starting Dylaris Node '%s'...", nodeID)
-	log.Printf("Connecting to Redis at %s (User: '%s', DB: %d)", redisAddr, redisUser, redisDB)
+	log.Printf("Connecting to Redis at %s (DB: %d)", redisAddr, redisDB)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	redisUserEff, redisPassEff := redisUser, redisPass
-	if redisACLEnabled {
-		secret := ensureNodeSecret(ctx)
-		if secret == nil {
-			log.Fatal("redisacl: shutdown before node secret could be obtained")
-		}
-		redisUserEff = aclNodeUsername(nodeID)
-		redisPassEff = aclNodePassword(secret, nodeID)
+	secret := ensureNodeSecret(ctx)
+	if secret == nil {
+		log.Fatal("redisacl: shutdown before node secret could be obtained")
 	}
+	redisUserEff := aclNodeUsername(nodeID)
+	redisPassEff := aclNodePassword(secret, nodeID)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
@@ -193,44 +184,37 @@ func main() {
 		DB:       redisDB,
 	})
 
-	if redisACLEnabled {
-		// Non-fatal: retry. On auth failure re-confirm with Core (which re-applies
-		// the ACL) and rebuild the client if the secret changed. MC containers keep
-		// running throughout, so a slow Core/Valkey never takes the node down.
-		backoff := time.Second
-		for {
-			if err := rdb.Ping(ctx).Err(); err == nil {
-				break
-			} else {
-				log.Printf("redisacl: Redis ping failed, re-confirming ACL with Core: %v", err)
-			}
-			if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
-				_ = saveNodeSecret(nodeSecretDir, s)
-				nodeSecret = s
-				_ = rdb.Close()
-				rdb = redis.NewClient(&redis.Options{
-					Addr: redisAddr, Username: aclNodeUsername(nodeID),
-					Password: aclNodePassword(s, nodeID), DB: redisDB,
-				})
-			} else if berr != nil {
-				log.Printf("redisacl: re-confirm with Core failed: %v", berr)
-			}
-			select {
-			case <-ctx.Done():
-				log.Fatal("redisacl: shutdown during Redis bootstrap")
-			case <-time.After(backoff):
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
+	// Non-fatal: retry. On auth failure re-confirm with Core (which re-applies
+	// the ACL) and rebuild the client if the secret changed. MC containers keep
+	// running throughout, so a slow Core/Valkey never takes the node down.
+	backoff := time.Second
+	for {
+		if err := rdb.Ping(ctx).Err(); err == nil {
+			break
+		} else {
+			log.Printf("redisacl: Redis ping failed, re-confirming ACL with Core: %v", err)
 		}
-		log.Println("Connected to Redis (ACL mode)")
-	} else {
-		if err := rdb.Ping(ctx).Err(); err != nil {
-			log.Fatalf("Failed to connect to Redis: %v", err)
+		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
+			_ = saveNodeSecret(nodeSecretDir, s)
+			nodeSecret = s
+			_ = rdb.Close()
+			rdb = redis.NewClient(&redis.Options{
+				Addr: redisAddr, Username: aclNodeUsername(nodeID),
+				Password: aclNodePassword(s, nodeID), DB: redisDB,
+			})
+		} else if berr != nil {
+			log.Printf("redisacl: re-confirm with Core failed: %v", berr)
 		}
-		log.Println("Connected to Redis")
+		select {
+		case <-ctx.Done():
+			log.Fatal("redisacl: shutdown during Redis bootstrap")
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
 	}
+	log.Println("Connected to Redis (ACL mode)")
 
 	// Multi-storage: init StorageManager with configured paths
 	storageMgr := NewStorageManager(storagePaths, rdb)
@@ -298,7 +282,7 @@ func main() {
 		}()
 	}
 
-	go startDiscoveryLoop(ctx, rdb, nodeID, clusterSecret, nodeTags, nodeRegion, mon, dockerMgr)
+	go startDiscoveryLoop(ctx, rdb, nodeID, nodeTags, nodeRegion, mon, dockerMgr)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
@@ -323,7 +307,7 @@ func main() {
 
 	// Migration (auto-move) pull endpoint (MIGRATION_PORT, default :25522).
 	// archivePathFor serves only a staged archive produced by migrate_out.
-	go StartMigrationServer(ctx, rdb, clusterSecret, nodeID, migrationArchivePathFor(storageMgr))
+	go StartMigrationServer(ctx, rdb, nodeID, migrationArchivePathFor(storageMgr))
 
 	// Node-managed Link sidecar (no-op unless NODE_MANAGES_LINK).
 	go startLinkReconciler(ctx, dockerMgr)
@@ -369,12 +353,9 @@ func parseConfig() {
 	}
 	nodeRegion = os.Getenv("NODE_REGION")
 
-	// CLUSTER_SECRET is required UNLESS the hardened path is on: a BYON/secret-free
-	// node boots on its enroll token + cached per-node secret and never holds it.
-	redisACLEnabled = os.Getenv("REDIS_ACL_ENABLED") == "true"
-	if clusterSecret == "" && !redisACLEnabled {
-		log.Fatal("FATAL: CLUSTER_SECRET is missing (required unless REDIS_ACL_ENABLED=true)!")
-	}
+	// CLUSTER_SECRET is OPTIONAL: a node authenticates to Redis via its
+	// gRPC-bootstrapped per-node secret, not the cluster secret. In-cluster nodes
+	// still use CLUSTER_SECRET for the cluster proof + gRPC TLS pin when present.
 	if nodeID == "" {
 		hostname, err := os.Hostname()
 		if err != nil || hostname == "" {
@@ -386,8 +367,6 @@ func parseConfig() {
 
 	// 2. Node Redis
 	redisAddr = os.Getenv("REDIS_ADDR")
-	redisUser = os.Getenv("REDIS_USER")
-	redisPass = getSecretEnv("REDIS_PASSWORD")
 	redisDB = 0
 	if dbStr := os.Getenv("REDIS_DB"); dbStr != "" {
 		if db, err := strconv.Atoi(dbStr); err == nil {
@@ -403,14 +382,6 @@ func parseConfig() {
 	mcRedisAddr = os.Getenv("SIDECAR_REDIS_ADDR")
 	if mcRedisAddr == "" {
 		mcRedisAddr = redisAddr // fallback: works if MC containers can reach Swarm DNS
-	}
-	mcRedisUser = os.Getenv("SIDECAR_REDIS_USER")
-	if mcRedisUser == "" {
-		mcRedisUser = redisUser
-	}
-	mcRedisPass = getSecretEnv("SIDECAR_REDIS_PASSWORD")
-	if mcRedisPass == "" {
-		mcRedisPass = redisPass
 	}
 	mcRedisDB = os.Getenv("SIDECAR_REDIS_DB")
 	if mcRedisDB == "" {
@@ -460,17 +431,9 @@ func parseConfig() {
 	// Cache the per-node secret on the first persisted storage path so it
 	// survives restarts (resolved the same way StorageManager picks paths[0]).
 	nodeSecretDir = firstPersistedStoragePath(storagePaths)
-	if redisACLEnabled {
-		log.Printf("Redis ACL mode ENABLED — node will use scoped credentials (secret dir: %s)", nodeSecretDir)
-		// Two-sided opt-in: Core MUST also have feature_redis_acl ON. If Core has it
-		// OFF, it returns a plain auth result with no secret, so a first-boot node
-		// (no cached secret) blocks waiting for one, and a node with a stale cached
-		// secret can't authenticate to Redis. Enable both sides together (see
-		// docs/superpowers/redis-acl-deploy.md).
-		log.Println("Redis ACL mode requires feature_redis_acl ENABLED on Core too — node-on/core-off will block on bootstrap.")
-		if coreGRPCAddr == "" {
-			log.Println("WARNING: REDIS_ACL_ENABLED but CORE_GRPC_ADDR is empty — the node can still run on a cached secret, but first-boot bootstrap and ACL re-confirm need a reachable Core gRPC endpoint.")
-		}
+	log.Printf("Redis ACL: node uses scoped credentials (secret dir: %s)", nodeSecretDir)
+	if coreGRPCAddr == "" {
+		log.Println("WARNING: CORE_GRPC_ADDR is empty. A first-boot node cannot bootstrap its per-node secret without a reachable Core gRPC endpoint; a node with a cached secret can still run.")
 	}
 
 	linkImage = os.Getenv("LINK_IMAGE")
@@ -635,21 +598,21 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 // storageManager is set during init and used by heartbeat to publish storage info.
 var globalStorageMgr *StorageManager
 
-func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, secret, tags, region string, mon *agent.Monitor, dm *DockerManager) {
+func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, tags, region string, mon *agent.Monitor, dm *DockerManager) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	sendHeartbeat(ctx, rdb, id, secret, tags, region, mon, dm)
+	sendHeartbeat(ctx, rdb, id, tags, region, mon, dm)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sendHeartbeat(ctx, rdb, id, secret, tags, region, mon, dm)
+			sendHeartbeat(ctx, rdb, id, tags, region, mon, dm)
 		}
 	}
 }
 
-func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, region string, mon *agent.Monitor, dm *DockerManager) {
+func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region string, mon *agent.Monitor, dm *DockerManager) {
 	key := fmt.Sprintf("dylaris:discovery:%s", id)
 
 	// IP-hiding: only expose public IP when at least one mode uses direct access
@@ -668,14 +631,10 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, secret, tags, reg
 			"private": getPrivateIPs(),
 		},
 	}
-	// Auth: on the hardened path (feature_redis_acl) the node stamps a per-node
-	// HMAC signature instead of shipping the raw CLUSTER_SECRET over Redis every
-	// 5s. OFF path is byte-identical (raw secret in the payload).
-	if redisACLEnabled && nodeSecret != nil {
-		data["sig"] = aclHeartbeatSig(nodeSecret, id, ts)
-	} else {
-		data["clusterSecret"] = secret
-	}
+	// Auth: the node stamps a per-node HMAC signature instead of shipping the raw
+	// CLUSTER_SECRET over Redis. nodeSecret is guaranteed non-nil after the startup
+	// bootstrap (main fatals otherwise).
+	data["sig"] = aclHeartbeatSig(nodeSecret, id, ts)
 
 	// BYON: advertise the per-user enroll token so Core can bind this node to its
 	// owner on first discovery. Only present when the operator brought the node

@@ -17,7 +17,7 @@ import (
 
 // StartMigrationServer runs the node-side migration pull endpoint and publishes
 // its overlay address to Redis. A target node calls GET /migration with a
-// CLUSTER_SECRET-derived bearer token; on a valid token we ServeFile the staged
+// per-node-secret-derived bearer token; on a valid token we ServeFile the staged
 // archive resolved via archivePathFor. Auth gates every request, so binding to
 // all interfaces (needed so a sibling node can reach us over the overlay) opens
 // no new surface — same reasoning as the Beam gRPC server.
@@ -25,7 +25,7 @@ import (
 // Wave 2a wires nothing into main.go yet: the real archivePathFor (which stages
 // a zip per server UUID) lands with the command handlers in Wave 2b. This
 // function only needs to compile and be ready.
-func StartMigrationServer(ctx context.Context, rdb *redis.Client, clusterSecret, nodeID string, archivePathFor func(serverUUID string) (string, bool)) {
+func StartMigrationServer(ctx context.Context, rdb *redis.Client, nodeID string, archivePathFor func(serverUUID string) (string, bool)) {
 	port := os.Getenv("MIGRATION_PORT")
 	if port == "" {
 		port = "25522"
@@ -39,12 +39,9 @@ func StartMigrationServer(ctx context.Context, rdb *redis.Client, clusterSecret,
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// Mirror Core's keying: verify with the per-node secret on the hardened
-		// path, else with CLUSTER_SECRET (read nodeSecret fresh per request).
-		verifyKey := clusterSecret
-		if redisACLEnabled && nodeSecret != nil {
-			verifyKey = string(nodeSecret)
-		}
+		// Mirror Core's keying: always verify with the per-node secret (read
+		// nodeSecret fresh per request).
+		verifyKey := string(nodeSecret)
 		claims, err := migration.VerifyToken(verifyKey, token)
 		if err != nil {
 			// Don't echo the underlying reason (expired vs forged) to callers.

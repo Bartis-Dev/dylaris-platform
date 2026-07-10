@@ -197,10 +197,9 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 			Private: nodeIPs.Private,
 		},
 	}
-	// ACL on: the node already holds a secret by the time the mesh runs, so it
-	// MUST present a proof — Core refuses an empty proof for a node with a stored
-	// secret. When ACL is off this stays exactly as before (no new fields set).
-	if redisACLEnabled && nodeSecret != nil {
+	// The node already holds a secret by the time the mesh runs, so it MUST present
+	// a proof. Core refuses an empty proof for a node with a stored secret.
+	if nodeSecret != nil {
 		auth.AclSupported = true
 		auth.SecretProof = aclProof(nodeSecret, m.nodeToken)
 	}

@@ -24,7 +24,7 @@ var (
 	linkDiscoveryProof string
 )
 
-// ensureNodeSecret returns the per-node secret (REDIS_ACL_ENABLED path). Uses the
+// ensureNodeSecret returns the per-node secret. Uses the
 // cached .node_secret when present (no Core contact needed — resilience); else
 // bootstraps it from Core via a one-shot gRPC handshake. Loops until success or
 // ctx cancel; never fatal.
