@@ -204,6 +204,8 @@ type Store interface {
 	CreateWarpAPIKey(k WarpAPIKey) (int, error)
 	GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error)
 	ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, error)
+	GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error)
+	RevokeWarpAPIKeyByNodeID(nodeID string) error
 	InsertWarpPeer(p WarpPeer) (int, error)
 	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)
 	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)

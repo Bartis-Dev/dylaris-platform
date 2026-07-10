@@ -431,6 +431,9 @@ func main() {
 	// route-only link-boot endpoint can derive and provision per-link creds.
 	appState.ACLProvisioner = aclProvisioner
 	appState.ClusterSecret = cfg.ClusterSecret
+	// The billing lifecycle drops/restores route-only link tunnels on
+	// suspend/reactivate; give it the same provisioner, gateway and cluster secret.
+	appState.Billing.SetLinkACL(appState.Gateway, redisClient, aclProvisioner, cfg.ClusterSecret)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
 		aclProvisioner,
@@ -726,6 +729,7 @@ func main() {
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")
 	api.HandleFunc("/warp/link-boot",
 		authLimiter.Limit(30, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
+	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
 
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 

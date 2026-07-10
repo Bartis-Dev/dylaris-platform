@@ -312,6 +312,62 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "kits": out})
 }
 
+// RevokeLinkKit DELETE /api/warp/link-kits/{linkID} - owner or admin. Tears the
+// route-only link down end to end: drops its scoped Redis ACL user (ACL DELUSER
+// terminates its live connections), deletes its tunnel key so the edge closes the
+// tunnel within 30s, removes its Core-owned routes, and revokes the warp key so it
+// can never re-enroll or boot again. Order matters: revoke the ACL BEFORE deleting
+// the key (see the design doc).
+func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("userID").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	linkID := mux.Vars(r)["linkID"]
+	if !strings.HasPrefix(linkID, "link-") {
+		sendJSONError(w, "Invalid link id", http.StatusBadRequest)
+		return
+	}
+	key, err := h.state.Store.GetWarpAPIKeyByNodeID(linkID)
+	if err != nil {
+		sendJSONError(w, "Link not found", http.StatusNotFound)
+		return
+	}
+	if !isAdmin && key.OwnerID != userID {
+		sendJSONError(w, "Link not found", http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tunnelToken := h.state.Gateway.LinkToken(linkID)
+
+	// 1. Drop the ACL user first: terminates live Redis connections and blocks
+	// re-registration on restart.
+	h.state.ACLProvisioner.RemoveRouteOnlyLinkACL(ctx, linkID)
+	// 2. Delete the tunnel key so the edge drops the tunnel within 30s.
+	if derr := h.state.Redis.Del(ctx, "link:"+tunnelToken).Err(); derr != nil {
+		log.Printf("revoke link %s: delete tunnel key: %v", linkID, derr)
+	}
+	// 3. Remove the link's Core-owned routes so a dead link does not squat domains.
+	for _, rt := range services.GetRoutesFromRedis(ctx, h.state.Redis) {
+		if rt.CoreOwned && rt.OwnerID == key.OwnerID && rt.TunnelID == tunnelToken {
+			if derr := h.state.Gateway.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
+				log.Printf("revoke link %s: delete route %s: %v", linkID, rt.Domain, derr)
+			}
+		}
+	}
+	// 4. Revoke the warp key: blocks warp re-enrollment and any future link-boot.
+	if derr := h.state.Store.RevokeWarpAPIKeyByNodeID(linkID); derr != nil {
+		sendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
 // ListRegions returns the full warp registry (regions + leaders + liveness +
 // peer counts) for the admin panel.
 func (h *WarpHandler) ListRegions(w http.ResponseWriter, r *http.Request) {

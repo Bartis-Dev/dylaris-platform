@@ -344,3 +344,29 @@ func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 	}
 	return wgIP, evicted, nil
 }
+
+// GetWarpAPIKeyByNodeID returns the non-revoked warp key for a link identity
+// (node_id), used to authorize and revoke a route-only link kit.
+func (s *PostgresStore) GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error) {
+	var k WarpAPIKey
+	var fixedIP, node, region, ownerID sql.NullString
+	err := s.db.QueryRow(`
+		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
+		       COALESCE(owner_id::text,''), revoked_at, created_at
+		FROM warp_api_keys WHERE node_id = $1 AND revoked_at IS NULL`, nodeID).
+		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &node, &region, &ownerID, &k.RevokedAt, &k.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, node.String, region.String, ownerID.String
+	return &k, nil
+}
+
+// RevokeWarpAPIKeyByNodeID marks a link kit's warp key revoked (revoked_at = NOW),
+// blocking warp re-enrollment and any future link-boot for that identity.
+func (s *PostgresStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
+	_, err := s.db.Exec(`UPDATE warp_api_keys SET revoked_at = NOW() WHERE node_id = $1 AND revoked_at IS NULL`, nodeID)
+	return err
+}
