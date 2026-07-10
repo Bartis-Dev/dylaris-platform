@@ -394,9 +394,11 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
 
 		// Snapshot the modpack's Modrinth members for the Content-tab
-		// cross-check. Advisory only: the helper logs and returns on any
-		// failure, so it never blocks the install.
-		h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL)
+		// cross-check. Advisory only: the helper logs and swallows every
+		// failure. Run in the background so the external-modpack case (which
+		// fetches the .mrpack over the network) cannot delay this response; the
+		// install command was already dispatched above.
+		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL)
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
@@ -544,11 +546,14 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
 
 		// Refresh the modpack cross-check snapshot for the reinstalled
-		// sub-server. Advisory only, never blocks. The builder-pack case is
-		// not reachable here (the /reinstall request carries no packId/buildId),
-		// so this covers the external-modpack URL case and clearing when the
-		// server switches to a non-modpack installer.
-		h.snapshotModpackContents(serverID, subName, installerType, nil, req.Installer.URL)
+		// sub-server. Advisory only, never blocks; run in the background so an
+		// external-modpack fetch cannot delay this response. The /reinstall
+		// request carries no packId/buildId, so the "pack" branch gets a nil
+		// build and no-ops (keeping the existing snapshot, which is still
+		// correct for a same-pack reinstall); this call therefore refreshes the
+		// external-modpack URL case and clears when switching to a non-modpack
+		// installer. The panel reinstalls a pack via /setup, not this route.
+		go h.snapshotModpackContents(serverID, subName, installerType, nil, req.Installer.URL)
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
