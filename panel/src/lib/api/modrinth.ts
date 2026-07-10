@@ -34,6 +34,10 @@ export interface ModrinthProject {
     body: string;
     icon_url?: string;
     project_type: string;
+    // Modrinth per-project client support: "required" | "optional" | "unsupported"
+    // | "unknown". Passed through verbatim by the Core proxy; drives the
+    // client-side-required install warning.
+    client_side?: 'required' | 'optional' | 'unsupported' | 'unknown';
     categories: string[];
     additional_categories: string[];
     loaders: string[];
@@ -196,4 +200,30 @@ export async function uninstallMod(serverId: number, modId: number): Promise<{ s
 export function pickPrimaryFile(v: ModrinthVersion): ModrinthVersionFile | null {
     if (!v.files || v.files.length === 0) return null;
     return v.files.find(f => f.primary) || v.files[0];
+}
+
+// --- Modpack contents snapshot (Content-tab cross-check) ---
+
+export interface ServerModpackContent {
+    id: number;
+    serverId: number;
+    subServerName: string;
+    modrinthProjectId: string;
+    modrinthVersionId: string;
+    modrinthVersionNumber: string;
+    fileName: string;
+    side: string;
+}
+
+// Fail-open: returns [] on any error. The cross-check is advisory, so the tab
+// must keep working when the snapshot is unavailable.
+export async function getServerModpackContents(serverId: number): Promise<ServerModpackContent[]> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/modpack-contents`, { headers: getAuthHeader() });
+        const data = await handleResponse(res);
+        return (data as any).contents || [];
+    } catch (err) {
+        handleError(err);
+        return [];
+    }
 }

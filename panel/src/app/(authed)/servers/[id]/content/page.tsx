@@ -13,6 +13,7 @@ import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions,
     listInstalledMods, installMod, uninstallMod, pickPrimaryFile,
+    getServerModpackContents,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
     type ModrinthVersion, type InstalledMod,
 } from '@/lib/api/modrinth';
@@ -55,6 +56,10 @@ export default function ServerContentPage() {
 
     const [installed, setInstalled] = useState<InstalledMod[]>([]);
     const installedById = useMemo(() => new Set(installed.map(m => m.modrinthProjectId)), [installed]);
+
+    // Modpack cross-check: projectId -> the pack's version of that mod. Non-empty
+    // only for a server installed from a modpack; drives the banner + warnings.
+    const [packByProject, setPackByProject] = useState<Map<string, { versionId: string; versionNumber: string }>>(new Map());
 
     const [projectDetail, setProjectDetail] = useState<ModrinthProject | null>(null);
     const [projectVersions, setProjectVersions] = useState<ModrinthVersion[]>([]);
@@ -104,6 +109,23 @@ export default function ServerContentPage() {
 
     useEffect(() => { refreshInstalled(); }, [refreshInstalled]);
 
+    // Load the modpack snapshot once per server. Fail-open: on any error the map
+    // stays empty and the tab behaves exactly as a non-modpack server.
+    useEffect(() => {
+        if (!serverId) return;
+        let cancelled = false;
+        (async () => {
+            const contents = await getServerModpackContents(serverId);
+            if (cancelled) return;
+            const next = new Map<string, { versionId: string; versionNumber: string }>();
+            for (const c of contents) {
+                next.set(c.modrinthProjectId, { versionId: c.modrinthVersionId, versionNumber: c.modrinthVersionNumber });
+            }
+            setPackByProject(next);
+        })();
+        return () => { cancelled = true; };
+    }, [serverId]);
+
     // SSE — server_mods.changed fires when another session installs/uninstalls.
     useEffect(() => {
         const unsub = systemEvents.on('server_mods.changed', (evt) => {
@@ -138,9 +160,25 @@ export default function ServerContentPage() {
 
     // ----- Install / uninstall -----
 
-    const handleInstall = async (project: { id: string; slug: string; title: string }, version: ModrinthVersion) => {
+    const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
         const file = pickPrimaryFile(version);
         if (!file) { showToast('Version has no downloadable file', false); return; }
+
+        // Advisory, non-blocking modpack cross-check. Differentiated by wording
+        // (window.confirm cannot carry visual tone): the same-version case is
+        // informational, the other two lead with "Warning:".
+        const inPack = packByProject.get(project.id);
+        if (inPack) {
+            if (inPack.versionId === version.id) {
+                if (!window.confirm(`"${project.title}" is already in this server's modpack at this version. Install it again anyway?`)) return;
+            } else {
+                const packVer = inPack.versionNumber || 'a different version';
+                if (!window.confirm(`Warning: this server's modpack ships ${packVer} of "${project.title}". Installing ${version.version_number} may stop the server from starting, or leave players on the pack version unable to connect. Install anyway?`)) return;
+            }
+        } else if (packByProject.size > 0 && project.client_side === 'required') {
+            if (!window.confirm(`Warning: "${project.title}" must run on each player's client too, or they will not be able to connect. It is not part of the distributed modpack. Install anyway?`)) return;
+        }
+
         const res = await installMod(serverId, {
             projectId: project.id,
             projectSlug: project.slug,
@@ -213,6 +251,16 @@ export default function ServerContentPage() {
                     </button>
                 ))}
             </nav>
+
+            {packByProject.size > 0 && (
+                <div className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md border border-(--base-04) bg-(--base-03) text-xs text-(--base-07)">
+                    <Package size={13} className="mt-0.5 shrink-0 text-(--accent-light)" />
+                    <span>
+                        This server runs a modpack. Mods you add here are not part of the distributed pack;
+                        players who lack a required client-side mod may fail to connect.
+                    </span>
+                </div>
+            )}
 
             {section === 'browse' && (
                 <div className="flex-1 flex gap-4 overflow-hidden">
