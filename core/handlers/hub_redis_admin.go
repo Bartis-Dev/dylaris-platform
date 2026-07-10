@@ -19,16 +19,17 @@ import (
 
 const (
 	// hubAdminUser is the NAMED Redis ACL user this feature creates. The button
-	// never touches the target's default user, so a shared platform Redis keeps
-	// working in "same" mode.
+	// never touches Core's default user, so the shared platform Redis keeps
+	// working while gw-hub-admin is (re)provisioned.
 	hubAdminUser = "gw-hub-admin"
 	// hubRedisStatusKey holds the small NON-secret status JSON in the settings
-	// table. No password, no external admin password, ever.
+	// table. No password, ever.
 	hubRedisStatusKey = "gw_hub_redis_admin_status"
 )
 
-// HubRedisAdminHandler provisions / tests / rolls the gw-hub-admin Redis ACL
-// user on a target Redis. All endpoints are admin-only.
+// HubRedisAdminHandler provisions / rolls the gw-hub-admin Redis ACL user on
+// Core's own Redis (the one instance shared with the Hub). All endpoints are
+// admin-only.
 type HubRedisAdminHandler struct {
 	state *AppState
 }
