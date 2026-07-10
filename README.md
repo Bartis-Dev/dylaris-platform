@@ -567,6 +567,11 @@ secrets:
 | `DYLARIS_STATS_BUFFER_MAXLEN` | `1800` | No | MaxLen of the per-server stats buffer stream (~1h at 2s). Reduce for very large fleets. |
 | `STATS_STREAM_MAXLEN` | `360` | No | MaxLen of the node system-stats stream (~3h at 30s). |
 
+A brand-new in-cluster node no longer auto-registers from its heartbeat: the
+Core-minted node identity can only be created via the gRPC enroll path, so a
+fresh node needs a `NODE_ENROLL_TOKEN` on first boot just like a BYON node.
+Already-paired nodes keep reconnecting normally.
+
 ### Panel
 
 | Variable | Default | Required | Description |

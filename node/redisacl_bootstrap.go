@@ -13,12 +13,14 @@ import (
 )
 
 // nodeSecret is the node's per-node Redis secret once obtained. Read by
-// grpc_mesh (proof) and docker_mgr (shipper creds). nil when ACL is off.
+// grpc_mesh (proof) and docker_mgr (shipper creds). nil until ensureNodeSecret
+// completes the bootstrap.
 var nodeSecret []byte
 
 // linkSecret / linkDiscoveryProof are the Core-delivered Link tunnel credentials
-// (empty when this node isn't gateway-relevant or ACL is off). Read by the link
-// reconciler (docker_mgr) to spawn the Link sidecar.
+// (empty when this node isn't gateway-relevant, or until ensureNodeSecret
+// completes the bootstrap). Read by the link reconciler (docker_mgr) to spawn
+// the Link sidecar.
 var (
 	linkSecret         string
 	linkDiscoveryProof string

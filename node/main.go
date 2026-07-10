@@ -97,8 +97,9 @@ var grpcTLSFingerprint string
 // per-node secret and derives scoped credentials.
 var (
 	// coreGRPCAddr is host:port of a Core gRPC endpoint, used for the one-shot
-	// secret-bootstrap handshake. Required only when ACL is on AND no cached
-	// secret exists (first boot) or after a Redis auth failure.
+	// secret-bootstrap handshake. Required for a node's first boot, to bootstrap
+	// its per-node secret via gRPC (also used to re-confirm after a Redis auth
+	// failure); a node with a cached .node_secret can start without it.
 	coreGRPCAddr string
 	// nodeSecretDir is the directory that holds the cached .node_secret. Set to
 	// the first persisted storage path so it survives restarts.
