@@ -76,6 +76,28 @@ func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ModpackContents returns the modpack snapshot for the active sub-server: the
+// Modrinth-identified members of the pack this server was installed from. Empty
+// when the server is not a modpack server. Same "config" access gate as the mods
+// endpoints. Backs the panel's advisory cross-check + modpack banner.
+func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Request) {
+	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	srv, ok := h.canAccess(r, serverID)
+	if !ok {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	contents, err := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer)
+	if err != nil {
+		sendJSONError(w, "Failed to list modpack contents", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"contents": contents,
+	})
+}
+
 func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.canAccess(r, serverID)

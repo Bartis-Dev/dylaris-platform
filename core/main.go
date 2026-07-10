@@ -603,6 +603,8 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.List)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.Install)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(serverModsHandler.Uninstall)).Methods("DELETE")
+	// Read-only modpack snapshot backing the Content-tab cross-check.
+	api.HandleFunc("/servers/{id:[0-9]+}/modpack-contents", authHandler.AuthMiddleware(serverModsHandler.ModpackContents)).Methods("GET")
 
 	// --- Spark profiles ---
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.List)).Methods("GET")
