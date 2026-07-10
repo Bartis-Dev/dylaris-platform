@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -226,6 +227,51 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		"link_id":    nodeID,
 		"link_token": h.state.Gateway.LinkToken(nodeID),
 		"note":       "Shown once. Deploy warp with the warp key, and link with the link token as its AGENT_SECRET.",
+	})
+}
+
+// LinkBoot POST /api/warp/link-boot - a route-only link presents its warp key and
+// receives its derived tunnel token plus a Redis credential scoped to its own keys.
+// WarpAPIKeyMiddleware has already rejected an unknown or revoked key. The response
+// is never logged.
+func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
+	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
+	if !ok {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// A BYON node's warp key must never mint a link credential.
+	if !strings.HasPrefix(key.NodeID, "link-") {
+		sendJSONError(w, "Not a route-only link key", http.StatusForbidden)
+		return
+	}
+	if !h.state.gatewayEnabled() || h.state.Gateway == nil {
+		sendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
+		return
+	}
+	// A suspended tenant's link cannot boot. GetUserBilling never returns
+	// sql.ErrNoRows; a missing row yields Status "active".
+	if b, berr := h.state.Store.GetUserBilling(key.OwnerID); berr == nil && b != nil && b.Status == "suspended" {
+		sendJSONError(w, "Account suspended", http.StatusForbidden)
+		return
+	}
+	tunnelToken := h.state.Gateway.LinkToken(key.NodeID)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	user, pass, err := h.state.ACLProvisioner.EnsureRouteOnlyLinkACL(ctx, h.state.ClusterSecret, key.NodeID, tunnelToken)
+	if err != nil {
+		log.Printf("link-boot: provision ACL for %s failed: %v", key.NodeID, err)
+		sendJSONError(w, "Failed to provision credentials", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"link_id":    key.NodeID,
+		"link_token": tunnelToken,
+		"redis_user": user,
+		"redis_pass": pass,
+		"redis_db":   h.state.Redis.Options().DB,
 	})
 }
 

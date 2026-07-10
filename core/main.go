@@ -427,6 +427,10 @@ func main() {
 	// mandatory); provisions the node's scoped ACL users and mints/returns its
 	// per-node secret.
 	aclProvisioner := redisacl.NewProvisioner(redisClient)
+	// Hand the warp handler Core's ACL provisioner + cluster secret so the
+	// route-only link-boot endpoint can derive and provision per-link creds.
+	appState.ACLProvisioner = aclProvisioner
+	appState.ClusterSecret = cfg.ClusterSecret
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
 		aclProvisioner,
@@ -720,6 +724,8 @@ func main() {
 	// Route-only link kits (tenant self-service; BYON-gated inside the handler)
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.ListLinkKits)).Methods("GET")
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")
+	api.HandleFunc("/warp/link-boot",
+		authLimiter.Limit(30, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
 
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 

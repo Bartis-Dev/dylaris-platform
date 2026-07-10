@@ -3,6 +3,7 @@ package handlers
 import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -74,4 +75,11 @@ type AppState struct {
 	// (public pinning material). Surfaced to BYON operators so a secret-free node
 	// can pin it via GRPC_TLS_FINGERPRINT. Empty string if derivation failed.
 	GRPCTLSFingerprint string
+
+	// ACLProvisioner provisions the route-only links' scoped Redis ACL users on
+	// Core's own Redis client (link-boot + revoke + billing suspend/reactivate).
+	ACLProvisioner *redisacl.Provisioner
+	// ClusterSecret is the deployment-wide secret used to derive per-link tunnel
+	// tokens and Redis passwords. Never sent to a tenant.
+	ClusterSecret string
 }
