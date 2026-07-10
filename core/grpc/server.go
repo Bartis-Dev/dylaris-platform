@@ -27,10 +27,9 @@ type NodeLookup interface {
 	GetNodeByToken(token string) (*Node, error)
 }
 
-// ACLHandshake is the optional per-node Redis-ACL bootstrap. nil = feature off.
-// Implemented by *redisacl.Handshake, wired from main.
+// ACLHandshake is the per-node Redis-ACL bootstrap run on every node connect.
+// Implemented by *redisacl.Handshake, wired from main (always non-nil).
 type ACLHandshake interface {
-	Enabled(ctx context.Context) bool
 	EnsureExisting(ctx context.Context, nodeID int, token string) (secretHex string, err error)
 	Enroll(ctx context.Context, token, enrollToken, address string) (assignedID string, nodeID int, secretHex string, err error)
 	VerifyProof(ctx context.Context, nodeID int, token, proof string) (ok bool, err error)

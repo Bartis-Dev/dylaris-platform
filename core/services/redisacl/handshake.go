@@ -29,19 +29,16 @@ type HandshakeStore interface {
 	NodeIDByToken(token string) (id int, found bool, err error)
 }
 
-// Handshake performs the gated ACL bootstrap during the node gRPC handshake.
+// Handshake performs the per-node ACL bootstrap during the node gRPC handshake.
 type Handshake struct {
 	store         HandshakeStore
 	prov          *Provisioner
 	clusterSecret string
-	enabled       func(ctx context.Context) bool
 }
 
-func NewHandshake(store HandshakeStore, prov *Provisioner, clusterSecret string, enabled func(ctx context.Context) bool) *Handshake {
-	return &Handshake{store: store, prov: prov, clusterSecret: clusterSecret, enabled: enabled}
+func NewHandshake(store HandshakeStore, prov *Provisioner, clusterSecret string) *Handshake {
+	return &Handshake{store: store, prov: prov, clusterSecret: clusterSecret}
 }
-
-func (h *Handshake) Enabled(ctx context.Context) bool { return h != nil && h.enabled(ctx) }
 
 // ensure loads/mints the secret, provisions the ACL from the assigned servers,
 // and returns the secret hex.

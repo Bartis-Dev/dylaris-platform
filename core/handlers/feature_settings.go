@@ -23,7 +23,6 @@ type featureSettingsPayload struct {
 	Tickets  bool `json:"tickets"`
 	Modpacks bool `json:"modpacks"`
 	AutoMove bool `json:"autoMove"`
-	RedisAcl bool `json:"redisAcl"`
 }
 
 // Get GET /api/admin/settings/features — current bundle of platform toggles.
@@ -36,7 +35,6 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Tickets:  h.state.FeatureFlags.IsTicketsEnabled(r.Context()),
 		Modpacks: h.state.FeatureFlags.IsModpacksEnabled(r.Context()),
 		AutoMove: h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
-		RedisAcl: h.state.FeatureFlags.IsRedisACLEnabled(r.Context()),
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -82,7 +80,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"feature_tickets_enabled", req.Tickets, "feature_tickets_enabled", "tickets"},
 		{"feature_modpacks_enabled", req.Modpacks, "feature_modpacks_enabled", "modpacks"},
 		{"feature_auto_move_enabled", req.AutoMove, "feature_auto_move_enabled", "autoMove"},
-		{"feature_redis_acl", req.RedisAcl, "feature_redis_acl", "redisAcl"},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.key, boolStr(kv.val)); err != nil {

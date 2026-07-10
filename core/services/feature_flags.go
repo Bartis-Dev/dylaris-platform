@@ -94,14 +94,6 @@ func (f *FeatureFlags) IsShareLinksEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "modpack_share_links_enabled", false)
 }
 
-// IsRedisACLEnabled gates per-node Redis ACL provisioning for untrusted BYON
-// nodes. Default = false: the platform keeps the shared-password Redis setup.
-// Enabling REQUIRES Valkey deployed with an aclfile (see docs/superpowers/
-// redis-acl-deploy.md) or ACL persistence will silently not survive a restart.
-func (f *FeatureFlags) IsRedisACLEnabled(ctx context.Context) bool {
-	return f.Get(ctx, "feature_redis_acl", false)
-}
-
 // Invalidate drops the cached entry for a key so the next Get re-reads from
 // the store. Called by settings PUT handlers after a write.
 func (f *FeatureFlags) Invalidate(key string) {

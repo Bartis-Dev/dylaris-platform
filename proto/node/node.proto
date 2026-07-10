@@ -81,7 +81,7 @@ message NodeMessage {
 message NodeAuth {
   string node_token = 1;
   NodeIPs ips = 2;
-  // BYON Redis-ACL bootstrap (only set when the node runs REDIS_ACL_ENABLED):
+  // Per-node Redis-ACL bootstrap fields (Redis ACL is mandatory; always set):
   string enroll_token = 3;   // first enrollment only
   string secret_proof = 4;   // HMAC proof of possession on later connects
   bool   acl_supported = 5;  // node advertises it can use scoped creds
@@ -94,8 +94,10 @@ message AuthResult {
   bool ok = 1;
   string core_id = 2;
   string message = 3;
-  // BYON Redis-ACL bootstrap response (only set when feature_redis_acl is on):
-  bool   acl_enabled = 4;   // informational: Core provisioned this node's ACL (node still gates on its own REDIS_ACL_ENABLED)
+  // Per-node Redis-ACL bootstrap response (Redis ACL is mandatory).
+  // Deprecated: advisory only. Core always provisions the node's ACL and no longer
+  // gates on this field; kept physically to avoid a protoc regen. (No .pb.go regen in TP2f.)
+  bool   acl_enabled = 4;
   string node_secret = 5;   // hex per-node secret (returned once on first issue / enroll)
   // Core-minted, unguessable node identity. Set ONLY on the enroll (first-issuance)
   // response; the node persists it and uses it as its token on every later connect.

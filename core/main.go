@@ -423,14 +423,14 @@ func main() {
 			return node.ID, nil
 		},
 	}
-	// Per-node Redis-ACL handshake. nil-safe + gated: when feature_redis_acl is
-	// off (default) the gRPC auth path is byte-identical to before.
+	// Per-node Redis-ACL handshake. Runs on every node connect (Redis ACL is
+	// mandatory); provisions the node's scoped ACL users and mints/returns its
+	// per-node secret.
 	aclProvisioner := redisacl.NewProvisioner(redisClient)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
 		aclProvisioner,
 		cfg.ClusterSecret,
-		func(ctx context.Context) bool { return appState.FeatureFlags.IsRedisACLEnabled(ctx) },
 	)
 	// P0b-5 admission gate: consulted only on the ACL-on enroll path for unknown nodes.
 	admissionGate := services.NewAdmissionGate(pgStore)
