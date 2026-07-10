@@ -345,8 +345,10 @@ func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 	return wgIP, evicted, nil
 }
 
-// GetWarpAPIKeyByNodeID returns the non-revoked warp key for a link identity
-// (node_id), used to authorize and revoke a route-only link kit.
+// GetWarpAPIKeyByNodeID returns the warp key for a link identity (node_id),
+// revoked or not. Revoked rows are included so a revoke whose best-effort Redis
+// teardown failed can be retried and finish; authentication never goes through
+// this lookup (WarpAPIKeyMiddleware checks revoked_at on the hash lookup).
 func (s *PostgresStore) GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error) {
 	var k WarpAPIKey
 	var fixedIP, node, region, ownerID sql.NullString
@@ -354,7 +356,7 @@ func (s *PostgresStore) GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
 		       COALESCE(owner_id::text,''), revoked_at, created_at
-		FROM warp_api_keys WHERE node_id = $1 AND revoked_at IS NULL`, nodeID).
+		FROM warp_api_keys WHERE node_id = $1`, nodeID).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
 			&fixedIP, &node, &region, &ownerID, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {

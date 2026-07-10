@@ -230,7 +230,8 @@ func main() {
 	// provider-agnostic; handlers/webhooks call EnterPastDue/Reactivate/Suspend.
 	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL)
 	appState.Billing.SetLeader(coreLeader)
-	appState.Billing.Start(context.Background())
+	// Start() is deferred until after SetLinkACL below, so the ticker can never run
+	// a suspend before the link teardown dependencies are wired.
 
 	// DNS reconciler — leader-gated. Points each region's edge wildcard A record
 	// at the live edge IPs via the DNS provider. Off unless DNS_UPDATER_ENABLED
@@ -434,6 +435,7 @@ func main() {
 	// The billing lifecycle drops/restores route-only link tunnels on
 	// suspend/reactivate; give it the same provisioner, gateway and cluster secret.
 	appState.Billing.SetLinkACL(appState.Gateway, redisClient, aclProvisioner, cfg.ClusterSecret)
+	appState.Billing.Start(context.Background())
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
 		aclProvisioner,

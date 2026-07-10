@@ -376,6 +376,10 @@ func (s *BillingLifecycleService) suspendTenantLinks(ctx context.Context, userID
 	if s.provisioner == nil || s.gateway == nil || s.redis == nil {
 		return
 	}
+	// The hourly ticker calls Suspend with context.Background(); a hung Redis call
+	// would stall that goroutine indefinitely. Bound it, as reactivate already does.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	for _, linkID := range s.linkKitsForUser(userID) {
 		tunnelToken := s.gateway.LinkToken(linkID)
 		s.provisioner.RemoveRouteOnlyLinkACL(ctx, linkID)

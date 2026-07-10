@@ -313,11 +313,12 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokeLinkKit DELETE /api/warp/link-kits/{linkID} - owner or admin. Tears the
-// route-only link down end to end: drops its scoped Redis ACL user (ACL DELUSER
-// terminates its live connections), deletes its tunnel key so the edge closes the
-// tunnel within 30s, removes its Core-owned routes, and revokes the warp key so it
-// can never re-enroll or boot again. Order matters: revoke the ACL BEFORE deleting
-// the key (see the design doc).
+// route-only link down end to end: marks the warp key revoked so it can never
+// re-enroll or boot again, drops its scoped Redis ACL user (ACL DELUSER terminates
+// its live connections), deletes its tunnel key so the edge closes the tunnel within
+// 30s, and removes its Core-owned routes. Order matters twice: the durable revoke
+// comes first so a partial failure cannot undo itself, and the ACL user is dropped
+// before the tunnel key so a restart cannot re-register (see the design doc).
 func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -344,26 +345,43 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	tunnelToken := h.state.Gateway.LinkToken(linkID)
 
-	// 1. Drop the ACL user first: terminates live Redis connections and blocks
-	// re-registration on restart.
+	// 1. Revoke the warp key FIRST. It is the only durable step, and it is the one
+	// that blocks link-boot. If the teardown below ran first and this failed, the
+	// link's next ordinary reconnect would call link-boot, EnsureRouteOnlyLinkACL
+	// would idempotently re-provision it, and the revoke would silently undo itself.
+	// Failing here aborts before any Redis state changed, so a retry is clean.
+	if derr := h.state.Store.RevokeWarpAPIKeyByNodeID(linkID); derr != nil {
+		log.Printf("revoke link %s: mark revoked: %v", linkID, derr)
+		sendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
+		return
+	}
+
+	// The remaining steps are best-effort teardown and are safe to repeat: a retried
+	// DELETE re-runs them, because the lookup above does not filter revoked keys.
+
+	// 2. Drop the ACL user before deleting the tunnel key: DELUSER terminates the
+	// link's live Redis connections and blocks re-registration on restart, while
+	// DEL alone would let a restart re-register. Neither step alone suffices.
 	h.state.ACLProvisioner.RemoveRouteOnlyLinkACL(ctx, linkID)
-	// 2. Delete the tunnel key so the edge drops the tunnel within 30s.
+	// 3. Delete the tunnel key so the edge drops the tunnel within 30s.
 	if derr := h.state.Redis.Del(ctx, "link:"+tunnelToken).Err(); derr != nil {
 		log.Printf("revoke link %s: delete tunnel key: %v", linkID, derr)
 	}
-	// 3. Remove the link's Core-owned routes so a dead link does not squat domains.
+	// 4. Remove the link's Core-owned routes so a dead link does not squat domains.
+	// GetRoutesFromRedis returns nil on a Redis error, indistinguishable from "no
+	// routes", so log the count: a silent zero is the only signal cleanup was skipped.
+	removed := 0
 	for _, rt := range services.GetRoutesFromRedis(ctx, h.state.Redis) {
 		if rt.CoreOwned && rt.OwnerID == key.OwnerID && rt.TunnelID == tunnelToken {
 			if derr := h.state.Gateway.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
 				log.Printf("revoke link %s: delete route %s: %v", linkID, rt.Domain, derr)
+				continue
 			}
+			removed++
 		}
 	}
-	// 4. Revoke the warp key: blocks warp re-enrollment and any future link-boot.
-	if derr := h.state.Store.RevokeWarpAPIKeyByNodeID(linkID); derr != nil {
-		sendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
-		return
-	}
+	log.Printf("revoke link %s: revoked, %d route(s) removed", linkID, removed)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
