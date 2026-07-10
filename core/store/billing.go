@@ -21,6 +21,7 @@ type UserBilling struct {
 	R2QuotaGB     *int64     `json:"r2QuotaGb,omitempty"` // per-user override; nil = use the plan value
 	// Per-user LIMIT overrides (nil = use the plan value). 0 = unlimited.
 	MaxNodes          *int64 `json:"maxNodes,omitempty"`
+	MaxLinks          *int64 `json:"maxLinks,omitempty"`
 	TrafficEdgeGB     *int64 `json:"trafficEdgeGb,omitempty"`
 	TrafficRelayGB    *int64 `json:"trafficRelayGb,omitempty"`
 	TrafficCombinedGB *int64 `json:"trafficCombinedGb,omitempty"`
@@ -29,7 +30,7 @@ type UserBilling struct {
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at`
 
 func scanUserBilling(row interface {
 	Scan(dest ...any) error
@@ -37,9 +38,9 @@ func scanUserBilling(row interface {
 	var b UserBilling
 	var grace, susp sql.NullTime
 	var gp, r2, nr sql.NullString
-	var quota, maxNodes, tEdge, tRelay, tComb sql.NullInt64
+	var quota, maxNodes, maxLinks, tEdge, tRelay, tComb sql.NullInt64
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
-		&maxNodes, &tEdge, &tRelay, &tComb, &b.UpdatedAt); err != nil {
+		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if grace.Valid {
@@ -56,6 +57,9 @@ func scanUserBilling(row interface {
 	}
 	if maxNodes.Valid {
 		b.MaxNodes = &maxNodes.Int64
+	}
+	if maxLinks.Valid {
+		b.MaxLinks = &maxLinks.Int64
 	}
 	if tEdge.Valid {
 		b.TrafficEdgeGB = &tEdge.Int64

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -167,6 +168,23 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
+	}
+	// Enforce the tenant's link cap (0 = unlimited, mirrors max_nodes).
+	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
+	if lerr != nil {
+		sendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
+		return
+	}
+	if lim.MaxLinks > 0 {
+		used, cerr := h.state.Store.CountLinkKitsByOwner(userID)
+		if cerr != nil {
+			sendJSONError(w, "Failed to count links", http.StatusInternalServerError)
+			return
+		}
+		if int64(used) >= lim.MaxLinks {
+			sendJSONError(w, fmt.Sprintf("Link limit reached (%d)", lim.MaxLinks), http.StatusForbidden)
+			return
+		}
 	}
 	var req struct {
 		Name string `json:"name"`

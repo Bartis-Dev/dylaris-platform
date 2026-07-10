@@ -14,6 +14,7 @@ type Plan struct {
 	Name              string    `json:"name"`
 	PriceLabel        string    `json:"priceLabel"`
 	MaxNodes          int64     `json:"maxNodes"`
+	MaxLinks          int64     `json:"maxLinks"`
 	R2QuotaGB         int64     `json:"r2QuotaGb"`
 	TrafficEdgeGB     int64     `json:"trafficEdgeGb"`
 	TrafficRelayGB    int64     `json:"trafficRelayGb"`
@@ -22,11 +23,11 @@ type Plan struct {
 	CreatedAt         time.Time `json:"createdAt"`
 }
 
-const planCols = `id, name, price_label, max_nodes, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, created_at`
+const planCols = `id, name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, created_at`
 
 func scanPlan(row interface{ Scan(dest ...any) error }) (*Plan, error) {
 	var p Plan
-	if err := row.Scan(&p.ID, &p.Name, &p.PriceLabel, &p.MaxNodes, &p.R2QuotaGB,
+	if err := row.Scan(&p.ID, &p.Name, &p.PriceLabel, &p.MaxNodes, &p.MaxLinks, &p.R2QuotaGB,
 		&p.TrafficEdgeGB, &p.TrafficRelayGB, &p.TrafficCombinedGB, &p.IsDefault, &p.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -79,9 +80,9 @@ func (s *PostgresStore) CreatePlan(p Plan) (int, error) {
 	}
 	var id int
 	err = tx.QueryRow(`
-		INSERT INTO plans (name, price_label, max_nodes, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		p.Name, p.PriceLabel, p.MaxNodes, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).Scan(&id)
+		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+		p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -101,10 +102,10 @@ func (s *PostgresStore) UpdatePlan(p Plan) error {
 		}
 	}
 	if _, err = tx.Exec(`
-		UPDATE plans SET name=$2, price_label=$3, max_nodes=$4, r2_quota_gb=$5,
-			traffic_edge_gb=$6, traffic_relay_gb=$7, traffic_combined_gb=$8, is_default=$9
+		UPDATE plans SET name=$2, price_label=$3, max_nodes=$4, max_links=$5, r2_quota_gb=$6,
+			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10
 		WHERE id=$1`,
-		p.ID, p.Name, p.PriceLabel, p.MaxNodes, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault); err != nil {
+		p.ID, p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -140,14 +141,14 @@ func (s *PostgresStore) SetUserPlan(userID string, planID *int) error {
 // SetUserLimitOverrides upserts the per-user LIMIT overrides in user_billing
 // (nil clears one -> use the plan value). It does NOT touch r2_quota_gb (owned by
 // SetUserBillingOverrides) or the lifecycle/retention columns.
-func (s *PostgresStore) SetUserLimitOverrides(userID string, maxNodes, trafficEdge, trafficRelay, trafficCombined *int64) error {
+func (s *PostgresStore) SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error {
 	_, err := s.db.Exec(`
-		INSERT INTO user_billing (user_id, max_nodes, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at)
-		VALUES ($1,$2,$3,$4,$5,NOW())
+		INSERT INTO user_billing (user_id, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
-			max_nodes = $2, traffic_edge_gb = $3, traffic_relay_gb = $4,
-			traffic_combined_gb = $5, updated_at = NOW()`,
-		userID, maxNodes, trafficEdge, trafficRelay, trafficCombined)
+			max_nodes = $2, max_links = $3, traffic_edge_gb = $4, traffic_relay_gb = $5,
+			traffic_combined_gb = $6, updated_at = NOW()`,
+		userID, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined)
 	return err
 }
 
@@ -155,5 +156,15 @@ func (s *PostgresStore) SetUserLimitOverrides(userID string, maxNodes, trafficEd
 func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE owner_id = $1`, ownerID).Scan(&n)
+	return n, err
+}
+
+// CountLinkKitsByOwner returns how many route-only link kits a tenant owns (for the
+// max_links gate). warp_api_keys also holds BYON node keys, so this filters to the
+// 'link-' node_id prefix.
+func (s *PostgresStore) CountLinkKitsByOwner(ownerID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'link-%'`, ownerID).Scan(&n)
 	return n, err
 }

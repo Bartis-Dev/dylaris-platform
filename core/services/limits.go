@@ -6,6 +6,7 @@ import "dylaris-core/store"
 // limits are monthly GB and warn-only; max_nodes + R2 quota are hard-enforced.
 type Limits struct {
 	MaxNodes          int64 `json:"maxNodes"`
+	MaxLinks          int64 `json:"maxLinks"`
 	R2QuotaGB         int64 `json:"r2QuotaGb"`
 	TrafficEdgeGB     int64 `json:"trafficEdgeGb"`
 	TrafficRelayGB    int64 `json:"trafficRelayGb"`
@@ -44,6 +45,7 @@ func EffectiveLimits(st limitStore, userID string) (Limits, error) {
 	if plan != nil {
 		lim = Limits{
 			MaxNodes:          plan.MaxNodes,
+			MaxLinks:          plan.MaxLinks,
 			R2QuotaGB:         plan.R2QuotaGB,
 			TrafficEdgeGB:     plan.TrafficEdgeGB,
 			TrafficRelayGB:    plan.TrafficRelayGB,
@@ -55,6 +57,9 @@ func EffectiveLimits(st limitStore, userID string) (Limits, error) {
 	if b, berr := st.GetUserBilling(userID); berr == nil && b != nil {
 		if b.MaxNodes != nil {
 			lim.MaxNodes = *b.MaxNodes
+		}
+		if b.MaxLinks != nil {
+			lim.MaxLinks = *b.MaxLinks
 		}
 		if b.R2QuotaGB != nil {
 			lim.R2QuotaGB = *b.R2QuotaGB

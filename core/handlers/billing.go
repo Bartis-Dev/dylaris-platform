@@ -238,6 +238,7 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 			"nodeRetention":     b.NodeRetention,
 			"r2QuotaGb":         b.R2QuotaGB,
 			"maxNodes":          b.MaxNodes,
+			"maxLinks":          b.MaxLinks,
 			"trafficEdgeGb":     b.TrafficEdgeGB,
 			"trafficRelayGb":    b.TrafficRelayGB,
 			"trafficCombinedGb": b.TrafficCombinedGB,

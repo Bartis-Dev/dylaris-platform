@@ -83,8 +83,9 @@ type Store interface {
 	DeletePlan(id int) error
 	GetUserPlanID(userID string) (*int, error)
 	SetUserPlan(userID string, planID *int) error
-	SetUserLimitOverrides(userID string, maxNodes, trafficEdge, trafficRelay, trafficCombined *int64) error
+	SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error
 	CountNodesByOwner(ownerID string) (int, error)
+	CountLinkKitsByOwner(ownerID string) (int, error)
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error

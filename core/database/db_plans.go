@@ -39,10 +39,16 @@ func applyPlansSchema(db *sql.DB) error {
 		return fmt.Errorf("plans: add users.plan_id: %w", err)
 	}
 
+	// max_links caps a tenant's route-only link kits (0 = unlimited, mirrors max_nodes).
+	if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS max_links INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("plans: add plans.max_links: %w", err)
+	}
+
 	// Per-user limit overrides live in user_billing alongside the existing
 	// r2_quota_gb override (NULL = use the plan's value).
 	for _, col := range []string{
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS max_nodes INTEGER`,
+		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS max_links INTEGER`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_edge_gb BIGINT`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_relay_gb BIGINT`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_combined_gb BIGINT`,
