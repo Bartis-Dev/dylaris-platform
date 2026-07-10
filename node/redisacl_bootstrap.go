@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	pb "dylaris-proto/node"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
 
@@ -157,4 +159,74 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 		return cached, nil // Core re-applied ACL for our existing secret
 	}
 	return nil, fmt.Errorf("no secret returned and none cached")
+}
+
+// redisACLWatchdog re-bootstraps the node's ACL over gRPC when Redis auth is
+// sustainedly failing (NOAUTH/NOPERM/WRONGPASS), e.g. after a Valkey restart that
+// dropped the aclfile. It does NOT rebuild rdb: the per-node secret is cached on
+// disk and stable, so bootstrapSecretViaGRPC sends a proof, Core re-provisions the
+// identical user + password, and the existing client re-auths transparently on its
+// next command. This also breaks the mesh discovery chicken-and-egg (Cores are read
+// from a now-authenticated Redis). Backoff-capped, throttled logs, never falls open.
+func redisACLWatchdog(ctx context.Context, rdb *redis.Client) {
+	const (
+		probeEvery = 15 * time.Second
+		failsToAct = 2 // consecutive auth failures before acting (~30s)
+		maxBackoff = 5 * time.Minute
+		logEvery   = 2 * time.Minute
+	)
+	backoff := probeEvery
+	consecutive := 0
+	var lastLog time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		err := rdb.Ping(ctx).Err()
+		if err == nil {
+			consecutive = 0
+			backoff = probeEvery
+			continue
+		}
+		if !isRedisAuthError(err) {
+			// Redis unreachable (not an auth problem): a re-bootstrap would not
+			// help and Core may be down too. Keep probing at the base interval.
+			consecutive = 0
+			backoff = probeEvery
+			continue
+		}
+		consecutive++
+		if time.Since(lastLog) >= logEvery {
+			lastLog = time.Now()
+			log.Printf("redisacl: WARNING sustained Redis auth failure (%v); re-bootstrapping ACL with Core", err)
+		}
+		if consecutive < failsToAct {
+			continue
+		}
+		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
+			_ = saveNodeSecret(nodeSecretDir, s)
+			nodeSecret = s
+			consecutive = 0
+			backoff = probeEvery
+			log.Println("redisacl: re-bootstrap OK; Core re-applied the node ACL")
+		} else if berr != nil {
+			// Core unreachable: stay fail-closed on Redis, back off and retry.
+			if backoff < maxBackoff {
+				backoff *= 2
+			}
+			log.Printf("redisacl: re-bootstrap failed (retry in %s): %v", backoff, berr)
+		}
+	}
+}
+
+// isRedisAuthError reports whether a Redis error is an ACL/auth rejection
+// (NOAUTH/NOPERM/WRONGPASS) rather than a connectivity failure.
+func isRedisAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "NOAUTH") || strings.Contains(s, "NOPERM") || strings.Contains(s, "WRONGPASS")
 }

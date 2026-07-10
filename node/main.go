@@ -217,6 +217,13 @@ func main() {
 	}
 	log.Println("Connected to Redis (ACL mode)")
 
+	// Redis-ACL recovery watchdog: if a Valkey restart drops this node's scoped
+	// ACL user, go-redis re-auth fails (NOAUTH/NOPERM) with no self-heal. On
+	// sustained auth failure the watchdog re-bootstraps over gRPC (Redis-
+	// independent), making Core re-provision the SAME user + password so this
+	// existing rdb re-auths transparently. Fail-closed; capped backoff.
+	go redisACLWatchdog(ctx, rdb)
+
 	// Multi-storage: init StorageManager with configured paths
 	storageMgr := NewStorageManager(storagePaths, rdb)
 	storageMgr.LogStorageInfo()
