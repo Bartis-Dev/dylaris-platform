@@ -34,6 +34,12 @@ services:
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME}"
       REDIS_ADDR: "redis:6379"
+      # Core admin Redis login. Empty against the bundled passwordless dev Valkey;
+      # for a password-protected or external Redis set both. REDIS_PASSWORD supports
+      # the _FILE secret convention (REDIS_PASSWORD_FILE=...). Scoped per-node users
+      # are always Core-provisioned, never hand-set.
+      REDIS_USER: "${REDIS_USER:-}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
