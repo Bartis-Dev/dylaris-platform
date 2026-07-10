@@ -1,22 +1,23 @@
-// TP2b admin API: provision / test / roll the gateway Hub admin Redis ACL user
-// (gw-hub-admin). Mirrors the nodeAdmission.ts fetch/auth-header pattern.
+// Admin API: provision / roll the gateway Hub admin Redis ACL user (gw-hub-admin)
+// on the ONE shared Redis instance. Mirrors the nodeAdmission.ts fetch/auth-header
+// pattern.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
 export interface HubRedisAdminStatus {
     success: boolean;
     provisioned?: boolean;
-    mode?: 'same' | 'external' | 'manual';
+    mode?: 'auto' | 'manual';
     addr?: string;
     db?: number;
-    adminUser?: string;
     provisionedAt?: string;
     lastRolledAt?: string;
     message?: string;
 }
 
 // HubEnv is the ready-to-paste Hub deploy environment returned once on
-// provision/roll. REDIS_ADDR is absent in manual mode (the operator supplies it).
+// provision/roll. REDIS_ADDR is present in auto mode (Core's own address unless the
+// admin overrode it) and present in manual mode only when an address was supplied.
 export interface HubEnv {
     REDIS_ADDR?: string;
     REDIS_USER: string;
@@ -33,13 +34,6 @@ export interface HubRedisProvisionResult {
     message?: string;
 }
 
-export interface HubRedisExternalTarget {
-    addr: string;
-    db: number;
-    username: string;
-    password?: string;
-}
-
 export async function getHubRedisAdminStatus(): Promise<HubRedisAdminStatus> {
     try {
         const res = await fetch(`${API_URL}/settings/gateway/hub-redis-admin`, { headers: getAuthHeader() });
@@ -49,23 +43,8 @@ export async function getHubRedisAdminStatus(): Promise<HubRedisAdminStatus> {
     }
 }
 
-export async function testHubRedisConnection(
-    body: HubRedisExternalTarget,
-): Promise<{ success: boolean; ok?: boolean; whoami?: string; message?: string }> {
-    try {
-        const res = await fetch(`${API_URL}/settings/gateway/hub-redis-admin/test-connection`, {
-            method: 'POST',
-            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        return (await handleResponse(res)) as { success: boolean; ok?: boolean; whoami?: string; message?: string };
-    } catch (err) {
-        return handleError(err) as { success: boolean; message?: string };
-    }
-}
-
 export async function provisionHubRedisAdmin(
-    body: { mode: 'same' | 'external' | 'manual'; db: number; external?: HubRedisExternalTarget },
+    body: { mode: 'auto' | 'manual'; db: number; hubAddr?: string },
 ): Promise<HubRedisProvisionResult> {
     try {
         const res = await fetch(`${API_URL}/settings/gateway/hub-redis-admin`, {
@@ -79,14 +58,12 @@ export async function provisionHubRedisAdmin(
     }
 }
 
-export async function rollHubRedisAdmin(
-    body: { external?: { password: string } },
-): Promise<HubRedisProvisionResult> {
+export async function rollHubRedisAdmin(): Promise<HubRedisProvisionResult> {
     try {
         const res = await fetch(`${API_URL}/settings/gateway/hub-redis-admin/roll`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({}),
         });
         return (await handleResponse(res)) as HubRedisProvisionResult;
     } catch (err) {

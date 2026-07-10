@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"dylaris-core/services/redisacl"
@@ -36,22 +37,14 @@ func NewHubRedisAdminHandler(state *AppState) *HubRedisAdminHandler {
 	return &HubRedisAdminHandler{state: state}
 }
 
-// hubRedisStatus is the persisted, non-secret record of the last provision.
+// hubRedisStatus is the persisted, non-secret record of the last provision. Addr
+// records only how the Hub reaches the ONE shared Redis; it is never dialled by Core.
 type hubRedisStatus struct {
 	Mode          string `json:"mode"`
 	Addr          string `json:"addr"`
 	DB            int    `json:"db"`
-	AdminUser     string `json:"adminUser,omitempty"` // external mode only
 	ProvisionedAt string `json:"provisionedAt"`
 	LastRolledAt  string `json:"lastRolledAt,omitempty"`
-}
-
-// externalTarget is the wire shape for an external Redis target.
-type externalTarget struct {
-	Addr     string `json:"addr"`
-	DB       int    `json:"db"`
-	Username string `json:"username"`
-	Password string `json:"password"`
 }
 
 // GetStatus GET /api/settings/gateway/hub-redis-admin - non-secret status only.
@@ -82,70 +75,24 @@ func (h *HubRedisAdminHandler) GetStatus(w http.ResponseWriter, r *http.Request)
 		"mode":          st.Mode,
 		"addr":          st.Addr,
 		"db":            st.DB,
-		"adminUser":     st.AdminUser,
 		"provisionedAt": st.ProvisionedAt,
 		"lastRolledAt":  st.LastRolledAt,
 	})
 }
 
-// TestConnection POST /api/settings/gateway/hub-redis-admin/test-connection -
-// reachability + auth against an external target (Ping + ACL WHOAMI). Does NOT
-// pre-check the SETUSER right; that is proven at provision time.
-func (h *HubRedisAdminHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-	var req externalTarget
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	if !validAddr(req.Addr) {
-		sendJSONError(w, "Address must be host:port", http.StatusBadRequest)
-		return
-	}
-	if req.DB < 0 || req.DB > 15 {
-		sendJSONError(w, "DB must be between 0 and 15", http.StatusBadRequest)
-		return
-	}
-	if req.Username == "" {
-		sendJSONError(w, "Username is required", http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	client := redis.NewClient(&redis.Options{
-		Addr: req.Addr, Username: req.Username, Password: req.Password, DB: req.DB,
-	})
-	defer client.Close()
-	if err := client.Ping(ctx).Err(); err != nil {
-		sendJSONError(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	whoami, err := client.Do(ctx, "ACL", "WHOAMI").Text()
-	if err != nil {
-		sendJSONError(w, "Auth check failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"ok":      true,
-		"whoami":  whoami,
-	})
-}
-
 // Provision POST /api/settings/gateway/hub-redis-admin - create gw-hub-admin on
-// the chosen target and return the generated password ONCE.
+// Core's own Redis (the ONE shared instance) and return the generated password
+// ONCE, or in manual mode return the ready-to-paste command. hubAddr only records
+// how the Hub reaches that instance; Core never dials it.
 func (h *HubRedisAdminHandler) Provision(w http.ResponseWriter, r *http.Request) {
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	var req struct {
-		Mode     string          `json:"mode"`
-		DB       int             `json:"db"`
-		External *externalTarget `json:"external"`
+		Mode    string `json:"mode"`
+		DB      int    `json:"db"`
+		HubAddr string `json:"hubAddr"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
@@ -153,6 +100,11 @@ func (h *HubRedisAdminHandler) Provision(w http.ResponseWriter, r *http.Request)
 	}
 	if req.DB < 0 || req.DB > 15 {
 		sendJSONError(w, "DB must be between 0 and 15", http.StatusBadRequest)
+		return
+	}
+	hubAddr := strings.TrimSpace(req.HubAddr)
+	if hubAddr != "" && !validAddr(hubAddr) {
+		sendJSONError(w, "Address must be host:port", http.StatusBadRequest)
 		return
 	}
 	pw, err := genHubPassword()
@@ -164,80 +116,42 @@ func (h *HubRedisAdminHandler) Provision(w http.ResponseWriter, r *http.Request)
 
 	switch req.Mode {
 	case "manual":
-		h.persist(hubRedisStatus{Mode: "manual", Addr: "", DB: req.DB, ProvisionedAt: now})
+		h.persist(hubRedisStatus{Mode: "manual", Addr: hubAddr, DB: req.DB, ProvisionedAt: now})
+		hubEnv := map[string]interface{}{
+			"REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": req.DB,
+		}
+		if hubAddr != "" {
+			hubEnv["REDIS_ADDR"] = hubAddr
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":  true,
-			"username": hubAdminUser,
-			"password": pw,
-			"hubEnv": map[string]interface{}{
-				"REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": req.DB,
-			},
+			"success":    true,
+			"username":   hubAdminUser,
+			"password":   pw,
+			"hubEnv":     hubEnv,
 			"aclCommand": manualACLCommand(pw),
 		})
 		return
 
-	case "same":
+	case "auto":
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		if perr := h.provisionOnClient(ctx, h.state.Redis, pw); perr != nil {
 			sendJSONError(w, "Provision failed: "+perr.Error(), http.StatusBadGateway)
 			return
 		}
-		addr := h.state.Redis.Options().Addr
-		h.persist(hubRedisStatus{Mode: "same", Addr: addr, DB: req.DB, ProvisionedAt: now})
+		// Default the recorded address to Core's own view when the admin did not
+		// override it. This is only the Hub's REDIS_ADDR; Core provisions on its
+		// own client regardless.
+		if hubAddr == "" {
+			hubAddr = h.state.Redis.Options().Addr
+		}
+		h.persist(hubRedisStatus{Mode: "auto", Addr: hubAddr, DB: req.DB, ProvisionedAt: now})
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":  true,
 			"username": hubAdminUser,
 			"password": pw,
 			"hubEnv": map[string]interface{}{
-				"REDIS_ADDR": addr, "REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": req.DB,
-			},
-		})
-		return
-
-	case "external":
-		if req.External == nil {
-			sendJSONError(w, "External target is required", http.StatusBadRequest)
-			return
-		}
-		if !validAddr(req.External.Addr) {
-			sendJSONError(w, "Address must be host:port", http.StatusBadRequest)
-			return
-		}
-		if req.External.DB < 0 || req.External.DB > 15 {
-			sendJSONError(w, "DB must be between 0 and 15", http.StatusBadRequest)
-			return
-		}
-		if req.External.Username == "" {
-			sendJSONError(w, "Username is required", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		client := redis.NewClient(&redis.Options{
-			Addr: req.External.Addr, Username: req.External.Username,
-			Password: req.External.Password, DB: req.External.DB,
-		})
-		defer client.Close()
-		if perr := client.Ping(ctx).Err(); perr != nil {
-			sendJSONError(w, "Connection failed: "+perr.Error(), http.StatusBadGateway)
-			return
-		}
-		if perr := h.provisionOnClient(ctx, client, pw); perr != nil {
-			sendJSONError(w, "Provision failed: "+perr.Error(), http.StatusBadGateway)
-			return
-		}
-		h.persist(hubRedisStatus{
-			Mode: "external", Addr: req.External.Addr, DB: req.External.DB,
-			AdminUser: req.External.Username, ProvisionedAt: now,
-		})
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":  true,
-			"username": hubAdminUser,
-			"password": pw,
-			"hubEnv": map[string]interface{}{
-				"REDIS_ADDR": req.External.Addr, "REDIS_USER": hubAdminUser,
-				"REDIS_PASS": pw, "REDIS_DB": req.External.DB,
+				"REDIS_ADDR": hubAddr, "REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": req.DB,
 			},
 		})
 		return
@@ -249,7 +163,8 @@ func (h *HubRedisAdminHandler) Provision(w http.ResponseWriter, r *http.Request)
 }
 
 // Roll POST /api/settings/gateway/hub-redis-admin/roll - re-mint the password on
-// the recorded target. External re-prompts the admin password (never stored).
+// the recorded target. No request body: auto rolls on Core's Redis, manual just
+// re-shows the command.
 func (h *HubRedisAdminHandler) Roll(w http.ResponseWriter, r *http.Request) {
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
@@ -265,13 +180,6 @@ func (h *HubRedisAdminHandler) Roll(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Stored status is corrupt", http.StatusInternalServerError)
 		return
 	}
-	var req struct {
-		External *struct {
-			Password string `json:"password"`
-		} `json:"external"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-
 	pw, perr := genHubPassword()
 	if perr != nil {
 		sendJSONError(w, "Failed to generate password", http.StatusInternalServerError)
@@ -283,52 +191,25 @@ func (h *HubRedisAdminHandler) Roll(w http.ResponseWriter, r *http.Request) {
 	case "manual":
 		st.LastRolledAt = now
 		h.persist(st)
+		hubEnv := map[string]interface{}{
+			"REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": st.DB,
+		}
+		if st.Addr != "" {
+			hubEnv["REDIS_ADDR"] = st.Addr
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":  true,
-			"username": hubAdminUser,
-			"password": pw,
-			"hubEnv": map[string]interface{}{
-				"REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": st.DB,
-			},
+			"success":    true,
+			"username":   hubAdminUser,
+			"password":   pw,
+			"hubEnv":     hubEnv,
 			"aclCommand": manualACLCommand(pw),
 		})
 		return
 
-	case "same":
+	case "auto":
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		if err := h.provisionOnClient(ctx, h.state.Redis, pw); err != nil {
-			sendJSONError(w, "Roll failed: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		st.LastRolledAt = now
-		h.persist(st)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":  true,
-			"username": hubAdminUser,
-			"password": pw,
-			"hubEnv": map[string]interface{}{
-				"REDIS_ADDR": st.Addr, "REDIS_USER": hubAdminUser, "REDIS_PASS": pw, "REDIS_DB": st.DB,
-			},
-		})
-		return
-
-	case "external":
-		if req.External == nil || req.External.Password == "" {
-			sendJSONError(w, "External admin password is required to roll", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		client := redis.NewClient(&redis.Options{
-			Addr: st.Addr, Username: st.AdminUser, Password: req.External.Password, DB: st.DB,
-		})
-		defer client.Close()
-		if err := client.Ping(ctx).Err(); err != nil {
-			sendJSONError(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		if err := h.provisionOnClient(ctx, client, pw); err != nil {
 			sendJSONError(w, "Roll failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
