@@ -20,6 +20,7 @@ export interface UserBillingOverrides {
     nodeRetention: string;
     r2QuotaGb: number | null;
     maxNodes: number | null;
+    maxLinks: number | null;
     trafficEdgeGb: number | null;
     trafficRelayGb: number | null;
     trafficCombinedGb: number | null;

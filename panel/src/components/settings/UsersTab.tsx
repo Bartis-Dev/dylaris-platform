@@ -906,6 +906,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [plans, setPlans] = useState<Plan[]>([]);
     const [planId, setPlanId] = useState<number | null>(null);
     const [maxNodes, setMaxNodes] = useState('');
+    const [maxLinks, setMaxLinks] = useState('');
     const [tEdge, setTEdge] = useState('');
     const [tRelay, setTRelay] = useState('');
     const [tCombined, setTCombined] = useState('');
@@ -923,6 +924,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                 setQuota(d.overrides.r2QuotaGb == null ? '' : String(d.overrides.r2QuotaGb));
                 setPlanId(d.planId ?? null);
                 setMaxNodes(d.overrides.maxNodes == null ? '' : String(d.overrides.maxNodes));
+                setMaxLinks(d.overrides.maxLinks == null ? '' : String(d.overrides.maxLinks));
                 setTEdge(d.overrides.trafficEdgeGb == null ? '' : String(d.overrides.trafficEdgeGb));
                 setTRelay(d.overrides.trafficRelayGb == null ? '' : String(d.overrides.trafficRelayGb));
                 setTCombined(d.overrides.trafficCombinedGb == null ? '' : String(d.overrides.trafficCombinedGb));
@@ -958,7 +960,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     };
 
     const numOk = (v: string) => v === '' || /^\d+$/.test(v);
-    const limitsValid = numOk(maxNodes) && numOk(tEdge) && numOk(tRelay) && numOk(tCombined);
+    const limitsValid = numOk(maxNodes) && numOk(maxLinks) && numOk(tEdge) && numOk(tRelay) && numOk(tCombined);
     const toNum = (v: string) => (v === '' ? null : parseInt(v, 10));
 
     const savePlan = async () => {
@@ -967,6 +969,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
         const r1 = await setUserPlan(user.id, planId);
         const r2res = await setUserLimitOverrides(user.id, {
             maxNodes: toNum(maxNodes),
+            maxLinks: toNum(maxLinks),
             trafficEdgeGb: toNum(tEdge),
             trafficRelayGb: toNum(tRelay),
             trafficCombinedGb: toNum(tCombined),
@@ -1085,6 +1088,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                     </select>
                                 </div>
                                 <LimitField label="Max nodes" value={maxNodes} onChange={setMaxNodes} />
+                                <LimitField label="Max links" value={maxLinks} onChange={setMaxLinks} />
                                 <LimitField label="Traffic combined (GB/mo)" value={tCombined} onChange={setTCombined} />
                                 <LimitField label="Traffic edge (GB/mo)" value={tEdge} onChange={setTEdge} />
                                 <LimitField label="Traffic relay (GB/mo)" value={tRelay} onChange={setTRelay} />

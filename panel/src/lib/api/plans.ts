@@ -7,6 +7,7 @@ export interface Plan {
     name: string;
     priceLabel: string;
     maxNodes: number;
+    maxLinks: number;
     r2QuotaGb: number;
     trafficEdgeGb: number;
     trafficRelayGb: number;
@@ -20,6 +21,7 @@ export type PlanInput = Omit<Plan, 'id' | 'createdAt'>;
 // Per-user limit overrides. null on a field = use the plan value.
 export interface LimitOverrides {
     maxNodes: number | null;
+    maxLinks: number | null;
     trafficEdgeGb: number | null;
     trafficRelayGb: number | null;
     trafficCombinedGb: number | null;

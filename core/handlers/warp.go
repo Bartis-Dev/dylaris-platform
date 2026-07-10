@@ -222,11 +222,10 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":    true,
-		"warp_key":   plaintext,
-		"link_id":    nodeID,
-		"link_token": h.state.Gateway.LinkToken(nodeID),
-		"note":       "Shown once. Deploy warp with the warp key, and link with the link token as its AGENT_SECRET.",
+		"success":  true,
+		"warp_key": plaintext,
+		"link_id":  nodeID,
+		"note":     "Shown once. Paste WARP_API_KEY into the route-only .env.",
 	})
 }
 
@@ -308,8 +307,12 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 	for _, k := range keys {
 		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
 	}
+	// Surface the effective link cap + current link-kit count so the panel can show
+	// "X of Y links used". 0 limit means unlimited.
+	lim, _ := services.EffectiveLimits(h.state.Store, userID)
+	used, _ := h.state.Store.CountLinkKitsByOwner(userID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "kits": out})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "kits": out, "used": used, "limit": lim.MaxLinks})
 }
 
 // RevokeLinkKit DELETE /api/warp/link-kits/{linkID} - owner or admin. Tears the

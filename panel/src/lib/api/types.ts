@@ -876,13 +876,14 @@ export interface MintedLinkKit {
     success: boolean;
     warp_key: string;
     link_id: string;
-    link_token: string;
     note: string;
 }
-export const listLinkKits = (): Promise<{ success: boolean; kits: LinkKit[] }> =>
+export const listLinkKits = (): Promise<{ success: boolean; kits: LinkKit[]; used?: number; limit?: number }> =>
     fetchAPI('/warp/link-kits');
 export const mintLinkKit = (name: string): Promise<MintedLinkKit> =>
     fetchAPI('/warp/link-kits', { method: 'POST', body: JSON.stringify({ name }) });
+export const revokeLinkKit = (linkId: string): Promise<{ success: boolean }> =>
+    fetchAPI(`/warp/link-kits/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
 
 // Live availability check for the route-create form. Accepts the same
 // three input shapes the create endpoint does and answers `{available}`

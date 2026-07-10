@@ -8,7 +8,7 @@ import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainP
 import {
     CreateRouteRequest, LinkRoute, LinkKit, MintedLinkKit,
     getLinkRoutes, createLinkRoute, deleteLinkRoute,
-    listLinkKits, mintLinkKit,
+    listLinkKits, mintLinkKit, revokeLinkKit,
 } from '@/lib/api';
 
 // Route-only ("via Link"): a DDoS-protected address pointed at a server the user
@@ -20,6 +20,8 @@ export default function RoutesPage() {
     const { gatewayEnabled } = useAppData();
 
     const [kits, setKits] = useState<LinkKit[]>([]);
+    const [used, setUsed] = useState(0);
+    const [limit, setLimit] = useState(0);
     const [routes, setRoutes] = useState<LinkRoute[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -43,6 +45,8 @@ export default function RoutesPage() {
             const [k, r] = await Promise.all([listLinkKits(), getLinkRoutes()]);
             const kitList = k?.kits ?? [];
             setKits(kitList);
+            setUsed(k?.used ?? kitList.length);
+            setLimit(k?.limit ?? 0);
             setRoutes(Array.isArray(r) ? r : []);
             // Default the route form to the first link if none chosen yet.
             setLinkId(prev => prev || (kitList[0]?.link_id ?? ''));
@@ -75,6 +79,17 @@ export default function RoutesPage() {
             flashToast(e instanceof Error ? e.message : 'Failed to create link');
         } finally {
             setMinting(false);
+        }
+    };
+
+    const revoke = async (linkIdToRevoke: string) => {
+        if (!confirm('Revoke this link? Its tunnel drops and it can no longer connect.')) return;
+        try {
+            await revokeLinkKit(linkIdToRevoke);
+            flashToast('Link revoked');
+            await load();
+        } catch (e) {
+            flashToast(e instanceof Error ? e.message : 'Failed to revoke link');
         }
     };
 
@@ -124,11 +139,21 @@ export default function RoutesPage() {
 
                 {kits.length > 0 && (
                     <div className="space-y-2">
+                        <p className="text-xs text-(--base-06) font-mono">
+                            {limit > 0 ? `${used} of ${limit} links used` : `${used} link${used === 1 ? '' : 's'} used`}
+                        </p>
                         {kits.map(k => (
                             <div key={k.id} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">
                                 <ShieldCheck size={14} className="text-(--success-light) shrink-0" />
                                 <span className="text-sm text-(--base-09) truncate">{k.name}</span>
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
+                                <button
+                                    onClick={() => revoke(k.link_id)}
+                                    title="Revoke link"
+                                    className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
                             </div>
                         ))}
                     </div>
@@ -244,26 +269,24 @@ export default function RoutesPage() {
 // key is hashed server-side and can never be shown again, so we make copying it
 // prominent and warn the user.
 function MintReveal({ kit, onCopy, onClose }: { kit: MintedLinkKit; onCopy: (m: string) => void; onClose: () => void }) {
-    // Matches docker-compose.route-only.yml. The operator-supplied values
-    // (ENROLL_URL / TUNNEL_SUBNETS / REDIS_ADDR / LOCAL_TARGET) go in the rest
-    // of the .env — see the route-only deploy guide.
-    const envBlock = `WARP_API_KEY=${kit.warp_key}\nLINK_TOKEN=${kit.link_token}`;
+    // The link fetches everything else (its tunnel token + Redis credential) from
+    // Core at boot using this warp key, so the only secret to paste is WARP_API_KEY.
     return (
         <div className="rounded-md border border-(--accent)/30 bg-(--accent)/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-(--base-09)">Link created — copy these now</span>
+                <span className="text-sm font-medium text-(--base-09)">Link created - copy this now</span>
                 <button onClick={onClose} className="text-xs text-(--base-06) hover:text-(--base-09)">Dismiss</button>
             </div>
             <p className="text-xs text-(--base-07) leading-relaxed">
-                Shown once. Deploy warp + link on your machine with these values. The warp key cannot be retrieved later.
+                Shown once. Paste this into the route-only <code className="font-mono">.env</code>. The link fetches its
+                tunnel token and Redis credential from Core on its own. The warp key cannot be retrieved later.
             </p>
             <CopyRow label="WARP_API_KEY" value={kit.warp_key} onCopy={onCopy} />
-            <CopyRow label="LINK_TOKEN" value={kit.link_token} onCopy={onCopy} />
             <button
-                onClick={() => { navigator.clipboard?.writeText(envBlock); onCopy('Copied .env block'); }}
+                onClick={() => { navigator.clipboard?.writeText(`WARP_API_KEY=${kit.warp_key}`); onCopy('Copied .env line'); }}
                 className="btn btn-secondary inline-flex items-center gap-2 text-xs"
             >
-                <Copy size={13} /> Copy full .env block
+                <Copy size={13} /> Copy .env line
             </button>
         </div>
     );

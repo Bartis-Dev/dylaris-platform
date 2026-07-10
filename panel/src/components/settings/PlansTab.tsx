@@ -6,7 +6,7 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { Loader2, Info, Plus, Trash2, Pencil, Star } from 'lucide-react';
 
 const EMPTY: PlanInput = {
-    name: '', priceLabel: '', maxNodes: 0, r2QuotaGb: 0,
+    name: '', priceLabel: '', maxNodes: 0, maxLinks: 0, r2QuotaGb: 0,
     trafficEdgeGb: 0, trafficRelayGb: 0, trafficCombinedGb: 0, isDefault: false,
 };
 
@@ -81,6 +81,7 @@ export default function PlansTab() {
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 font-mono text-xs text-(--base-07)">
                             <span>nodes: {lim(p.maxNodes)}</span>
+                            <span>links: {lim(p.maxLinks)}</span>
                             <span>R2: {lim(p.r2QuotaGb)} GB</span>
                             <span>traffic combined: {lim(p.trafficCombinedGb)} GB</span>
                             <span>traffic edge: {lim(p.trafficEdgeGb)} GB</span>
@@ -132,6 +133,7 @@ function PlanEditor({ data, isNew, saving, onChange, onSave, onCancel }: {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <NumField label="Max nodes" value={data.maxNodes} onChange={num('maxNodes')} />
+                <NumField label="Max links" value={data.maxLinks} onChange={num('maxLinks')} />
                 <NumField label="R2 quota (GB)" value={data.r2QuotaGb} onChange={num('r2QuotaGb')} />
                 <NumField label="Traffic combined (GB/mo)" value={data.trafficCombinedGb} onChange={num('trafficCombinedGb')} />
                 <NumField label="Traffic edge (GB/mo)" value={data.trafficEdgeGb} onChange={num('trafficEdgeGb')} />
