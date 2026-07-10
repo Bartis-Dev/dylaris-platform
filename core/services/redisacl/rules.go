@@ -70,6 +70,7 @@ func BuildLinkACLRules(password, nodeToken, tunnelToken string) []interface{} {
 	rules = append(rules,
 		"~link:"+tunnelToken,
 		"~online_link:"+tunnelToken,
+		"~dylaris:errors:link:"+nodeToken,
 		"~hub:link:discovery:"+nodeToken,
 		"~beam:node:"+nodeToken,
 		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
@@ -88,4 +89,21 @@ func SetUserArgs(username string, rules []interface{}) []interface{} {
 	out = append(out, "ACL", "SETUSER", username)
 	out = append(out, rules...)
 	return out
+}
+
+// BuildRouteOnlyLinkACLRules scopes an external route-only link to exactly the keys
+// it touches. No hub discovery, no beam: a route-only link has no NodeID and can
+// neither publish nor resolve either.
+func BuildRouteOnlyLinkACLRules(password, tunnelToken, instanceID string) []interface{} {
+	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
+	rules = append(rules,
+		"~link:"+tunnelToken,
+		"~online_link:"+tunnelToken,
+		"~dylaris:errors:link:"+instanceID,
+		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
+	)
+	for _, c := range commandCats {
+		rules = append(rules, c)
+	}
+	return rules
 }

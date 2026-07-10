@@ -51,3 +51,28 @@ func (p *Provisioner) RemoveNodeACL(ctx context.Context, token string) {
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", LinkUsername(token)).Err()
 	_ = p.admin.Do(ctx, "ACL", "SAVE").Err()
 }
+
+// EnsureRouteOnlyLinkACL is idempotent: it recomputes the derived password and
+// re-applies the rule set on every call. instanceID is tunnelToken[:8], matching
+// the link's own errlog instance id (gateway/link/link.go). Returns the ACL
+// username + password so the boot endpoint can hand them to the link.
+func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret, linkID, tunnelToken string) (user, pass string, err error) {
+	user = RouteOnlyLinkUsername(linkID)
+	pass = RouteOnlyLinkPassword(clusterSecret, linkID)
+	instanceID := tunnelToken[:8]
+	args := SetUserArgs(user, BuildRouteOnlyLinkACLRules(pass, tunnelToken, instanceID))
+	if err = p.admin.Do(ctx, args...).Err(); err != nil {
+		return "", "", err
+	}
+	if serr := p.admin.Do(ctx, "ACL", "SAVE").Err(); serr != nil {
+		log.Printf("redisacl: ACL SAVE failed (aclfile configured?): %v - ACLs are in-memory only", serr)
+	}
+	return user, pass, nil
+}
+
+// RemoveRouteOnlyLinkACL drops the user, terminating its live Redis connections
+// (ACL DELUSER). Best-effort.
+func (p *Provisioner) RemoveRouteOnlyLinkACL(ctx context.Context, linkID string) {
+	_ = p.admin.Do(ctx, "ACL", "DELUSER", RouteOnlyLinkUsername(linkID)).Err()
+	_ = p.admin.Do(ctx, "ACL", "SAVE").Err()
+}
