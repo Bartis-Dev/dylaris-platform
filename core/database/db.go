@@ -115,6 +115,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyPhase10Schema(db); err != nil {
 		return err
 	}
+	if err := applyModpackCrosscheckSchema(db); err != nil {
+		return err
+	}
 	if err := applyPhase13Schema(db); err != nil {
 		return err
 	}

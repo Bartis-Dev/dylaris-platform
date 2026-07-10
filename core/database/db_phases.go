@@ -184,3 +184,31 @@ func applyPhase17Schema(db *sql.DB) error {
 	}
 	return nil
 }
+
+// applyModpackCrosscheckSchema sets up the modpack cross-check snapshot:
+//   - server_modpack_contents: per-server-per-sub-server snapshot of the
+//     modpack's Modrinth-identified members, captured at install/reinstall.
+//     Sibling of server_mods; drives the advisory Content-tab cross-check.
+//
+// Idempotent. Only Modrinth-identified members are ever inserted (a pack member
+// with no project id is skipped by the snapshot writer, not stored here).
+func applyModpackCrosscheckSchema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS server_modpack_contents (
+		id                       SERIAL PRIMARY KEY,
+		server_id                INTEGER     NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		sub_server_name          TEXT        NOT NULL,
+		modrinth_project_id      VARCHAR(64) NOT NULL,
+		modrinth_version_id      VARCHAR(64) NOT NULL,
+		modrinth_version_number  VARCHAR(64) NOT NULL DEFAULT '',
+		file_name                TEXT        NOT NULL DEFAULT '',
+		side                     VARCHAR(8)  NOT NULL DEFAULT 'both',
+		UNIQUE (server_id, sub_server_name, modrinth_project_id)
+	)`); err != nil {
+		return fmt.Errorf("modpack crosscheck: create server_modpack_contents: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_server_modpack_contents_server
+		ON server_modpack_contents(server_id, sub_server_name)`); err != nil {
+		return fmt.Errorf("modpack crosscheck: create server_modpack_contents index: %w", err)
+	}
+	return nil
+}

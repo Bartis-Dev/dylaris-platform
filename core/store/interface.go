@@ -459,6 +459,13 @@ type Store interface {
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
 	DeleteServerMod(id, serverID int) error
 
+	// --- Modpack contents snapshot ---
+	// Per-server-per-sub-server snapshot of the modpack's Modrinth-identified
+	// members, captured at install/reinstall. Backs the advisory Content-tab
+	// cross-check (client-side). Cleared + rewritten on each (re)install.
+	ReplaceServerModpackContents(serverID int, subServer string, rows []models.ServerModpackContent) error
+	ListServerModpackContents(serverID int, subServer string) ([]models.ServerModpackContent, error)
+
 	// Modrinth PATs. One row per user; SetModrinthPAT upserts and
 	// stamps last_validated_at on success. ClearModrinthPAT removes the
 	// row entirely so a revoked PAT can't accidentally be re-used.
