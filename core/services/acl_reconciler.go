@@ -105,7 +105,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 	for _, n := range nodes {
 		secret, ok, serr := redisacl.LoadNodeSecret(r.store, r.clusterSecret, n.ID)
 		if serr != nil {
-			log.Printf("acl reconciler: node %d (%s): load secret: %v", n.ID, n.Token, serr)
+			log.Printf("acl reconciler: node %d (%s): load secret: %v", n.ID, tokenPrefix(n.Token), serr)
 			continue
 		}
 		if !ok {
@@ -113,7 +113,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		}
 		servers, lerr := r.store.ListServersByNode(n.ID)
 		if lerr != nil {
-			log.Printf("acl reconciler: node %d (%s): list servers: %v", n.ID, n.Token, lerr)
+			log.Printf("acl reconciler: node %d (%s): list servers: %v", n.ID, tokenPrefix(n.Token), lerr)
 			continue
 		}
 		uuids := make([]string, 0, len(servers))
@@ -122,7 +122,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		}
 		tunnelToken := redisacl.LinkTunnelToken(n.Token, r.clusterSecret)
 		if aerr := r.prov.EnsureNodeACLNoSave(ctx, n.Token, tunnelToken, secret, uuids); aerr != nil {
-			log.Printf("acl reconciler: node %d (%s): ensure ACL: %v", n.ID, n.Token, aerr)
+			log.Printf("acl reconciler: node %d (%s): ensure ACL: %v", n.ID, tokenPrefix(n.Token), aerr)
 			continue
 		}
 		applied++
@@ -148,4 +148,14 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 	if applied > 0 {
 		log.Printf("acl reconciler: re-applied %d Redis ACL user set(s)", applied)
 	}
+}
+
+// tokenPrefix truncates a node token for logging, matching the hygiene used by the
+// gRPC server (grpc/server.go): the full token is the Redis username base and is
+// not logged in full.
+func tokenPrefix(t string) string {
+	if len(t) > 8 {
+		return t[:8]
+	}
+	return t
 }
