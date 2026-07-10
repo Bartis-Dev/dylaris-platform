@@ -358,7 +358,7 @@ func main() {
 	// leaders read and poll, so a freshly (re)started leader gets the admin value
 	// rather than only its compiled-in fail-closed default. Always write (even
 	// the default) so a stale value from a previous install cannot linger.
-	redisClient.Set(context.Background(), "dylaris:warp:firewall:allowed_ports", settingsHandler.LoadWarpSpokeAllowedPorts(), 0)
+	redisClient.Set(context.Background(), handlers.WarpFirewallRedisKey, settingsHandler.LoadWarpSpokeAllowedPorts(), 0)
 
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)

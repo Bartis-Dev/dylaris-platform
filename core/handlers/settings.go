@@ -1180,15 +1180,16 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 
 // --- Warp Spoke Firewall Settings ---
 
-// warpFirewallRedisKey is the fixed central-Redis key the warp leaders read and
+// WarpFirewallRedisKey is the fixed central-Redis key the warp leaders read and
 // poll for the admin-configured spoke destination-port allowlist. MUST stay
 // byte-identical to gateway/warp firewallAllowedPortsKey.
-const warpFirewallRedisKey = "dylaris:warp:firewall:allowed_ports"
+const WarpFirewallRedisKey = "dylaris:warp:firewall:allowed_ports"
 
 // defaultWarpSpokeAllowedPorts is the compiled-in default allowlist (6379 Redis,
-// 25560 edge tunnel, 25551 beam relay, 25501 Core gRPC). MUST match gateway/warp
-// defaultSpokeAllowedPorts.
-const defaultWarpSpokeAllowedPorts = "6379,25560,25551,25501"
+// 25501 Core gRPC, 25551 beam relay, 25560 edge tunnel). Written in the sorted
+// order normalizeWarpPorts emits, so the first-boot value does not visibly
+// reorder on the first save. MUST match gateway/warp defaultSpokeAllowedPorts.
+const defaultWarpSpokeAllowedPorts = "6379,25501,25551,25560"
 
 type WarpFirewallSettings struct {
 	AllowedPorts string `json:"allowedPorts"` // comma-separated destination TCP ports the overlay leaders allow spokes to reach
@@ -1276,7 +1277,7 @@ func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *htt
 		return
 	}
 	if h.state.Redis != nil {
-		h.state.Redis.Set(r.Context(), warpFirewallRedisKey, norm, 0)
+		h.state.Redis.Set(r.Context(), WarpFirewallRedisKey, norm, 0)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

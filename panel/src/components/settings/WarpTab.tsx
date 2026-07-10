@@ -36,10 +36,15 @@ export default function WarpTab() {
     const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
     const load = useCallback(async () => {
-        const [res, fw] = await Promise.all([getWarpRegions(), getWarpFirewallSettings()]);
-        if (res.success) setRegions(res.regions || []);
-        if (fw.success) { setFwPorts(fw.settings.allowedPorts); setFwLoaded(true); }
-        setLoading(false);
+        try {
+            const [res, fw] = await Promise.all([getWarpRegions(), getWarpFirewallSettings()]);
+            if (res.success) setRegions(res.regions || []);
+            if (fw.success) { setFwPorts(fw.settings.allowedPorts); setFwLoaded(true); }
+        } catch {
+            showToast('Failed to load Warp settings', false);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => { load(); }, [load]);
