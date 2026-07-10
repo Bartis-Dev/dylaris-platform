@@ -85,7 +85,11 @@ export default function RoutesPage() {
     const revoke = async (linkIdToRevoke: string) => {
         if (!confirm('Revoke this link? Its tunnel drops and it can no longer connect.')) return;
         try {
-            await revokeLinkKit(linkIdToRevoke);
+            // fetchAPI resolves (does not throw) on an HTTP error whose body is JSON, so a
+            // 404/500 arrives here as { success: false }. Check it, or a failed revoke of a
+            // destructive, security-relevant action would falsely report "Link revoked".
+            const res = await revokeLinkKit(linkIdToRevoke);
+            if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to revoke link');
             flashToast('Link revoked');
             await load();
         } catch (e) {
