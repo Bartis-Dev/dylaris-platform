@@ -250,8 +250,13 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A suspended tenant's link cannot boot. GetUserBilling never returns
-	// sql.ErrNoRows; a missing row yields Status "active".
-	if b, berr := h.state.Store.GetUserBilling(key.OwnerID); berr == nil && b != nil && b.Status == "suspended" {
+	// sql.ErrNoRows; a missing row yields Status "active". A real DB fault fails
+	// OPEN so a transient blip does not lock out paying tenants on reconnect, but
+	// it must be visible: the suspension gate is silently degraded for that window.
+	b, berr := h.state.Store.GetUserBilling(key.OwnerID)
+	if berr != nil {
+		log.Printf("link-boot: billing lookup for %s failed, suspension gate skipped: %v", key.NodeID, berr)
+	} else if b != nil && b.Status == "suspended" {
 		sendJSONError(w, "Account suspended", http.StatusForbidden)
 		return
 	}
