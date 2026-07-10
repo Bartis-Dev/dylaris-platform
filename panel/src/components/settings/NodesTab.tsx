@@ -148,8 +148,7 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 
     // Extracted so the copy buttons below can send the exact same string that
     // is rendered in the <pre> blocks, with no duplication.
-    const nodeEnv = revealed ? `REDIS_ACL_ENABLED=true
-GRPC_TLS_ENABLED=true
+    const nodeEnv = revealed ? `GRPC_TLS_ENABLED=true
 GRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}
 NODE_ENROLL_TOKEN=<your enroll token>
 CORE_GRPC_ADDR=<core-host:25520>
