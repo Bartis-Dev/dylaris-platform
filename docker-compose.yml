@@ -98,12 +98,19 @@ services:
       - dylaris_net
 
   redis:
-    # Valkey — a drop-in, Redis-compatible fork. Service name stays "redis"
+    # Valkey - a drop-in, Redis-compatible fork. Service name stays "redis"
     # so REDIS_ADDR=redis:6379 works everywhere. In-memory only (coordination
-    # bus, not the source of truth — Postgres is).
+    # bus, not the source of truth - Postgres is).
+    # Redis ACL is mandatory: Valkey runs with an aclfile so per-node scoped
+    # users (provisioned by Core) survive a restart. The aclfile MUST be seeded
+    # before first boot with an admin default user whose password equals Core's
+    # REDIS_PASSWORD (see docs/superpowers/redis-acl-deploy.md). There is no open
+    # fallback. Mount the PARENT DIRECTORY (ACL SAVE does temp-file + rename).
     image: valkey/valkey:8-alpine
     restart: unless-stopped
-    command: valkey-server --save "" --appendonly no
+    command: valkey-server --save "" --appendonly no --aclfile /etc/valkey/users.acl
+    volumes:
+      - ./valkey-acl:/etc/valkey
     networks:
       - dylaris_net
 

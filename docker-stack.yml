@@ -118,10 +118,17 @@ services:
         condition: any
 
   redis:
-    # Valkey — drop-in Redis-compatible fork. Service name stays "redis" so
+    # Valkey - drop-in Redis-compatible fork. Service name stays "redis" so
     # REDIS_ADDR=redis:6379 resolves. In-memory coordination bus.
+    # Redis ACL is mandatory: run with an aclfile so per-node scoped users
+    # survive a restart. Seed /etc/dylaris/valkey-acl/users.acl on the manager
+    # host before first boot with an admin default user matching Core's
+    # REDIS_PASSWORD (see docs/superpowers/redis-acl-deploy.md). Mount the parent
+    # DIRECTORY (ACL SAVE does temp-file + rename). No open fallback.
     image: valkey/valkey:8-alpine
-    command: valkey-server --save "" --appendonly no
+    command: valkey-server --save "" --appendonly no --aclfile /etc/valkey/users.acl
+    volumes:
+      - /etc/dylaris/valkey-acl:/etc/valkey
     networks:
       - dylaris_net
     deploy:

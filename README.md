@@ -495,8 +495,8 @@ Every secret can be supplied from a **file** instead of a plain env value by set
 Supported:
 
 - **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`
-- **Node:** `CLUSTER_SECRET_FILE`, `REDIS_PASSWORD_FILE`, `SIDECAR_REDIS_PASSWORD_FILE`, `BEAM_JWT_SECRET_FILE`
-- **Log shipper:** `REDIS_PASS_FILE`
+- **Node:** `CLUSTER_SECRET_FILE`, `BEAM_JWT_SECRET_FILE`
+- **Log shipper:** *(none - the node injects scoped Redis creds derived from its per-node secret)*
 
 Example (Swarm / Portainer with external secrets):
 
@@ -534,7 +534,7 @@ secrets:
 | `FRONTEND_URL` | `http://localhost:25510` (compose: `http://panel:25510`) | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config — kept as env. |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
-| `REDIS_PASSWORD` | *(empty)* | No | Redis/Valkey password. |
+| `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. Must match the seeded aclfile admin password. |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
 | `DYLARIS_TELEMETRY` | *(unset = on)* | No | Set to `false` to hard-disable anonymous usage stats (bypasses the in-panel toggle). See [Anonymous usage stats](#anonymous-usage-stats). |
@@ -544,25 +544,23 @@ secrets:
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `CLUSTER_SECRET` | *(none — fatal)* | **Yes** | Must match Core. Node exits if missing. |
+| `CLUSTER_SECRET` | *(empty)* | For in-cluster | Cluster proof + gRPC TLS pin for in-cluster nodes; must match Core when set. Optional now: a node authenticates to Redis via its gRPC-bootstrapped per-node secret. BYON nodes omit it. |
 | `REDIS_ADDR` | *(none — fatal)* | **Yes** | Redis/Valkey address. Node exits if missing. |
 | `NODE_ID` | *(hostname)* | No | Unique id for this Node. In Swarm, templated from the hostname. Falls back to OS hostname. |
 | `NODE_TAGS` | *(empty)* | No | Comma-separated placement tags (e.g. `eu,fast`). The tag `external` flags a home/external node. |
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
 | `NODE_EXTERNAL` | `false` | No | If `true` (or `NODE_TAGS` contains `external`), the Node forces `gateway` routing + `beam` file access locally (no host ports, no SFTP). |
-| `REDIS_USER` | *(empty)* | No | Redis/Valkey username. |
-| `REDIS_PASSWORD` | *(empty)* | No | Redis/Valkey password. |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
+| `CORE_GRPC_ADDR` | *(empty)* | **Yes** | Core gRPC endpoint (`host:25501`). Required: the node bootstraps its per-node Redis secret over gRPC on first boot. Redis ACL is mandatory and there is no static-password fallback. |
+| `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. |
 | `SIDECAR_REDIS_ADDR` | *(falls back to `REDIS_ADDR`)* | No | Redis address handed to MC containers, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. |
-| `SIDECAR_REDIS_USER` | *(falls back to `REDIS_USER`)* | No | Redis username for MC containers. |
-| `SIDECAR_REDIS_PASSWORD` | *(falls back to `REDIS_PASSWORD`)* | No | Redis password for MC containers. |
 | `SIDECAR_REDIS_DB` | *(falls back to `REDIS_DB`)* | No | Redis DB index for MC containers. |
 | `PORT_RANGE` | *(unset)* | No | Host port range as `START-END` (e.g. `25600-30000`). Takes precedence over the split vars below. |
 | `PORT_RANGE_START` | `25600` | No | Start of host port range for MC servers (`ip_port`/`both`). Ignored if `PORT_RANGE` is set. |
 | `PORT_RANGE_END` | `30000` | No | End of host port range for MC servers. Ignored if `PORT_RANGE` is set. |
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
-| `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a CLUSTER_SECRET-derived HMAC token. |
+| `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
 | `BEAM_JWT_SECRET` | *(empty — Beam rejects all tickets)* | No (required for Beam) | Must match the gateway beam-relay's JWT secret so relay-validated tickets pass the node-side gate. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
 | `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). |
@@ -584,7 +582,7 @@ window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com" };
 
 ### Log Shipper (inside the MC container)
 
-These are set by the Node when it launches a container; they are listed for completeness. Note `REDIS_PASS` (not `REDIS_PASSWORD`) here.
+These are set by the Node when it launches a container; they are listed for completeness. Note `REDIS_PASS` (not `REDIS_PASSWORD`) here. With mandatory Redis ACL, the Node injects a per-node SHIPPER ACL user (scoped to this node's server keys only) - not a static password.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -604,7 +602,7 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25510` | panel | Web UI |
 | `25520` | node | SFTP (`SFTP_PORT`; file access = `sftp`/`both`) |
 | `25521` | node | Beam gRPC (`BEAM_GRPC_PORT`; overlay-only, JWT-gated) |
-| `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; CLUSTER_SECRET-HMAC) |
+| `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
 | `25600–30000` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`25599/udp`) — see the `dylaris-gateway` repo.
