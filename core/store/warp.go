@@ -61,6 +61,36 @@ func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, er
 	return out, rows.Err()
 }
 
+// ListAllLinkKits returns every non-revoked route-only link kit across all
+// tenants (their warp key node_id carries the "link-" prefix). Used by the ACL
+// reconciler to re-apply route-only link ACL users after a Valkey restart that
+// dropped them. Mirrors ListWarpAPIKeysByOwner's scan.
+func (s *PostgresStore) ListAllLinkKits() ([]WarpAPIKey, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
+		       COALESCE(owner_id::text,''), revoked_at, created_at
+		FROM warp_api_keys
+		WHERE node_id LIKE 'link-%' AND revoked_at IS NULL
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpAPIKey
+	for rows.Next() {
+		var k WarpAPIKey
+		var fixedIP, nodeID, region, owner sql.NullString
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) InsertWarpPeer(p WarpPeer) (int, error) {
 	var id int
 	err := s.db.QueryRow(`

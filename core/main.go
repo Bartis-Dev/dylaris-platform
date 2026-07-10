@@ -432,6 +432,15 @@ func main() {
 	// route-only link-boot endpoint can derive and provision per-link creds.
 	appState.ACLProvisioner = aclProvisioner
 	appState.ClusterSecret = cfg.ClusterSecret
+
+	// ACL reconciler - leader-gated. Periodically (and on a Redis reconnect)
+	// re-provisions every paired node's + route-only link's scoped Redis ACL
+	// users from the DB-stored per-node secret, so a Valkey restart that lost the
+	// aclfile self-heals without a service restart. Same users, same passwords;
+	// running services re-auth transparently on their next command.
+	aclReconciler := services.NewACLReconciler(pgStore, aclProvisioner, redisClient, cfg.ClusterSecret)
+	aclReconciler.SetLeader(coreLeader)
+	aclReconciler.Start(context.Background())
 	// The billing lifecycle drops/restores route-only link tunnels on
 	// suspend/reactivate; give it the same provisioner, gateway and cluster secret.
 	appState.Billing.SetLinkACL(appState.Gateway, redisClient, aclProvisioner, cfg.ClusterSecret)

@@ -3,6 +3,8 @@ package redisacl
 import (
 	"context"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -14,11 +16,11 @@ type Provisioner struct {
 
 func NewProvisioner(admin *redis.Client) *Provisioner { return &Provisioner{admin: admin} }
 
-// EnsureNodeACL (idempotent) sets the node, shipper, and link users from the
-// authoritative server list, then persists via ACL SAVE (best-effort).
-// secret is the node's 32-byte per-node secret. Safe to call on every connect
-// and before every placement.
-func (p *Provisioner) EnsureNodeACL(ctx context.Context, token, tunnelToken string, secret []byte, serverUUIDs []string) error {
+// EnsureNodeACLNoSave (idempotent) sets the node, shipper, and link users from
+// the authoritative server list WITHOUT persisting (no ACL SAVE). secret is the
+// node's 32-byte per-node secret. The caller issues a single trailing SaveACL so
+// a full reconcile sweep does one temp-file+rename, not one per node.
+func (p *Provisioner) EnsureNodeACLNoSave(ctx context.Context, token, tunnelToken string, secret []byte, serverUUIDs []string) error {
 	nodePw := NodePassword(secret, token)
 	shipPw := ShipperPassword(secret, token)
 	linkPw := LinkPassword(secret, token)
@@ -35,12 +37,18 @@ func (p *Provisioner) EnsureNodeACL(ctx context.Context, token, tunnelToken stri
 	if err := p.admin.Do(ctx, linkArgs...).Err(); err != nil {
 		return err
 	}
-	// Persist so a Valkey restart (even while Core is offline) keeps these users.
-	// Best-effort: with no aclfile configured this errors — warn loudly but do
-	// NOT fail; the in-memory ACL still enforces until the next restart.
-	if err := p.admin.Do(ctx, "ACL", "SAVE").Err(); err != nil {
-		log.Printf("redisacl: ACL SAVE failed (aclfile configured?): %v — ACLs are in-memory only", err)
+	return nil
+}
+
+// EnsureNodeACL (idempotent) applies the node's scoped users then persists via
+// ACL SAVE (best-effort, loud on failure). Safe to call on every connect and
+// before every placement.
+func (p *Provisioner) EnsureNodeACL(ctx context.Context, token, tunnelToken string, secret []byte, serverUUIDs []string) error {
+	if err := p.EnsureNodeACLNoSave(ctx, token, tunnelToken, secret, serverUUIDs); err != nil {
+		return err
 	}
+	// Persist so a Valkey restart (even while Core is offline) keeps these users.
+	p.SaveACL(ctx)
 	return nil
 }
 
@@ -49,14 +57,14 @@ func (p *Provisioner) RemoveNodeACL(ctx context.Context, token string) {
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", NodeUsername(token)).Err()
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", ShipperUsername(token)).Err()
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", LinkUsername(token)).Err()
-	_ = p.admin.Do(ctx, "ACL", "SAVE").Err()
+	p.SaveACL(ctx)
 }
 
-// EnsureRouteOnlyLinkACL is idempotent: it recomputes the derived password and
-// re-applies the rule set on every call. instanceID is tunnelToken[:8], matching
-// the link's own errlog instance id (gateway/link/link.go). Returns the ACL
-// username + password so the boot endpoint can hand them to the link.
-func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret, linkID, tunnelToken string) (user, pass string, err error) {
+// EnsureRouteOnlyLinkACLNoSave applies the route-only link ACL user WITHOUT
+// persisting (no ACL SAVE). instanceID is tunnelToken[:8], matching the link's
+// own errlog instance id (gateway/link/link.go). Returns the derived ACL
+// username + password; the caller issues the trailing SaveACL.
+func (p *Provisioner) EnsureRouteOnlyLinkACLNoSave(ctx context.Context, clusterSecret, linkID, tunnelToken string) (user, pass string, err error) {
 	user = RouteOnlyLinkUsername(linkID)
 	pass = RouteOnlyLinkPassword(clusterSecret, linkID)
 	instanceID := tunnelToken[:8]
@@ -64,9 +72,18 @@ func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret,
 	if err = p.admin.Do(ctx, args...).Err(); err != nil {
 		return "", "", err
 	}
-	if serr := p.admin.Do(ctx, "ACL", "SAVE").Err(); serr != nil {
-		log.Printf("redisacl: ACL SAVE failed (aclfile configured?): %v - ACLs are in-memory only", serr)
+	return user, pass, nil
+}
+
+// EnsureRouteOnlyLinkACL is idempotent: it recomputes the derived password,
+// re-applies the rule set, then persists (best-effort, loud on failure). Returns
+// the ACL username + password so the boot endpoint can hand them to the link.
+func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret, linkID, tunnelToken string) (user, pass string, err error) {
+	user, pass, err = p.EnsureRouteOnlyLinkACLNoSave(ctx, clusterSecret, linkID, tunnelToken)
+	if err != nil {
+		return "", "", err
 	}
+	p.SaveACL(ctx)
 	return user, pass, nil
 }
 
@@ -74,5 +91,44 @@ func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret,
 // (ACL DELUSER). Best-effort.
 func (p *Provisioner) RemoveRouteOnlyLinkACL(ctx context.Context, linkID string) {
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", RouteOnlyLinkUsername(linkID)).Err()
-	_ = p.admin.Do(ctx, "ACL", "SAVE").Err()
+	p.SaveACL(ctx)
+}
+
+// aclSaveWarnEvery throttles the loud ACL SAVE failure warning so a persistently
+// broken aclfile does not flood the log on every provision and reconcile tick.
+const aclSaveWarnEvery = 5 * time.Minute
+
+var (
+	aclSaveWarnMu   sync.Mutex
+	aclSaveWarnLast time.Time
+)
+
+// SaveACL persists the in-memory ACL users to the aclfile (ACL SAVE), best-effort.
+// On failure it emits a loud, throttled WARN naming the consequence. It never
+// returns an error: persistence is best-effort by design and the in-memory ACL
+// still enforces; recovery no longer depends on it (the reconciler re-provisions).
+func (p *Provisioner) SaveACL(ctx context.Context) {
+	err := p.admin.Do(ctx, "ACL", "SAVE").Err()
+	if err == nil {
+		return
+	}
+	aclSaveWarnMu.Lock()
+	defer aclSaveWarnMu.Unlock()
+	if time.Since(aclSaveWarnLast) < aclSaveWarnEvery {
+		return
+	}
+	aclSaveWarnLast = time.Now()
+	log.Printf("redisacl: WARNING: ACL SAVE failed: %v. Scoped Redis users are IN-MEMORY ONLY and will be LOST on a Valkey restart until the next reconcile re-provisions them. Ensure Valkey runs with --aclfile on a writable, persisted volume.", err)
+}
+
+// SelfProbe runs once at boot to surface a broken ACL-persistence setup early. It
+// issues ACL SAVE and, on failure, logs a loud one-time boot warning so an
+// operator learns the aclfile is not persisting now, not at the first Valkey
+// restart. A passing probe means scoped users survive a restart.
+func (p *Provisioner) SelfProbe(ctx context.Context) {
+	if err := p.admin.Do(ctx, "ACL", "SAVE").Err(); err != nil {
+		log.Printf("redisacl: BOOT WARNING: ACL persistence is NOT working (ACL SAVE failed: %v). Scoped Redis users are IN-MEMORY ONLY; a Valkey restart drops them until the reconciler re-provisions (up to one interval later). Configure Valkey with --aclfile on a writable, persisted volume.", err)
+		return
+	}
+	log.Println("redisacl: ACL persistence verified (ACL SAVE ok)")
 }
