@@ -360,7 +360,9 @@ func main() {
 	// leaders read and poll, so a freshly (re)started leader gets the admin value
 	// rather than only its compiled-in fail-closed default. Always write (even
 	// the default) so a stale value from a previous install cannot linger.
-	redisClient.Set(context.Background(), handlers.WarpFirewallRedisKey, settingsHandler.LoadWarpSpokeAllowedPorts(), 0)
+	if err := redisClient.Set(context.Background(), handlers.WarpFirewallRedisKey, settingsHandler.LoadWarpSpokeAllowedPorts(), 0).Err(); err != nil {
+		log.Printf("WARNING: failed to publish warp-firewall allowlist to Redis at boot; leaders may still be running a stale/compiled-in default until the next successful save: %v", err)
+	}
 
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)

@@ -1276,11 +1276,25 @@ func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *htt
 		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
+	propagated := true
 	if h.state.Redis != nil {
-		h.state.Redis.Set(r.Context(), WarpFirewallRedisKey, norm, 0)
+		if rerr := h.state.Redis.Set(r.Context(), WarpFirewallRedisKey, norm, 0).Err(); rerr != nil {
+			log.Printf("warp-firewall: failed to publish allowlist to Redis (leaders keep the stale value until the next successful save): %v", rerr)
+			propagated = false
+		}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"success":  true,
 		"settings": WarpFirewallSettings{AllowedPorts: norm},
-	})
+	}
+	if !propagated {
+		// The Postgres row IS saved (source of truth for a later successful
+		// publish), but the warp leaders poll a fixed Redis key with no other
+		// reconcile path, so a failed publish leaves the OLD, wider allowlist
+		// live. Tell the admin instead of a bare success - silently pretending
+		// this succeeded would hide a firewall rule that never tightened.
+		resp["success"] = false
+		resp["error"] = "Saved, but failed to publish to the warp leaders. The previous allowlist is still active; retry the save."
+	}
+	json.NewEncoder(w).Encode(resp)
 }
