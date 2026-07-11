@@ -199,9 +199,10 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	}
 	// The node already holds a secret by the time the mesh runs, so it MUST present
 	// a proof. Core refuses an empty proof for a node with a stored secret.
-	if nodeSecret != nil {
+	currentSecret := getNodeSecret()
+	if currentSecret != nil {
 		auth.AclSupported = true
-		auth.SecretProof = aclProof(nodeSecret, m.nodeToken)
+		auth.SecretProof = aclProof(currentSecret, m.nodeToken)
 	}
 	// Prove we hold CLUSTER_SECRET so Core will issue this known node its secret
 	// on first ACL enablement. Harmless when the node already has a secret.
@@ -218,7 +219,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	}
 
 	// Step 2: Wait for auth result (answering a challenge nonce if Core sends one)
-	authResult, err := recvAuthResult(stream, nodeSecret)
+	authResult, err := recvAuthResult(stream, currentSecret)
 	if err != nil {
 		log.Printf("gRPC Mesh: Failed to receive auth result from Core %s: %v", info.ID, err)
 		cancel()
@@ -241,15 +242,19 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 
 	// Defensive: persist a refreshed secret if Core handed one back (e.g. ACL
 	// newly enabled for this known node, or a reset). No-op when ACL is off.
+	// Routed through the guarded setter, not a direct global write: this runs
+	// in a per-Core-connection goroutine, so an unsynchronized write here could
+	// race (and previously DID race) the watchdog's own read-modify-write and
+	// blind it to a real rotation - see redisacl_bootstrap.go. setNodeSecret
+	// applies the same change-detection + restart rule no matter which caller
+	// triggers it.
 	if authResult.NodeSecret != "" {
 		if raw, derr := hex.DecodeString(authResult.NodeSecret); derr == nil && len(raw) == 32 {
-			_ = saveNodeSecret(nodeSecretDir, raw)
-			nodeSecret = raw
+			setNodeSecret(raw, true)
 		}
 	}
 	if authResult.LinkSecret != "" && authResult.LinkDiscoveryProof != "" {
-		linkSecret, linkDiscoveryProof = authResult.LinkSecret, authResult.LinkDiscoveryProof
-		_ = saveLinkCreds(nodeSecretDir, authResult.LinkSecret, authResult.LinkDiscoveryProof)
+		setLinkCreds(authResult.LinkSecret, authResult.LinkDiscoveryProof, true)
 	}
 
 	// Register connection

@@ -196,8 +196,12 @@ func main() {
 			log.Printf("redisacl: Redis ping failed, re-confirming ACL with Core: %v", err)
 		}
 		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
-			_ = saveNodeSecret(nodeSecretDir, s)
-			nodeSecret = s
+			// setNodeSecret restarts the agent (log.Fatal) if this differs from
+			// the secret we just tried against Redis - a genuine rotation, not
+			// just Valkey having lost the aclfile. The rebuild below only runs
+			// when the secret is unchanged (Core just re-applied the same ACL),
+			// clearing any connections poisoned by the earlier auth failure.
+			setNodeSecret(s, true)
 			_ = rdb.Close()
 			rdb = redis.NewClient(&redis.Options{
 				Addr: redisAddr, Username: aclNodeUsername(nodeID),
@@ -642,9 +646,10 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		},
 	}
 	// Auth: the node stamps a per-node HMAC signature instead of shipping the raw
-	// CLUSTER_SECRET over Redis. nodeSecret is guaranteed non-nil after the startup
-	// bootstrap (main fatals otherwise).
-	data["sig"] = aclHeartbeatSig(nodeSecret, id, ts)
+	// CLUSTER_SECRET over Redis. The secret is guaranteed non-nil after the
+	// startup bootstrap (main fatals otherwise); read through the guarded
+	// accessor since the ACL watchdog / gRPC mesh can rotate it concurrently.
+	data["sig"] = aclHeartbeatSig(getNodeSecret(), id, ts)
 
 	// BYON: advertise the per-user enroll token so Core can bind this node to its
 	// owner on first discovery. Only present when the operator brought the node

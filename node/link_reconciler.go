@@ -17,11 +17,12 @@ func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 	}
 	var last string // signature of the last-applied spawn; "" = not running
 	reconcile := func() {
-		want := routingMode == "gateway" && linkSecret != "" && linkDiscoveryProof != "" && linkImage != ""
-		sig := nodeID + "|" + linkSecret + "|" + linkDiscoveryProof + "|" + linkImage
+		secret, proof := getLinkCreds()
+		want := routingMode == "gateway" && secret != "" && proof != "" && linkImage != ""
+		sig := nodeID + "|" + secret + "|" + proof + "|" + linkImage
 		if want {
 			if sig != last {
-				if err := dm.EnsureLinkContainer(linkImage, nodeID, linkSecret, linkDiscoveryProof); err != nil {
+				if err := dm.EnsureLinkContainer(linkImage, nodeID, secret, proof); err != nil {
 					log.Printf("link: failed to ensure Link sidecar: %v", err)
 					return
 				}

@@ -178,7 +178,7 @@ func buildRedisEnv(uuid, subServer string) []string {
 	// :cmds), so a compromised container can't reach sibling-tenant data or the
 	// command stream. Derived deterministically; Core provisions the matching user.
 	user := aclShipperUsername(nodeID)
-	pass := aclShipperPassword(nodeSecret, nodeID)
+	pass := aclShipperPassword(getNodeSecret(), nodeID)
 	env := []string{
 		fmt.Sprintf("REDIS_ADDR=%s", mcRedisAddr),
 		fmt.Sprintf("REDIS_USER=%s", user),
@@ -203,7 +203,7 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof string) []string {
 	// Redis ACL is mandatory: Link always authenticates with its own per-node ACL
 	// user (nodeSecret guaranteed non-nil after the startup bootstrap).
 	user := aclLinkUsername(nodeID)
-	pass := aclLinkPassword(nodeSecret, nodeID)
+	pass := aclLinkPassword(getNodeSecret(), nodeID)
 	return []string{
 		fmt.Sprintf("NODE_ID=%s", nodeID),
 		fmt.Sprintf("LINK_SECRET=%s", linkSecret),

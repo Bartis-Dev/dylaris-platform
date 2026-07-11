@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	pb "dylaris-proto/node"
@@ -15,19 +16,92 @@ import (
 	"google.golang.org/grpc"
 )
 
-// nodeSecret is the node's per-node Redis secret once obtained. Read by
-// grpc_mesh (proof) and docker_mgr (shipper creds). nil until ensureNodeSecret
-// completes the bootstrap.
+// nodeSecret is the node's per-node Redis secret once obtained. nil until
+// ensureNodeSecret completes the bootstrap. Written from three independent
+// call sites - main's startup path, the ACL watchdog's re-bootstrap, and the
+// gRPC mesh's per-Core-connection reconnect handler - so every read and write
+// goes through the guarded accessors below (getNodeSecret/setNodeSecret),
+// never this global directly.
 var nodeSecret []byte
 
 // linkSecret / linkDiscoveryProof are the Core-delivered Link tunnel credentials
 // (empty when this node isn't gateway-relevant, or until ensureNodeSecret
-// completes the bootstrap). Read by the link reconciler (docker_mgr) to spawn
-// the Link sidecar.
+// completes the bootstrap). Same multi-writer concern as nodeSecret: go
+// through getLinkCreds/setLinkCreds, never these globals directly.
 var (
 	linkSecret         string
 	linkDiscoveryProof string
 )
+
+// nodeSecretMu guards nodeSecret, linkSecret and linkDiscoveryProof. Before
+// this existed, grpc_mesh's per-reconnect handler wrote nodeSecret directly
+// with no synchronization AND with no change-detection, which could blind the
+// ACL watchdog: the watchdog's own "prev := nodeSecret" read would observe
+// the already-updated value, bytes.Equal would be true, no restart would
+// fire, and the node would be stranded on a stale rdb password until a
+// manual restart. Every writer now goes through setNodeSecret, which applies
+// the SAME change-detection + restart rule regardless of caller.
+var nodeSecretMu sync.Mutex
+
+// getNodeSecret returns the current per-node secret (nil until the startup
+// bootstrap completes). Safe for concurrent use.
+func getNodeSecret() []byte {
+	nodeSecretMu.Lock()
+	defer nodeSecretMu.Unlock()
+	return nodeSecret
+}
+
+// getLinkCreds returns the current Link tunnel token + discovery proof. Safe
+// for concurrent use.
+func getLinkCreds() (secret, proof string) {
+	nodeSecretMu.Lock()
+	defer nodeSecretMu.Unlock()
+	return linkSecret, linkDiscoveryProof
+}
+
+// setNodeSecret installs a freshly obtained per-node secret. Applies the SAME
+// rule no matter which caller triggers it: the FIRST install (prev is nil,
+// e.g. the startup bootstrap or a cache load) never restarts; a genuine
+// CHANGE from an already-loaded secret (a real pairing rotation, whether
+// detected by the watchdog or by the gRPC mesh's reconnect handler) always
+// logs loud and log.Fatal's, so the proven startup path rebuilds rdb from the
+// new secret on restart. A re-confirmation of the SAME secret is a no-op
+// restart-wise. persist=false skips the disk write for a caller that already
+// has the value on disk (e.g. loading the cache at startup); every other
+// caller passes true.
+func setNodeSecret(s []byte, persist bool) {
+	nodeSecretMu.Lock()
+	prev := nodeSecret
+	nodeSecret = s
+	nodeSecretMu.Unlock()
+	if persist {
+		if werr := saveNodeSecret(nodeSecretDir, s); werr != nil {
+			log.Printf("redisacl: WARN failed to persist node secret: %v", werr)
+		}
+	}
+	if prev != nil && !bytes.Equal(prev, s) {
+		// MC server containers are separate Docker containers and are
+		// unaffected by this process restarting; only the node management
+		// plane briefly blips.
+		log.Fatal("redisacl: per-node secret rotated; restarting node agent to adopt new Redis credentials")
+	}
+}
+
+// setLinkCreds installs freshly delivered Link tunnel credentials. No
+// change-detection/restart logic: unlike nodeSecret, a stale Link credential
+// does not leave any long-lived client with a wrong password baked in - the
+// link reconciler (link_reconciler.go) re-reads via getLinkCreds on its next
+// 30s tick and respawns the sidecar if the signature changed.
+func setLinkCreds(secret, proof string, persist bool) {
+	nodeSecretMu.Lock()
+	linkSecret, linkDiscoveryProof = secret, proof
+	nodeSecretMu.Unlock()
+	if persist {
+		if werr := saveLinkCreds(nodeSecretDir, secret, proof); werr != nil {
+			log.Printf("redisacl: WARN failed to persist link creds: %v", werr)
+		}
+	}
+}
 
 // ensureNodeSecret returns the per-node secret. Uses the
 // cached .node_secret when present (no Core contact needed — resilience); else
@@ -41,10 +115,10 @@ func ensureNodeSecret(ctx context.Context) []byte {
 		hadAssignedID = true
 	}
 	if s, p, ok := loadLinkCreds(nodeSecretDir); ok {
-		linkSecret, linkDiscoveryProof = s, p
+		setLinkCreds(s, p, false) // already on disk, no need to re-persist
 	}
 	if s, ok := loadNodeSecret(nodeSecretDir); ok {
-		nodeSecret = s
+		setNodeSecret(s, false) // already on disk; first install, never restarts
 		log.Println("redisacl: using cached node secret")
 		return s
 	}
@@ -64,10 +138,7 @@ func ensureNodeSecret(ctx context.Context) []byte {
 	for {
 		s, err := bootstrapSecretViaGRPC(ctx)
 		if err == nil && len(s) == 32 {
-			if werr := saveNodeSecret(nodeSecretDir, s); werr != nil {
-				log.Printf("redisacl: WARN failed to persist node secret: %v", werr)
-			}
-			nodeSecret = s
+			setNodeSecret(s, true) // first install (nodeSecret was nil until now), never restarts
 			log.Println("redisacl: obtained node secret via gRPC bootstrap")
 			return s
 		}
@@ -144,10 +215,7 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 		log.Println("redisacl: adopted server-assigned node identity")
 	}
 	if res.LinkSecret != "" && res.LinkDiscoveryProof != "" {
-		linkSecret, linkDiscoveryProof = res.LinkSecret, res.LinkDiscoveryProof
-		if werr := saveLinkCreds(nodeSecretDir, res.LinkSecret, res.LinkDiscoveryProof); werr != nil {
-			log.Printf("redisacl: WARN failed to persist link creds: %v", werr)
-		}
+		setLinkCreds(res.LinkSecret, res.LinkDiscoveryProof, true)
 	}
 	if res.NodeSecret != "" {
 		raw, derr := hex.DecodeString(res.NodeSecret)
@@ -206,21 +274,12 @@ func redisACLWatchdog(ctx context.Context, rdb *redis.Client) {
 		if consecutive < failsToAct {
 			continue
 		}
-		prev := nodeSecret
 		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
-			_ = saveNodeSecret(nodeSecretDir, s)
-			nodeSecret = s
-			if prev != nil && !bytes.Equal(prev, s) {
-				// Core minted a DIFFERENT per-node secret (a genuine pairing reset).
-				// The shared rdb was built with the OLD password and cannot be swapped
-				// in place from this goroutine, so restart the agent: the proven
-				// startup path rebuilds rdb from the now-cached new secret. Uses the
-				// module's fatal-to-restart idiom (log.Fatal, as in main.go). The MC
-				// server containers are separate and unaffected; only the node
-				// management plane briefly blips. plain bytes.Equal is fine here: this
-				// is a self-owned value, not attacker input.
-				log.Fatal("redisacl: per-node secret rotated; restarting node agent to adopt new Redis credentials")
-			}
+			// setNodeSecret applies the change-detection + restart rule itself
+			// (log.Fatal if this differs from the currently loaded secret), so
+			// the lines below only run when the secret is unchanged (Core just
+			// re-applied the same ACL after Valkey lost its aclfile).
+			setNodeSecret(s, true)
 			consecutive = 0
 			backoff = probeEvery
 			log.Println("redisacl: re-bootstrap OK; Core re-applied the node ACL")

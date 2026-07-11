@@ -40,8 +40,8 @@ func StartMigrationServer(ctx context.Context, rdb *redis.Client, nodeID string,
 			return
 		}
 		// Mirror Core's keying: always verify with the per-node secret (read
-		// nodeSecret fresh per request).
-		verifyKey := string(nodeSecret)
+		// through the guarded accessor so this always sees the latest value).
+		verifyKey := string(getNodeSecret())
 		claims, err := migration.VerifyToken(verifyKey, token)
 		if err != nil {
 			// Don't echo the underlying reason (expired vs forged) to callers.
