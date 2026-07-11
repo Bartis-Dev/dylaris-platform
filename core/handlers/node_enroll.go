@@ -71,10 +71,17 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to create token", http.StatusInternalServerError)
 		return
 	}
+	// The fingerprint is only meaningful pinning material when TLS is actually
+	// on; showing it while GRPC_TLS_ENABLED=false would suggest a pin the
+	// control channel never enforces.
+	fingerprint := ""
+	if h.state.GRPCTLSEnabled {
+		fingerprint = h.state.GRPCTLSFingerprint
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":            true,
 		"token":              token,
-		"grpcTlsFingerprint": h.state.GRPCTLSFingerprint,
+		"grpcTlsFingerprint": fingerprint,
 		"note":               "Shown once. Start your node with NODE_ENROLL_TOKEN set to this value. When GRPC_TLS_ENABLED, also set GRPC_TLS_FINGERPRINT.",
 	})
 }

@@ -77,6 +77,10 @@ type AppState struct {
 	// (public pinning material). Surfaced to BYON operators so a secret-free node
 	// can pin it via GRPC_TLS_FINGERPRINT. Empty string if derivation failed.
 	GRPCTLSFingerprint string
+	// GRPCTLSEnabled mirrors config.GRPCTLSEnabled: whether the node<->Core gRPC
+	// control channel actually enforces TLS + fingerprint pinning. Gates whether
+	// GRPCTLSFingerprint is worth handing to an operator (see node_enroll.go).
+	GRPCTLSEnabled bool
 
 	// ACLProvisioner provisions the route-only links' scoped Redis ACL users on
 	// Core's own Redis client (link-boot + revoke + billing suspend/reactivate).

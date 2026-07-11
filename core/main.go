@@ -160,6 +160,10 @@ func main() {
 	if fp, ferr := beamauth.ClusterGRPCCertFingerprint(cfg.ClusterSecret); ferr == nil {
 		appState.GRPCTLSFingerprint = fp
 	}
+	appState.GRPCTLSEnabled = cfg.GRPCTLSEnabled
+	if !cfg.GRPCTLSEnabled {
+		log.Println("WARNING: GRPC_TLS_ENABLED is false; node<->Core gRPC (control channel, carries per-node secrets) is UNENCRYPTED. Rely on an encrypted overlay (WireGuard/VPN) between node and Core, or set GRPC_TLS_ENABLED=true.")
+	}
 
 	redisClient, err := database.InitRedis(cfg)
 	if err != nil {
