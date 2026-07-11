@@ -215,6 +215,12 @@ func (h *PacksHandler) importOneSolderMod(ctx context.Context, prov modpack.Modp
 	if modpack.HasUnsafeZipEntry(zipBytes) {
 		return 0, 0, fmt.Errorf("unsafe zip entry path")
 	}
+	// Store-time defense in depth (BC2 bundled minor): an external Solder
+	// instance is not a trusted source; cap declared per-entry size before
+	// persisting, same as the local upload path.
+	if hasOversizedZipEntry(zipBytes) {
+		return 0, 0, fmt.Errorf("zip entry exceeds the size cap")
+	}
 	md5hex, _, _ := modpack.Hashes(zipBytes)
 
 	innerName, innerJar, hasJar := modpack.FirstInnerJar(zipBytes)

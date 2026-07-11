@@ -196,6 +196,14 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Zip contains unsafe entry paths", http.StatusBadRequest)
 			return
 		}
+		// Store-time defense in depth (BC2 bundled minor): reject a per-entry
+		// declared size over the render cap so a decompression bomb is never
+		// persisted, on top of the render-time cap in packs_mrpack.go /
+		// packs_serverpack.go.
+		if hasOversizedZipEntry(data) {
+			sendJSONError(w, "Zip entry exceeds the size cap", http.StatusBadRequest)
+			return
+		}
 		zipBytes = data
 	default:
 		// A resourcepack/shaderpack/config file (incl. a raw .zip resourcepack

@@ -22,6 +22,26 @@ const (
 	maxServerPackTotalBytes = 2 << 30   // 2 GiB assembled pack
 )
 
+// hasOversizedZipEntry reports whether any entry in zipBytes declares an
+// UncompressedSize64 over maxServerPackEntryBytes. Store-time defense in
+// depth (BC2 bundled minor): even though the render paths (renderServerPack,
+// writeMrpackZip) now cap decompression at read time, rejecting an oversized
+// declared size at STORE time means a decompression bomb is never persisted
+// in the first place. An unreadable zip is flagged as oversized too (fail
+// closed), matching modpack.HasUnsafeZipEntry's convention.
+func hasOversizedZipEntry(zipBytes []byte) bool {
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return true
+	}
+	for _, f := range zr.File {
+		if f.UncompressedSize64 > maxServerPackEntryBytes {
+			return true
+		}
+	}
+	return false
+}
+
 // renderServerPack builds a plain .zip of a build's SERVER-SIDE content + configs
 // (every entry whose side is not client-only), each file placed at its
 // .minecraft-relative path so a server operator can extract it into the server

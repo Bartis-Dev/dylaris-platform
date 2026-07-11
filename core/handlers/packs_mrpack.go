@@ -116,6 +116,12 @@ func modrinthCDNURL(e models.BuildContentEntry) string {
 // returns its inner files rekeyed under overrides/. A Solder zip already holds
 // the file at its .minecraft-relative path (e.g. mods/x.jar), so we prefix
 // "overrides/". Skips content that has no storage_key (pure Modrinth reference).
+//
+// Reachable from the PUBLIC UNAUTHENTICATED ServeShare mrpack endpoint (BC2),
+// so each entry is capped the same way renderServerPack caps its stored-zip
+// branch (per-entry UncompressedSize64 check + io.LimitReader) to prevent a
+// highly compressible uploaded override from decompressing an unbounded
+// amount into RAM.
 func (h *PacksHandler) overrideEntriesFromStoredZip(prov modpack.ModpackStorageProvider, e models.BuildContentEntry) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	if e.StorageKey == "" {
@@ -133,14 +139,20 @@ func (h *PacksHandler) overrideEntriesFromStoredZip(prov modpack.ModpackStorageP
 		if f.FileInfo().IsDir() {
 			continue
 		}
+		if f.UncompressedSize64 > maxServerPackEntryBytes {
+			return nil, fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
-		b, err := io.ReadAll(rc)
+		b, err := io.ReadAll(io.LimitReader(rc, maxServerPackEntryBytes+1))
 		rc.Close()
 		if err != nil {
 			return nil, err
+		}
+		if int64(len(b)) > maxServerPackEntryBytes {
+			return nil, fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
 		}
 		out["overrides/"+f.Name] = b
 	}
@@ -162,7 +174,9 @@ func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *
 		return err
 	}
 
-	// Embed non-linked content under overrides/.
+	// Embed non-linked content under overrides/. total bounds the assembled
+	// pack across all entries (BC2), mirroring renderServerPack's running cap.
+	var total int64
 	for _, e := range content {
 		if e.Linked && e.SHA1 != "" && e.SHA512 != "" && modrinthCDNURL(e) != "" {
 			continue // already a files[] reference
@@ -175,6 +189,10 @@ func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *
 			return err
 		}
 		for name, b := range entries {
+			total += int64(len(b))
+			if total > maxServerPackTotalBytes {
+				return fmt.Errorf("mrpack overrides exceed the total size cap")
+			}
 			ew, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: time.Now()})
 			if err != nil {
 				return err
