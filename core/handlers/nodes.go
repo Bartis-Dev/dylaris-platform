@@ -403,10 +403,17 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The fingerprint is only meaningful pinning material when TLS is actually
+	// on; showing it while GRPC_TLS_ENABLED=false would suggest a pin the
+	// control channel never enforces.
+	fingerprint := ""
+	if h.state.GRPCTLSEnabled {
+		fingerprint = h.state.GRPCTLSFingerprint
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":            true,
 		"nodeId":             node.Token,
-		"grpcTlsFingerprint": h.state.GRPCTLSFingerprint,
+		"grpcTlsFingerprint": fingerprint,
 		"linkSecret":         h.state.Gateway.LinkToken(node.Token),
 		"linkDiscoveryProof": h.state.Gateway.DiscoveryProof(node.Token),
 	})

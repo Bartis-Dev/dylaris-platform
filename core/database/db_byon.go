@@ -28,7 +28,7 @@ func applyBYONSchema(db *sql.DB) error {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_node_enroll_tokens_user ON node_enroll_tokens(user_id)`)
 	db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ`)
 	// P0b-5 recovery: a recovery token re-pairs an EXISTING node identity (nodes.token).
-	// Plain column, no FK (nodes.token has no UNIQUE constraint); validated live at consume.
+	// Plain column, no FK (nodes.token is unique but not a foreign key); validated live at consume.
 	db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS recovers_node_token TEXT`)
 
 	// P0b-5 admission: global-scope IP allowlist for NEW node registrations.
