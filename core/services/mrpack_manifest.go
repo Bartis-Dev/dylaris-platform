@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 )
@@ -30,6 +31,14 @@ type mrpackManifest struct {
 	Files []mrpackManifestFile `json:"files"`
 }
 
+// maxMrpackIndexJSONBytes bounds the DECOMPRESSED size of modrinth.index.json
+// read out of an .mrpack archive. The archive itself is capped at 200MiB
+// compressed elsewhere (a separate, pre-existing check); without THIS cap a
+// crafted entry with a high compression ratio can decompress to tens/hundreds
+// of GB and OOM Core while json.Decode reads it. 8 MiB is generous even for a
+// very large modpack's manifest (typically a few hundred KB).
+const maxMrpackIndexJSONBytes = 8 << 20
+
 // ParseMrpackContents reads modrinth.index.json from the .mrpack bytes and
 // returns one entry per file whose first download is a
 // cdn.modrinth.com/data/<project>/versions/<version>/<file> URL. Files without
@@ -45,12 +54,15 @@ func ParseMrpackContents(mrpack []byte) ([]MrpackEntry, error) {
 		if f.Name != "modrinth.index.json" {
 			continue
 		}
+		if f.UncompressedSize64 > uint64(maxMrpackIndexJSONBytes) {
+			return nil, fmt.Errorf("modrinth.index.json exceeds the %d byte cap", maxMrpackIndexJSONBytes)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			return nil, fmt.Errorf("open modrinth.index.json: %w", err)
 		}
 		var m mrpackManifest
-		decErr := json.NewDecoder(rc).Decode(&m)
+		decErr := json.NewDecoder(io.LimitReader(rc, int64(maxMrpackIndexJSONBytes)+1)).Decode(&m)
 		rc.Close()
 		if decErr != nil {
 			return nil, fmt.Errorf("decode modrinth.index.json: %w", decErr)
