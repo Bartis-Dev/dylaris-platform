@@ -551,7 +551,7 @@ secrets:
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
 | `NODE_EXTERNAL` | `false` | No | If `true` (or `NODE_TAGS` contains `external`), the Node forces `gateway` routing + `beam` file access locally (no host ports, no SFTP). |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
-| `CORE_GRPC_ADDR` | *(empty)* | **Yes** | Core gRPC endpoint (`host:25501`). Required: the node bootstraps its per-node Redis secret over gRPC on first boot. Redis ACL is mandatory and there is no static-password fallback. |
+| `CORE_GRPC_ADDR` | *(empty)* | For first boot | Core gRPC endpoint (`host:25501`). Needed for a first-boot node to bootstrap its per-node Redis secret over gRPC; a node with an already-cached secret can start without it (see the boot warning). Redis ACL is mandatory and there is no static-password fallback. |
 | `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. |
 | `SIDECAR_REDIS_ADDR` | *(falls back to `REDIS_ADDR`)* | No | Redis address handed to MC containers, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. |
 | `SIDECAR_REDIS_DB` | *(falls back to `REDIS_DB`)* | No | Redis DB index for MC containers. |

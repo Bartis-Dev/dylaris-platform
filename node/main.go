@@ -458,6 +458,8 @@ func parseConfig() {
 	grpcTLSFingerprint = os.Getenv("GRPC_TLS_FINGERPRINT")
 	if grpcTLSEnabled {
 		log.Println("gRPC TLS ENABLED - node pins the Core control-channel cert fingerprint (must match Core GRPC_TLS_ENABLED).")
+	} else {
+		log.Println("WARNING: GRPC_TLS_ENABLED is false; node<->Core gRPC is UNENCRYPTED. Rely on an encrypted overlay (WireGuard/VPN) between node and Core, or set GRPC_TLS_ENABLED=true.")
 	}
 
 	// Port range stays env-only because firewall rules on the host must
