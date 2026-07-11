@@ -113,50 +113,63 @@ func modrinthCDNURL(e models.BuildContentEntry) string {
 }
 
 // overrideEntriesFromStoredZip reads a content entry's stored Solder zip and
-// returns its inner files rekeyed under overrides/. A Solder zip already holds
-// the file at its .minecraft-relative path (e.g. mods/x.jar), so we prefix
-// "overrides/". Skips content that has no storage_key (pure Modrinth reference).
+// writes its inner files directly into zw under overrides/. A Solder zip
+// already holds the file at its .minecraft-relative path (e.g. mods/x.jar),
+// so we prefix "overrides/". Skips content that has no storage_key (pure
+// Modrinth reference).
 //
-// Reachable from the PUBLIC UNAUTHENTICATED ServeShare mrpack endpoint (BC2),
-// so each entry is capped the same way renderServerPack caps its stored-zip
-// branch (per-entry UncompressedSize64 check + io.LimitReader) to prevent a
-// highly compressible uploaded override from decompressing an unbounded
-// amount into RAM.
-func (h *PacksHandler) overrideEntriesFromStoredZip(prov modpack.ModpackStorageProvider, e models.BuildContentEntry) (map[string][]byte, error) {
-	out := map[string][]byte{}
+// Reachable from the PUBLIC UNAUTHENTICATED ServeShare mrpack endpoint (BC2).
+// total is a running total shared across every stored zip of the render;
+// it is incremented and checked INSIDE this per-file loop, immediately after
+// each file's io.LimitReader read, mirroring renderServerPack's accumulator
+// placement. Writing straight into zw instead of returning a
+// map[string][]byte means a bomb split across many small files within one
+// stored zip fails the moment the aggregate crosses the cap, instead of
+// only being caught after the whole entry was already buffered in RAM.
+func (h *PacksHandler) overrideEntriesFromStoredZip(zw *zip.Writer, prov modpack.ModpackStorageProvider, e models.BuildContentEntry, total *int64) error {
 	if e.StorageKey == "" {
-		return out, nil
+		return nil
 	}
 	raw, err := prov.Get(e.StorageKey)
 	if err != nil {
-		return nil, fmt.Errorf("override read %s: %w", e.StorageKey, err)
+		return fmt.Errorf("override read %s: %w", e.StorageKey, err)
 	}
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		return nil, fmt.Errorf("override unzip %s: %w", e.StorageKey, err)
+		return fmt.Errorf("override unzip %s: %w", e.StorageKey, err)
 	}
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
 			continue
 		}
 		if f.UncompressedSize64 > maxServerPackEntryBytes {
-			return nil, fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
+			return fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
 		}
 		rc, err := f.Open()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		b, err := io.ReadAll(io.LimitReader(rc, maxServerPackEntryBytes+1))
 		rc.Close()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if int64(len(b)) > maxServerPackEntryBytes {
-			return nil, fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
+			return fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
 		}
-		out["overrides/"+f.Name] = b
+		*total += int64(len(b))
+		if *total > maxServerPackTotalBytes {
+			return fmt.Errorf("mrpack overrides exceed the total size cap")
+		}
+		ew, err := zw.CreateHeader(&zip.FileHeader{Name: "overrides/" + f.Name, Method: zip.Deflate, Modified: time.Now()})
+		if err != nil {
+			return err
+		}
+		if _, err := ew.Write(b); err != nil {
+			return err
+		}
 	}
-	return out, nil
+	return nil
 }
 
 // writeMrpackZip writes modrinth.index.json + all overrides into zw.
@@ -175,7 +188,9 @@ func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *
 	}
 
 	// Embed non-linked content under overrides/. total bounds the assembled
-	// pack across all entries (BC2), mirroring renderServerPack's running cap.
+	// pack across all entries and all stored zips (BC2), mirroring
+	// renderServerPack's running cap; overrideEntriesFromStoredZip checks it
+	// incrementally per file instead of after fully materializing an entry.
 	var total int64
 	for _, e := range content {
 		if e.Linked && e.SHA1 != "" && e.SHA512 != "" && modrinthCDNURL(e) != "" {
@@ -184,22 +199,8 @@ func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *
 		if prov == nil {
 			continue // no storage configured; skip embedding
 		}
-		entries, err := h.overrideEntriesFromStoredZip(prov, e)
-		if err != nil {
+		if err := h.overrideEntriesFromStoredZip(zw, prov, e, &total); err != nil {
 			return err
-		}
-		for name, b := range entries {
-			total += int64(len(b))
-			if total > maxServerPackTotalBytes {
-				return fmt.Errorf("mrpack overrides exceed the total size cap")
-			}
-			ew, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: time.Now()})
-			if err != nil {
-				return err
-			}
-			if _, err := ew.Write(b); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
