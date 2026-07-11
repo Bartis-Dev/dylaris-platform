@@ -382,7 +382,7 @@ func (s *BillingLifecycleService) sendSuspendedEmail(userID string) {
 	}
 	body := fmt.Sprintf(`Hi %s,
 
-Your Dylaris services have been suspended for non-payment. Your servers are stopped, but your data and backups are kept and remain viewable.
+Your Dylaris account has been suspended for non-payment. Your servers and services will stop after a grace period if the issue is not resolved. Your data and backups are kept and remain viewable.
 
 Pay here to reactivate:
 
