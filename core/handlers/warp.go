@@ -272,6 +272,18 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Account suspended", http.StatusForbidden)
 		return
 	}
+	// Re-check revoked_at with a fresh read immediately before provisioning, to
+	// shrink the TOCTOU window against a concurrent RevokeLinkKit: the middleware
+	// already checked revoked_at once, but a revoke racing between that check and
+	// this point could otherwise have EnsureRouteOnlyLinkACL resurrect the just-
+	// deleted ACL user. The reconciler's cleanup sweep (acl_reconciler.go) is the
+	// robust backstop regardless (self-heals within ~60s even if this race is lost).
+	if fresh, ferr := h.state.Store.GetWarpAPIKeyByNodeID(key.NodeID); ferr != nil {
+		log.Printf("link-boot: fresh revoke check for %s failed, proceeding: %v", key.NodeID, ferr)
+	} else if fresh.RevokedAt != nil {
+		sendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		return
+	}
 	tunnelToken := h.state.Gateway.LinkToken(key.NodeID)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()

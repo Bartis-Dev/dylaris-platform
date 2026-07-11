@@ -102,6 +102,54 @@ func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore time.Tim
 	return out, rows.Err()
 }
 
+// ListLinkKitsForACLTeardown returns route-only link kits that MUST NOT have a
+// Redis ACL user right now: either revoked (recently - see below) or owned by
+// a hard-suspended tenant. Feeds the reconciler's cleanup sweep, the self-heal
+// counterpart to ListLinkKitsForACLReconcile: that query says who KEEPS an ACL,
+// this one says who must have theirs TORN DOWN, so a DELUSER that failed at
+// revoke/suspend time (a transient Redis blip) converges within the next ~60s
+// tick instead of leaving a valid scoped cred live indefinitely. The revoked
+// arm is bounded to revokedAfter (now-24h in the reconciler) so revoked kits
+// don't accumulate in this query forever - a teardown that keeps failing for a
+// full 24h straight is assumed already gone (DELUSER is idempotent, a later
+// retry may simply be a no-op) or a deeper problem an operator needs to look
+// at, not something to retry forever. The hard-suspended arm has no time lower
+// bound: reactivation clears suspended_at, which removes the row from this
+// result on its own. hardSuspendedBefore mirrors ListLinkKitsForACLReconcile's
+// cutoff (now-grace); the two queries' hard-suspended predicates use the same
+// three atoms (status/suspended_at IS NOT NULL/suspended_at <=) so they can
+// never disagree about a given kit.
+func (s *PostgresStore) ListLinkKitsForACLTeardown(hardSuspendedBefore, revokedAfter time.Time) ([]WarpAPIKey, error) {
+	rows, err := s.db.Query(`
+		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,
+		       COALESCE(w.fixed_wg_ip,''), COALESCE(w.node_id,''), COALESCE(w.region,''),
+		       COALESCE(w.owner_id::text,''), w.revoked_at, w.created_at
+		FROM warp_api_keys w
+		LEFT JOIN user_billing ub ON ub.user_id = w.owner_id
+		WHERE w.node_id LIKE 'link-%'
+		  AND (
+		    (w.revoked_at IS NOT NULL AND w.revoked_at >= $2)
+		    OR (ub.status = 'suspended' AND ub.suspended_at IS NOT NULL AND ub.suspended_at <= $1)
+		  )
+		ORDER BY w.created_at DESC`, hardSuspendedBefore, revokedAfter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpAPIKey
+	for rows.Next() {
+		var k WarpAPIKey
+		var fixedIP, nodeID, region, owner sql.NullString
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) InsertWarpPeer(p WarpPeer) (int, error) {
 	var id int
 	err := s.db.QueryRow(`

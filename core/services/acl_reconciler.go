@@ -22,7 +22,17 @@ type aclReconcilerStore interface {
 	SetNodeSecretEnc(id int, enc string) error
 	ListServersByNode(nodeID int) ([]models.Server, error)
 	ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]store.WarpAPIKey, error)
+	// ListLinkKitsForACLTeardown feeds the cleanup sweep: link kits that must
+	// NOT have an ACL right now (see reconcileOnce).
+	ListLinkKitsForACLTeardown(hardSuspendedBefore, revokedAfter time.Time) ([]store.WarpAPIKey, error)
 }
+
+// aclTeardownWindow bounds how long a revoked link kit keeps being retried by
+// the cleanup sweep: a DELUSER that keeps failing for a full day straight is
+// either already gone (a later retry can simply be a no-op) or a deeper
+// problem an operator needs to look at, not something to retry forever. The
+// owner-hard-suspension arm of the sweep has no such window (see reconcileOnce).
+const aclTeardownWindow = 24 * time.Hour
 
 // ACLReconciler re-provisions every paired node's and route-only link's scoped
 // Redis ACL users from the DB-stored per-node secret, periodically and on a Redis
@@ -149,6 +159,28 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 				continue
 			}
 			applied++
+		}
+	}
+
+	// Cleanup sweep: link kits that must NOT have an ACL right now (revoked
+	// recently, or owner hard-suspended past grace). Self-heals a DELUSER that
+	// failed at revoke/suspend time (a transient Redis blip, see F1): a failed
+	// teardown converges here within the next ~60s tick instead of leaving a
+	// valid scoped Redis credential live indefinitely. DELUSER is idempotent (no
+	// error on an absent user), so re-running this every tick is cheap. This is
+	// also the backstop for the LinkBoot/RevokeLinkKit TOCTOU: a link resurrected
+	// by an in-flight EnsureRouteOnlyLinkACL that raced a concurrent revoke is
+	// caught here on the next tick even if LinkBoot's own fresh re-check
+	// (handlers/warp.go) lost the race too.
+	teardown, terr := r.store.ListLinkKitsForACLTeardown(cutoff, time.Now().Add(-aclTeardownWindow))
+	if terr != nil {
+		log.Printf("acl reconciler: list link kits for teardown: %v", terr)
+	} else {
+		for _, k := range teardown {
+			r.prov.RemoveRouteOnlyLinkACLNoSave(ctx, k.NodeID)
+		}
+		if len(teardown) > 0 {
+			log.Printf("acl reconciler: swept %d link kit ACL(s) for teardown", len(teardown))
 		}
 	}
 

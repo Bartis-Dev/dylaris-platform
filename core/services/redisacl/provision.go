@@ -87,10 +87,26 @@ func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret,
 	return user, pass, nil
 }
 
+// RemoveRouteOnlyLinkACLNoSave drops the user WITHOUT persisting (no ACL SAVE),
+// terminating its live Redis connections (ACL DELUSER). The DELUSER error is
+// logged loudly rather than silently discarded (matching SaveACL/SelfProbe's
+// style) but is never returned: the caller's own teardown (revoke, suspend, or
+// the reconciler's cleanup sweep) must not be blocked by a transient Redis
+// blip. DELUSER is idempotent (no error on an absent user), so a retry - e.g.
+// the reconciler's next tick - is always safe. Callers tearing down a single
+// link in isolation should use RemoveRouteOnlyLinkACL below; a sweep tearing
+// down several issues one trailing SaveACL itself, exactly like
+// EnsureRouteOnlyLinkACLNoSave does for the ensure side.
+func (p *Provisioner) RemoveRouteOnlyLinkACLNoSave(ctx context.Context, linkID string) {
+	if err := p.admin.Do(ctx, "ACL", "DELUSER", RouteOnlyLinkUsername(linkID)).Err(); err != nil {
+		log.Printf("redisacl: WARNING: ACL DELUSER failed for route-only link %s: %v. The scoped Redis user may still be live; retrying on the next reconcile sweep.", linkID, err)
+	}
+}
+
 // RemoveRouteOnlyLinkACL drops the user, terminating its live Redis connections
-// (ACL DELUSER). Best-effort.
+// (ACL DELUSER), then persists. Best-effort.
 func (p *Provisioner) RemoveRouteOnlyLinkACL(ctx context.Context, linkID string) {
-	_ = p.admin.Do(ctx, "ACL", "DELUSER", RouteOnlyLinkUsername(linkID)).Err()
+	p.RemoveRouteOnlyLinkACLNoSave(ctx, linkID)
 	p.SaveACL(ctx)
 }
 
