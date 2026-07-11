@@ -80,47 +80,73 @@ func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) int64 
 // or download operation. Non-admin users must own the server or be invited with
 // the "files" permission. Demo viewers are denied here (read-only).
 func (h *FileHandler) getServerUUID(r *http.Request) (string, error) {
-	return h.resolveServerUUID(r, false)
+	uuid, _, err := h.resolveServerUUID(r, false)
+	return uuid, err
 }
 
 // getServerUUIDRead is getServerUUID for read-only operations (list + view file
 // content). It additionally allows any authenticated user to READ a demo server,
 // so a logged-out-of-everything account can still browse the showcase. Write and
-// download endpoints keep using the strict getServerUUID.
-func (h *FileHandler) getServerUUIDRead(r *http.Request) (string, error) {
+// download endpoints keep using the strict getServerUUID. viaDemoBypass reports
+// whether access was granted THROUGH the demo bypass rather than real ownership
+// or an invite, so callers can redact sensitive file content on that path.
+func (h *FileHandler) getServerUUIDRead(r *http.Request) (uuid string, viaDemoBypass bool, err error) {
 	return h.resolveServerUUID(r, true)
 }
 
-func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool) (string, error) {
-	uuid := r.URL.Query().Get("server_uuid")
+func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool) (uuid string, viaDemoBypass bool, err error) {
+	uuid = r.URL.Query().Get("server_uuid")
 	if uuid == "" {
 		uuid = r.FormValue("server_uuid")
 	}
 	if uuid == "" {
-		return "", nil
+		return "", false, nil
 	}
 	if h.state == nil || h.state.Store == nil {
-		return uuid, nil
+		return uuid, false, nil
 	}
 	username, _ := r.Context().Value("username").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 	if isAdmin {
-		return uuid, nil
+		return uuid, false, nil
 	}
 	srv, err := h.state.Store.GetServerByUUID(uuid)
 	if err != nil {
-		return "", fmt.Errorf("server not found")
+		return "", false, fmt.Errorf("server not found")
 	}
 	// Honor invited-member permissions, not just ownership: a user invited to
 	// this server with the "files" permission may use the file browser.
 	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
 		if allowDemoRead && isDemoServer(h.state, uuid) {
-			return uuid, nil // read-only demo access
+			return uuid, true, nil // read-only demo access, bypassing checkServerAccess
 		}
-		return "", fmt.Errorf("access denied")
+		return "", false, fmt.Errorf("access denied")
 	}
-	return uuid, nil
+	return uuid, false, nil
+}
+
+// redactDemoFileContent strips secrets from a file's content when it was read
+// via the demo-server bypass (any authenticated user, not just the owner).
+// server.properties' rcon.password and ops.json (server operator identities)
+// are the two files that would otherwise leak real credentials/privilege on a
+// showcase server. Every other file is returned unchanged.
+func redactDemoFileContent(path, content string) string {
+	base := filepath.Base(strings.ReplaceAll(path, "\\", "/"))
+	switch base {
+	case "server.properties":
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "rcon.password=") {
+				lines[i] = "rcon.password=REDACTED"
+			}
+		}
+		return strings.Join(lines, "\n")
+	case "ops.json":
+		return "[]"
+	default:
+		return content
+	}
 }
 
 // getNodeIDForServer looks up which Node owns this server and returns its NodeID.
@@ -146,7 +172,7 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	if pathParam == "" {
 		pathParam = "/"
 	}
-	serverUUID, err := h.getServerUUIDRead(r)
+	serverUUID, _, err := h.getServerUUIDRead(r)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -205,7 +231,7 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 // GetFileContentHandler handles requests to read the content of a file
 func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	serverUUID, err := h.getServerUUIDRead(r)
+	serverUUID, viaDemoBypass, err := h.getServerUUIDRead(r)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -251,9 +277,15 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 		// TransferDone signals end — channel will be closed by registry
 	}
 
+	content := buf.String()
+	if viaDemoBypass {
+		// Any authenticated user can reach this via the demo bypass, not just
+		// the owner - never hand back rcon.password or ops.json unredacted.
+		content = redactDemoFileContent(path, content)
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"content": buf.String(),
+		"content": content,
 	})
 }
 
