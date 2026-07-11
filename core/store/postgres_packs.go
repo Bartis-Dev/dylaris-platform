@@ -228,11 +228,13 @@ func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
 	return out, rows.Err()
 }
 
-// ListAllSolderPacks returns every pack with a Solder slug regardless of
-// private/hidden. Used by the public read path ONLY when a valid ?k= is present.
-func (s *PostgresStore) ListAllSolderPacks() ([]models.Pack, error) {
-	rows, err := s.db.Query(`SELECT ` + packCols + ` FROM packs
-		WHERE solder_slug <> '' ORDER BY internal_name`)
+// ListAllSolderPacks returns every pack with a Solder slug OWNED BY ownerID,
+// regardless of private/hidden. Used by the public read path ONLY when a
+// valid ?k= is present, scoped to that key's own owner (BC5: a key must
+// never unlock another owner's packs).
+func (s *PostgresStore) ListAllSolderPacks(ownerID string) ([]models.Pack, error) {
+	rows, err := s.db.Query(`SELECT `+packCols+` FROM packs
+		WHERE solder_slug <> '' AND owner_id = $1 ORDER BY internal_name`, ownerID)
 	if err != nil {
 		return nil, err
 	}

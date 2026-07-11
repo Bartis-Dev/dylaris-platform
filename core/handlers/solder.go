@@ -56,8 +56,9 @@ func solderKeyHash(plaintext string) string {
 
 // solderAuth is the resolved access context for one public read request.
 type solderAuth struct {
-	hasKey   bool // a valid ?k= was supplied → sees ALL gated packs
-	clientID int  // >0 when a valid ?cid= was supplied → sees whitelisted packs
+	hasKey   bool   // a valid ?k= was supplied → sees packs owned by ownerID
+	ownerID  string // the key's own owner; only meaningful when hasKey is true
+	clientID int    // >0 when a valid ?cid= was supplied → sees whitelisted packs
 }
 
 // resolveSolderAuth reads ?k= and ?cid= and resolves them to an access context.
@@ -70,6 +71,7 @@ func (h *SolderHandler) resolveSolderAuth(r *http.Request) solderAuth {
 	if k := r.URL.Query().Get("k"); k != "" {
 		if key, err := h.state.Store.GetSolderKeyByHash(solderKeyHash(k)); err == nil && key != nil {
 			a.hasKey = true
+			a.ownerID = key.OwnerID
 		}
 	}
 	if cid := r.URL.Query().Get("cid"); cid != "" {
@@ -81,11 +83,13 @@ func (h *SolderHandler) resolveSolderAuth(r *http.Request) solderAuth {
 }
 
 // canAccessPack reports whether this auth context unlocks a gated (private or
-// hidden) pack. A valid key unlocks everything; a client unlocks a pack only if
-// it is on that pack's whitelist. A non-gated pack should not be routed here.
-func (h *SolderHandler) canAccessPack(a solderAuth, packID int) bool {
+// hidden) pack owned by packOwnerID. A valid key unlocks ONLY packs owned by
+// that SAME key owner (BC5: keys are owner-scoped, never global); a client
+// unlocks a pack only if it is on that pack's whitelist. A non-gated pack
+// should not be routed here.
+func (h *SolderHandler) canAccessPack(a solderAuth, packID int, packOwnerID string) bool {
 	if a.hasKey {
-		return true
+		return a.ownerID == packOwnerID
 	}
 	if a.clientID > 0 {
 		ok, err := h.state.Store.IsPackClient(packID, a.clientID)
@@ -157,7 +161,7 @@ func (h *SolderHandler) ListModpacks(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case auth.hasKey:
-		packs, err = h.state.Store.ListAllSolderPacks()
+		packs, err = h.state.Store.ListAllSolderPacks(auth.ownerID)
 	case auth.clientID > 0:
 		packs, err = h.state.Store.ListSolderPacksForClient(auth.clientID)
 	default:
@@ -236,7 +240,7 @@ func (h *SolderHandler) GetModpack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Private || p.Hidden {
-		if !h.canAccessPack(h.resolveSolderAuth(r), p.ID) {
+		if !h.canAccessPack(h.resolveSolderAuth(r), p.ID, p.OwnerID) {
 			solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
 			return
 		}
@@ -276,7 +280,7 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Private || p.Hidden {
-		if !h.canAccessPack(h.resolveSolderAuth(r), p.ID) {
+		if !h.canAccessPack(h.resolveSolderAuth(r), p.ID, p.OwnerID) {
 			solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
 			return
 		}

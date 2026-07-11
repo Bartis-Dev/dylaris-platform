@@ -121,8 +121,11 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 				return fmt.Errorf("download %q: %w", e.ModSlug, err)
 			}
 			innerPath := e.TargetPath
-			if innerPath == "" {
-				return fmt.Errorf("modrinth content %q missing target path", e.ModSlug)
+			// A traversal-bearing target path would zip-slip a downstream launcher
+			// once it extracts the emitted Solder zip. Mirror the same guard
+			// renderServerPack already applies to the identical field.
+			if innerPath == "" || modpack.IsUnsafeEntryPath(innerPath) {
+				return fmt.Errorf("modrinth content %q has an invalid target path", e.ModSlug)
 			}
 			zipBytes, err := modpack.BuildSolderContentZip(innerPath, jar)
 			if err != nil {

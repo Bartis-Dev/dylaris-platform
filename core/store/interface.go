@@ -499,7 +499,7 @@ type Store interface {
 	ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error)
 	ListPublicSolderPacks() ([]models.Pack, error)
 	// Access-controlled Solder pack listings (Phase 3c).
-	ListAllSolderPacks() ([]models.Pack, error)
+	ListAllSolderPacks(ownerID string) ([]models.Pack, error)
 	ListSolderPacksForClient(clientID int) ([]models.Pack, error)
 
 	// Solder clients (per-owner Technic Launcher identities for pack whitelisting).
