@@ -94,6 +94,33 @@ func aclRelevantAction(action string) bool {
 	return false
 }
 
+// SendRawCommand publishes a pre-built payload directly to the node's command
+// stream, bypassing the NodeCommand{Action, Config, Installer} envelope
+// SendCommand uses. Some commands (backup_run, backup_restore) carry their
+// fields at the TOP LEVEL of the JSON, matching the migrate_* commands'
+// pattern above (SendMigrateInCommand etc.) rather than nested under
+// "config" - the node's decoder for those actions re-parses the raw stream
+// payload into its own struct (e.g. BackupRunCommand), so wrapping it in
+// NodeCommand's envelope would change the wire shape it expects. payload is
+// marshaled as-is: callers own its exact field set (it must already include
+// its own "action" field). Not ACL pre-placement gated like SendCommand -
+// backup actions operate on an already-provisioned server key, they never
+// add one, so aclRelevantAction's pre-placement re-apply does not apply here.
+func (q *QueueService) SendRawCommand(ctx context.Context, nodeToken string, payload interface{}) error {
+	stream := nodeCmdStream(nodeToken)
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal command: %w", err)
+	}
+
+	if _, err = queue.Publish(ctx, q.redis, stream, jsonData); err != nil {
+		return fmt.Errorf("failed to push to node command stream: %w", err)
+	}
+
+	return nil
+}
+
 // SendProxyNetworkCommand queues one of the proxy_network_* lifecycle
 // commands. For create/destroy, serverUUID is the proxy UUID and proxyUUID
 // can be empty. For connect/disconnect, serverUUID is the game-server

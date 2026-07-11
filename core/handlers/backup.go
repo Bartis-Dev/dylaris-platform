@@ -387,6 +387,12 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.state.Queue == nil {
+		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue unavailable", time.Now())
+		sendJSONError(w, "Queue unavailable", 500)
+		return
+	}
+
 	storageCfgJSON, presignedGet := services.PrepareNodeStorage(r.Context(), h.state.Store, storage, node, run.StorageKey, "get")
 	subServer := ""
 	if job.SubServer != nil {
@@ -403,9 +409,9 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		"storage":         json.RawMessage(storageCfgJSON),
 		"presignedGetUrl": presignedGet,
 	}
-	jsonData, _ := json.Marshal(payload)
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)
-	if err := h.state.Redis.RPush(r.Context(), queueKey, jsonData).Err(); err != nil {
+	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
+	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
+	if err := h.state.Queue.SendRawCommand(r.Context(), node.Token, payload); err != nil {
 		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue push failed: "+err.Error(), time.Now())
 		sendJSONError(w, "Failed to queue restore: "+err.Error(), 500)
 		return
@@ -660,9 +666,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		"storage":         json.RawMessage(storageCfgJSON),
 		"presignedPutUrl": presignedPut,
 	}
-	jsonData, _ := json.Marshal(payload)
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)
-	if err := h.state.Redis.RPush(ctx, queueKey, jsonData).Err(); err != nil {
+	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
+	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
+	if err := h.state.Queue.SendRawCommand(ctx, node.Token, payload); err != nil {
 		h.state.Store.UpdateBackupRunStatus(runID, "failed", "queue push failed: "+err.Error(), 0, "", time.Now())
 		return runID, err
 	}

@@ -23,12 +23,13 @@ import (
 type BackupScheduler struct {
 	store    store.Store
 	redis    *redis.Client
+	queue    *QueueService       // publishes backup_run to the node's :cmds stream (BC1)
 	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
 	leader   leader.Election
 }
 
-func NewBackupScheduler(s store.Store, r *redis.Client) *BackupScheduler {
-	return &BackupScheduler{store: s, redis: r}
+func NewBackupScheduler(s store.Store, r *redis.Client, q *QueueService) *BackupScheduler {
+	return &BackupScheduler{store: s, redis: r, queue: q}
 }
 
 // SetRegistry wires the gRPC mesh registry so the retention sweep can call
@@ -256,6 +257,11 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("create run: %w", err)
 	}
 
+	if b.queue == nil {
+		b.store.UpdateBackupRunStatus(runID, "failed", "queue unavailable", 0, "", time.Now())
+		return fmt.Errorf("queue unavailable")
+	}
+
 	storageCfgJSON, presignedPut := PrepareNodeStorage(ctx, b.store, storage, node, storageKey, "put")
 	subServer := ""
 	if job.SubServer != nil {
@@ -273,9 +279,9 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		"storage":         json.RawMessage(storageCfgJSON),
 		"presignedPutUrl": presignedPut,
 	}
-	jsonData, _ := json.Marshal(payload)
-	queueKey := fmt.Sprintf("dylaris:node:%s:queue", node.Token)
-	if err := b.redis.RPush(ctx, queueKey, jsonData).Err(); err != nil {
+	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
+	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
+	if err := b.queue.SendRawCommand(ctx, node.Token, payload); err != nil {
 		b.store.UpdateBackupRunStatus(runID, "failed", "queue push: "+err.Error(), 0, "", time.Now())
 		return err
 	}

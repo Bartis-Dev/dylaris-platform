@@ -478,7 +478,7 @@ func main() {
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
 	// Leader-gated: tick + Pub/Sub result processing run only on
 	// the elected Core to avoid double-dispatch and double-result-write.
-	backupScheduler := services.NewBackupScheduler(pgStore, redisClient)
+	backupScheduler := services.NewBackupScheduler(pgStore, redisClient, appState.Queue)
 	backupScheduler.SetRegistry(grpcRegistry)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(context.Background())
