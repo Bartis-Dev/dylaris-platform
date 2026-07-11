@@ -229,6 +229,17 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// linkHardSuspended reports whether a tenant's suspension has persisted past the
+// enforcement grace, i.e. the point at which route-only links are actually cut
+// off. A nil billing row, an active/past_due status, or a suspension still inside
+// the grace window all return false (the link may boot). MUST stay equivalent to
+// the SQL predicate in store.ListLinkKitsForACLReconcile (suspended AND
+// suspended_at + grace <= now) so LinkBoot and the reconciler agree.
+func linkHardSuspended(b *store.UserBilling, grace time.Duration, now time.Time) bool {
+	return b != nil && b.Status == "suspended" &&
+		b.SuspendedAt != nil && !now.Before(b.SuspendedAt.Add(grace))
+}
+
 // LinkBoot POST /api/warp/link-boot - a route-only link presents its warp key and
 // receives its derived tunnel token plus a Redis credential scoped to its own keys.
 // WarpAPIKeyMiddleware has already rejected an unknown or revoked key. The response
@@ -248,14 +259,16 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return
 	}
-	// A suspended tenant's link cannot boot. GetUserBilling never returns
-	// sql.ErrNoRows; a missing row yields Status "active". A real DB fault fails
-	// OPEN so a transient blip does not lock out paying tenants on reconnect, but
-	// it must be visible: the suspension gate is silently degraded for that window.
+	// A HARD-suspended tenant's link (suspended past the grace) cannot boot.
+	// GetUserBilling never returns sql.ErrNoRows; a missing row yields Status
+	// "active". A real DB fault fails OPEN so a transient blip does not lock out
+	// paying tenants on reconnect, but it must be visible: the suspension gate is
+	// silently degraded for that window. Within the grace a suspended tenant still
+	// boots, consistent with the soft-enforcement posture.
 	b, berr := h.state.Store.GetUserBilling(key.OwnerID)
 	if berr != nil {
 		log.Printf("link-boot: billing lookup for %s failed, suspension gate skipped: %v", key.NodeID, berr)
-	} else if b != nil && b.Status == "suspended" {
+	} else if linkHardSuspended(b, h.state.SuspendGrace, time.Now()) {
 		sendJSONError(w, "Account suspended", http.StatusForbidden)
 		return
 	}

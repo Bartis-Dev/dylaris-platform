@@ -433,6 +433,7 @@ func main() {
 	// route-only link-boot endpoint can derive and provision per-link creds.
 	appState.ACLProvisioner = aclProvisioner
 	appState.ClusterSecret = cfg.ClusterSecret
+	appState.SuspendGrace = cfg.SuspendGrace
 
 	// ACL reconciler - leader-gated. Periodically (and on a Redis reconnect)
 	// re-provisions every paired node's + route-only link's scoped Redis ACL

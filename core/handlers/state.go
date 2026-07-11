@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
@@ -82,4 +84,10 @@ type AppState struct {
 	// ClusterSecret is the deployment-wide secret used to derive per-link tunnel
 	// tokens and Redis passwords. Never sent to a tenant.
 	ClusterSecret string
+
+	// SuspendGrace mirrors config.SuspendGrace: how long after a tenant is marked
+	// "suspended" the LinkBoot gate keeps letting their route-only links boot. The
+	// gate uses it via linkHardSuspended; MUST match the reconciler + enforcement
+	// cutoff so a link is refused exactly when its ACL is actually gone.
+	SuspendGrace time.Duration
 }
