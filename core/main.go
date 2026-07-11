@@ -226,9 +226,10 @@ func main() {
 	trafficAggregator.Start(context.Background())
 
 	// Billing lifecycle — leader-gated. Progresses past_due tenants whose grace
-	// window has elapsed into suspended (stops servers, keeps data). Payment-
-	// provider-agnostic; handlers/webhooks call EnterPastDue/Reactivate/Suspend.
-	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL)
+	// window has elapsed into suspended (hard cutoff deferred to SuspendGrace
+	// later, keeps data). Payment-provider-agnostic; handlers/webhooks call
+	// EnterPastDue/Reactivate/Suspend.
+	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL, cfg.SuspendGrace)
 	appState.Billing.SetLeader(coreLeader)
 	// Start() is deferred until after SetLinkACL below, so the ticker can never run
 	// a suspend before the link teardown dependencies are wired.

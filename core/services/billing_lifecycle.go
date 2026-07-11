@@ -101,10 +101,15 @@ type BillingLifecycleService struct {
 	redis         *redis.Client
 	provisioner   *redisacl.Provisioner
 	clusterSecret string
+
+	// suspendGrace defers the hard cutoff until suspended_at + suspendGrace has
+	// elapsed (see enforceSuspensions). Threaded from cfg.SuspendGrace at
+	// construction, like frontendURL.
+	suspendGrace time.Duration
 }
 
-func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegrpc.Registry, frontendURL string) *BillingLifecycleService {
-	return &BillingLifecycleService{store: s, queue: q, registry: registry, frontendURL: frontendURL, interval: time.Hour}
+func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegrpc.Registry, frontendURL string, suspendGrace time.Duration) *BillingLifecycleService {
+	return &BillingLifecycleService{store: s, queue: q, registry: registry, frontendURL: frontendURL, interval: time.Hour, suspendGrace: suspendGrace}
 }
 
 func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
@@ -157,12 +162,44 @@ func (s *BillingLifecycleService) runOnce(ctx context.Context) {
 		}
 	}
 
+	// Deferred hard cutoff: enforce suspensions whose grace has elapsed. Separate
+	// from the past_due->suspended promotion above so a tenant suspended this pass
+	// still gets the full grace before anything is cut.
+	s.enforceSuspensions(ctx)
+
 	s.cleanupExpiredR2(ctx)
 	// NOTE: node-connection retention teardown (drop the warp tunnel + revoke the
 	// tenant's warp peers/keys after node_retention) is handled in the Warp
 	// multi-hub track, which adds the tenant-scoped warp queries + remove_peer
 	// command needed to disconnect a LIVE tunnel. Deleting enroll tokens alone
 	// would not drop an active tunnel, so it is intentionally not done here.
+}
+
+// enforceSuspensions applies the hard cutoff to tenants whose suspension has
+// persisted past the grace window (suspended_at + suspendGrace <= now): it stops
+// their running servers and drops their route-only link ACLs. Suspend() only
+// records the suspended state; the cutoff lands here so a transient billing fault
+// cannot instantly kick a paying customer. Idempotent - stopping an already
+// stopped server and DELUSER/DEL on absent keys are no-ops - so re-running every
+// hour is harmless and needs no "enforced" flag. Leader-gated via runOnce.
+func (s *BillingLifecycleService) enforceSuspensions(ctx context.Context) {
+	suspended, err := s.store.ListUserBillingByStatus("suspended")
+	if err != nil {
+		log.Printf("billing lifecycle: list suspended for enforcement: %v", err)
+		return
+	}
+	now := time.Now()
+	for _, b := range suspended {
+		if b.SuspendedAt == nil || now.Before(b.SuspendedAt.Add(s.suspendGrace)) {
+			continue
+		}
+		// One line per enforced tenant per pass. Suspended tenants are few, so the
+		// hourly repeat is acceptable; no state is added just to silence it.
+		log.Printf("billing lifecycle: enforcing suspension cutoff for %s (suspended_at=%s, grace=%s)",
+			b.UserID, b.SuspendedAt.UTC().Format(time.RFC3339), s.suspendGrace)
+		s.stopTenantServers(ctx, b.UserID)
+		s.suspendTenantLinks(ctx, b.UserID)
+	}
 }
 
 // cleanupExpiredR2 deletes the R2 backups of suspended tenants whose r2_retention
@@ -254,16 +291,21 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 	return nil
 }
 
-// Suspend stops the tenant's running servers and marks them suspended. Read
-// access (file browser, backups) stays; the start path is gated elsewhere. No
-// data is deleted.
+// Suspend marks the tenant suspended and notifies them. Read access (file
+// browser, backups) stays; the start path is gated elsewhere. No data is
+// deleted. The hard cutoff (stop servers, drop link ACLs) is NOT synchronous
+// here - see enforceSuspensions.
 func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) error {
 	now := time.Now()
 	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
 		return err
 	}
-	s.stopTenantServers(ctx, userID)
-	s.suspendTenantLinks(ctx, userID)
+	// The hard cutoff (stop servers + drop route-only link ACLs) is deferred to the
+	// enforcement pass in runOnce, which fires once suspended_at + suspendGrace has
+	// elapsed. Recording state + notifying only here means a transient billing/DB
+	// fault (or a buggy manual suspend) cannot instantly kick a paying customer, and
+	// enforcement is single-sourced in the leader-gated ticker. ctx is retained for
+	// the unchanged caller signature.
 	s.sendSuspendedEmail(userID)
 	return nil
 }
