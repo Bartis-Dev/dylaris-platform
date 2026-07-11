@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -74,6 +75,13 @@ type Config struct {
 	StoreURL       string
 	StoreSharedKey string
 	StoreEnabled   bool
+
+	// SuspendGrace defers the hard cutoff (stop servers + drop route-only link
+	// ACLs) for this long after a tenant is marked "suspended", so a transient
+	// billing/DB fault cannot instantly kick a paying customer. Env
+	// BILLING_SUSPEND_GRACE (Go duration), default 48h; 0 = enforce on the next
+	// hourly lifecycle tick (no grace).
+	SuspendGrace time.Duration
 }
 
 func LoadConfig() (Config, error) {
@@ -96,6 +104,19 @@ func LoadConfig() (Config, error) {
 
 	storeURL := strings.TrimSpace(getEnv("STORE_URL", ""))
 	storeSharedKey := getSecret("STORE_SHARED_KEY", "")
+
+	// BILLING_SUSPEND_GRACE is the only time.Duration env. config.go otherwise has
+	// no duration env, so this follows the surrounding int-parse style (parse, keep
+	// the default on empty) plus getSecret's log-on-fallback: a bad value keeps the
+	// 48h default instead of silently yielding 0, which would disable the grace.
+	suspendGrace := 48 * time.Hour
+	if v := strings.TrimSpace(getEnv("BILLING_SUSPEND_GRACE", "")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			suspendGrace = d
+		} else {
+			log.Printf("config: invalid BILLING_SUSPEND_GRACE %q: %v; using default %s", v, err, suspendGrace)
+		}
+	}
 
 	cfg := Config{
 		APIPort:       getEnv("API_PORT", "25500"),
@@ -134,6 +155,8 @@ func LoadConfig() (Config, error) {
 		StoreURL:       storeURL,
 		StoreSharedKey: storeSharedKey,
 		StoreEnabled:   storeURL != "" && storeSharedKey != "",
+
+		SuspendGrace: suspendGrace,
 	}
 
 	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET
