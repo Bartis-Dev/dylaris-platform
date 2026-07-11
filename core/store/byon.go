@@ -25,12 +25,19 @@ func (s *PostgresStore) CreateNodeEnrollToken(userID, plaintext, label string, e
 	return err
 }
 
-// ResolveNodeEnrollToken returns the owning user id for a valid, unexpired token.
-// ok=false (no error) when the token is unknown or expired.
+// ResolveNodeEnrollToken returns the owning user id for a valid, unexpired,
+// NON-RECOVERY enroll token. ok=false (no error) when the token is unknown,
+// expired, or is a recovery token (recovers_node_token set): a recovery token
+// is minted for ONE specific existing node identity (see CreateRecoveryToken)
+// and must only be redeemable via the recovery branch (ResolveRecoveryToken +
+// ConsumeNodeEnrollToken in the gRPC recovery flow), never as a generic
+// new-node enroll token - otherwise it could mint a brand-new rogue node
+// instead of re-pairing the identity it was scoped to.
 func (s *PostgresStore) ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error) {
 	err = s.db.QueryRow(
 		`SELECT user_id FROM node_enroll_tokens
-		 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+		 WHERE token_hash = $1 AND consumed_at IS NULL AND recovers_node_token IS NULL
+		   AND (expires_at IS NULL OR expires_at > NOW())`,
 		hashAuthToken(plaintext)).Scan(&userID)
 	if err == sql.ErrNoRows {
 		return "", false, nil

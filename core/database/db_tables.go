@@ -213,7 +213,9 @@ func migrateSchema(db *sql.DB) error {
 	// token is the load-bearing node identity (server-assigned uuid on the
 	// hardened path). Enforce uniqueness now that it is authoritative. Existing
 	// rows have token=hostname, already kept distinct by idx_nodes_name_unique.
-	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_token_unique ON nodes (token)`)
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_token_unique ON nodes (token)`); err != nil {
+		log.Printf("db: create idx_nodes_token_unique failed (token uniqueness NOT enforced): %v", err)
+	}
 
 	// Backfill: existing admins (is_admin=TRUE) get role='admin'
 	// so the new role column matches their legacy capability. Idempotent —

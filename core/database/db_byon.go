@@ -11,8 +11,9 @@ import (
 func applyBYONSchema(db *sql.DB) error {
 	// node_enroll_tokens: per-user tokens a tenant uses to enroll their own node.
 	// The plaintext token is only ever returned once at mint time; we store a
-	// hash. Reusable until expires_at (NULL = no expiry); revoked by deleting the
-	// row. The plan's max_nodes is enforced separately at enroll time.
+	// hash. Single-use (consumed on enroll, see ConsumeNodeEnrollToken) until
+	// expires_at (NULL = no expiry); revoked by deleting the row. The plan's
+	// max_nodes is enforced separately at enroll time.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS node_enroll_tokens (
 		id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

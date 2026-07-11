@@ -25,6 +25,10 @@ func NewNodeEnrollHandler(state *AppState) *NodeEnrollHandler {
 	return &NodeEnrollHandler{state: state}
 }
 
+// maxNodeEnrollTokenExpiryDays caps a tenant-supplied expiresDays so a leaked
+// or mistyped huge value cannot mint an effectively-eternal enroll token.
+const maxNodeEnrollTokenExpiryDays = 30
+
 // MintToken POST /api/nodes/enroll-token — generate a new enroll token for the
 // calling user. The plaintext is returned ONCE; only its hash is stored.
 func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
@@ -52,10 +56,14 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 	// Default a 7-day expiry when none is given, so a leaked token is not valid
 	// forever. Single-use (consumed on enroll) already limits reuse; 7 days is
-	// enough to set a node up.
+	// enough to set a node up. Cap a tenant-supplied value too: an unbounded
+	// expiresDays would let a mistyped or malicious huge number mint an
+	// effectively-eternal enroll token.
 	days := req.ExpiresDays
 	if days <= 0 {
 		days = 7
+	} else if days > maxNodeEnrollTokenExpiryDays {
+		days = maxNodeEnrollTokenExpiryDays
 	}
 	t := time.Now().AddDate(0, 0, days)
 	exp := &t
