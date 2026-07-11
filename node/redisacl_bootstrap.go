@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -205,9 +206,21 @@ func redisACLWatchdog(ctx context.Context, rdb *redis.Client) {
 		if consecutive < failsToAct {
 			continue
 		}
+		prev := nodeSecret
 		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
 			_ = saveNodeSecret(nodeSecretDir, s)
 			nodeSecret = s
+			if prev != nil && !bytes.Equal(prev, s) {
+				// Core minted a DIFFERENT per-node secret (a genuine pairing reset).
+				// The shared rdb was built with the OLD password and cannot be swapped
+				// in place from this goroutine, so restart the agent: the proven
+				// startup path rebuilds rdb from the now-cached new secret. Uses the
+				// module's fatal-to-restart idiom (log.Fatal, as in main.go). The MC
+				// server containers are separate and unaffected; only the node
+				// management plane briefly blips. plain bytes.Equal is fine here: this
+				// is a self-owned value, not attacker input.
+				log.Fatal("redisacl: per-node secret rotated; restarting node agent to adopt new Redis credentials")
+			}
 			consecutive = 0
 			backoff = probeEvery
 			log.Println("redisacl: re-bootstrap OK; Core re-applied the node ACL")
