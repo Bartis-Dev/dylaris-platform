@@ -47,10 +47,16 @@ type LinkCredSource interface {
 	DiscoveryProof(nodeID string) string
 }
 
-// AdmissionChecker gates NEW node registrations (network + join) before enroll.
-// nil = admission off. Satisfied structurally by *services.AdmissionGate.
+// AdmissionChecker gates NEW node registrations (network + join) before enroll,
+// and consumes the one-shot join slot after a successful enroll. nil =
+// admission off. Satisfied structurally by *services.AdmissionGate.
 type AdmissionChecker interface {
+	// CheckNewRegistration is a PEEK run in the pre-check, before the enroll
+	// token is even validated: is a new registration currently allowed?
 	CheckNewRegistration(ctx context.Context, ip net.IP) (allowed bool, reason string, err error)
+	// ConsumeJoinSlot is called ONLY after s.acl.Enroll succeeds, so a garbage
+	// connection can never burn the one-shot slot before a real device enrolls.
+	ConsumeJoinSlot(ctx context.Context) error
 }
 
 // peerIP returns the TCP source IP of the gRPC connection (NOT the self-reported
@@ -200,6 +206,18 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			if eerr != nil {
 				sendFail("enrollment failed")
 				return fmt.Errorf("acl: enroll failed for %s: %w", tokenPrefix(auth.NodeToken), eerr)
+			}
+			// Consume the one-shot join slot HERE, only after enrollment actually
+			// validated the enroll token and created the node - never during the
+			// admission pre-check peek (CheckNewRegistration). A garbage connection
+			// with an invalid/empty enroll token never reaches this line, so it can
+			// no longer burn the one-shot slot before a real device gets a chance.
+			// Non-fatal: the node is already enrolled at this point, so a failure
+			// here is logged loudly, not surfaced to the caller.
+			if s.admission != nil {
+				if cerr := s.admission.ConsumeJoinSlot(ctx); cerr != nil {
+					log.Printf("acl: node %d (%s): consume one-shot join slot: %v", id, tokenPrefix(assignedID), cerr)
+				}
 			}
 			node = &Node{ID: id, Token: assignedID}
 			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID}
