@@ -244,6 +244,15 @@ func (w *RebalanceWorker) pickTarget(srv *models.Server, src *models.Node, nodes
 		if t.IsExternal() && !gatewayOn {
 			continue
 		}
+		// BYON isolation (BC6): a tenant-owned source keeps its server within
+		// that SAME tenant's nodes - never a platform node, never a different
+		// tenant. Mirrors canPlaceOnNode / placement.go's OwnerScope guard. A
+		// platform-owned source (src.OwnerID nil) keeps today's behavior.
+		if src.OwnerID != nil {
+			if t.OwnerID == nil || *t.OwnerID != *src.OwnerID {
+				continue
+			}
+		}
 		// Keep the server in the same region + match the source's tags so a move
 		// doesn't silently relocate a server across a placement boundary.
 		if src.Region != "" && !equalRegion(t.Region, src.Region) {
