@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"time"
 )
 
 func (s *PostgresStore) CreateWarpAPIKey(k WarpAPIKey) (int, error) {
@@ -73,6 +74,46 @@ func (s *PostgresStore) ListAllLinkKits() ([]WarpAPIKey, error) {
 		FROM warp_api_keys
 		WHERE node_id LIKE 'link-%' AND revoked_at IS NULL
 		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpAPIKey
+	for rows.Next() {
+		var k WarpAPIKey
+		var fixedIP, nodeID, region, owner sql.NullString
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// ListLinkKitsForACLReconcile returns the non-revoked route-only link kits the
+// ACL reconciler should keep provisioned: every link EXCEPT those whose owner is
+// hard-suspended (suspended and past the enforcement grace). hardSuspendedBefore
+// is now-minus-grace; a link whose owner's suspended_at is at or before it is
+// excluded so the reconciler stops resurrecting its Redis ACL. Admin-minted kits
+// (owner_id is UUID NULL -> no billing row) are ALWAYS included: the LEFT JOIN
+// yields NULL billing, and "ub.suspended_at IS NOT NULL" is then FALSE, so the
+// inner AND is FALSE and NOT(FALSE) keeps the row. Owner active or within grace is
+// likewise kept. Mirrors ListAllLinkKits's column list + scan; the predicate MUST
+// stay equivalent to handlers.linkHardSuspended.
+func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]WarpAPIKey, error) {
+	rows, err := s.db.Query(`
+		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,
+		       COALESCE(w.fixed_wg_ip,''), COALESCE(w.node_id,''), COALESCE(w.region,''),
+		       COALESCE(w.owner_id::text,''), w.revoked_at, w.created_at
+		FROM warp_api_keys w
+		LEFT JOIN user_billing ub ON ub.user_id = w.owner_id
+		WHERE w.node_id LIKE 'link-%' AND w.revoked_at IS NULL
+		  AND NOT (ub.status = 'suspended'
+		           AND ub.suspended_at IS NOT NULL
+		           AND ub.suspended_at <= $1)
+		ORDER BY w.created_at DESC`, hardSuspendedBefore)
 	if err != nil {
 		return nil, err
 	}
