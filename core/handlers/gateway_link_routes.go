@@ -163,7 +163,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Route created", "domain": finalDomain})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Route created", "domain": finalDomain})
 }
 
 // ListLinkRoutes GET /api/gateway/link-routes — the caller's route-only entries.
@@ -204,5 +204,5 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Route deleted"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Route deleted"})
 }

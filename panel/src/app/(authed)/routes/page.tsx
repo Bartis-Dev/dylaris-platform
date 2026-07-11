@@ -71,6 +71,11 @@ export default function RoutesPage() {
         setMinting(true);
         try {
             const res = await mintLinkKit(linkName.trim());
+            // Mirrors revoke's res.success check below: fetchAPI resolves (does not
+            // throw) on an HTTP error with a JSON body, so an unchecked res here
+            // would render the one-time-secret panel with WARP_API_KEY=undefined -
+            // looking like success for a security-critical mint.
+            if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to create link');
             setMinted(res);
             setLinkName('');
             await load();
@@ -104,7 +109,8 @@ export default function RoutesPage() {
         if (availability === 'taken') { setError('That domain is already taken'); return; }
         setCreating(true);
         try {
-            await createLinkRoute({ ...domainReq, linkId, targetPort, targetHost: targetHost.trim() });
+            const res = await createLinkRoute({ ...domainReq, linkId, targetPort, targetHost: targetHost.trim() });
+            if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to create route');
             flashToast('Route created');
             await load();
         } catch (e) {
@@ -116,8 +122,13 @@ export default function RoutesPage() {
 
     const removeRoute = async (domain: string) => {
         if (!confirm(`Delete the route ${domain}?`)) return;
-        await deleteLinkRoute(domain);
-        await load();
+        try {
+            const res = await deleteLinkRoute(domain);
+            if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to delete route');
+            await load();
+        } catch (e) {
+            flashToast(e instanceof Error ? e.message : 'Failed to delete route');
+        }
     };
 
     if (!gatewayEnabled) return null;
