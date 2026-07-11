@@ -282,7 +282,15 @@ func (s *BillingLifecycleService) EnterPastDue(userID string) error {
 
 // Reactivate clears the lifecycle back to active (e.g. after payment). Stopped
 // servers are NOT auto-started; the owner starts them. The tenant's route-only
-// links come back on their own once their ACL + tunnel key are restored.
+// links come back on their own once their ACL + tunnel key are restored - but
+// ONLY links that were GRACED-suspended (ACL/tunnel key dropped by
+// suspendTenantLinks, never revoked). A link that was DURABLY REVOKED by an
+// admin's force-suspend (SuspendNow) stays revoked: reactivateTenantLinks only
+// re-provisions non-revoked kits (linkKitsForUser reads
+// ListWarpAPIKeysByOwner, which already excludes revoked_at IS NOT NULL rows),
+// so a force-suspended tenant's links must be deliberately re-minted by an
+// admin after reactivation. This is intentional: reactivation must not
+// silently restore a nuked tenant's link infrastructure.
 func (s *BillingLifecycleService) Reactivate(userID string) error {
 	if err := s.store.SetUserBillingStatus(userID, "active", nil, nil); err != nil {
 		return err
@@ -294,7 +302,10 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 // Suspend marks the tenant suspended and notifies them. Read access (file
 // browser, backups) stays; the start path is gated elsewhere. No data is
 // deleted. The hard cutoff (stop servers, drop link ACLs) is NOT synchronous
-// here - see enforceSuspensions.
+// here - see enforceSuspensions. Used by the AUTOMATIC non-payment lifecycle
+// and the store webhook (handlers/store.go): a buggy webhook must not
+// instant-kill a paying tenant. See SuspendNow for the ADMIN-manual immediate
+// variant.
 func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) error {
 	now := time.Now()
 	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
@@ -307,6 +318,39 @@ func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) er
 	// enforcement is single-sourced in the leader-gated ticker. ctx is retained for
 	// the unchanged caller signature.
 	s.sendSuspendedEmail(userID)
+	return nil
+}
+
+// SuspendNow immediately, synchronously suspends a tenant for the ADMIN-manual
+// path: unlike the graced Suspend (deferred cutoff via enforceSuspensions,
+// used by the automatic non-payment lifecycle and the store webhook), this is
+// a one-click hard kill for fraud/abuse. It records the suspended state +
+// sends the same email as Suspend, stops the tenant's running servers
+// synchronously, and DURABLY revokes every one of the tenant's route-only
+// link kits via RevokeLinkKitTeardown (revoked_at first, then ACL, then
+// tunnel key, then routes - the same ordering RevokeLinkKit uses) so they are
+// immediately and permanently down. No grace-window resurrection, and no
+// change to the three grace predicates (reconciler SQL, enforceSuspensions,
+// handlers.linkHardSuspended all stay as-is): a durably revoked link is
+// already excluded by all three. See Reactivate's doc comment for what
+// happens to these links on reactivation.
+func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string) error {
+	now := time.Now()
+	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
+		return err
+	}
+	s.sendSuspendedEmail(userID)
+	s.stopTenantServers(ctx, userID)
+	if s.provisioner == nil || s.gateway == nil || s.redis == nil {
+		return nil // solo/hoster mode: no link kits to revoke
+	}
+	revokeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	for _, linkID := range s.linkKitsForUser(userID) {
+		if _, rerr := RevokeLinkKitTeardown(revokeCtx, s.store, s.gateway, s.redis, s.provisioner, linkID, userID); rerr != nil {
+			log.Printf("billing lifecycle: force-suspend %s: revoke link %s: %v", userID, linkID, rerr)
+		}
+	}
 	return nil
 }
 

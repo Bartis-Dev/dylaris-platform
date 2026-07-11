@@ -47,7 +47,12 @@ func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 
 // SetBillingStatus PATCH /api/admin/users/{id}/billing — admin transitions a
 // tenant between active / past_due / suspended. past_due starts the grace window
-// + dunning email; suspended stops servers; active reactivates (no auto-start).
+// + dunning email; suspended is an IMMEDIATE force-suspend (SuspendNow: stops
+// servers now and durably revokes every route-only link kit - they do NOT come
+// back on reactivation, an admin must re-mint them); active reactivates (no
+// auto-start, and only GRACED-suspended links restore automatically). The
+// automatic non-payment lifecycle and the store webhook (handlers/store.go)
+// keep the graced Suspend (deferred cutoff) - this admin path does not.
 func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request) {
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
@@ -72,7 +77,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	case "active":
 		err = h.state.Billing.Reactivate(userID)
 	case "suspended":
-		err = h.state.Billing.Suspend(r.Context(), userID)
+		err = h.state.Billing.SuspendNow(r.Context(), userID)
 	default:
 		sendJSONError(w, "Invalid status (active|past_due|suspended)", http.StatusBadRequest)
 		return

@@ -193,7 +193,12 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 //
 //	action "activate" -> billing active (+ optional plan assignment)
 //	action "past_due" -> dunning grace window starts
-//	action "suspend"  -> stop tenant servers, mark suspended (no data deleted)
+//	action "suspend"  -> mark suspended now; servers stop + route-only links
+//	                     are torn down after the grace window elapses (no data
+//	                     deleted). Deliberately graced, not immediate: a buggy
+//	                     webhook must not instant-kill a paying tenant. Compare
+//	                     the admin-manual path (handlers/billing.go), which
+//	                     uses the immediate SuspendNow instead.
 //
 // This is how a successful Stripe checkout / failed payment / canceled
 // subscription reaches Core. It NEVER deletes user data.

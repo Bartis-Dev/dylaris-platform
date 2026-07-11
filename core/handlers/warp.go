@@ -371,42 +371,15 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	tunnelToken := h.state.Gateway.LinkToken(linkID)
 
-	// 1. Revoke the warp key FIRST. It is the only durable step, and it is the one
-	// that blocks link-boot. If the teardown below ran first and this failed, the
-	// link's next ordinary reconnect would call link-boot, EnsureRouteOnlyLinkACL
-	// would idempotently re-provision it, and the revoke would silently undo itself.
-	// Failing here aborts before any Redis state changed, so a retry is clean.
-	if derr := h.state.Store.RevokeWarpAPIKeyByNodeID(linkID); derr != nil {
-		log.Printf("revoke link %s: mark revoked: %v", linkID, derr)
+	// Durable-first revoke, ACL dropped before the tunnel key, routes cleaned up
+	// last - shared with the admin force-suspend path (billing_lifecycle.go
+	// SuspendNow) so the ordering has one source of truth. See its doc comment.
+	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.state.Store, h.state.Gateway, h.state.Redis, h.state.ACLProvisioner, linkID, key.OwnerID)
+	if rerr != nil {
+		log.Printf("revoke link %s: %v", linkID, rerr)
 		sendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
 		return
-	}
-
-	// The remaining steps are best-effort teardown and are safe to repeat: a retried
-	// DELETE re-runs them, because the lookup above does not filter revoked keys.
-
-	// 2. Drop the ACL user before deleting the tunnel key: DELUSER terminates the
-	// link's live Redis connections and blocks re-registration on restart, while
-	// DEL alone would let a restart re-register. Neither step alone suffices.
-	h.state.ACLProvisioner.RemoveRouteOnlyLinkACL(ctx, linkID)
-	// 3. Delete the tunnel key so the edge drops the tunnel within 30s.
-	if derr := h.state.Redis.Del(ctx, "link:"+tunnelToken).Err(); derr != nil {
-		log.Printf("revoke link %s: delete tunnel key: %v", linkID, derr)
-	}
-	// 4. Remove the link's Core-owned routes so a dead link does not squat domains.
-	// GetRoutesFromRedis returns nil on a Redis error, indistinguishable from "no
-	// routes", so log the count: a silent zero is the only signal cleanup was skipped.
-	removed := 0
-	for _, rt := range services.GetRoutesFromRedis(ctx, h.state.Redis) {
-		if rt.CoreOwned && rt.OwnerID == key.OwnerID && rt.TunnelID == tunnelToken {
-			if derr := h.state.Gateway.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
-				log.Printf("revoke link %s: delete route %s: %v", linkID, rt.Domain, derr)
-				continue
-			}
-			removed++
-		}
 	}
 	log.Printf("revoke link %s: revoked, %d route(s) removed", linkID, removed)
 
