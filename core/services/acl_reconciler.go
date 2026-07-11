@@ -21,7 +21,7 @@ type aclReconcilerStore interface {
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
 	ListServersByNode(nodeID int) ([]models.Server, error)
-	ListAllLinkKits() ([]store.WarpAPIKey, error)
+	ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]store.WarpAPIKey, error)
 }
 
 // ACLReconciler re-provisions every paired node's and route-only link's scoped
@@ -38,14 +38,19 @@ type ACLReconciler struct {
 	leader        leader.Election
 	interval      time.Duration // full-sweep cadence (~60s)
 	probeInterval time.Duration // Redis reachability probe cadence (~10s)
+	// graceWindow mirrors cfg.SuspendGrace: a hard-suspended owner's links are
+	// excluded from re-provision once suspended_at <= now-graceWindow, matching the
+	// billing enforcement cutoff so the reconciler never resurrects a cut link.
+	graceWindow time.Duration
 }
 
-func NewACLReconciler(st aclReconcilerStore, prov *redisacl.Provisioner, r *redis.Client, clusterSecret string) *ACLReconciler {
+func NewACLReconciler(st aclReconcilerStore, prov *redisacl.Provisioner, r *redis.Client, clusterSecret string, graceWindow time.Duration) *ACLReconciler {
 	return &ACLReconciler{
 		store:         st,
 		prov:          prov,
 		redis:         r,
 		clusterSecret: clusterSecret,
+		graceWindow:   graceWindow,
 		interval:      60 * time.Second,
 		probeInterval: 10 * time.Second,
 	}
@@ -128,8 +133,12 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		applied++
 	}
 
-	// Route-only external link kits (all tenants).
-	kits, kerr := r.store.ListAllLinkKits()
+	// Route-only external link kits (all tenants) whose owner is NOT hard-suspended.
+	// A link kept during grace still routes; once the grace elapses the billing
+	// enforcement pass drops its ACL and this query stops resurrecting it. cutoff =
+	// now - graceWindow, evaluated once for the whole sweep.
+	cutoff := time.Now().Add(-r.graceWindow)
+	kits, kerr := r.store.ListLinkKitsForACLReconcile(cutoff)
 	if kerr != nil {
 		log.Printf("acl reconciler: list link kits: %v", kerr)
 	} else {

@@ -62,36 +62,6 @@ func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, er
 	return out, rows.Err()
 }
 
-// ListAllLinkKits returns every non-revoked route-only link kit across all
-// tenants (their warp key node_id carries the "link-" prefix). Used by the ACL
-// reconciler to re-apply route-only link ACL users after a Valkey restart that
-// dropped them. Mirrors ListWarpAPIKeysByOwner's scan.
-func (s *PostgresStore) ListAllLinkKits() ([]WarpAPIKey, error) {
-	rows, err := s.db.Query(`
-		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
-		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), revoked_at, created_at
-		FROM warp_api_keys
-		WHERE node_id LIKE 'link-%' AND revoked_at IS NULL
-		ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []WarpAPIKey
-	for rows.Next() {
-		var k WarpAPIKey
-		var fixedIP, nodeID, region, owner sql.NullString
-		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
-			return nil, err
-		}
-		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
-		out = append(out, k)
-	}
-	return out, rows.Err()
-}
-
 // ListLinkKitsForACLReconcile returns the non-revoked route-only link kits the
 // ACL reconciler should keep provisioned: every link EXCEPT those whose owner is
 // hard-suspended (suspended and past the enforcement grace). hardSuspendedBefore
@@ -100,8 +70,8 @@ func (s *PostgresStore) ListAllLinkKits() ([]WarpAPIKey, error) {
 // (owner_id is UUID NULL -> no billing row) are ALWAYS included: the LEFT JOIN
 // yields NULL billing, and "ub.suspended_at IS NOT NULL" is then FALSE, so the
 // inner AND is FALSE and NOT(FALSE) keeps the row. Owner active or within grace is
-// likewise kept. Mirrors ListAllLinkKits's column list + scan; the predicate MUST
-// stay equivalent to handlers.linkHardSuspended.
+// likewise kept. Mirrors ListWarpAPIKeysByOwner's column list + scan; the predicate
+// MUST stay equivalent to handlers.linkHardSuspended.
 func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]WarpAPIKey, error) {
 	rows, err := s.db.Query(`
 		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,

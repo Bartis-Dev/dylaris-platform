@@ -438,7 +438,7 @@ func main() {
 	// users from the DB-stored per-node secret, so a Valkey restart that lost the
 	// aclfile self-heals without a service restart. Same users, same passwords;
 	// running services re-auth transparently on their next command.
-	aclReconciler := services.NewACLReconciler(pgStore, aclProvisioner, redisClient, cfg.ClusterSecret)
+	aclReconciler := services.NewACLReconciler(pgStore, aclProvisioner, redisClient, cfg.ClusterSecret, cfg.SuspendGrace)
 	aclReconciler.SetLeader(coreLeader)
 	aclReconciler.Start(context.Background())
 	// The billing lifecycle drops/restores route-only link tunnels on
