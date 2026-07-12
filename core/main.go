@@ -6,7 +6,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"dylaris-core/config"
@@ -1192,7 +1195,26 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Core API crashed: %v", err)
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Core API crashed: %v", err)
+		}
+	}()
+
+	// Graceful shutdown: mirrors node/main.go's signal handling. Rolling
+	// deploys (docker-stack.yml start-first, 2 core replicas) SIGTERM the
+	// outgoing task while the new one is already serving; without this the
+	// old task hard-kills mid-request, dropping in-flight backup/migration
+	// jobs and live SSE (/api/system/events) subscribers.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	log.Println("Shutting down Core gracefully...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Core graceful shutdown error: %v", err)
 	}
 }
