@@ -53,7 +53,7 @@ Everything is self-hosted: your servers, your data, your infrastructure.
 - **Live events** — Server-Sent Events over Redis Pub/Sub for real-time status (no polling).
 - **Multi-tenant user management** — UUID users, username history + cooldowns, admin controls, API keys.
 - **First-run setup wizard** — browser-driven first-admin creation, plus lost-admin recovery.
-- **Warp** — pull external/home nodes behind NAT into the swarm over an encrypted WireGuard tunnel, and run servers on them as if they were in your DC. See [`docs/superpowers/warp-deploy.md`](../docs/superpowers/warp-deploy.md).
+- **Warp** - pull external/home nodes behind NAT into the swarm over an encrypted WireGuard tunnel, and run servers on them as if they were in your DC. See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
 - **Optional Gateway stack** — public ingress/proxy (edge), hub and link services for routing player traffic without exposing node IPs. Lives in a separate repo (`dylaris-gateway`).
 
 ## Architecture
@@ -164,121 +164,7 @@ Two compose files are provided. They run the **same images** and differ only in 
 
 All services on one host, a local **bridge** network, one Node. Best for a single VPS / homelab box.
 
-```yaml
-# ─────────────────────────────────────────────────────────────────────────────
-# DYLARIS — SINGLE-HOST deployment
-#
-# Everything runs on ONE machine over a local bridge network.
-# Best for a single VPS / homelab box.
-#
-#   cp .env.example .env   # then edit JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD
-#   docker compose up -d
-#   open http://localhost:25510  →  /setup
-#
-# For a multi-host fleet, use docker-stack.yml (Docker Swarm) instead.
-# ─────────────────────────────────────────────────────────────────────────────
-
-services:
-  core:
-    image: ghcr.io/bartis-dev/dylaris-platform-core:latest
-    restart: unless-stopped
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    environment:
-      API_PORT: "25500"
-      FRONTEND_URL: "http://panel:25510"
-      JWT_SECRET: "${JWT_SECRET}"
-      CLUSTER_SECRET: "${CLUSTER_SECRET}"
-      DYLARIS_REGION: "${DYLARIS_REGION:-default}"
-      DB_HOST: timescaledb
-      DB_PORT: "5432"
-      DB_USER: "${DB_USER}"
-      DB_PASSWORD: "${DB_PASSWORD}"
-      DB_NAME: "${DB_NAME}"
-      REDIS_ADDR: "redis:6379"
-    ports:
-      - "25500:25500"   # REST API
-      - "25501:25501"   # gRPC node mesh (Cluster-Sync)
-    networks:
-      - dylaris_net
-
-  node:
-    image: ghcr.io/bartis-dev/dylaris-platform-node:latest
-    restart: unless-stopped
-    depends_on:
-      - redis
-    environment:
-      NODE_ID: "${NODE_ID:-node-01}"
-      CLUSTER_SECRET: "${CLUSTER_SECRET}"
-      NODE_TAGS: "${NODE_TAGS:-}"
-      NODE_REGION: "${NODE_REGION:-}"
-      REDIS_ADDR: "redis:6379"
-      PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
-      PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
-    volumes:
-      # The Node drives the host Docker daemon to launch MC server containers.
-      - /var/run/docker.sock:/var/run/docker.sock
-      - dylaris_data:/app/dylaris_data
-    # MC server host ports (ip_port / both routing modes) are published from the
-    # container by the Node. Expose the configured range on the host:
-    ports:
-      - "25600-30000:25600-30000"
-      - "25520:25520"   # SFTP (when file access = sftp/both)
-    networks:
-      - dylaris_net
-
-  panel:
-    image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
-    restart: unless-stopped
-    environment:
-      # Browser-reachable Core API URL (NOT the internal service name).
-      NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
-    ports:
-      - "25510:25510"
-    networks:
-      - dylaris_net
-
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: "${DB_USER}"
-      POSTGRES_PASSWORD: "${DB_PASSWORD}"
-      POSTGRES_DB: "${DB_NAME}"
-    volumes:
-      - timescaledb_data:/var/lib/postgresql/data
-    healthcheck:
-      # $$ escapes compose interpolation so the container shell expands
-      # POSTGRES_USER/DB from its own environment.
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - dylaris_net
-
-  redis:
-    # Valkey — a drop-in, Redis-compatible fork. Service name stays "redis"
-    # so REDIS_ADDR=redis:6379 works everywhere. In-memory only (coordination
-    # bus, not the source of truth — Postgres is).
-    image: valkey/valkey:8-alpine
-    restart: unless-stopped
-    command: valkey-server --save "" --appendonly no
-    networks:
-      - dylaris_net
-
-volumes:
-  timescaledb_data:
-  dylaris_data:
-
-networks:
-  dylaris_net:
-    driver: bridge
-```
+The full file is [`docker-compose.yml`](docker-compose.yml) at the repo root, see it directly rather than a copy here, so this README can't drift out of sync with the real services (env vars, the Valkey ACL `entrypoint:`, healthchecks, etc.). Five services on one bridge network: `core`, `node`, `panel`, `timescaledb`, `redis` (Valkey).
 
 ```bash
 docker compose up -d          # start
@@ -293,146 +179,7 @@ Multi-host fleet on an **overlay** network with `deploy:` blocks (replicas, plac
 
 > **Portainer:** paste `docker-stack.yml` into a new Stack and set the variables in the stack's **environment** editor (and secrets via the `*_FILE` pattern above) — the CLI `set -a; . ./.env` step below is only for `docker stack deploy` from a shell.
 
-```yaml
-# ─────────────────────────────────────────────────────────────────────────────
-# DYLARIS — DOCKER SWARM deployment
-#
-# A multi-host fleet on an overlay network, with `deploy:` blocks
-# (replicas, placement, restart policy, resources).
-#
-#   docker swarm init                                            # once, on the manager
-#   docker node update --label-add dylaris.db=true <node-id>     # pin the DB host
-#   set -a; . ./.env; set +a                                     # load env into the shell
-#   docker stack deploy -c docker-stack.yml dylaris
-#
-#   docker stack services dylaris
-#   docker service logs -f dylaris_core
-#
-# Join more hosts as Nodes:  `docker swarm join-token worker`  → run the printed
-# command on each host. The `node` service is GLOBAL, so every host becomes a
-# Node automatically (NODE_ID templated from the hostname).
-#
-# For a single machine, use docker-compose.yml instead.
-# ─────────────────────────────────────────────────────────────────────────────
-
-services:
-  core:
-    image: ghcr.io/bartis-dev/dylaris-platform-core:latest
-    environment:
-      API_PORT: "25500"
-      FRONTEND_URL: "http://panel:25510"
-      JWT_SECRET: "${JWT_SECRET}"
-      CLUSTER_SECRET: "${CLUSTER_SECRET}"
-      DYLARIS_REGION: "${DYLARIS_REGION:-default}"
-      DB_HOST: timescaledb
-      DB_PORT: "5432"
-      DB_USER: "${DB_USER}"
-      DB_PASSWORD: "${DB_PASSWORD}"
-      DB_NAME: "${DB_NAME}"
-      REDIS_ADDR: "redis:6379"
-    ports:
-      - "25500:25500"   # REST API
-      - "25501:25501"   # gRPC node mesh (Cluster-Sync)
-    networks:
-      - dylaris_net
-    deploy:
-      # Multiple replicas are safe: Redis leader-election keeps singleton jobs
-      # (discovery, Warp resync) on one replica; all replicas serve the API.
-      replicas: 2
-      placement:
-        constraints: [node.role == manager]
-      restart_policy:
-        condition: any
-      update_config:
-        order: start-first
-        parallelism: 1
-      resources:
-        limits:
-          memory: 512M
-
-  node:
-    image: ghcr.io/bartis-dev/dylaris-platform-node:latest
-    environment:
-      # Templated per host → every swarm host is a distinct Node.
-      NODE_ID: "{{.Node.Hostname}}"
-      CLUSTER_SECRET: "${CLUSTER_SECRET}"
-      NODE_TAGS: "${NODE_TAGS:-}"
-      NODE_REGION: "${NODE_REGION:-}"
-      REDIS_ADDR: "redis:6379"
-      PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
-      PORT_RANGE_END: "${PORT_RANGE_END:-30000}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - dylaris_data:/app/dylaris_data
-    networks:
-      - dylaris_net
-    deploy:
-      # One Node task per swarm host.
-      mode: global
-      restart_policy:
-        condition: any
-    # NOTE: external/home (Warp) nodes are deployed separately with a
-    # `node.labels.dylaris_role == external` constraint + `NODE_EXTERNAL=true`.
-    # See docs/superpowers/warp-deploy.md.
-
-  panel:
-    image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
-    environment:
-      NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
-    ports:
-      - "25510:25510"
-    networks:
-      - dylaris_net
-    deploy:
-      replicas: 2
-      restart_policy:
-        condition: any
-      update_config:
-        order: start-first
-        parallelism: 1
-
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    environment:
-      POSTGRES_USER: "${DB_USER}"
-      POSTGRES_PASSWORD: "${DB_PASSWORD}"
-      POSTGRES_DB: "${DB_NAME}"
-    volumes:
-      - timescaledb_data:/var/lib/postgresql/data
-    networks:
-      - dylaris_net
-    deploy:
-      # Single replica pinned to a labelled host (the named volume is node-local).
-      # For real HA, point Core at an external/managed PostgreSQL instead.
-      replicas: 1
-      placement:
-        constraints: [node.labels.dylaris.db == true]
-      restart_policy:
-        condition: any
-
-  redis:
-    # Valkey — drop-in Redis-compatible fork. Service name stays "redis" so
-    # REDIS_ADDR=redis:6379 resolves. In-memory coordination bus.
-    image: valkey/valkey:8-alpine
-    command: valkey-server --save "" --appendonly no
-    networks:
-      - dylaris_net
-    deploy:
-      replicas: 1
-      placement:
-        constraints: [node.role == manager]
-      restart_policy:
-        condition: any
-
-volumes:
-  timescaledb_data:
-  dylaris_data:
-
-networks:
-  dylaris_net:
-    driver: overlay
-    attachable: true
-```
+The full file is [`docker-stack.yml`](docker-stack.yml) at the repo root, see it directly rather than a copy here. Same five services as the single-host file, plus `deploy:` blocks (replicas, placement constraints, `start-first` rolling updates, resource limits) and an `overlay` network.
 
 ```bash
 # On a manager node:
@@ -460,7 +207,7 @@ docker service scale dylaris_panel=2               # more panel replicas
 
 In the stack, the `node` service is **global** — exactly one Node task runs on every swarm host, and its `NODE_ID` is templated from the hostname (`{{.Node.Hostname}}`), so every host becomes a distinct Node automatically.
 
-**External / home nodes (Warp):** to add a NAT'd home machine as a Node, see [`docs/superpowers/warp-deploy.md`](../docs/superpowers/warp-deploy.md) — it joins over an encrypted WireGuard tunnel, is labelled `dylaris_role=external`, and runs with `NODE_EXTERNAL=true` so it forces gateway+beam locally (no exposed ports/SFTP).
+**External / home nodes (Warp):** to add a NAT'd home machine as a Node, deploy it separately (not via the global `node` service above) with a `node.labels.dylaris_role == external` placement constraint and `NODE_EXTERNAL=true` (see `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference)); it joins over an encrypted WireGuard tunnel and forces gateway+beam locally (no exposed ports/SFTP).
 
 ### The compose files explained
 
@@ -479,7 +226,7 @@ Notable details:
 - **`node` needs the Docker socket** (`/var/run/docker.sock`) — that is how it launches Minecraft containers on its host. Treat any host running a Node as trusted.
 - **`redis`/Valkey runs in-memory** (`--save "" --appendonly no`) — it is used as a coordination bus, not the source of truth (Postgres is). Losing it loses transient queue state, not your servers.
 - **`timescaledb` has a healthcheck** (single-host) so Core waits for the DB to accept connections on first boot.
-- **The Panel needs a browser-reachable Core URL** via `PANEL_API_URL` (`NEXT_PUBLIC_API_URL` inside the container), because the browser — not the container — calls the API.
+- **The Panel needs a browser-reachable Core URL** via `PANEL_API_URL`, written into `/config.js` by the panel's entrypoint at container **start** (no rebuild needed), because the browser, not the container, calls the API. `NEXT_PUBLIC_API_URL` is the separate build-time fallback baked into the JS bundle (used by the owner's SaaS CI build).
 - **Swarm DB is a single replica** pinned to a labelled host (`dylaris.db=true`) because the named volume is node-local. For real HA, point Core at an external/managed PostgreSQL.
 
 ## Configuration reference
@@ -531,7 +278,7 @@ secrets:
 | `DYLARIS_GRPC_PORT` | `25501` | No | Core gRPC mesh port (Core ↔ Node). |
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
-| `FRONTEND_URL` | `http://localhost:25510` (compose: `http://panel:25510`) | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config — kept as env. |
+| `FRONTEND_URL` | `http://localhost:25510` | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). **Must be externally reachable**: the previous compose default (`http://panel:25510`, an internal Docker-only hostname) made every emailed link unreachable outside the Docker network. For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config, kept as env. |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
 | `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. Must match the seeded aclfile admin password. |
@@ -553,6 +300,7 @@ secrets:
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `CORE_GRPC_ADDR` | *(empty)* | For first boot | Core gRPC endpoint (`host:25501`). Needed for a first-boot node to bootstrap its per-node Redis secret over gRPC; a node with an already-cached secret can start without it (see the boot warning). Redis ACL is mandatory and there is no static-password fallback. |
 | `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. |
+| `NODE_RECOVERY_TOKEN` | *(empty)* | For recovery | Single-use, admin-minted token (Settings → Nodes → Reset pairing) to re-pair a node under its EXISTING identity after its secret was reset. Not needed on a normal boot. |
 | `SIDECAR_REDIS_ADDR` | *(falls back to `REDIS_ADDR`)* | No | Redis address handed to MC containers, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. |
 | `SIDECAR_REDIS_DB` | *(falls back to `REDIS_DB`)* | No | Redis DB index for MC containers. |
 | `PORT_RANGE` | *(unset)* | No | Host port range as `START-END` (e.g. `25600-30000`). Takes precedence over the split vars below. |
@@ -576,12 +324,12 @@ Already-paired nodes keep reconnecting normally.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `PANEL_API_URL` → `NEXT_PUBLIC_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL (build-time; the compose maps `PANEL_API_URL` into `NEXT_PUBLIC_API_URL`). If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`) — the usual reverse-proxy layout where `/api` is routed to Core. Override at runtime (no rebuild) via the shim below. |
+| `PANEL_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL. Runtime (not build-time): the container's entrypoint writes it into `/config.js` on every start, so it takes effect without a rebuild. If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`), the usual reverse-proxy layout where `/api` is routed to Core. See the shim details below. |
 
-The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). The runtime value lives in **`/config.js`** (served from the panel image's `public/`), so a self-hoster can point a prebuilt image at a different API host by editing or bind-mounting that one file — no rebuild needed. Leave `apiUrl` empty for same-origin:
+The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). The runtime value lives in **`/config.js`**; the container's entrypoint (`panel/docker-entrypoint.sh`) regenerates that file from `PANEL_API_URL` on every start, so set the env var rather than bind-mounting `/app/public/config.js` directly - the entrypoint overwrites it on the next restart:
 
 ```js
-// config.js (bind-mount to override)
+// what the entrypoint writes when PANEL_API_URL=https://api.example.com
 window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com" };
 ```
 

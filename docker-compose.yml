@@ -137,7 +137,8 @@ services:
     # up already locked (no open window). Empty REDIS_PASSWORD seeds a PASSWORDLESS
     # admin for local dev; PRODUCTION MUST set REDIS_PASSWORD (equal to Core's).
     # Core then provisions the per-node scoped users. Mount the PARENT DIRECTORY
-    # (ACL SAVE does temp-file + rename). See docs/superpowers/redis-acl-deploy.md.
+    # (ACL SAVE does temp-file + rename). See REDIS_PASSWORD in README.md's
+    # Configuration reference for the Core-side admin login this seeds.
     image: valkey/valkey:8-alpine
     restart: unless-stopped
     environment:

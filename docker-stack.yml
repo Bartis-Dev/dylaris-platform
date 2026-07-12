@@ -100,7 +100,7 @@ services:
         condition: any
     # NOTE: external/home (Warp) nodes are deployed separately with a
     # `node.labels.dylaris_role == external` constraint + `NODE_EXTERNAL=true`.
-    # See docs/superpowers/warp-deploy.md.
+    # See NODE_EXTERNAL / NODE_TAGS in README.md's Configuration reference.
 
   panel:
     image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
@@ -154,7 +154,8 @@ services:
     # admin `default` user whose password is REDIS_PASSWORD (equal to Core's), so
     # Valkey comes up already locked. Empty REDIS_PASSWORD seeds a PASSWORDLESS admin
     # for dev only; PRODUCTION MUST set it. Mount the parent DIRECTORY (ACL SAVE does
-    # temp-file + rename). See docs/superpowers/redis-acl-deploy.md.
+    # temp-file + rename). See REDIS_PASSWORD in README.md's Configuration
+    # reference for the Core-side admin login this seeds.
     image: valkey/valkey:8-alpine
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
