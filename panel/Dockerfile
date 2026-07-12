@@ -17,7 +17,7 @@ RUN npm install --workspaces --include-workspace-root
 FROM node:22-alpine AS builder
 WORKDIR /app
 
-ARG NEXT_PUBLIC_API_URL="https://api.dylaris.com/api"
+ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 # Copy deps + workspace structure
@@ -42,9 +42,16 @@ RUN if [ -f panel/server.js ] && [ ! -f server.js ]; then \
       cp -r panel/. . && rm -rf panel; \
     fi
 COPY --from=builder /app/panel/.next/static ./.next/static
+# public/ (incl. config.js, the runtime API-URL shim) is NOT part of the
+# standalone output - Next.js only auto-copies it when building outside a
+# workspace. Without this, /config.js 404s and the shim never runs.
+COPY --from=builder /app/panel/public ./public
+
+COPY panel/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 ENV PORT=25510
 ENV HOSTNAME="0.0.0.0"
 EXPOSE 25510
 
-CMD ["node", "server.js"]
+ENTRYPOINT ["./docker-entrypoint.sh"]

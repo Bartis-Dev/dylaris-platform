@@ -84,8 +84,13 @@ services:
     image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
     restart: unless-stopped
     environment:
-      # Browser-reachable Core API URL (NOT the internal service name).
-      NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
+      # Browser-reachable Core API URL (NOT the internal service name). Written
+      # into /config.js by the panel's entrypoint at container START, so this
+      # takes effect without a rebuild. Empty = same-origin /api (the default
+      # self-host layout behind a reverse proxy that routes /api to Core).
+      # NEXT_PUBLIC_API_URL (build-time, baked into the JS bundle) is a
+      # different, SaaS-only mechanism - see the CI workflow.
+      PANEL_API_URL: "${PANEL_API_URL:-}"
     ports:
       - "25510:25510"
     networks:

@@ -99,7 +99,11 @@ services:
   panel:
     image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
     environment:
-      NEXT_PUBLIC_API_URL: "${PANEL_API_URL:-http://localhost:25500}"
+      # Browser-reachable Core API URL, written into /config.js by the panel's
+      # entrypoint at container start (runtime, no rebuild). Empty = same-origin
+      # /api. NEXT_PUBLIC_API_URL (build-time) is the separate SaaS-only path -
+      # see the CI workflow.
+      PANEL_API_URL: "${PANEL_API_URL:-}"
     ports:
       - "25510:25510"
     networks:

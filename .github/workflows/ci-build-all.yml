@@ -78,6 +78,9 @@ jobs:
       component: panel
       dockerfile: ./panel/Dockerfile
       context: .
+      # Owner's published image keeps its baked SaaS URL (the ARG now defaults
+      # to empty for a self-hoster's own build).
+      extra_build_args: "NEXT_PUBLIC_API_URL=https://api.dylaris.com/api"
     secrets: inherit
 
   # ──────────────────────────────────────────────

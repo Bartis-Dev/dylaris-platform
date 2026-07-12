@@ -1,8 +1,11 @@
 // Dylaris Panel - runtime configuration.
 //
-// This file is served as-is and is NOT baked into the build, so you can edit it
-// (or bind-mount / override it in Docker) to point the panel at your API
-// WITHOUT rebuilding the image. Build-time NEXT_PUBLIC_* variables cannot be
+// This file is served as-is and is NOT baked into the build. In the Docker
+// image, panel/docker-entrypoint.sh REGENERATES this file from the PANEL_API_URL
+// env var on every container start - set that env var rather than editing or
+// bind-mounting this file directly, since the entrypoint overwrites it on the
+// next restart. Outside Docker (e.g. `next dev` / a bare `next start`), this
+// shipped default is served as-is. Build-time NEXT_PUBLIC_* variables cannot be
 // changed after the image is built; this can.
 //
 // Leave apiUrl empty to use the same origin that serves the panel (recommended
