@@ -51,6 +51,12 @@ services:
       start_period: 10s
     networks:
       - dylaris_net
+    volumes:
+      # Core writes library, ticket-attachments, ticket-backups here. Without a
+      # volume this data is lost on container recreation. NOTE: this is a LOCAL
+      # per-host volume; multi-replica Core (see docker-stack.yml) needs shared or
+      # S3-backed storage - single replica or S3 for correctness there.
+      - core_data:/app/dylaris_data
     deploy:
       # Multiple replicas are safe: Redis leader-election keeps singleton jobs
       # (discovery, Warp resync) on one replica; all replicas serve the API.
@@ -190,6 +196,7 @@ services:
 volumes:
   timescaledb_data:
   dylaris_data:
+  core_data:
 
 networks:
   dylaris_net:

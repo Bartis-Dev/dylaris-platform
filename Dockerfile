@@ -46,7 +46,10 @@ RUN if [ "$INSTALL_QUOTA" = "1" ]; then apk add --no-cache quota-tools e2fsprogs
 ARG SERVICE=node
 ARG RUN_AS=root
 ENV SERVICE=$SERVICE
-RUN adduser -D -u 1000 dylaris && chown -R dylaris:dylaris /app
+# mkdir the data mount point BEFORE chown so a fresh named volume mounted here
+# inherits uid-1000 ownership (Docker seeds a new volume's ownership from the
+# image dir). Without this, non-root Core (RUN_AS=dylaris) cannot write the volume.
+RUN adduser -D -u 1000 dylaris && mkdir -p /app/dylaris_data && chown -R dylaris:dylaris /app
 USER ${RUN_AS}
 
 # No-op for Node (SERVICE != core, the `if` is skipped and the shell exits 0).
