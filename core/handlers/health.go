@@ -292,3 +292,38 @@ func countStatus(online, total int) string {
 		return "up"
 	}
 }
+
+// Healthz GET /healthz
+//
+// Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load
+// balancers). Pings only DB + Redis - the two dependencies Core cannot run
+// without - skipping the heavier admin checks (nodes, gateway, metrics
+// extension) that GetStatus (/api/admin/health) reports. Registered outside
+// AuthMiddleware AND outside the /api setup-lock + maintenance middleware
+// (see core/main.go), so it keeps answering during Fresh-Install/Lost-Admin
+// setup states and while maintenance mode is active.
+func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
+	defer cancel()
+
+	dbErr := h.state.Store.Ping(ctx)
+	redisErr := h.state.Redis.Ping(ctx).Err()
+
+	w.Header().Set("Content-Type", "application/json")
+	if dbErr != nil || redisErr != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "not ready",
+			"db":     dbErr == nil,
+			"redis":  redisErr == nil,
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ready",
+		"db":     true,
+		"redis":  true,
+	})
+}

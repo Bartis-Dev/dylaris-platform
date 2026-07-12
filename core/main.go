@@ -524,6 +524,13 @@ func main() {
 		})
 	})
 
+	// Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load
+	// balancers). Registered on the root router, so it bypasses AuthMiddleware
+	// AND the /api subrouter's setup-lock + maintenance middleware below -
+	// infra healthchecks must keep answering through Fresh-Install/Lost-Admin
+	// setup states and maintenance windows.
+	r.HandleFunc("/healthz", healthHandler.Healthz).Methods("GET")
+
 	api := r.PathPrefix("/api").Subrouter().StrictSlash(true)
 
 	// Setup-lock middleware wraps every /api/* route. /api/setup/*
