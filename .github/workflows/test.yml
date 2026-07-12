@@ -1,0 +1,64 @@
+name: CI — Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go-tests:
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [core, node, pkg, log-shipper]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        run: go test -count=1 ./...
+
+  panel-tests:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # This is an npm workspaces monorepo (root package.json declares
+      # "workspaces": ["packages/*", "panel"]) and the lockfile lives at the
+      # repo root, not panel/package-lock.json. `npm ci` is intentionally not
+      # used here: panel/Dockerfile documents that this lockfile was generated
+      # on Windows and misses platform-specific optional native binaries
+      # (lightningcss/swc) for other OS/libc targets, so it does a plain
+      # `npm install --workspaces --include-workspace-root` instead. Mirrored
+      # here for the same reason.
+      - name: Install dependencies
+        run: npm install --workspaces --include-workspace-root
+
+      - name: Run vitest
+        working-directory: panel
+        run: npx vitest run
