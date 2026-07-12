@@ -65,12 +65,19 @@ func TestLocalStorage_resolveKey_HappyPath(t *testing.T) {
 
 // TestLocalStorage_resolveKey_UnreachableGuard is the one way to actually
 // exercise the HasPrefix error branch: give it a BasePath that is NOT
-// absolute/clean (violating the invariant NewLocal enforces via
-// filepath.Abs). This is a synthetic misuse case, not a traversal-via-key
-// scenario - see the finding above.
+// clean (violating the invariant NewLocal enforces via filepath.Abs, which
+// always returns a cleaned path). This is a synthetic misuse case, not a
+// traversal-via-key scenario - see the finding above.
+//
+// The BasePath must contain a ".." segment so the trigger is OS-independent:
+// filepath.Join always returns a cleaned path (no ".."), so a raw BasePath
+// that still contains "/.." can never be a prefix of the joined result on
+// EITHER separator. A merely non-absolute BasePath like "relative/base" would
+// only fire on Windows (where the joined "\..." mismatches the "/"-form
+// prefix by accident) and would spuriously pass on Linux/macOS - i.e. red CI.
 func TestLocalStorage_resolveKey_UnreachableGuard(t *testing.T) {
-	l := &LocalStorage{BasePath: "relative/base"}
+	l := &LocalStorage{BasePath: "/base/sub/.."}
 	if _, err := l.resolveKey("a/b.txt"); err == nil {
-		t.Error("expected an error when BasePath itself is not absolute/clean")
+		t.Error("expected an error when BasePath itself is not clean")
 	}
 }
