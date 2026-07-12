@@ -62,11 +62,6 @@ type App struct {
 // Panel URL choice survives reinstalls of the same major version.
 type userSettings struct {
 	PanelURL string `json:"panelUrl"`
-	// PreferLocalLAN opts into the LAN fast-path: when on, ConnectToServer probes
-	// the node's private IPs and dials it directly, skipping the cloud relay when
-	// the node is reachable on the same network. Off by default — behavior is
-	// then identical to before (relay only).
-	PreferLocalLAN bool `json:"preferLocalLan"`
 }
 
 // settingsPath returns the OS-appropriate config file location:
@@ -389,11 +384,16 @@ func (a *App) GetServers() ([]BeamServer, error) {
 	return client.GetBeamServers()
 }
 
-// ConnectToServer opens a gRPC tunnel through the BeamRelay to the Node
-// hosting this server. It resolves the relay address (GET /beam/config)
-// and mints a ticket (GET /beam/ticket) lazily — both GETs, which go
-// through cleanly; the desktop app's POSTs to Core were getting an HTML
-// challenge page from a CDN/WAF in front.
+// ConnectToServer opens a file-ops tunnel to the Node hosting this server. The
+// choice is PRESENCE-DRIVEN, decided by Core: if a relay is registered (non-empty
+// relay_address) the connection ALWAYS goes through the relay so the node IP stays
+// hidden; if no relay is present the app connects DIRECTLY to the node on its
+// pinned-TLS beam port (a same-LAN IP or the node's public address). Direct dials
+// only ever use the fingerprint-pinned TLS port, never the plain overlay port, so
+// a direct hop is encrypted and MITM-proof or it does not happen at all.
+//
+// GETs (not POSTs): a CDN/WAF in front of Core was handing the desktop app's POSTs
+// an HTML challenge page; GET /beam/* goes through cleanly.
 func (a *App) ConnectToServer(serverUUID string) error {
 	client := a.getClient()
 	if client == nil {
@@ -405,62 +405,77 @@ func (a *App) ConnectToServer(serverUUID string) error {
 		return fmt.Errorf("ticket: %w", err)
 	}
 
-	// LAN fast-path (opt-in): when the user prefers local and the node advertises
-	// private IPs, probe them and dial the node directly, skipping the relay.
-	// Any failure here silently falls back to the relay below.
-	if loadSettings().PreferLocalLAN && len(ticket.LANIPs) > 0 && ticket.LANFingerprint != "" {
-		if addr := probeBeamLAN(ticket.LANIPs, ticket.LANPort); addr != "" {
-			if rc, lerr := ConnectBeamNodeDirect(addr, ticket.Ticket, ticket.LANFingerprint); lerr == nil {
-				if old := a.setRelay(rc); old != nil {
-					old.Close()
-				}
-				a.startHealthCheck(serverUUID)
-				return nil
-			} else {
-				fmt.Fprintf(os.Stderr, "beam-app: LAN fast-path to %s failed (%v); using relay\n", addr, lerr)
-			}
-		}
-	}
-
-	// Relay path (default). Bootstrap the relay address from Core if needed.
-	if a.getRelayAddr() == "" {
-		if _, err := a.GetBeamConfig(); err != nil {
-			return fmt.Errorf("beam config: %w", err)
-		}
-		if a.getRelayAddr() == "" {
-			return fmt.Errorf("Core returned no relay address")
-		}
-	}
-
-	// Dial the new tunnel first, then atomically swap it in and tear down the
-	// previous one — so a failed dial doesn't leave us with no connection.
-	rc, err := ConnectBeamNode(a.getRelayAddr(), ticket.Ticket)
+	// Ask Core whether a relay is present. A non-empty address == gateway present.
+	config, err := client.GetBeamConfig()
 	if err != nil {
-		// ConnectBeamNode already returns a self-descriptive,
-		// English message — don't bury it under another prefix.
+		return fmt.Errorf("beam config: %w", err)
+	}
+	relayAddr := strings.TrimSpace(config.RelayAddress)
+	a.setRelayAddr(relayAddr)
+
+	if relayAddr != "" {
+		// Relay present -> relay only. No direct attempt: obscuring the node IP is
+		// the whole point of the relay.
+		rc, err := ConnectBeamNode(relayAddr, ticket.Ticket)
+		if err != nil {
+			// ConnectBeamNode already returns a self-descriptive English message.
+			return err
+		}
+		if old := a.setRelay(rc); old != nil {
+			old.Close()
+		}
+		a.startHealthCheck(serverUUID)
+		return nil
+	}
+
+	// No relay -> connect directly to the node.
+	rc, err := a.connectDirect(ticket)
+	if err != nil {
 		return err
 	}
 	if old := a.setRelay(rc); old != nil {
 		old.Close()
 	}
-
-	// Kick (or restart) the background health-check now that a tunnel
-	// is up. The goroutine takes ownership of detecting dead relays
-	// and rotating to a fresh one so the user doesn't have to.
 	a.startHealthCheck(serverUUID)
 	return nil
 }
 
-// GetPreferLocalLAN / SetPreferLocalLAN expose the LAN fast-path toggle to the
-// frontend Settings dialog. Load-modify-save preserves the other settings.
-func (a *App) GetPreferLocalLAN() bool {
-	return loadSettings().PreferLocalLAN
-}
+// connectDirect dials the node directly on its pinned-TLS beam port, never the
+// plain overlay port. It tries the LAN IPs first (a cheap TCP probe filters
+// unreachable hints) and then the node's public address, returning the first that
+// authenticates. A non-nil error means every direct target failed.
+func (a *App) connectDirect(ticket *BeamTicket) (*BeamNodeClient, error) {
+	port := ticket.LANPort
+	if port == "" {
+		port = "25523" // pinned-TLS beam port (BEAM_LAN_PORT default)
+	}
+	if ticket.LANFingerprint == "" {
+		return nil, fmt.Errorf("node not reachable directly: Core provided no pinned-TLS fingerprint, and no gateway/relay is configured - add a gateway/relay to route the connection")
+	}
 
-func (a *App) SetPreferLocalLAN(enabled bool) error {
-	s := loadSettings()
-	s.PreferLocalLAN = enabled
-	return saveSettings(s)
+	// 1) LAN IPs. Probe first so an unreachable hint costs a few hundred ms instead
+	// of a full TLS dial timeout.
+	if len(ticket.LANIPs) > 0 {
+		if addr := probeBeamLAN(ticket.LANIPs, port); addr != "" {
+			if rc, derr := ConnectBeamNodeDirect(addr, ticket.Ticket, ticket.LANFingerprint); derr == nil {
+				return rc, nil
+			} else {
+				fmt.Fprintf(os.Stderr, "beam-app: direct LAN dial to %s failed: %v\n", addr, derr)
+			}
+		}
+	}
+
+	// 2) Public address (a remote solo node with the beam port reachable).
+	// ConnectBeamNodeDirect bounds its own dial at 3s.
+	if ticket.PublicAddr != "" {
+		if rc, derr := ConnectBeamNodeDirect(ticket.PublicAddr, ticket.Ticket, ticket.LANFingerprint); derr == nil {
+			return rc, nil
+		} else {
+			fmt.Fprintf(os.Stderr, "beam-app: direct public dial to %s failed: %v\n", ticket.PublicAddr, derr)
+		}
+	}
+
+	return nil, fmt.Errorf("node not reachable directly and no gateway/relay is configured - open the node's beam port (%s) so this client can reach it, or add a gateway/relay to route the connection", port)
 }
 
 // ─── File Operations ─────────────────────────────────────────────────

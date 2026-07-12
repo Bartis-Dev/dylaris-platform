@@ -18,8 +18,6 @@ type WailsBindings = {
   GetPanelURL?: () => Promise<string>;
   GetDefaultPanelURL?: () => Promise<string>;
   SavePanelURL?: (url: string) => Promise<void>;
-  GetPreferLocalLAN?: () => Promise<boolean>;
-  SetPreferLocalLAN?: (enabled: boolean) => Promise<void>;
   GetUpdateInfo?: () => Promise<UpdateInfo>;
   OpenUpdateDownload?: () => void;
 };
@@ -39,7 +37,6 @@ export default function App() {
   const [inputUrl, setInputUrl] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
-  const [preferLAN, setPreferLAN] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
   // Pull the current + default Panel URL on mount.
@@ -51,7 +48,6 @@ export default function App() {
         setDefaultUrl(fallback);
         const url = (await bindings?.GetPanelURL?.()) || fallback;
         setInputUrl(url);
-        setPreferLAN(!!(await bindings?.GetPreferLocalLAN?.()));
         bindings?.GetUpdateInfo?.().then(u => setUpdate(u)).catch(() => {});
       } catch (err) {
         console.warn('Panel URL resolve failed:', err);
@@ -62,16 +58,6 @@ export default function App() {
     };
     load();
   }, []);
-
-  // Persist the LAN fast-path toggle immediately on change.
-  const handleToggleLAN = async (enabled: boolean) => {
-    setPreferLAN(enabled);
-    try {
-      await getBindings()?.SetPreferLocalLAN?.(enabled);
-    } catch (err) {
-      console.warn('Saving LAN preference failed:', err);
-    }
-  };
 
   // Persist the URL, then hand the window back to the Panel. The proxy
   // re-reads the saved URL on the next request, so '/' now resolves to
@@ -131,23 +117,6 @@ export default function App() {
           }}
         />
         {savingError && <div className="error">{savingError}</div>}
-
-        <label className="lan-toggle" style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginTop: '1rem', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={preferLAN}
-            disabled={!loaded}
-            onChange={e => handleToggleLAN(e.target.checked)}
-            style={{ marginTop: '0.2rem' }}
-          />
-          <span style={{ textAlign: 'left' }}>
-            <strong>Prefer local network</strong>
-            <br />
-            <span style={{ opacity: 0.7, fontSize: '0.85em' }}>
-              When this machine is on the same network as the server&apos;s node, transfer files directly to it instead of through the cloud relay. Falls back automatically when the node is not reachable locally.
-            </span>
-          </span>
-        </label>
 
         <div className="settings-actions">
           <button
