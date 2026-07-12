@@ -41,6 +41,12 @@ services:
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25500/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - dylaris_net
 
@@ -93,6 +99,12 @@ services:
       PANEL_API_URL: "${PANEL_API_URL:-}"
     ports:
       - "25510:25510"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25510/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - dylaris_net
 

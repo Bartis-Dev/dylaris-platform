@@ -32,4 +32,26 @@ ARG INSTALL_QUOTA=""
 RUN chmod +x /app/binary && apk add --no-cache ca-certificates
 RUN if [ "$INSTALL_QUOTA" = "1" ]; then apk add --no-cache quota-tools e2fsprogs-extra xfsprogs xfsprogs-extra && echo "Quota tools installed"; fi
 
+# This image builds both Core and Node (ENTRY_PATH selects the binary); they
+# need different runtime privileges, so both are threaded through as build
+# args (ci.yml passes SERVICE=core/RUN_AS=dylaris for Core; Node's build
+# leaves both at their root defaults below).
+#   SERVICE - selects the HEALTHCHECK branch below (Core has an HTTP surface
+#             to probe, Node does not).
+#   RUN_AS  - the USER the container runs as. Core has no reason to run as
+#             root. Node stays root: it mounts the host Docker socket
+#             (/var/run/docker.sock) to manage MC server containers, which
+#             needs root (or the socket's host GID, not portable across
+#             hosts) - documented exception.
+ARG SERVICE=node
+ARG RUN_AS=root
+ENV SERVICE=$SERVICE
+RUN adduser -D -u 1000 dylaris && chown -R dylaris:dylaris /app
+USER ${RUN_AS}
+
+# No-op for Node (SERVICE != core, the `if` is skipped and the shell exits 0).
+# Core: pings its own /healthz (DB + Redis), added in core/handlers/health.go.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD if [ "$SERVICE" = "core" ]; then wget -q -O /dev/null "http://127.0.0.1:${API_PORT:-25500}/healthz" || exit 1; fi
+
 CMD ["./binary"]

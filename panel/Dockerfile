@@ -50,8 +50,18 @@ COPY --from=builder /app/panel/public ./public
 COPY panel/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 
+# Non-root: the entrypoint only needs to (re)write ./public/config.js at
+# container start; nothing else in this image writes to disk.
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S -u 1001 -G nodejs nextjs && \
+    chown -R nextjs:nodejs /app
+USER nextjs
+
 ENV PORT=25510
 ENV HOSTNAME="0.0.0.0"
 EXPOSE 25510
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/" || exit 1
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

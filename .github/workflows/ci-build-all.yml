@@ -60,6 +60,8 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core:${{ steps.tags.outputs.TAG_SHA }}
           build-args: |
             ENTRY_PATH=./core/
+            SERVICE=core
+            RUN_AS=dylaris
 
   # ──────────────────────────────────────────────
   # Node, Panel
