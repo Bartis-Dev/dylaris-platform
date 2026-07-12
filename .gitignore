@@ -17,6 +17,12 @@ vendor/
 /dylaris-core
 /dylaris-node
 
+# Beam desktop app build outputs (rebuilt by CI; not committed). NOTE:
+# beam/app/third_party/ (the vendored, BC3-patched Wails) IS committed and must
+# NOT be ignored - only these generated outputs are.
+beam/app/frontend/dist/
+beam/app/build/bin/
+
 # Node (NEVER upload modules)
 node_modules/
 .next/

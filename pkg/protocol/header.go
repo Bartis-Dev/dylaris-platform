@@ -89,6 +89,16 @@ func WriteStreamHeaderResume(w io.Writer, sessionID [16]byte, bytesReceived uint
 	return binary.Write(w, binary.BigEndian, bytesReceived)
 }
 
+// FROZEN CROSS-REPO CONTRACT: the Beam stream header below is a wire contract
+// between two SEPARATE repos. The beam desktop app (platform/beam/app, which
+// WRITES this header via WriteBeamHeader) and the beam-relay (gateway/beam/relay,
+// which READS it via ReadBeamHeader) each compile their OWN copy of this file
+// (platform/pkg/protocol vs gateway/pkg/protocol). There is no version byte, so a
+// change to this framing on one side silently breaks the other. Do NOT change the
+// [0x03][len][ticket] layout without updating BOTH repos in lockstep (add a version
+// byte first if the format must evolve). Same discipline as the edge<->splice
+// stream header.
+//
 // WriteBeamHeader writes a Beam stream header with the JWT ticket.
 // Format: [0x03] [TICKET_LEN (2 bytes, big-endian)] [TICKET (n bytes)]
 func WriteBeamHeader(w io.Writer, ticket string) error {

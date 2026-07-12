@@ -1,0 +1,144 @@
+/* Styles for the Panel URL settings page (/__beam/). The real UI is
+   the proxied Panel — anything beyond this small config screen should
+   live there, not here. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #080909;
+  color: #D8DDE6;
+  font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.loader {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  animation: fade-in 0.3s ease-out;
+  max-width: 520px;
+  width: 100%;
+}
+
+.logo {
+  font-family: 'VT323', monospace;
+  font-size: 40px;
+  letter-spacing: 0.04em;
+  color: #D8DDE6;
+  user-select: none;
+}
+
+.brand-d { color: #A07EE8; }
+.brand-beam {
+  font-family: 'DM Mono', monospace;
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  color: #5A6272;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.settings-card {
+  width: 100%;
+  background: #141618;
+  border: 1px solid #1C1F24;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+  animation: slide-up 0.2s ease-out;
+}
+
+.settings-title {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #5A6272;
+}
+
+.url-input {
+  width: 100%;
+  background: #1C1F24;
+  border: 1px solid #2C3038;
+  color: #D8DDE6;
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.url-input:focus {
+  border-color: #7048C8;
+  box-shadow: 0 0 0 3px rgba(112, 72, 200, 0.15);
+}
+.url-input::placeholder { color: #3E4450; }
+
+.error {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: #E06060;
+  background: rgba(150, 56, 56, 0.10);
+  border: 1px solid rgba(150, 56, 56, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn {
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary {
+  background: #7048C8;
+  color: #fff;
+  border-color: #7048C8;
+}
+.btn-primary:hover { background: #A07EE8; border-color: #A07EE8; }
+
+.btn-secondary {
+  background: #1C1F24;
+  color: #B8C0CC;
+  border-color: #2C3038;
+}
+.btn-secondary:hover { background: #2C3038; }
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
