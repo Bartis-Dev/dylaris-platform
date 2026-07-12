@@ -238,21 +238,18 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + LAN hints.
+	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + direct-connect
+	// hint inputs. Whether these are actually handed out is decided below by relay
+	// presence, not by node ownership.
 	nodeDiscoveryID := ""
-	var lanIPs []string
+	var nodePrivateIPs []string
+	var nodePublicIP string
 	if server.NodeID > 0 {
 		node, err := h.state.Store.GetNodeByID(server.NodeID)
 		if err == nil && node != nil {
 			nodeDiscoveryID = node.Token
-			// Only expose the node's private IPs for the LAN fast-path when it is
-			// a BYON node (tenant-owned, the only case where a client can be on
-			// the same LAN) or the caller is an admin. This avoids leaking a
-			// shared platform node's internal IPs to a non-admin tenant, for whom
-			// the fast-path is useless anyway (they're never on that datacenter LAN).
-			if node.OwnerID != nil || isAdmin {
-				lanIPs = node.PrivateIPs
-			}
+			nodePrivateIPs = node.PrivateIPs
+			nodePublicIP = node.PublicIP
 		}
 	}
 	if nodeDiscoveryID == "" {
@@ -260,17 +257,27 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fingerprint of the node's deterministic LAN TLS cert, so the app can pin it
-	// (encryption + MITM protection on the direct LAN hop). Derived from the same
-	// beam secret + node ID the node uses to serve that listener.
-	lanFingerprint := ""
-	if len(lanIPs) > 0 {
-		if fp, ferr := beamauth.LANCertFingerprint(h.jwtSecret, nodeDiscoveryID); ferr == nil {
-			lanFingerprint = fp
-		} else {
-			lanIPs = nil // no pin => don't advertise the LAN path at all
-		}
+	// Fingerprint of the node's deterministic LAN TLS cert so the app can pin it
+	// (encryption + MITM protection on the direct hop, LAN or public). Derived from
+	// the same beam secret + node ID the node uses to serve that listener. Needed
+	// for any direct target, so derive it up front; an error leaves it empty and
+	// buildBeamDirectHints then advertises no direct path.
+	directFingerprint := ""
+	if fp, ferr := beamauth.LANCertFingerprint(h.jwtSecret, nodeDiscoveryID); ferr == nil {
+		directFingerprint = fp
 	}
+
+	// Presence-driven gate: when a relay is registered we obscure the node and omit
+	// direct hints; when none is, we hand the client the node's direct addresses
+	// (LAN IPs + public IP on the pinned-TLS beam port) so a solo deployment can
+	// connect without a gateway. resolveRelay reads the same settings GetBeamConfig
+	// uses.
+	getSetting := func(key string) string {
+		val, _ := h.state.Store.GetSetting(key)
+		return val
+	}
+	relayAddr, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"))
+	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 
 	// Sign ticket via shared auth package — same format used by gateway
 	// beam-relay validators and node-side BeamNodeService.Authenticate.
@@ -286,32 +293,65 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// expires is informational. Compute it from the TTL directly —
-	// SignBeamTicket takes claims by value and sets ExpiresAt on its
-	// own copy, so claims.ExpiresAt here is still nil; dereferencing it
-	// panicked the handler (the connection drop surfaced as a 502).
-	// LAN fast-path hints: the node's private (RFC1918) IPs + the beam port, so
-	// a Beam app on the same LAN can dial the node directly and skip the relay.
-	// Same trust model as the relay->node hop (the JWT ticket gates auth and is
-	// node+server bound); the app only uses these when the user opts in, and the
-	// node only answers if it publishes the beam port on the LAN. Returned only
-	// to a caller already authorized for this server.
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// expires is informational. Compute it from the TTL directly - SignBeamTicket
+	// takes claims by value and sets ExpiresAt on its own copy, so claims.ExpiresAt
+	// here is still nil; dereferencing it panicked the handler (the connection drop
+	// surfaced as a 502).
+	// Direct-connect hints (lanHints): the node's LAN IPs + public address on the
+	// pinned-TLS beam port, handed out ONLY when no relay is present so a solo
+	// client can reach the node directly. Omitted when a relay is registered - the
+	// client uses the relay and the node IP stays hidden. The JWT ticket gates auth
+	// (node+server bound) on either path. Returned only to a caller already
+	// authorized for this server.
+	resp := map[string]interface{}{
 		"success": true,
 		"ticket":  ticketString,
 		"expires": time.Now().Add(beamauth.BeamTicketTTL).Unix(),
-		"lanHints": map[string]interface{}{
-			"ips":         lanIPs,
-			"port":        beamLANPort,
-			"fingerprint": lanFingerprint,
-		},
-	})
+	}
+	if directHints != nil {
+		resp["lanHints"] = directHints
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 // beamLANPort is the node's LAN fast-path TLS port (BEAM_LAN_PORT default). The
 // app probes the node's private IPs on this port, dials TLS, and pins the
 // fingerprint above. Distinct from the plain overlay port (25521) used by the relay.
 const beamLANPort = "25523"
+
+// beamDirectHints is the presence-driven direct-connect payload on a beam ticket
+// (serialized as the JSON field "lanHints"). It carries the node's LAN IPs and
+// public address on the pinned-TLS beam port so a solo client (no relay present)
+// can dial the node directly. Absent from the ticket when a relay is registered.
+type beamDirectHints struct {
+	IPs         []string `json:"ips"`
+	PublicAddr  string   `json:"publicAddr"`
+	Port        string   `json:"port"`
+	Fingerprint string   `json:"fingerprint"`
+}
+
+// buildBeamDirectHints applies the presence-driven gate. When a relay is
+// registered (relayAddr != "") it returns nil: the client must use the relay so
+// the node IP stays hidden. Otherwise it returns the node's dialable direct
+// targets (LAN IPs + public address) on the pinned-TLS beam port. Returns nil when
+// there is no fingerprint to pin (never advertise an unpinnable, plaintext-risk
+// path) or when nothing is dialable. Pure (no I/O) so it is unit-tested directly.
+func buildBeamDirectHints(relayAddr string, lanIPs []string, publicIP, port, fingerprint string) *beamDirectHints {
+	if strings.TrimSpace(relayAddr) != "" {
+		return nil // relay present -> obscure the node, hand out no direct hints
+	}
+	if fingerprint == "" {
+		return nil // no pin -> refuse to advertise an unpinnable direct path
+	}
+	h := &beamDirectHints{IPs: lanIPs, Port: port, Fingerprint: fingerprint}
+	if ip := strings.TrimSpace(publicIP); ip != "" {
+		h.PublicAddr = net.JoinHostPort(ip, port)
+	}
+	if len(h.IPs) == 0 && h.PublicAddr == "" {
+		return nil // nothing to dial
+	}
+	return h
+}
 
 // GetBeamConfig returns the Beam relay address and branding info.
 // GET /api/beam/config
