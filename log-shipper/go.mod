@@ -1,4 +1,4 @@
-module github.com/callmebartis/dylaris-log-shipper
+module github.com/Bartis-Dev/dylaris-log-shipper
 
 go 1.26.1
 
