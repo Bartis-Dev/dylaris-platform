@@ -99,6 +99,11 @@ services:
       - dylaris_data:/app/dylaris_data
     networks:
       - dylaris_net
+    # Beam's direct-connect port (25523) is deliberately NOT published here: in the
+    # SaaS/Swarm topology the relay reaches the node over the overlay and publishing
+    # 25523 would expose the node IP and defeat IP-hiding. Direct connect is a
+    # self-host-only path (see docker-compose.yml). The plain :25521 is never
+    # published either.
     deploy:
       # One Node task per swarm host.
       mode: global
