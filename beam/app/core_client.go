@@ -166,15 +166,19 @@ func (c *CoreClient) GetBeamServers() ([]BeamServer, error) {
 	return resp.Servers, nil
 }
 
-// BeamTicket is the signed ticket plus the LAN fast-path hints (the node's
-// private IPs + beam port). The app uses the hints only when the user opts into
-// the LAN fast-path; otherwise it ignores them and goes through the relay.
+// BeamTicket is the signed ticket plus the presence-driven direct-connect hints
+// (the node's LAN IPs + public address on the pinned-TLS beam port). The hints are
+// present only when Core reports no relay; the app then dials the node directly.
 type BeamTicket struct {
 	Ticket string
 	LANIPs []string
 	LANPort string
-	// LANFingerprint is the SHA-256 (hex) of the node's deterministic LAN TLS
-	// cert. The app pins it on the direct dial — encryption + MITM protection.
+	// PublicAddr is the node's public host:port on the pinned-TLS beam port, used as
+	// the direct target when no LAN IP is reachable. Empty when Core has no public IP
+	// for the node (or a relay is present, so there are no hints at all).
+	PublicAddr string
+	// LANFingerprint is the SHA-256 (hex) of the node's deterministic LAN TLS cert.
+	// The app pins it on the direct dial - encryption + MITM protection.
 	LANFingerprint string
 }
 
@@ -191,6 +195,7 @@ func (c *CoreClient) GetBeamTicket(serverUUID string) (*BeamTicket, error) {
 		Message  string `json:"message"`
 		LANHints struct {
 			IPs         []string `json:"ips"`
+			PublicAddr  string   `json:"publicAddr"`
 			Port        string   `json:"port"`
 			Fingerprint string   `json:"fingerprint"`
 		} `json:"lanHints"`
@@ -205,6 +210,7 @@ func (c *CoreClient) GetBeamTicket(serverUUID string) (*BeamTicket, error) {
 		Ticket:         resp.Ticket,
 		LANIPs:         resp.LANHints.IPs,
 		LANPort:        resp.LANHints.Port,
+		PublicAddr:     resp.LANHints.PublicAddr,
 		LANFingerprint: resp.LANHints.Fingerprint,
 	}, nil
 }
