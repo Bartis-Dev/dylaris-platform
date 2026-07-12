@@ -1,5 +1,6 @@
 # Data (Minecraft server data etc.)
 node/dylaris_data/
+core/dylaris_data/
 
 docs/
 # Secrets & Configs (IMPORTANT)
@@ -10,6 +11,11 @@ config.yaml
 *.exe
 *.test
 vendor/
+# Extensionless local build outputs (accidentally committed once as
+# dylaris-core, a 43MB Linux ELF leaking a dev build path) -- anchored to the
+# repo root so it doesn't shadow real subdirectories/files of the same name.
+/dylaris-core
+/dylaris-node
 
 # Node (NEVER upload modules)
 node_modules/
