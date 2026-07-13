@@ -271,6 +271,8 @@ func serveBeamIndex(app *App, next http.Handler, w http.ResponseWriter, r *http.
 			w.Header().Add(k, v)
 		}
 	}
+	// no-store: the shell token is per-run, so never serve a stale cached copy
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))

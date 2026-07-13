@@ -58,4 +58,7 @@ func TestServeBeamIndexInjectsTokenAndFraming(t *testing.T) {
 	if got := res.Header.Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
 		t.Errorf("CSP = %q, want frame-ancestors 'none'", got)
 	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
 }
