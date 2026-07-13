@@ -33,6 +33,13 @@ export const metadata: Metadata = {
   description: "Dylaris MC Webinterface",
 };
 
+// Nonce-based CSP (proxy.ts) requires per-request rendering: statically
+// prerendered pages have no request nonce, so their inline hydration scripts
+// ship un-nonced and the browser blocks them under the strict script-src.
+// Forcing dynamic rendering here cascades to every route under this layout,
+// so Next stamps the per-request nonce onto every page's inline scripts.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: Readonly<{
