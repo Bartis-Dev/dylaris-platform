@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -177,13 +178,15 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// page's relative ./assets/* references resolve correctly.
 			http.Redirect(w, r, beamSettingsRoute, http.StatusFound)
 		case r.URL.Path == beamSettingsRoute:
-			// The settings-page HTML entry point. Served straight through
-			// the Wails asset server, which auto-injects /wails/runtime.js +
-			// /wails/ipc.js for any path ending in "/index.html" (200
-			// text/html). No manual injection is needed, and Wails' raw
+			// The settings-page HTML entry point. Served through the Wails
+			// asset server (which auto-injects /wails/runtime.js +
+			// /wails/ipc.js for any path ending in "/index.html"), then
+			// post-processed to splice the per-run shell-capability token
+			// and mark the page unframeable so a compromised same-origin
+			// Panel cannot iframe it and read the token. Wails' raw
 			// runtime is safe now that the native dispatcher enforces the
 			// URL-open boundary (BC3 Part A).
-			serveEmbedded(next, w, r, "/index.html")
+			serveBeamIndex(app, next, w, r)
 		case strings.HasPrefix(r.URL.Path, beamSettingsRoute+"assets/"):
 			// Static JS/CSS assets - never HTML documents, nothing to
 			// inject, and Wails' own auto-injection only fires for
@@ -211,6 +214,74 @@ func serveEmbedded(next http.Handler, w http.ResponseWriter, r *http.Request, pa
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = path
 	next.ServeHTTP(w, r2)
+}
+
+// captureResponse is a buffering http.ResponseWriter used to post-process the
+// Wails asset server's /__beam/ index.html (splice the shell token, add framing
+// headers) before writing it to the real client. It records status, headers,
+// and body without touching the underlying connection.
+type captureResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func newCaptureResponse() *captureResponse {
+	return &captureResponse{header: http.Header{}, status: http.StatusOK}
+}
+
+func (c *captureResponse) Header() http.Header         { return c.header }
+func (c *captureResponse) WriteHeader(status int)      { c.status = status }
+func (c *captureResponse) Write(b []byte) (int, error) { return c.body.Write(b) }
+
+// injectShellToken splices a <script> that publishes the per-run shell token as
+// window.__beamShellToken just before </head> (same anchor strategy as
+// injectWailsRuntime). The token is emitted with %q so it is always a safe,
+// Go-quoted string literal in the HTML; the token is hex from crypto/rand, so
+// %q never needs to escape anything, but %q keeps it robust regardless.
+func injectShellToken(html []byte, token string) []byte {
+	tag := fmt.Sprintf(`<script>window.__beamShellToken=%q</script>`, token)
+	s := string(html)
+	for _, anchor := range []string{"</head>", "<body"} {
+		if i := strings.Index(strings.ToLower(s), anchor); i >= 0 {
+			return []byte(s[:i] + tag + s[i:])
+		}
+	}
+	return append([]byte(tag), html...)
+}
+
+// serveBeamIndex serves the app-shell index.html through the Wails asset server
+// (which auto-injects /wails/*), then splices the per-run shell-capability token
+// into the document and marks it unframeable. The token reaches ONLY this
+// first-party page - never the proxied Panel - so a compromised Panel cannot
+// read it, and X-Frame-Options: DENY + CSP frame-ancestors 'none' stop a
+// same-origin iframe from stealing it via frames[0].__beamShellToken.
+func serveBeamIndex(app *App, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	cap := newCaptureResponse()
+	serveEmbedded(next, cap, r, "/index.html")
+
+	body := cap.body.Bytes()
+	if strings.HasPrefix(cap.header.Get("Content-Type"), "text/html") {
+		body = injectShellToken(body, app.shellToken)
+	}
+
+	// Copy the asset server's headers through, then override framing + length.
+	for k, vals := range cap.header {
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.Header().Del("Content-Encoding")
+
+	status := cap.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // panelUnreachableHTML is shown when the Panel can't be reached (DNS
