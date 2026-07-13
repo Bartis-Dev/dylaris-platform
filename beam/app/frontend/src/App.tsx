@@ -24,16 +24,20 @@ type UpdateGate = {
 type WailsBindings = {
   GetPanelURL?: () => Promise<string>;
   GetDefaultPanelURL?: () => Promise<string>;
-  SavePanelURL?: (url: string) => Promise<void>;
+  SavePanelURL?: (token: string, url: string) => Promise<void>;
   GetUpdateInfo?: () => Promise<UpdateInfo>;
   GetUpdateGate?: () => Promise<UpdateGate>;
-  OpenUpdateDownload?: () => void;
-  ApplyUpdate?: () => Promise<void>;
+  OpenUpdateDownload?: (token: string) => void;
+  ApplyUpdate?: (token: string) => Promise<void>;
 };
 
 declare global {
   interface Window {
     go?: { main?: { App?: WailsBindings } };
+    // Per-run shell capability token, spliced into this page's HTML by the Go
+    // proxy (serveBeamIndex). Required as the first arg of the side-effecting
+    // bound methods; the proxied Panel never receives it.
+    __beamShellToken?: string;
     // Wails injects window.runtime at load; EventsOn returns an unsubscribe fn.
     runtime?: {
       EventsOn?: (eventName: string, callback: (data: any) => void) => (() => void);
@@ -44,6 +48,11 @@ declare global {
 function getBindings(): WailsBindings | undefined {
   return window.go?.main?.App;
 }
+
+// The Beam shell publishes a per-run capability token on window (spliced into
+// this page's HTML by the Go proxy). It is read once and passed as the first
+// arg of the side-effecting bound methods; a proxied Panel never holds it.
+const shellToken = window.__beamShellToken ?? '';
 
 // Human-readable label per self-update phase (matches the Go update:status states).
 const UPDATE_LABELS: Record<string, string> = {
@@ -113,7 +122,7 @@ export default function App() {
     setUpdateError(null);
     setUpdateProgress(null);
     setUpdateState('downloading');
-    getBindings()?.ApplyUpdate?.();
+    getBindings()?.ApplyUpdate?.(shellToken);
   };
 
   const updating = updateState !== null && updateState !== 'error';
@@ -150,7 +159,7 @@ export default function App() {
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => getBindings()?.OpenUpdateDownload?.()}
+              onClick={() => getBindings()?.OpenUpdateDownload?.(shellToken)}
             >
               Download in browser instead
             </button>
@@ -174,7 +183,7 @@ export default function App() {
       candidate = 'https://' + candidate;
     }
     try {
-      await getBindings()?.SavePanelURL?.(candidate);
+      await getBindings()?.SavePanelURL?.(shellToken, candidate);
     } catch (err) {
       setSavingError(err instanceof Error ? err.message : String(err));
       return;
