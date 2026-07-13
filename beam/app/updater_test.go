@@ -93,3 +93,25 @@ func TestParseVerifiedManifest(t *testing.T) {
 		t.Error("placeholder key verified - must fail closed")
 	}
 }
+
+func TestBelowMinVersion(t *testing.T) {
+	cases := []struct {
+		name         string
+		current, min string
+		want         bool
+	}{
+		{"gating off empty min", "1.0.0", "", false},
+		{"malformed min fails safe", "1.0.0", "nope", false},
+		{"below blocked", "1.2.2", "1.2.3", true},
+		{"equal allowed", "1.2.3", "1.2.3", false},
+		{"above allowed", "1.3.0", "1.2.3", false},
+		{"v-prefixed below", "v1.2.2", "1.2.3", true},
+		{"dev fail-closed", "dev", "1.0.0", true},
+		{"empty current fail-closed", "", "1.0.0", true},
+	}
+	for _, c := range cases {
+		if got := belowMinVersion(c.current, c.min); got != c.want {
+			t.Errorf("%s: belowMinVersion(%q,%q) = %v want %v", c.name, c.current, c.min, got, c.want)
+		}
+	}
+}

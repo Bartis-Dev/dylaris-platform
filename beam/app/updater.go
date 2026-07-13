@@ -172,6 +172,29 @@ func parseSemver(s string) ([3]int, bool) {
 	return out, true
 }
 
+// belowMinVersion is the app-side twin of Core's beamClientBelowMin: it decides
+// the MANDATORY tier. Empty/invalid min -> false (gating off). An unparseable
+// current (incl. "dev") while a valid min is set -> true (fail-closed, matching
+// the server gate so the app blocks itself exactly when Core would). Otherwise
+// ordered MAJOR.MINOR.PATCH: current < min -> true. Reuses the Phase-1
+// parseSemver rule; does not duplicate it.
+func belowMinVersion(current, min string) bool {
+	mv, ok := parseSemver(min)
+	if !ok {
+		return false
+	}
+	cv, ok := parseSemver(current)
+	if !ok {
+		return true
+	}
+	for i := 0; i < 3; i++ {
+		if cv[i] != mv[i] {
+			return cv[i] < mv[i]
+		}
+	}
+	return false
+}
+
 // OpenUpdateDownload opens the update manifest's platform-specific download
 // URL in the user's system browser (so it doesn't navigate the app's
 // webview). Deliberately no-arg (BC3): OpenInBrowser used to take an

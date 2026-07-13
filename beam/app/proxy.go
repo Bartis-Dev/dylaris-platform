@@ -191,6 +191,15 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// these either. Plain passthrough.
 			serveEmbedded(next, w, r, strings.TrimPrefix(r.URL.Path, "/__beam"))
 		default:
+			if app.gateIsBlocked() {
+				// Force-update gate active: keep the webview on the app-shell
+				// mandatory screen. Redirect every Panel-bound request to
+				// /__beam/ so a reload or deep-link can't slip past it.
+				// /wails/ and /__beam/* are handled in the cases above, so this
+				// never loops.
+				http.Redirect(w, r, beamSettingsRoute, http.StatusFound)
+				return
+			}
 			proxy.ServeHTTP(w, r)
 		}
 	})

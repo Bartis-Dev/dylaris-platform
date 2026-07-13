@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -55,6 +56,14 @@ type App struct {
 	// RevealInExplorer will ever open (see comment there).
 	downloadMu       sync.Mutex
 	lastDownloadPath string
+
+	// gateMu guards the force-update gate. gateBlocked is set once the app knows
+	// its build is below Core's advertised min_version (proactively after auth,
+	// or reactively from a GetBeamTicket 426). While set, the app-shell shows the
+	// mandatory-update screen and the proxy middleware pins the webview to it.
+	gateMu      sync.Mutex
+	gateBlocked bool
+	gateMin     string
 }
 
 // userSettings is the schema of the JSON config file we persist between
@@ -146,6 +155,63 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+// UpdateGate is the force-update decision the app-shell frontend reads to
+// render the mandatory "update required" screen. Blocked is true when the
+// running build is below Core's advertised min_version.
+type UpdateGate struct {
+	Blocked    bool   `json:"blocked"`
+	Current    string `json:"current"`
+	MinVersion string `json:"minVersion"`
+}
+
+// GetUpdateGate reports the force-update decision. Bound to the frontend; the
+// mandatory screen renders when Blocked is true. The download button reuses the
+// Phase-1 OpenUpdateDownload, so no download URL is carried here.
+func (a *App) GetUpdateGate() *UpdateGate {
+	a.gateMu.Lock()
+	defer a.gateMu.Unlock()
+	return &UpdateGate{Blocked: a.gateBlocked, Current: AppVersion, MinVersion: a.gateMin}
+}
+
+func (a *App) gateIsBlocked() bool {
+	a.gateMu.Lock()
+	defer a.gateMu.Unlock()
+	return a.gateBlocked
+}
+
+// triggerMandatoryUpdate flips the gate and pulls the webview off the Panel
+// onto the app-shell mandatory screen (/__beam/, where App.tsx renders it when
+// GetUpdateGate reports blocked). The proxy middleware also redirects Panel
+// requests while blocked, so a manual reload can't escape. Safe from any
+// goroutine.
+func (a *App) triggerMandatoryUpdate(minVer string) {
+	a.gateMu.Lock()
+	a.gateBlocked = true
+	a.gateMin = minVer
+	a.gateMu.Unlock()
+	if a.ctx != nil {
+		runtime.WindowExecJS(a.ctx, "window.location.href='/__beam/'")
+	}
+}
+
+// evaluateUpdateGate is the PROACTIVE startup gate: once authenticated it reads
+// Core's advertised min_version and blocks if this build is below it. Called
+// (backgrounded) from SetSession. Best-effort - a fetch error leaves the gate
+// unchanged; the reactive 426 in ConnectToServer is the backstop.
+func (a *App) evaluateUpdateGate() {
+	client := a.getClient()
+	if client == nil {
+		return
+	}
+	config, err := client.GetBeamConfig()
+	if err != nil || config == nil {
+		return
+	}
+	if belowMinVersion(AppVersion, config.MinVersion) {
+		a.triggerMandatoryUpdate(config.MinVersion)
+	}
 }
 
 // ─── Connection-state accessors (connMu-guarded) ─────────────────────
@@ -271,6 +337,10 @@ func (a *App) SetSession(apiURL, token string) error {
 	if old != nil {
 		old.Close()
 	}
+	// Proactive force-update gate: now authenticated, check Core's advertised
+	// minimum and block if this build is too old. Backgrounded so SetSession
+	// returns to the Panel JS promptly (the check is a network round-trip).
+	go a.evaluateUpdateGate()
 	return nil
 }
 
@@ -402,6 +472,12 @@ func (a *App) ConnectToServer(serverUUID string) error {
 
 	ticket, err := client.GetBeamTicket(serverUUID)
 	if err != nil {
+		// A mid-session raise of beam.min_version surfaces here as a typed 426:
+		// show the mandatory screen instead of a generic error.
+		var ure *UpdateRequiredError
+		if errors.As(err, &ure) {
+			a.triggerMandatoryUpdate(ure.MinVersion)
+		}
 		return fmt.Errorf("ticket: %w", err)
 	}
 
