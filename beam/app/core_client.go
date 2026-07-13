@@ -28,9 +28,12 @@ type LoginResult struct {
 }
 
 type BeamConfig struct {
-	RelayAddress string        `json:"relay_address"`
-	Enabled      bool          `json:"enabled"`
-	Branding     BeamBranding  `json:"branding"`
+	RelayAddress string       `json:"relay_address"`
+	Enabled      bool         `json:"enabled"`
+	Branding     BeamBranding `json:"branding"`
+	// MinVersion is Core's advertised force-update floor (empty = gating off).
+	// The app reads it for the proactive startup gate; enforcement is server-side.
+	MinVersion string `json:"min_version"`
 }
 
 type BeamBranding struct {
@@ -139,6 +142,7 @@ func (c *CoreClient) GetBeamConfig() (*BeamConfig, error) {
 		Success      bool         `json:"success"`
 		RelayAddress string       `json:"relay_address"`
 		Enabled      bool         `json:"enabled"`
+		MinVersion   string       `json:"min_version"`
 		Branding     BeamBranding `json:"branding"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
@@ -148,6 +152,7 @@ func (c *CoreClient) GetBeamConfig() (*BeamConfig, error) {
 		RelayAddress: resp.RelayAddress,
 		Enabled:      resp.Enabled,
 		Branding:     resp.Branding,
+		MinVersion:   resp.MinVersion,
 	}, nil
 }
 
@@ -325,6 +330,10 @@ func (c *CoreClient) SelectiveDownload(basePath string, selected []string, selec
 func (c *CoreClient) get(path string) ([]byte, error) {
 	req, _ := http.NewRequest("GET", c.apiURL+path, nil)
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	// Self-report the running build so Core's GetBeamTicket force-update gate
+	// can lock out below-min clients. "dev" builds send "dev" (unparseable ->
+	// blocked only when a floor is set).
+	req.Header.Set("X-Beam-Version", AppVersion)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -337,6 +346,7 @@ func (c *CoreClient) post(path string, body []byte) ([]byte, error) {
 	req, _ := http.NewRequest("POST", c.apiURL+path, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Beam-Version", AppVersion)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -345,14 +355,40 @@ func (c *CoreClient) post(path string, body []byte) ([]byte, error) {
 	return readCoreResponse(resp)
 }
 
+// UpdateRequiredError is the typed signal that Core refused to mint a beam
+// ticket because this build is below the admin-set minimum (HTTP 426 with
+// reason:"update_required"). ConnectToServer branches on it (errors.As) to
+// show the mandatory-update screen instead of a generic connection error -
+// typed, not a string match on the message.
+type UpdateRequiredError struct {
+	MinVersion string
+}
+
+func (e *UpdateRequiredError) Error() string {
+	if e.MinVersion != "" {
+		return "update required: this Beam version is below the minimum " + e.MinVersion
+	}
+	return "update required: this Beam version is below the minimum"
+}
+
 // readCoreResponse reads the body and turns any 4xx/5xx into an error
 // that carries the status code and a body snippet. Without this an HTML
 // error page (from a proxy/CDN, not Core) reached the JSON decoder and
-// surfaced as the useless "invalid character '<'".
+// surfaced as the useless "invalid character '<'". A 426 update_required is
+// decoded to a typed UpdateRequiredError first so the caller can react.
 func readCoreResponse(resp *http.Response) ([]byte, error) {
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusUpgradeRequired { // 426 force-update gate
+		var body struct {
+			Reason     string `json:"reason"`
+			MinVersion string `json:"min_version"`
+		}
+		if json.Unmarshal(data, &body) == nil && body.Reason == "update_required" {
+			return nil, &UpdateRequiredError{MinVersion: body.MinVersion}
+		}
 	}
 	if resp.StatusCode >= 400 {
 		snippet := strings.TrimSpace(string(data))
