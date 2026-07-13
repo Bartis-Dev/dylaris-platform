@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -39,6 +40,68 @@ const beamPanelCSP = "default-src 'self'; " +
 	"frame-src https: http:; " +
 	"frame-ancestors 'self'"
 
+// scriptNonceRe matches a CSP nonce source ('nonce-<value>'). The value charset
+// covers base64 std (+ / =) and base64url (- _). The Panel emits a nonce only on
+// script-src, so the first match in the header is the script-src nonce.
+var scriptNonceRe = regexp.MustCompile(`'nonce-([A-Za-z0-9+/=_-]+)'`)
+
+// extractScriptNonce returns the first CSP nonce value (without the surrounding
+// 'nonce-' / quotes), or "" if the CSP carries none.
+func extractScriptNonce(csp string) string {
+	m := scriptNonceRe.FindStringSubmatch(csp)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// beamNonceCSP builds Beam's own Content-Security-Policy that REUSES the Panel's
+// per-request nonce with 'strict-dynamic' (no 'unsafe-inline' on script-src),
+// while keeping Beam's desktop-context directives: frame-src https: http: (P13
+// custom-tab iframes) and frame-ancestors 'self' (Beam frames the Panel on the
+// wails:// origin). Reusing Next's nonce is safe: Next stamped only its own
+// legitimate inline scripts with it, and an XSS-injected inline script cannot
+// predict the per-request value.
+func beamNonceCSP(nonce string) string {
+	return "default-src 'self'; " +
+		"script-src 'self' 'nonce-" + nonce + "' 'strict-dynamic' https://cdnjs.cloudflare.com; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com; " +
+		"font-src 'self'; " +
+		"connect-src 'self' https://api.dylaris.com; " +
+		"object-src 'none'; " +
+		"base-uri 'none'; " +
+		"form-action 'self'; " +
+		"frame-src https: http:; " +
+		"frame-ancestors 'self'"
+}
+
+// beamCSPForPanel picks Beam's CSP for a proxied Panel HTML response. If the
+// Panel's own CSP carried a script-src nonce, Beam reuses it under
+// 'strict-dynamic' (returning the nonce so the injected runtime tags can be
+// stamped to match); otherwise it falls back to the pragmatic beamPanelCSP with
+// an empty nonce - byte-identical to the pre-nonce behavior, so a mixed
+// old-Panel/new-Beam pair keeps working (graceful degradation).
+func beamCSPForPanel(panelCSP string) (csp, nonce string) {
+	if n := extractScriptNonce(panelCSP); n != "" {
+		return beamNonceCSP(n), n
+	}
+	return beamPanelCSP, ""
+}
+
+// wailsRuntimeTags returns the two runtime <script> tags, stamping each with a
+// nonce attribute when nonce != "" (required under 'strict-dynamic'), or the
+// plain classic scripts (wailsRuntimeInjection, byte-identical to the pre-nonce
+// behavior) when nonce == "".
+func wailsRuntimeTags(nonce string) string {
+	if nonce == "" {
+		return wailsRuntimeInjection
+	}
+	n := ` nonce="` + nonce + `"`
+	return `<script` + n + ` src="/wails/runtime.js"></script>` +
+		`<script` + n + ` src="/wails/ipc.js"></script>`
+}
+
 // wailsRuntimeInjection is spliced into proxied Panel HTML so the
 // window.go / window.runtime native bridge exists on the reverse-proxied
 // Panel. Wails' own AssetServer only auto-injects the runtime into HTML it
@@ -57,15 +120,17 @@ const wailsRuntimeInjection = `<script src="/wails/runtime.js"></script>` +
 	`<script src="/wails/ipc.js"></script>`
 
 // injectWailsRuntime splices the runtime scripts into an HTML document,
-// preferring just before </head>, then before <body>, else prepended.
-func injectWailsRuntime(html []byte) []byte {
+// preferring just before </head>, then before <body>, else prepended. The tags
+// are nonce-stamped when nonce != "" (Panel supplied a nonce), else plain.
+func injectWailsRuntime(html []byte, nonce string) []byte {
+	tags := wailsRuntimeTags(nonce)
 	s := string(html)
 	for _, anchor := range []string{"</head>", "<body"} {
 		if i := strings.Index(strings.ToLower(s), anchor); i >= 0 {
-			return []byte(s[:i] + wailsRuntimeInjection + s[i:])
+			return []byte(s[:i] + tags + s[i:])
 		}
 	}
-	return append([]byte(wailsRuntimeInjection), html...)
+	return append([]byte(tags), html...)
 }
 
 // beamSettingsRoute is the reserved path that serves the embedded
@@ -146,13 +211,18 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// exists on the Panel. Accept-Encoding was stripped on the
 			// way out, so the body here is always plain text.
 			if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-				resp.Header.Set("Content-Security-Policy", beamPanelCSP)
+				// Propagate the Panel's per-request nonce when present
+				// (nonce-strict), else fall back to the pragmatic beamPanelCSP.
+				// The Panel's own CSP is still on resp.Header here - we overwrite
+				// it immediately below.
+				csp, nonce := beamCSPForPanel(resp.Header.Get("Content-Security-Policy"))
+				resp.Header.Set("Content-Security-Policy", csp)
 				body, err := io.ReadAll(resp.Body)
 				resp.Body.Close()
 				if err != nil {
 					return err
 				}
-				body = injectWailsRuntime(body)
+				body = injectWailsRuntime(body, nonce)
 				resp.Body = io.NopCloser(bytes.NewReader(body))
 				resp.ContentLength = int64(len(body))
 				resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
