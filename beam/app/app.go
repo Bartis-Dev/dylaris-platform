@@ -78,8 +78,13 @@ type App struct {
 	// minted in NewApp, delivered ONLY to the first-party /__beam/ app-shell
 	// page (spliced into its HTML by the proxy), and never sent to the proxied
 	// Panel. The three side-effecting bound methods (SavePanelURL, ApplyUpdate,
-	// OpenUpdateDownload) require it as their first argument, so a compromised
-	// Panel cannot invoke them via window.go.main.App.* - it never holds the token.
+	// OpenUpdateDownload) require it as their first argument. This RAISES THE BAR
+	// against a blindly-injected Panel compromise; it is NOT a hard boundary,
+	// because the proxied Panel shares this wails:// origin and a same-origin
+	// fetch of /__beam/ could read the token unless the Sec-Fetch-Dest navigation
+	// gate in serveBeamIndex blocks it (which relies on the webview sending Fetch
+	// Metadata). A true boundary would require the native Wails dispatcher to check
+	// the current top-level URL at call time (deferred).
 	shellToken string
 }
 

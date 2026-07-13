@@ -331,7 +331,17 @@ func serveBeamIndex(app *App, next http.Handler, w http.ResponseWriter, r *http.
 	serveEmbedded(next, cap, r, "/index.html")
 
 	body := cap.body.Bytes()
-	if strings.HasPrefix(cap.header.Get("Content-Type"), "text/html") {
+	// Splice the shell token ONLY for a genuine top-level navigation. Sec-Fetch-Dest
+	// is a browser-set forbidden header that page JS cannot forge: a same-origin
+	// fetch()/XHR of /__beam/ carries "empty", an iframe "iframe", a real navigation
+	// "document". Without this gate a compromised proxied Panel (same wails:// origin)
+	// could fetch this page and read the token from the body. If the header is ABSENT
+	// (a webview with no Fetch Metadata support), we still deliver the token so the
+	// shell never breaks - on such a webview this degrades to obfuscation, no worse
+	// than not gating at all.
+	dest := r.Header.Get("Sec-Fetch-Dest")
+	isNavigation := dest == "" || dest == "document"
+	if isNavigation && strings.HasPrefix(cap.header.Get("Content-Type"), "text/html") {
 		body = injectShellToken(body, app.shellToken)
 	}
 

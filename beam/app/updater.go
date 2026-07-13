@@ -247,18 +247,20 @@ func belowMinVersion(current, min string) bool {
 
 // OpenUpdateDownload opens the update manifest's platform-specific download
 // URL in the user's system browser (so it doesn't navigate the app's
-// webview). Deliberately no-arg (BC3): OpenInBrowser used to take an
-// arbitrary caller-supplied URL, but it is a Wails-bound method reachable as
-// window.go.main.App.OpenInBrowser(...) from ANY JS in the webview - the
-// Wails webview reverse-proxies the remote Panel onto the wails:// origin,
-// so a compromised/MITM'd Panel (or a user-set malicious Panel URL) could
-// call it with a file://, UNC, or other dangerous scheme, triggering a
-// native OS shell-open. The no-arg design removes that JS-supplied-argument
-// vector, but the manifest's DownloadURL is still Go-origin input passed
-// straight to BrowserOpenURL, bypassing the Task 1 dispatcher's scheme
-// check. The allowlist below additionally constrains even a poisoned or
-// MITM'd manifest's DownloadURL to http/https, so it cannot reach a
-// file:// shell-open either.
+// webview). It takes the shell capability token as its first argument (see
+// checkShellToken) rather than a caller-supplied URL: OpenInBrowser used to
+// take an arbitrary caller-supplied URL, but it is a Wails-bound method
+// reachable as window.go.main.App.OpenInBrowser(...) from ANY JS in the
+// webview - the Wails webview reverse-proxies the remote Panel onto the
+// wails:// origin, so a compromised/MITM'd Panel (or a user-set malicious
+// Panel URL) could call it with a file://, UNC, or other dangerous scheme,
+// triggering a native OS shell-open. Taking only the token (never a
+// caller-supplied URL) removes that JS-supplied-argument vector, but the
+// manifest's DownloadURL is still Go-origin input passed straight to
+// BrowserOpenURL, bypassing the Task 1 dispatcher's scheme check. The
+// allowlist below additionally constrains even a poisoned or MITM'd
+// manifest's DownloadURL to http/https, so it cannot reach a file://
+// shell-open either.
 func (a *App) OpenUpdateDownload(token string) {
 	if !a.checkShellToken(token) {
 		return // broker isolation: only the first-party shell may open the browser
