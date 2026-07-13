@@ -190,11 +190,38 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// sendBeamUpdateRequired writes the structured HTTP 426 the Beam app branches
+// on (typed, not string-matched) to show its mandatory-update screen. It
+// carries reason + min_version in addition to the standard {success,message};
+// sendJSONError only emits {success,message}, so the gate needs this instead.
+func sendBeamUpdateRequired(w http.ResponseWriter, minVer string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUpgradeRequired) // 426
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     false,
+		"reason":      "update_required",
+		"min_version": minVer,
+		"message":     "Your Beam version is out of date. Update to at least " + minVer + " to connect.",
+	})
+}
+
 // GetBeamTicket signs a JWT ticket for a specific server.
 // POST /api/beam/ticket
 func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
+
+	// Force-update gate: refuse to mint a ticket for a Beam build below the
+	// admin-set minimum. GetBeamTicket is the single pre-connection choke point
+	// (every connect, relay or direct, calls it first), so gating here locks out
+	// old clients without touching the node. Fail-closed: with a floor set, an
+	// absent/unparseable X-Beam-Version is treated as below-min (see
+	// beamClientBelowMin). Empty beam.min_version = gating off.
+	minVer, _ := h.state.Store.GetSetting("beam.min_version")
+	if beamClientBelowMin(r.Header.Get("X-Beam-Version"), minVer) {
+		sendBeamUpdateRequired(w, minVer)
+		return
+	}
 
 	// server_uuid is read from the query string (GET) or a JSON body
 	// (POST). The Beam desktop app uses GET — networks in front of Core

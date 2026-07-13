@@ -1,6 +1,11 @@
 package handlers
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestParseBeamSemver(t *testing.T) {
 	cases := []struct {
@@ -53,5 +58,38 @@ func TestBeamClientBelowMin(t *testing.T) {
 		if got := beamClientBelowMin(c.clientVer, c.minVer); got != c.want {
 			t.Errorf("%s: beamClientBelowMin(%q,%q) = %v want %v", c.name, c.clientVer, c.minVer, got, c.want)
 		}
+	}
+}
+
+func TestSendBeamUpdateRequired(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sendBeamUpdateRequired(rec, "1.2.3")
+
+	if rec.Code != http.StatusUpgradeRequired {
+		t.Fatalf("status = %d, want 426", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	var body struct {
+		Success    bool   `json:"success"`
+		Reason     string `json:"reason"`
+		MinVersion string `json:"min_version"`
+		Message    string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	if body.Success {
+		t.Error("success = true, want false")
+	}
+	if body.Reason != "update_required" {
+		t.Errorf("reason = %q, want update_required", body.Reason)
+	}
+	if body.MinVersion != "1.2.3" {
+		t.Errorf("min_version = %q, want 1.2.3", body.MinVersion)
+	}
+	if body.Message == "" {
+		t.Error("message is empty")
 	}
 }
