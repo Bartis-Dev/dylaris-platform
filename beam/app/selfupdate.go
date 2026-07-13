@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 
 	"github.com/minio/selfupdate"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -81,6 +83,31 @@ func applyUpdate(verified []byte) error {
 			return fmt.Errorf("update failed and rollback failed, reinstall may be needed: %v (rollback: %v)", err, rbErr)
 		}
 		return fmt.Errorf("update failed, previous version restored: %w", err)
+	}
+	return nil
+}
+
+// relaunch starts a fresh copy of the (just-updated) executable and asks Wails
+// to quit the current one. A plain exec.Start() is enough to outlive the parent
+// on both Linux and Windows once we Quit, so no per-OS branch is needed. If the
+// spawn fails the update is ALREADY applied, so we return a "restart manually"
+// signal instead of failing the whole flow - the new binary is on disk either
+// way.
+func (a *App) relaunch() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("update applied - please restart manually (cannot locate executable: %v)", err)
+	}
+	cmd := exec.Command(exe)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("update applied - please restart manually (relaunch failed: %v)", err)
+	}
+	if a.ctx != nil {
+		wailsruntime.Quit(a.ctx)
+	} else {
+		os.Exit(0)
 	}
 	return nil
 }
