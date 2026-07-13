@@ -532,12 +532,12 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 // deliberately NOT considered here: they pin where Beam.exe connects
 // from outside, where the download port (25552) is typically closed.
 //
-// The Beam app is published to Cloudflare R2 (no longer served by the relay).
+// The Beam app is published to GitHub Releases (no longer served by the relay).
 // Resolution order:
-//   1. beam.download_link — explicit full-URL override (CDN/mirror).
-//   2. The platform URL from the R2 manifest (beam.release_manifest, default
-//      https://downloads.dylaris.com/beam/latest.json). Public, so Core fetches
-//      it without auth.
+//   1. beam.download_link - explicit full-URL override (CDN/mirror).
+//   2. The platform URL from the GitHub manifest (beam.release_manifest, default
+//      https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json).
+//      Public once the repo is public, so Core fetches it without auth.
 func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) []string {
 	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
 		base := strings.TrimRight(link, "/")
@@ -549,7 +549,7 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 
 	manifestURL := strings.TrimSpace(getSetting("beam.release_manifest"))
 	if manifestURL == "" {
-		manifestURL = "https://downloads.dylaris.com/beam/latest.json"
+		manifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
 	}
 	if u, err := manifestPlatformURL(ctx, manifestURL, platform); err == nil && u != "" {
 		return []string{u}
@@ -557,8 +557,8 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 	return nil
 }
 
-// manifestPlatformURL fetches the R2 release manifest and returns the download
-// URL for the given platform slug (e.g. windows-amd64).
+// manifestPlatformURL fetches the GitHub release manifest and returns the
+// download URL for the given platform slug (e.g. windows-amd64).
 func manifestPlatformURL(ctx context.Context, manifestURL, platform string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
