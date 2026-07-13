@@ -926,6 +926,7 @@ export interface BeamSettings {
     bwLimit: number;
     enabled: boolean;
     downloadLink?: string;               // Optional CDN override
+    minVersion?: string;                 // Force-update floor (empty = gating off)
 }
 export const getBeamSettings = (): Promise<{ success: boolean; settings?: BeamSettings }> => fetchAPI('/settings/beam');
 export const saveBeamSettings = (data: BeamSettings) => fetchAPI('/settings/beam', { method: 'POST', body: JSON.stringify(data) });

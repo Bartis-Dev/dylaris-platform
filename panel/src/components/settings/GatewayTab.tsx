@@ -27,6 +27,10 @@ interface BeamSettings {
     enabled: boolean;
     downloadLink: string;
 
+    // Force-update floor (empty = gating off). Clients below this get HTTP 426
+    // from GetBeamTicket and a blocking update screen. Validated server-side.
+    minVersion?: string;
+
     // Per-direction throttle splits (bytes/sec, 0 = unlimited). Stored
     // alongside bwLimit; Core folds the internal pair into bwLimit until
     // the per-direction enforcement ships.
@@ -206,6 +210,7 @@ function bpsToMbit(bps: number | undefined): number {
 interface BeamEditableSnapshot {
     relayAddress: string;
     downloadLink: string;
+    minVersion: string;
     enabled: boolean;
     bwUpInternal: number;
     bwDownInternal: number;
@@ -221,6 +226,7 @@ function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
     return {
         relayAddress: s.relayAddress,
         downloadLink: s.downloadLink,
+        minVersion: s.minVersion ?? '',
         enabled: s.enabled,
         bwUpInternal: s.bwUpInternal ?? 0,
         bwDownInternal: s.bwDownInternal ?? 0,
@@ -244,6 +250,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         bwLimit: 0,
         enabled: true,
         downloadLink: '',
+        minVersion: '',
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -281,6 +288,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             ...s,
             relayAddress: snap.relayAddress,
             downloadLink: snap.downloadLink,
+            minVersion: snap.minVersion,
             enabled: snap.enabled,
             bwUpInternal: snap.bwUpInternal,
             bwDownInternal: snap.bwDownInternal,
@@ -382,6 +390,19 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                         className="input-field"
                     />
                     <p className="text-xs text-(--base-06) mt-0.5">When set, a download button appears in the Files tab for all users.</p>
+                </div>
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Minimum Beam Version</label>
+                    <input
+                        type="text"
+                        value={settings.minVersion ?? ''}
+                        onChange={e => setSettings(s => ({ ...s, minVersion: e.target.value.trim() }))}
+                        placeholder="e.g. 1.2.3"
+                        className="input-field input-mono"
+                    />
+                    <p className="text-xs text-(--base-06) mt-0.5">
+                        Clients below this version cannot connect and must update. Leave empty to disable.
+                    </p>
                 </div>
             </div>
 
