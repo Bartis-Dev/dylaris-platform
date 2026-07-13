@@ -5,11 +5,13 @@ go 1.26.1
 require (
 	dylaris-pkg v0.0.0
 	dylaris-proto v0.0.0
+	github.com/minio/selfupdate v0.6.0
 	github.com/wailsapp/wails/v2 v2.10.1
 	google.golang.org/grpc v1.79.2
 )
 
 require (
+	aead.dev/minisign v0.2.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect

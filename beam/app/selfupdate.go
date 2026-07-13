@@ -5,10 +5,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/minio/selfupdate"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -64,4 +66,21 @@ func (a *App) downloadUpdate(url string) ([]byte, error) {
 		}
 	}
 	return buf, nil
+}
+
+// applyUpdate atomically replaces the running executable with verified.
+// Verification (sha256 + Ed25519, in verifyUpdateBinary) MUST have passed before
+// this is called; selfupdate is handed empty Options so it does ONLY the
+// OS-specific atomic replace + rollback and is never part of the trust decision.
+// On a failed replace the library auto-rolls-back internally; RollbackError
+// reports whether that rollback ALSO failed, which we surface distinctly so the
+// user knows if a manual reinstall is needed.
+func applyUpdate(verified []byte) error {
+	if err := selfupdate.Apply(bytes.NewReader(verified), selfupdate.Options{}); err != nil {
+		if rbErr := selfupdate.RollbackError(err); rbErr != nil {
+			return fmt.Errorf("update failed and rollback failed, reinstall may be needed: %v (rollback: %v)", err, rbErr)
+		}
+		return fmt.Errorf("update failed, previous version restored: %w", err)
+	}
+	return nil
 }
