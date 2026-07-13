@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +65,28 @@ func TestSignVerifyRoundtrip(t *testing.T) {
 	}
 	if got.Version != "1.2.3" || got.Platforms["linux-amd64"].URL != entry.URL {
 		t.Errorf("re-parsed shape mismatch: %+v", got)
+	}
+}
+
+func TestNoTrailingNewline(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bins := []binInput{{Slug: "linux-amd64", Data: []byte("fake-binary-bytes")}}
+	m := buildManifest("1.2.3", "https://example.test/dl", priv, bins)
+
+	manifestBytes, err := canonicalManifestBytes(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.HasSuffix(manifestBytes, []byte("\n")) {
+		t.Error("canonicalManifestBytes must not end in a trailing newline")
+	}
+
+	sig := signDetached(priv, manifestBytes)
+	if strings.Contains(sig, "\n") {
+		t.Error("signDetached output must not contain a newline")
 	}
 }
 

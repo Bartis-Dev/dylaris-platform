@@ -61,7 +61,7 @@ func runSign(args []string) error {
 	baseURL := fs.String("base-url", "", "release asset base URL")
 	outDir := fs.String("out", ".", "output directory for latest.json and .sig files")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("parse args: %w", err)
 	}
 	if *version == "" || *baseURL == "" {
 		return fmt.Errorf("-version and -base-url are required")
@@ -87,13 +87,13 @@ func runSign(args []string) error {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("read binary %s (%s): %w", slug, path, err)
 		}
 		bins = append(bins, binInput{Slug: slug, Data: data})
 		// Detached per-binary signature (consumed by Phase 3's self-apply).
 		sigPath := *outDir + "/DylarisBeam-" + slug + ".sig"
 		if err := os.WriteFile(sigPath, []byte(signDetached(priv, data)), 0o644); err != nil {
-			return err
+			return fmt.Errorf("write %s: %w", sigPath, err)
 		}
 	}
 	if len(bins) == 0 {
@@ -106,11 +106,14 @@ func runSign(args []string) error {
 		return err
 	}
 	if err := os.WriteFile(*outDir+"/latest.json", manifestBytes, 0o644); err != nil {
-		return err
+		return fmt.Errorf("write latest.json: %w", err)
 	}
 	// Detached signature over the EXACT latest.json bytes.
 	sig := signDetached(priv, manifestBytes)
-	return os.WriteFile(*outDir+"/latest.json.sig", []byte(sig), 0o644)
+	if err := os.WriteFile(*outDir+"/latest.json.sig", []byte(sig), 0o644); err != nil {
+		return fmt.Errorf("write latest.json.sig: %w", err)
+	}
+	return nil
 }
 
 type platformEntry struct {
