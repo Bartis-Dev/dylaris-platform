@@ -56,7 +56,9 @@ func main() {
 			},
 		},
 		Windows: &windows.Options{
-			DisableWindowIcon: true,
+			// Show the branded titlebar icon. Windows-window-chrome only; does
+			// not touch the BC3-patched webview dispatcher or asset server.
+			DisableWindowIcon: false,
 		},
 		OnStartup: app.startup,
 		Bind: []interface{}{

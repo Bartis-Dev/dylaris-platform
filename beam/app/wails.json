@@ -9,5 +9,12 @@
   "author": {
     "name": "Dylaris",
     "email": ""
+  },
+  "info": {
+    "companyName": "Dylaris",
+    "productName": "Dylaris Beam",
+    "productVersion": "0.0.0",
+    "copyright": "Copyright (c) 2026 Dylaris",
+    "comments": "Dylaris Beam desktop client"
   }
 }
