@@ -164,7 +164,7 @@ Two compose files are provided. They run the **same images** and differ only in 
 
 All services on one host, a local **bridge** network, one Node. Best for a single VPS / homelab box.
 
-The full file is [`docker-compose.yml`](docker-compose.yml) at the repo root, see it directly rather than a copy here, so this README can't drift out of sync with the real services (env vars, the Valkey ACL `entrypoint:`, healthchecks, etc.). Five services on one bridge network: `core`, `node`, `panel`, `timescaledb`, `redis` (Valkey).
+The full file is [`docker-compose.yml`](docker-compose.yml) at the repo root, see it directly rather than a copy here, so this README can't drift out of sync with the real services (env vars, the Valkey ACL `command:` + aclfile setup, healthchecks, etc.). Five services on one bridge network: `core`, `node`, `panel`, `timescaledb`, `redis` (Valkey).
 
 ```bash
 docker compose up -d          # start
@@ -281,7 +281,7 @@ secrets:
 | `FRONTEND_URL` | `http://localhost:25510` | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). **Must be externally reachable**: the previous compose default (`http://panel:25510`, an internal Docker-only hostname) made every emailed link unreachable outside the Docker network. For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config, kept as env. |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
-| `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. Must match the seeded aclfile admin password. |
+| `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. The bundled Valkey runs the stock image (non-root) with `--aclfile` and is NOT auto-seeded, so this must match the `default` admin password you create in the aclfile before the first boot (see the redis service comment in the compose files). |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
 | `DYLARIS_TELEMETRY` | *(unset = on)* | No | Set to `false` to hard-disable anonymous usage stats (bypasses the in-panel toggle). See [Anonymous usage stats](#anonymous-usage-stats). |

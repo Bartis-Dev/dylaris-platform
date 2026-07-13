@@ -161,34 +161,22 @@ services:
   redis:
     # Valkey - drop-in Redis-compatible fork. Service name stays "redis" so
     # REDIS_ADDR=redis:6379 resolves. In-memory coordination bus.
-    # Redis ACL is mandatory. The entrypoint seeds the aclfile on first boot with an
-    # admin `default` user whose password is REDIS_PASSWORD (equal to Core's), so
-    # Valkey comes up already locked. Empty REDIS_PASSWORD seeds a PASSWORDLESS admin
-    # for dev only; PRODUCTION MUST set it. Mount the parent DIRECTORY (ACL SAVE does
-    # temp-file + rename). See REDIS_PASSWORD in README.md's Configuration
-    # reference for the Core-side admin login this seeds.
+    # Redis ACL is mandatory. This runs the STOCK image (no custom entrypoint),
+    # so Valkey drops to its non-root `valkey` user (the stock entrypoint chowns
+    # /data and execs via setpriv). --aclfile refuses to start against a missing
+    # file, so seed the admin `default` user ONCE before the first deploy with a
+    # password equal to Core's REDIS_PASSWORD (no space in the password - ACL
+    # fields are space-delimited):
+    #   mkdir -p /etc/dylaris/valkey-acl
+    #   printf 'user default on >%s ~* &* +@all\n' "$REDIS_PASSWORD" > /etc/dylaris/valkey-acl/users.acl
+    # Core then connects as the `default` admin and provisions the per-node scoped
+    # users. The aclfile lives in /data (the WORKDIR) so the stock chown reaches
+    # it and ACL SAVE (temp-file + rename) works as non-root. See REDIS_PASSWORD
+    # in README.md's Configuration reference for the Core-side admin login.
     image: valkey/valkey:8-alpine
-    environment:
-      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
-    # Seed users.acl if absent, then exec valkey-server with the SAME flags. $$
-    # escapes compose interpolation so the container shell expands the vars.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        ACL=/etc/valkey/users.acl
-        if [ ! -s "$$ACL" ]; then
-          if [ -n "$$REDIS_PASSWORD" ]; then
-            echo "user default on >$$REDIS_PASSWORD ~* &* +@all" > "$$ACL"
-          else
-            echo "redisacl: WARNING seeding a PASSWORDLESS admin default (dev only; production MUST set REDIS_PASSWORD)" >&2
-            echo "user default on nopass ~* &* +@all" > "$$ACL"
-          fi
-        fi
-        exec valkey-server --save "" --appendonly no --aclfile "$$ACL"
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--aclfile", "/data/users.acl"]
     volumes:
-      - /etc/dylaris/valkey-acl:/etc/valkey
+      - /etc/dylaris/valkey-acl:/data
     networks:
       - dylaris_net
     deploy:

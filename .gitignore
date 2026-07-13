@@ -2,6 +2,9 @@
 node/dylaris_data/
 core/dylaris_data/
 
+# Redis/Valkey ACL runtime state (aclfile created before first boot, rewritten by ACL SAVE)
+valkey-acl/
+
 docs/
 # Secrets & Configs (IMPORTANT)
 .env
