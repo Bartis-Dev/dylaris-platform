@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -39,16 +40,33 @@ type UpdateInfo struct {
 	DownloadURL     string `json:"downloadUrl"`
 }
 
-// manifest is the app's minimal read view of latest.json. The producer also
-// writes per-platform "sha256" and "sig" fields (for Phase 3's self-apply);
-// encoding/json ignores those unknown fields here. Integrity is not weakened by
-// ignoring them: the manifest signature is verified over the FULL raw bytes
-// before any field is read.
+// manifest is the app's read view of latest.json. The producer writes a
+// per-platform url, sha256 (hex, over the binary) and sig (base64 Ed25519 over
+// the binary); Phase 3 decodes all three. Integrity is not weakened by decoding
+// them: the manifest signature is verified over the FULL raw bytes before any
+// field is read, so the sha256/sig become trust-rooted once the manifest sig
+// verifies.
 type manifest struct {
 	Version   string `json:"version"`
 	Platforms map[string]struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		Sha256 string `json:"sha256"`
+		Sig    string `json:"sig"`
 	} `json:"platforms"`
+}
+
+// platformArtifact returns the download url, hex sha256, and base64 Ed25519 sig
+// for the current runtime.GOOS-runtime.GOARCH from a verified manifest, or an
+// error if the manifest carries no entry for this platform (e.g. a Windows
+// client before Windows builds exist). The sha256/sig are used only inside the
+// Go apply flow and are never surfaced to the frontend.
+func platformArtifact(m *manifest) (dlURL, sha256Hex, sigB64 string, err error) {
+	key := runtime.GOOS + "-" + runtime.GOARCH
+	p, ok := m.Platforms[key]
+	if !ok {
+		return "", "", "", fmt.Errorf("beam: no update build for platform %s", key)
+	}
+	return p.URL, p.Sha256, p.Sig, nil
 }
 
 // GetUpdateInfo fetches and VERIFIES the signed manifest, then reports whether a

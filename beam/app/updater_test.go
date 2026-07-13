@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"runtime"
 	"testing"
 )
 
@@ -113,5 +114,28 @@ func TestBelowMinVersion(t *testing.T) {
 		if got := belowMinVersion(c.current, c.min); got != c.want {
 			t.Errorf("%s: belowMinVersion(%q,%q) = %v want %v", c.name, c.current, c.min, got, c.want)
 		}
+	}
+}
+
+func TestPlatformArtifactDecode(t *testing.T) {
+	key := runtime.GOOS + "-" + runtime.GOARCH
+	// A manifest whose platform map has an entry for THIS host, so the resolver
+	// finds it regardless of where the test runs. Confirms sha256/sig now decode.
+	body := []byte(`{"version":"1.4.0","platforms":{"` + key +
+		`":{"url":"https://example.test/bin","sha256":"abcd","sig":"AA=="}}}`)
+	var m manifest
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	url, sha, sig, err := platformArtifact(&m)
+	if err != nil {
+		t.Fatalf("platformArtifact(%s) errored: %v", key, err)
+	}
+	if url != "https://example.test/bin" || sha != "abcd" || sig != "AA==" {
+		t.Errorf("got url=%q sha=%q sig=%q", url, sha, sig)
+	}
+	// No entry for this platform -> a clear error, not a crash.
+	if _, _, _, err := platformArtifact(&manifest{Platforms: nil}); err == nil {
+		t.Error("missing-platform manifest accepted - want error")
 	}
 }
