@@ -6,11 +6,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/minio/selfupdate"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -23,16 +25,20 @@ const maxUpdateBytes = 200 << 20
 
 // downloadUpdate streams the update binary from url into memory, emitting
 // "update:progress" {loaded,total} per chunk. It is a DISTINCT event from the
-// file-transfer "download:progress" so the two never clash. Uses NO short
-// timeout (the body is multi-MB) and enforces maxUpdateBytes so the read stays
-// bounded. Mirrors the core_client.go streaming pattern; the full bytes are
-// returned because the caller must hash + verify them before applying.
+// file-transfer "download:progress" so the two never clash. Uses a generous
+// 15-minute overall context deadline (not a short one) so a stalled connection
+// eventually errors out instead of stranding the update flow forever, while
+// still enforcing maxUpdateBytes so the read stays bounded. Mirrors the
+// core_client.go streaming pattern; the full bytes are returned because the
+// caller must hash + verify them before applying.
 func (a *App) downloadUpdate(url string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := (&http.Client{}).Do(req) // no timeout: large binary
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +88,7 @@ func applyUpdate(verified []byte) error {
 		if rbErr := selfupdate.RollbackError(err); rbErr != nil {
 			return fmt.Errorf("update failed and rollback failed, reinstall may be needed: %v (rollback: %v)", err, rbErr)
 		}
-		return fmt.Errorf("update failed, previous version restored: %w", err)
+		return fmt.Errorf("update failed, no changes were applied: %w", err)
 	}
 	return nil
 }
