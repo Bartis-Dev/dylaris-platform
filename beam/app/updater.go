@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +137,36 @@ func verifyDetached(pubB64 string, msg, sig []byte) bool {
 		return false
 	}
 	return ed25519.Verify(ed25519.PublicKey(pub), msg, sig)
+}
+
+// errUpdateVerify is the single fail-closed error for any update-binary
+// verification failure. We deliberately do NOT distinguish the failure modes to
+// the caller: any of them means "do not apply".
+var errUpdateVerify = errors.New("beam: update binary verification failed")
+
+// verifyUpdateBinary checks a downloaded update binary against the signed
+// manifest fields BEFORE selfupdate.Apply is ever called. It recomputes the
+// SHA-256 (hex) and compares it to wantSha256Hex, and verifies the detached
+// Ed25519 sigB64 over the exact bytes with pubB64. Both must pass. FAIL-CLOSED:
+// an empty field, a hash mismatch, an unparseable/short signature, or a
+// placeholder/unparseable pubkey all return errUpdateVerify. This is the trust
+// decision; the selfupdate library is not part of it.
+func verifyUpdateBinary(pubB64 string, data []byte, wantSha256Hex, sigB64 string) error {
+	if len(data) == 0 || wantSha256Hex == "" || sigB64 == "" {
+		return errUpdateVerify
+	}
+	sum := sha256.Sum256(data)
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(wantSha256Hex)) {
+		return errUpdateVerify
+	}
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(sigB64))
+	if err != nil {
+		return errUpdateVerify
+	}
+	if !verifyDetached(pubB64, data, sig) {
+		return errUpdateVerify
+	}
+	return nil
 }
 
 func httpGetBytes(u string) ([]byte, error) {

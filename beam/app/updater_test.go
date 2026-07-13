@@ -3,7 +3,9 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"runtime"
 	"testing"
@@ -137,5 +139,53 @@ func TestPlatformArtifactDecode(t *testing.T) {
 	// No entry for this platform -> a clear error, not a crash.
 	if _, _, _, err := platformArtifact(&manifest{Platforms: nil}); err == nil {
 		t.Error("missing-platform manifest accepted - want error")
+	}
+}
+
+func TestVerifyUpdateBinary(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	data := []byte("the new beam binary bytes")
+	sum := sha256.Sum256(data)
+	shaHex := hex.EncodeToString(sum[:])
+	sigB64 := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, data))
+
+	// correct hash + correct sig passes.
+	if err := verifyUpdateBinary(pubB64, data, shaHex, sigB64); err != nil {
+		t.Fatalf("valid binary rejected: %v", err)
+	}
+
+	// wrong hash fails (64 zero-nibbles can never equal the real digest).
+	zeroHash := "0000000000000000000000000000000000000000000000000000000000000000"
+	if err := verifyUpdateBinary(pubB64, data, zeroHash, sigB64); err == nil {
+		t.Error("wrong hash accepted - must fail closed")
+	}
+
+	// tampered bytes: hash no longer matches AND the sig no longer verifies.
+	tampered := append([]byte(nil), data...)
+	tampered[0] ^= 0xFF
+	if err := verifyUpdateBinary(pubB64, tampered, shaHex, sigB64); err == nil {
+		t.Error("tampered bytes accepted - must fail closed")
+	}
+
+	// bad/short signature (valid base64, wrong length) fails.
+	if err := verifyUpdateBinary(pubB64, data, shaHex, "AA=="); err == nil {
+		t.Error("short signature accepted - must fail closed")
+	}
+
+	// empty required fields fail.
+	if err := verifyUpdateBinary(pubB64, data, "", sigB64); err == nil {
+		t.Error("empty sha accepted - must fail closed")
+	}
+	if err := verifyUpdateBinary(pubB64, nil, shaHex, sigB64); err == nil {
+		t.Error("empty data accepted - must fail closed")
+	}
+
+	// the embedded PLACEHOLDER pubkey rejects an otherwise-valid hash+sig.
+	if err := verifyUpdateBinary(updatePublicKeyB64, data, shaHex, sigB64); err == nil {
+		t.Error("placeholder pubkey accepted - must fail closed")
 	}
 }
