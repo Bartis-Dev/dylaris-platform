@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -64,6 +65,11 @@ type App struct {
 	gateMu      sync.Mutex
 	gateBlocked bool
 	gateMin     string
+
+	// updateInFlight guards ApplyUpdate against concurrent/re-entrant runs: the
+	// mandatory screen and the optional nag both call it, and a user can click
+	// twice. CompareAndSwap admits exactly one flow at a time.
+	updateInFlight atomic.Bool
 }
 
 // userSettings is the schema of the JSON config file we persist between
@@ -211,6 +217,76 @@ func (a *App) evaluateUpdateGate() {
 	}
 	if belowMinVersion(AppVersion, config.MinVersion) {
 		a.triggerMandatoryUpdate(config.MinVersion)
+	}
+}
+
+// ApplyUpdate is the bound self-update entry point (Phase 3). Both the mandatory
+// screen and the optional nag call it. It admits exactly one run at a time and
+// drives the flow on a background goroutine so the bound call returns to the
+// frontend immediately; progress and terminal state reach the UI via the
+// update:progress and update:status events.
+func (a *App) ApplyUpdate() {
+	if !a.updateInFlight.CompareAndSwap(false, true) {
+		return // a run is already in progress
+	}
+	go func() {
+		defer a.updateInFlight.Store(false)
+		a.runUpdate()
+	}()
+}
+
+// runUpdate executes download -> verify -> apply -> relaunch, emitting an
+// update:status {state,message} at each transition (states: downloading,
+// verifying, applying, relaunching, or error). It RE-VERIFIES fail-closed even
+// though the buttons only appear when a verified update exists: the manifest is
+// re-fetched and re-checked, and verifyUpdateBinary gates the apply, so a
+// poisoned/placeholder path can never replace the running binary.
+func (a *App) runUpdate() {
+	emitStatus := func(state, message string) {
+		if a.ctx == nil {
+			return
+		}
+		runtime.EventsEmit(a.ctx, "update:status", map[string]interface{}{
+			"state":   state,
+			"message": message,
+		})
+	}
+
+	m, err := fetchVerifiedManifest()
+	if err != nil {
+		emitStatus("error", "No verified update is available.")
+		return
+	}
+	dlURL, wantSha, sigB64, err := platformArtifact(m)
+	if err != nil {
+		emitStatus("error", err.Error())
+		return
+	}
+
+	emitStatus("downloading", "")
+	data, err := a.downloadUpdate(dlURL)
+	if err != nil {
+		emitStatus("error", "Download failed: "+err.Error())
+		return
+	}
+
+	emitStatus("verifying", "")
+	if err := verifyUpdateBinary(updatePublicKeyB64, data, wantSha, sigB64); err != nil {
+		emitStatus("error", "Update verification failed; nothing was changed.")
+		return
+	}
+
+	emitStatus("applying", "")
+	if err := applyUpdate(data); err != nil {
+		emitStatus("error", err.Error())
+		return
+	}
+
+	emitStatus("relaunching", "")
+	if err := a.relaunch(); err != nil {
+		// Applied but the relaunch did not start: surface the restart-manually message.
+		emitStatus("error", err.Error())
+		return
 	}
 }
 
