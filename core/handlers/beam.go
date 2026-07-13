@@ -407,6 +407,10 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 		"success":       true,
 		"relay_address": relayAddress,
 		"enabled":       enabled == "true",
+		// min_version is the advertised force-update floor (empty = gating off).
+		// The Beam app reads it for its proactive startup gate; the actual
+		// enforcement lives in GetBeamTicket, not here.
+		"min_version": getSetting("beam.min_version"),
 		"branding": map[string]string{
 			"name":     brandName,
 			"logo_url": brandLogoURL,

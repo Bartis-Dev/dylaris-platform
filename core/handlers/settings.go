@@ -819,6 +819,11 @@ type BeamSettings struct {
 	Enabled      bool  `json:"enabled"`
 	DownloadLink string `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
 
+	// MinVersion is the Beam force-update floor (empty = gating off). Persisted
+	// to DB key beam.min_version; advertised by GetBeamConfig and enforced by
+	// GetBeamTicket. Validated empty-or-semver on save.
+	MinVersion string `json:"minVersion"`
+
 	// Throttle splits (bytes/sec, 0 = unlimited). Stored verbatim. Until
 	// the per-direction limiters land in node + relay these are advisory:
 	// BwLimit (above) is computed by SaveBeamSettings as the lower of
@@ -861,6 +866,17 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The force-update floor must be empty (gating off) or a valid semver;
+	// reject a malformed value so an admin cannot set a floor that never
+	// matches (and never silently locks every client out).
+	minVersion := strings.TrimSpace(req.MinVersion)
+	if minVersion != "" {
+		if _, ok := parseBeamSemver(minVersion); !ok {
+			sendJSONError(w, "Invalid minimum version: must be empty or a semantic version like 1.2.3", http.StatusBadRequest)
+			return
+		}
+	}
+
 	enabledStr := "false"
 	if req.Enabled {
 		enabledStr = "true"
@@ -881,6 +897,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.bw_limit", fmt.Sprintf("%d", effectiveBw)},
 		{"beam.enabled", enabledStr},
 		{"beam.download_link", req.DownloadLink},
+		{"beam.min_version", minVersion},
 
 		// New per-direction throttle splits (advisory until relay-side
 		// throttle ships). Stored verbatim so the UI round-trips.
@@ -937,6 +954,7 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 		ManualOverride: manualOverride,
 		PublicHost:     publicHost,
 		DownloadLink:   getSetting("beam.download_link"),
+		MinVersion:     getSetting("beam.min_version"),
 		Enabled:        true,
 	}
 
