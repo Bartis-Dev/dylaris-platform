@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +73,14 @@ type App struct {
 	// mandatory screen and the optional nag both call it, and a user can click
 	// twice. CompareAndSwap admits exactly one flow at a time.
 	updateInFlight atomic.Bool
+
+	// shellToken is a per-run capability secret (32 random bytes, hex). It is
+	// minted in NewApp, delivered ONLY to the first-party /__beam/ app-shell
+	// page (spliced into its HTML by the proxy), and never sent to the proxied
+	// Panel. The three side-effecting bound methods (SavePanelURL, ApplyUpdate,
+	// OpenUpdateDownload) require it as their first argument, so a compromised
+	// Panel cannot invoke them via window.go.main.App.* - it never holds the token.
+	shellToken string
 }
 
 // userSettings is the schema of the JSON config file we persist between
@@ -144,8 +155,13 @@ func (a *App) GetDefaultPanelURL() string {
 
 // SavePanelURL persists a new Panel URL chosen via the Settings dialog.
 // Pass an empty string to clear the override (falls back to the
-// build-time default on the next launch).
-func (a *App) SavePanelURL(url string) error {
+// build-time default on the next launch). Requires the shell capability
+// token (broker isolation): a compromised proxied Panel does not hold it,
+// so it cannot repoint the app at an attacker origin.
+func (a *App) SavePanelURL(token, url string) error {
+	if !a.checkShellToken(token) {
+		return fmt.Errorf("unauthorized")
+	}
 	url = strings.TrimSpace(url)
 	// Trim a trailing slash so the redirector's later concatenation
 	// (e.g. "/login") never produces a double-slash.
@@ -154,9 +170,23 @@ func (a *App) SavePanelURL(url string) error {
 }
 
 func NewApp() *App {
-	return &App{
-		uploads: make(map[string]*UploadSession),
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		// The app cannot enforce broker isolation without a token; refuse to
+		// start rather than silently run with an empty (guessable) one.
+		panic("beam: failed to generate shell capability token: " + err.Error())
 	}
+	return &App{
+		uploads:    make(map[string]*UploadSession),
+		shellToken: hex.EncodeToString(buf),
+	}
+}
+
+// checkShellToken reports whether tok matches this run's shell capability
+// token, in constant time. ConstantTimeCompare returns 0 for any length
+// mismatch, so an empty or truncated token is rejected.
+func (a *App) checkShellToken(tok string) bool {
+	return subtle.ConstantTimeCompare([]byte(tok), []byte(a.shellToken)) == 1
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -225,7 +255,10 @@ func (a *App) evaluateUpdateGate() {
 // drives the flow on a background goroutine so the bound call returns to the
 // frontend immediately; progress and terminal state reach the UI via the
 // update:progress and update:status events.
-func (a *App) ApplyUpdate() {
+func (a *App) ApplyUpdate(token string) {
+	if !a.checkShellToken(token) {
+		return // broker isolation: only the first-party shell may self-update
+	}
 	if !a.updateInFlight.CompareAndSwap(false, true) {
 		return // a run is already in progress
 	}

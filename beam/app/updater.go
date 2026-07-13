@@ -259,7 +259,10 @@ func belowMinVersion(current, min string) bool {
 // check. The allowlist below additionally constrains even a poisoned or
 // MITM'd manifest's DownloadURL to http/https, so it cannot reach a
 // file:// shell-open either.
-func (a *App) OpenUpdateDownload() {
+func (a *App) OpenUpdateDownload(token string) {
+	if !a.checkShellToken(token) {
+		return // broker isolation: only the first-party shell may open the browser
+	}
 	info := a.GetUpdateInfo()
 	if info.DownloadURL == "" || a.ctx == nil {
 		return
