@@ -39,6 +39,8 @@ func TestBeamClientBelowMin(t *testing.T) {
 		{"malformed min fails safe to allow", "1.0.0", "not-a-version", false},
 		{"below blocked", "1.2.2", "1.2.3", true},
 		{"below on minor", "1.1.9", "1.2.0", true},
+		{"below on major", "0.9.9", "1.0.0", true},
+		{"above on major", "1.0.0", "0.9.9", false},
 		{"equal allowed", "1.2.3", "1.2.3", false},
 		{"above allowed", "1.3.0", "1.2.3", false},
 		{"above with prerelease allowed", "1.3.0-rc1", "1.2.9", false},
