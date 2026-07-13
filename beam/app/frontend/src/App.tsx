@@ -14,11 +14,18 @@ type UpdateInfo = {
   downloadUrl: string;
 };
 
+type UpdateGate = {
+  blocked: boolean;
+  current: string;
+  minVersion: string;
+};
+
 type WailsBindings = {
   GetPanelURL?: () => Promise<string>;
   GetDefaultPanelURL?: () => Promise<string>;
   SavePanelURL?: (url: string) => Promise<void>;
   GetUpdateInfo?: () => Promise<UpdateInfo>;
+  GetUpdateGate?: () => Promise<UpdateGate>;
   OpenUpdateDownload?: () => void;
 };
 
@@ -38,6 +45,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [gate, setGate] = useState<UpdateGate | null>(null);
 
   // Pull the current + default Panel URL on mount.
   useEffect(() => {
@@ -49,6 +57,7 @@ export default function App() {
         const url = (await bindings?.GetPanelURL?.()) || fallback;
         setInputUrl(url);
         bindings?.GetUpdateInfo?.().then(u => setUpdate(u)).catch(() => {});
+        bindings?.GetUpdateGate?.().then(g => setGate(g)).catch(() => {});
       } catch (err) {
         console.warn('Panel URL resolve failed:', err);
         setInputUrl('https://panel.dylaris.com');
@@ -80,6 +89,37 @@ export default function App() {
     }
     window.location.href = '/';
   };
+
+  // MANDATORY (blocking) tier: the running build is below the server's floor.
+  // Full-screen, non-dismissible - no settings form, no cancel. The proxy
+  // middleware keeps redirecting Panel requests here while blocked. The button
+  // reuses the Phase-1 OpenUpdateDownload (opens the GitHub asset in the
+  // browser); self-apply is Phase 3.
+  if (gate?.blocked) {
+    return (
+      <div className="loader">
+        <div className="logo">
+          <span className="brand-d">D</span>ylaris <span className="brand-beam">Beam</span>
+        </div>
+        <div className="settings-card" style={{ borderColor: 'var(--accent, #7048C8)' }}>
+          <div className="settings-title">Update required</div>
+          <div style={{ fontSize: '0.85em', opacity: 0.85, marginTop: '0.4rem' }}>
+            This Beam version ({gate.current}) can no longer connect. The server requires
+            at least {gate.minVersion}. Update to continue.
+          </div>
+          <div className="settings-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => getBindings()?.OpenUpdateDownload?.()}
+            >
+              Download update
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="loader">
