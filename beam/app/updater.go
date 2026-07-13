@@ -1,23 +1,35 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // AppVersion is the running build, injected at build time via
-// -ldflags "-X main.AppVersion=<build-number>". "dev" for local builds. The
-// updater compares it to the manifest's version.
+// -ldflags "-X main.AppVersion=X.Y.Z". "dev" for local builds (never nags). The
+// updater does an ordered semver compare against the manifest's version.
 var AppVersion = "dev"
 
-// manifestURL is the R2-hosted manifest the app checks for updates. Public, so
-// it works regardless of the source repo's visibility.
-const manifestURL = "https://downloads.dylaris.com/beam/latest.json"
+// manifestURL is the GitHub Releases manifest the app checks for updates. The
+// "latest/download" path always resolves to the newest release's fixed-name
+// assets. Public once the repo is public (see the Phase 1 plan owner steps). The
+// detached signature lives at manifestURL + ".sig".
+const manifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
+
+// errUnverifiedManifest is returned (and swallowed to "no update") when the
+// manifest signature does not verify against the embedded public key.
+var errUnverifiedManifest = errors.New("beam: manifest signature verification failed")
 
 // UpdateInfo is returned to the frontend to drive the "update available" notice.
 type UpdateInfo struct {
@@ -27,6 +39,11 @@ type UpdateInfo struct {
 	DownloadURL     string `json:"downloadUrl"`
 }
 
+// manifest is the app's minimal read view of latest.json. The producer also
+// writes per-platform "sha256" and "sig" fields (for Phase 3's self-apply);
+// encoding/json ignores those unknown fields here. Integrity is not weakened by
+// ignoring them: the manifest signature is verified over the FULL raw bytes
+// before any field is read.
 type manifest struct {
 	Version   string `json:"version"`
 	Platforms map[string]struct {
@@ -34,19 +51,19 @@ type manifest struct {
 	} `json:"platforms"`
 }
 
-// GetUpdateInfo fetches the R2 manifest and reports whether a newer build exists
-// + the download URL for this platform. Best-effort: any error reports "no
-// update" so it never blocks the app. A build differing from the manifest's
-// version (by equality, since builds aren't ordered) counts as an update.
+// GetUpdateInfo fetches and VERIFIES the signed manifest, then reports whether a
+// newer build exists + the download URL for this platform. Best-effort and
+// FAIL-CLOSED: any fetch error, a missing/invalid signature, or an unparseable
+// embedded key all report "no update" so the app never nags on unverified data
+// and never blocks. A nag fires only when latest > current by ordered semver.
 func (a *App) GetUpdateInfo() *UpdateInfo {
 	info := &UpdateInfo{Current: AppVersion}
-	m, err := fetchManifest()
+	m, err := fetchVerifiedManifest()
 	if err != nil {
 		return info
 	}
 	info.Latest = m.Version
-	// "dev" builds never nag; otherwise any difference means a newer build.
-	if AppVersion != "dev" && m.Version != "" && m.Version != AppVersion {
+	if AppVersion != "dev" && m.Version != "" && semverNewer(m.Version, AppVersion) {
 		info.UpdateAvailable = true
 	}
 	if p, ok := m.Platforms[runtime.GOOS+"-"+runtime.GOARCH]; ok {
@@ -55,8 +72,55 @@ func (a *App) GetUpdateInfo() *UpdateInfo {
 	return info
 }
 
-func fetchManifest() (*manifest, error) {
-	req, _ := http.NewRequest(http.MethodGet, manifestURL, nil)
+// fetchVerifiedManifest downloads latest.json + latest.json.sig and verifies the
+// signature over the RAW manifest bytes with the embedded public key BEFORE any
+// field is parsed.
+func fetchVerifiedManifest() (*manifest, error) {
+	body, err := httpGetBytes(manifestURL)
+	if err != nil {
+		return nil, err
+	}
+	sigB64, err := httpGetBytes(manifestURL + ".sig")
+	if err != nil {
+		return nil, err
+	}
+	return parseVerifiedManifest(updatePublicKeyB64, body, sigB64)
+}
+
+// parseVerifiedManifest verifies sigB64 (base64-std) over the exact body bytes
+// with pubB64, then unmarshals. FAIL-CLOSED: a bad key, bad signature encoding,
+// or a failed verify returns an error (never a partial manifest).
+func parseVerifiedManifest(pubB64 string, body, sigB64 []byte) (*manifest, error) {
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigB64)))
+	if err != nil {
+		return nil, err
+	}
+	if !verifyDetached(pubB64, body, sig) {
+		return nil, errUnverifiedManifest
+	}
+	var m manifest
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// verifyDetached checks an ed25519 signature over msg using a base64-std public
+// key. FAIL-CLOSED on every bad-input path: an unparseable/placeholder key, a
+// wrong-length key, or an empty signature all return false.
+func verifyDetached(pubB64 string, msg, sig []byte) bool {
+	pub, err := base64.StdEncoding.DecodeString(pubB64)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false
+	}
+	if len(sig) == 0 {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(pub), msg, sig)
+}
+
+func httpGetBytes(u string) ([]byte, error) {
+	req, _ := http.NewRequest(http.MethodGet, u, nil)
 	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
@@ -65,11 +129,47 @@ func fetchManifest() (*manifest, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, http.ErrNotSupported
 	}
-	var m manifest
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return nil, err
+	return io.ReadAll(resp.Body)
+}
+
+// semverNewer reports whether latest is a strictly newer release than current by
+// ordered MAJOR.MINOR.PATCH. Rule (simplest correct): only the numeric core is
+// compared; an optional leading "v" is stripped and any "-prerelease"/"+build"
+// suffix is dropped before comparing. Anything that does not parse to three
+// numeric parts is treated as "not newer" (no nag on garbage). A pre-release does
+// not by itself trigger a nag - a higher core still wins on its core.
+func semverNewer(latest, current string) bool {
+	lv, ok1 := parseSemver(latest)
+	cv, ok2 := parseSemver(current)
+	if !ok1 || !ok2 {
+		return false
 	}
-	return &m, nil
+	for i := 0; i < 3; i++ {
+		if lv[i] != cv[i] {
+			return lv[i] > cv[i]
+		}
+	}
+	return false
+}
+
+func parseSemver(s string) ([3]int, bool) {
+	var out [3]int
+	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		s = s[:i]
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 // OpenUpdateDownload opens the update manifest's platform-specific download
