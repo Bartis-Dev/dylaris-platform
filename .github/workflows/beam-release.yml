@@ -1,0 +1,77 @@
+name: Beam Release
+
+on:
+  push:
+    tags:
+      - 'beam-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-beam:
+    # Phase 1: self-hosted Linux ships linux/amd64 only. Wails builds native per
+    # OS, so a Windows/macOS binary needs its own runner. When switching to
+    # GitHub-hosted runners, convert this into a matrix, e.g.:
+    #   strategy:
+    #     matrix:
+    #       include:
+    #         - { os: ubuntu-latest,  platform: linux/amd64,   slug: linux-amd64 }
+    #         - { os: windows-latest, platform: windows/amd64, slug: windows-amd64 }
+    #   runs-on: ${{ matrix.os }}
+    # and drive -platform / the slug from matrix. Phase 1 stays single-target.
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#beam-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: beam/app/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: beam/app/frontend/package-lock.json
+
+      - name: Stamp version into wails.json
+        working-directory: beam/app
+        run: |
+          sed -i "s/\"productVersion\": \"[^\"]*\"/\"productVersion\": \"${{ steps.ver.outputs.VERSION }}\"/" wails.json
+
+      - name: Build beam (linux/amd64)
+        working-directory: beam/app
+        # Uses the vendored + BC3-patched Wails CLI via the module replace (no
+        # separate wails install). AppVersion is injected for the updater.
+        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform linux/amd64 -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
+
+      - name: Stage + sign release assets
+        working-directory: beam/app
+        env:
+          BEAM_UPDATE_PRIVKEY: ${{ secrets.BEAM_UPDATE_PRIVKEY }}
+        run: |
+          mkdir -p dist-release
+          cp build/bin/DylarisBeam dist-release/DylarisBeam-linux-amd64
+          go run ./cmd/beam-release sign \
+            -version "${{ steps.ver.outputs.VERSION }}" \
+            -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download" \
+            -out dist-release \
+            linux-amd64=dist-release/DylarisBeam-linux-amd64
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Beam ${{ steps.ver.outputs.VERSION }}
+          files: |
+            beam/app/dist-release/DylarisBeam-linux-amd64
+            beam/app/dist-release/DylarisBeam-linux-amd64.sig
+            beam/app/dist-release/latest.json
+            beam/app/dist-release/latest.json.sig
