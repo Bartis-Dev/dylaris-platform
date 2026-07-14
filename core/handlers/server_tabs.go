@@ -238,11 +238,27 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	req.Mode = strings.TrimSpace(req.Mode)
+	req.TargetPath = strings.TrimSpace(req.TargetPath)
+	req.Surface = strings.TrimSpace(req.Surface)
+	req.Visibility = strings.TrimSpace(req.Visibility)
 	if req.URL != "" {
 		if err := validateTabURL(strings.TrimSpace(req.URL)); err != nil {
 			sendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	}
+	targetPort := 0
+	if req.TargetPort != nil {
+		targetPort = *req.TargetPort
+	}
+	// PATCH only writes fields the caller actually sent (see COALESCE below),
+	// so validate each proxied field the same way: only when present. Render,
+	// auth and proxy dispatch downstream trust these DB values, so an invalid
+	// port/path/enum must never reach the UPDATE.
+	if err := validateProxiedTabPatch(targetPort, req.TargetPath, req.Mode, req.Surface, req.Visibility); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	db := h.db()
 	if db == nil {
@@ -274,11 +290,11 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		strings.TrimSpace(req.URL),
 		nullableInt(req.Position),
 		req.Enabled, req.OpenInPanel,
-		strings.TrimSpace(req.Mode),
+		req.Mode,
 		portArg,
-		strings.TrimSpace(req.TargetPath),
-		strings.TrimSpace(req.Surface),
-		strings.TrimSpace(req.Visibility),
+		req.TargetPath,
+		req.Surface,
+		req.Visibility,
 	)
 	if err != nil {
 		sendJSONError(w, "Failed to save tab", http.StatusInternalServerError)
@@ -362,6 +378,44 @@ func validateProxiedTab(port int, path, surface, visibility string) error {
 	case "private", "public":
 	default:
 		return errBadTabURL("visibility must be private or public")
+	}
+	return nil
+}
+
+// validateProxiedTabPatch is the Update-path counterpart to validateProxiedTab.
+// Update is a partial PATCH (COALESCE/NULLIF keeps any field the caller
+// didn't send), so unlike Create there is no single point where every
+// proxied field is guaranteed present. Each field is therefore validated
+// only when the caller actually set it: port != 0, path/mode/surface/
+// visibility != "". A field left at its zero value is presumed unset and
+// passes through untouched by the UPDATE.
+func validateProxiedTabPatch(port int, path, mode, surface, visibility string) error {
+	if port != 0 && (port < 1 || port > 65535) {
+		return errBadTabURL("target port must be between 1 and 65535")
+	}
+	if path != "" && path[0] != '/' {
+		return errBadTabURL("target path must start with /")
+	}
+	if mode != "" {
+		switch mode {
+		case "direct", "proxied":
+		default:
+			return errBadTabURL("mode must be direct or proxied")
+		}
+	}
+	if surface != "" {
+		switch surface {
+		case "tab", "page", "both":
+		default:
+			return errBadTabURL("surface must be tab, page or both")
+		}
+	}
+	if visibility != "" {
+		switch visibility {
+		case "private", "public":
+		default:
+			return errBadTabURL("visibility must be private or public")
+		}
 	}
 	return nil
 }
