@@ -408,7 +408,7 @@ Traefik streams responses by default (no extra SSE buffering tweak needed).
 
 ### Gateway ingress
 
-Minecraft and gateway-routed HTTP go through the separate **Gateway** stack, not this proxy: the Edge maps public `80`/`443`/`25565` to `25561`/`25562`/Edge. If you front the Edge with a reverse proxy, point it at `Edge:25561` (HTTP) / `Edge:25562` (HTTPS) — see the `dylaris-gateway` repo.
+Minecraft routing goes through the separate **Gateway** stack, not this proxy: the Edge is a pure Minecraft-TCP router and maps public `25565` to the player ingress. It no longer serves HTTP/HTTPS (the 80/443 web data-plane was removed in WS7). See the `dylaris-gateway` repo.
 
 ## Scalability
 
