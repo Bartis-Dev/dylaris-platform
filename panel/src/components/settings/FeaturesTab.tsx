@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
 import { getTelemetrySettings, setTelemetrySettings } from '@/lib/api/telemetry';
 import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload } from '@/lib/api/featureFlags';
+import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -34,6 +35,11 @@ export default function FeaturesTab() {
     const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
+    // WS5 custom-tab reverse proxy toggles — same save-on-click/blur pattern
+    // as the platform flags above, but its own admin settings endpoint.
+    const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerServer: 10, maxShareLinksPerUser: 20 });
+    const [tabProxySaving, setTabProxySaving] = useState(false);
+
     // Snapshot of last-saved settings for dirty detection.
     const snapshotRef = useRef<FeatureSettings | null>(null);
 
@@ -58,6 +64,9 @@ export default function FeaturesTab() {
         getSystemFeaturesAdmin().then(res => {
             if (res.success && res.features) setPlatformFlags(res.features);
         });
+        getTabProxySettings().then(res => {
+            if (res.success && res.settings) setTabProxy(res.settings);
+        });
     }, []);
 
     // Save-on-click for the platform-wide bundle. We send BOTH keys every
@@ -77,6 +86,23 @@ export default function FeaturesTab() {
             setPlatformFlags(res.features);
         }
         setPlatformSaving(null);
+    };
+
+    // Save-on-click/blur for the tab-proxy settings bundle — sends the full
+    // payload every round-trip (mirrors savePlatformFlag's shape discipline).
+    const saveTabProxy = async (next: TabProxySettings) => {
+        if (tabProxySaving) return;
+        const prev = tabProxy;
+        setTabProxy(next);
+        setTabProxySaving(true);
+        const res = await setTabProxySettings(next);
+        if (!res.success) {
+            setTabProxy(prev);
+            showToast(res.message || 'Save failed.', false);
+        } else if (res.settings) {
+            setTabProxy(res.settings);
+        }
+        setTabProxySaving(false);
     };
 
     // Save-on-click: flip the UI optimistically, persist, revert + toast on
@@ -292,6 +318,55 @@ export default function FeaturesTab() {
                         <span>Requires gateway routing. Switch Game Traffic to Gateway or Both first.</span>
                     </p>
                 )}
+            </div>
+
+            {/* WS5 custom-tab reverse proxy */}
+            <div className="card p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Globe size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">Custom-Tab Reverse Proxy</div>
+                            <div className="text-xs text-(--base-06)">
+                                Streams a server container&apos;s web UI (BlueMap, squaremap, Dynmap) through Dylaris so no public port is needed. When off, proxied tabs and share links stop serving.
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" role="switch" aria-checked={tabProxy.enabled} disabled={tabProxySaving}
+                        onClick={() => saveTabProxy({ ...tabProxy, enabled: !tabProxy.enabled })}
+                        className={`toggle-track ${tabProxy.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
+                        <span className={`toggle-knob ${tabProxy.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+                <div className="flex items-center justify-between border-t border-(--base-03) pt-3">
+                    <div>
+                        <div className="text-sm font-medium text-(--base-09)">Allow public share links</div>
+                        <p className="text-xs text-(--base-06)">Let owners publish anonymous (no-login) share links.</p>
+                    </div>
+                    <button type="button" role="switch" aria-checked={tabProxy.allowPublicLinks} disabled={tabProxySaving}
+                        onClick={() => saveTabProxy({ ...tabProxy, allowPublicLinks: !tabProxy.allowPublicLinks })}
+                        className={`toggle-track ${tabProxy.allowPublicLinks ? 'toggle-track-on' : 'toggle-track-off'}`}>
+                        <span className={`toggle-knob ${tabProxy.allowPublicLinks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3 border-t border-(--base-03) pt-3">
+                    <div>
+                        <label className="input-label">Max proxied tabs / server</label>
+                        <input type="number" min={1} value={tabProxy.maxPerServer} disabled={tabProxySaving}
+                            onChange={e => setTabProxy({ ...tabProxy, maxPerServer: Number(e.target.value) })}
+                            onBlur={() => saveTabProxy(tabProxy)}
+                            className="input-field w-full" />
+                    </div>
+                    <div>
+                        <label className="input-label">Max share links / user</label>
+                        <input type="number" min={1} value={tabProxy.maxShareLinksPerUser} disabled={tabProxySaving}
+                            onChange={e => setTabProxy({ ...tabProxy, maxShareLinksPerUser: Number(e.target.value) })}
+                            onBlur={() => saveTabProxy(tabProxy)}
+                            className="input-field w-full" />
+                    </div>
+                </div>
             </div>
 
             {/* Toast */}
