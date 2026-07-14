@@ -97,7 +97,7 @@ async function saveBeamSettings(settings: BeamSettings): Promise<{ success: bool
 // Gateway settings
 // ─────────────────────────────────────────────
 
-type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc' | 'portHttps' | 'portHttp';
+type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
 type SubTab = 'gateway' | 'beam' | 'xdp' | 'hub';
 
@@ -764,8 +764,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         limits: {
             global: -1, userDefault: -1, perServer: -1,
             portMc: -1, portMcEnabled: true,
-            portHttps: -1, portHttpsEnabled: true,
-            portHttp: -1, portHttpEnabled: false,
         },
         hosterDomains: [],
         customDomainsEnabled: false,
@@ -1216,10 +1214,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
                 <div className="border-t border-(--base-03) pt-5">
                     <h3 className="mono-label mb-3">Port Configuration</h3>
-                    <div className="flex items-start gap-2 p-3 rounded-md bg-(--warning)/5 border border-(--warning)/20 mb-3">
-                        <AlertTriangle size={13} className="text-(--warning-light) mt-0.5 shrink-0" />
-                        <p className="text-xs text-(--base-07)">Use HTTP (port 80) only when behind a reverse proxy (nginx, Traefik, Caddy). Exposing HTTP directly is insecure.</p>
-                    </div>
                     <div className="space-y-3">
                         {/* MC Port */}
                         <div className={`p-3 rounded-md bg-(--base-02) ${!settings.limits.portMcEnabled ? 'opacity-60' : ''}`}>
@@ -1247,74 +1241,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                             <button type="button" role="switch" aria-checked={isUnlimited('portMc')} onClick={() => toggleUnlimited('portMc')}
                                                 className={`toggle-track ${isUnlimited('portMc') ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                                 <span className={`toggle-knob ${isUnlimited('portMc') ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                            </button>
-                                            <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* HTTP Port */}
-                        <div className={`p-3 rounded-md bg-(--base-02) ${!settings.limits.portHttpEnabled ? 'opacity-60' : ''}`}>
-                            <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold text-(--base-09)">HTTP</span>
-                                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-(--base-03) text-(--base-06)">80</span>
-                                </div>
-                                <button type="button" role="switch" aria-checked={settings.limits.portHttpEnabled}
-                                    onClick={() => setSettings(prev => ({ ...prev, limits: { ...prev.limits, portHttpEnabled: !prev.limits.portHttpEnabled } }))}
-                                    className={`toggle-track ${settings.limits.portHttpEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                    <span className={`toggle-knob ${settings.limits.portHttpEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                </button>
-                            </div>
-                            {settings.limits.portHttpEnabled && (
-                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-(--base-03)">
-                                    <span className="text-xs text-(--base-06)">Max routes on this port</span>
-                                    <div className="flex items-center gap-3">
-                                        {!isUnlimited('portHttp') && (
-                                            <input type="number" min={0} value={settings.limits.portHttp}
-                                                onChange={e => setLimit('portHttp', Number(e.target.value))}
-                                                className="input-mono w-20 text-center" />
-                                        )}
-                                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                            <button type="button" role="switch" aria-checked={isUnlimited('portHttp')} onClick={() => toggleUnlimited('portHttp')}
-                                                className={`toggle-track ${isUnlimited('portHttp') ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                                <span className={`toggle-knob ${isUnlimited('portHttp') ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                            </button>
-                                            <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* HTTPS Port */}
-                        <div className={`p-3 rounded-md bg-(--base-02) ${!settings.limits.portHttpsEnabled ? 'opacity-60' : ''}`}>
-                            <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold text-(--base-09)">HTTPS</span>
-                                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-(--base-03) text-(--base-06)">443</span>
-                                </div>
-                                <button type="button" role="switch" aria-checked={settings.limits.portHttpsEnabled}
-                                    onClick={() => setSettings(prev => ({ ...prev, limits: { ...prev.limits, portHttpsEnabled: !prev.limits.portHttpsEnabled } }))}
-                                    className={`toggle-track ${settings.limits.portHttpsEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                    <span className={`toggle-knob ${settings.limits.portHttpsEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                </button>
-                            </div>
-                            {settings.limits.portHttpsEnabled && (
-                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-(--base-03)">
-                                    <span className="text-xs text-(--base-06)">Max routes on this port</span>
-                                    <div className="flex items-center gap-3">
-                                        {!isUnlimited('portHttps') && (
-                                            <input type="number" min={0} value={settings.limits.portHttps}
-                                                onChange={e => setLimit('portHttps', Number(e.target.value))}
-                                                className="input-mono w-20 text-center" />
-                                        )}
-                                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                            <button type="button" role="switch" aria-checked={isUnlimited('portHttps')} onClick={() => toggleUnlimited('portHttps')}
-                                                className={`toggle-track ${isUnlimited('portHttps') ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                                <span className={`toggle-knob ${isUnlimited('portHttps') ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                             </button>
                                             <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
                                         </label>

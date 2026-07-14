@@ -174,8 +174,6 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                                     className="input-field text-sm w-28"
                                 >
                                     <option value={25565}>MC (25565)</option>
-                                    <option value={80}>HTTP (80)</option>
-                                    <option value={443}>HTTPS (443)</option>
                                 </select>
                             }
                         />

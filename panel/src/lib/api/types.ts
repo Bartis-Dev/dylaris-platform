@@ -641,10 +641,6 @@ export interface GatewayLimits {
     perServer: number;
     portMc: number;
     portMcEnabled: boolean;
-    portHttps: number;
-    portHttpsEnabled: boolean;
-    portHttp: number;
-    portHttpEnabled: boolean;
 }
 
 export type HosterValidation = 'letters' | 'alphanumeric' | 'dns';

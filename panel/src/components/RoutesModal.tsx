@@ -189,8 +189,6 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                                         className="input-field text-sm w-32"
                                     >
                                         <option value={25565}>MC (25565)</option>
-                                        <option value={80}>HTTP (80)</option>
-                                        <option value={443}>HTTPS (443)</option>
                                     </select>
                                     <button
                                         onClick={handleCreateRoute}
