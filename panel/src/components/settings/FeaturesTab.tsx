@@ -35,7 +35,7 @@ export default function FeaturesTab() {
     const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
-    // WS5 custom-tab reverse proxy toggles — same save-on-click/blur pattern
+    // WS5 custom-tab reverse proxy toggles - same save-on-click/blur pattern
     // as the platform flags above, but its own admin settings endpoint.
     const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerServer: 10, maxShareLinksPerUser: 20 });
     const [tabProxySaving, setTabProxySaving] = useState(false);
@@ -88,7 +88,7 @@ export default function FeaturesTab() {
         setPlatformSaving(null);
     };
 
-    // Save-on-click/blur for the tab-proxy settings bundle — sends the full
+    // Save-on-click/blur for the tab-proxy settings bundle - sends the full
     // payload every round-trip (mirrors savePlatformFlag's shape discipline).
     const saveTabProxy = async (next: TabProxySettings) => {
         if (tabProxySaving) return;
