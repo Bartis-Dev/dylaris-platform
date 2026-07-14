@@ -323,9 +323,14 @@ func injectShellToken(html []byte, token string) []byte {
 // serveBeamIndex serves the app-shell index.html through the Wails asset server
 // (which auto-injects /wails/*), then splices the per-run shell-capability token
 // into the document and marks it unframeable. The token reaches ONLY this
-// first-party page - never the proxied Panel - so a compromised Panel cannot
-// read it, and X-Frame-Options: DENY + CSP frame-ancestors 'none' stop a
-// same-origin iframe from stealing it via frames[0].__beamShellToken.
+// first-party page, never the proxied Panel, and only on a real top-level
+// navigation (see the Sec-Fetch-Dest gate below). This RAISES THE BAR:
+// X-Frame-Options: DENY + frame-ancestors 'none' stop an iframe read, the
+// Sec-Fetch-Dest gate stops a same-origin fetch/XHR read on webviews that send
+// Fetch Metadata, and Cache-Control: no-store keeps a stale token out of caches.
+// It is NOT a hard boundary on the shared wails:// origin (a webview without
+// Fetch Metadata degrades to obfuscation); a true boundary needs the native
+// dispatcher to check the current top-level URL at call time (deferred).
 func serveBeamIndex(app *App, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	cap := newCaptureResponse()
 	serveEmbedded(next, cap, r, "/index.html")
