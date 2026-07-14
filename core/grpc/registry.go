@@ -18,6 +18,7 @@ type NodeConnection struct {
 	// The stream reader goroutine routes incoming messages to the correct waiter.
 	pending map[string]chan *pb.NodeMessage
 	mu      sync.Mutex
+	sendMu  sync.Mutex // serializes Stream.Send across concurrent handlers + WS pumps
 }
 
 // Registry is thread-safe for concurrent access from HTTP handlers.
@@ -110,7 +111,7 @@ func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Dur
 		conn.mu.Unlock()
 	}()
 
-	if err := conn.Stream.Send(msg); err != nil {
+	if err := conn.Send(msg); err != nil {
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
 
@@ -144,7 +145,7 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 	conn.mu.Unlock()
 
 	// Send request
-	if err := conn.Stream.Send(msg); err != nil {
+	if err := conn.Send(msg); err != nil {
 		conn.mu.Lock()
 		delete(conn.pending, msg.RequestId)
 		conn.mu.Unlock()
@@ -152,6 +153,17 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
 	return ch, nil
+}
+
+// SendOnStream sends one message to a node's stream out-of-band, without
+// registering a pending waiter. Used for follow-up messages on an already-open
+// streaming request (e.g. a WsFrame carrying browser->container bytes).
+func (r *Registry) SendOnStream(nodeID int, msg *pb.NodeMessage) error {
+	conn, ok := r.GetConnection(nodeID)
+	if !ok {
+		return fmt.Errorf("node %d not connected", nodeID)
+	}
+	return conn.Send(msg)
 }
 
 // CleanupRequest removes a pending request channel (used after streaming is done).
@@ -163,6 +175,14 @@ func (r *Registry) CleanupRequest(nodeID int, requestID string) {
 	conn.mu.Lock()
 	delete(conn.pending, requestID)
 	conn.mu.Unlock()
+}
+
+// Send serializes writes to the underlying gRPC stream. gRPC streams are not
+// safe for concurrent Send; the WS bridge and parallel file ops can both write.
+func (conn *NodeConnection) Send(msg *pb.NodeMessage) error {
+	conn.sendMu.Lock()
+	defer conn.sendMu.Unlock()
+	return conn.Stream.Send(msg)
 }
 
 // RouteResponse delivers an incoming message to the waiting handler via request_id.

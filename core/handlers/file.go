@@ -359,7 +359,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 				Chunk: &pb.DataChunk{Data: data[offset:end], Offset: int64(offset)},
 			},
 		}
-		if err := conn.Stream.Send(chunkMsg); err != nil {
+		if err := conn.Send(chunkMsg); err != nil {
 			sendJSONError(w, fmt.Sprintf("Failed to send chunk: %v", err), http.StatusBadGateway)
 			return
 		}
@@ -373,7 +373,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 			TransferDone: &pb.TransferDone{TotalBytes: int64(len(data))},
 		},
 	}
-	if err := conn.Stream.Send(doneMsg); err != nil {
+	if err := conn.Send(doneMsg); err != nil {
 		sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
 		return
 	}
@@ -843,7 +843,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 						Chunk: &pb.DataChunk{Data: chunk, Offset: offset},
 					},
 				}
-				if err := conn.Stream.Send(chunkMsg); err != nil {
+				if err := conn.Send(chunkMsg); err != nil {
 					file.Close()
 					sendJSONError(w, fmt.Sprintf("Failed to send chunk: %v", err), http.StatusBadGateway)
 					return
@@ -869,7 +869,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 				TransferDone: &pb.TransferDone{TotalBytes: offset, Filename: sanitizedName},
 			},
 		}
-		if err := conn.Stream.Send(doneMsg); err != nil {
+		if err := conn.Send(doneMsg); err != nil {
 			sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
 			return
 		}
