@@ -809,6 +809,10 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
+	// Security invariant #2 (see serveHTTP): normalize to a safe origin-form
+	// path/query the same way before it crosses the mesh boundary, so the WS
+	// path is never less sanitized than the HTTP one.
+	target = sanitizeProxyPath(target)
 	// A fresh, unique request_id per WS open (never reused) - the registry
 	// keys the node-side bridge and pending-response channel by this id, so a
 	// collision with any other in-flight request (a concurrent WS, or an
