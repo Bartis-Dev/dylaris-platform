@@ -493,9 +493,12 @@ assets.
 
 - Unsigned binary. The `.exe` and installer are not Authenticode-signed, so
   Windows SmartScreen shows an "unknown publisher" warning on first run. Click
-  "More info", then "Run anyway". Integrity is still protected by the Ed25519
-  update chain (below). OV/EV Authenticode signing (a paid certificate) would
-  remove the warning and is a documented follow-up, not shipped in this build.
+  "More info", then "Run anyway". This first manual download is not verified at
+  download time, so only get it from the official GitHub Releases page;
+  subsequent in-app auto-updates are covered by the fail-closed sha256 +
+  Ed25519 verification chain (below). OV/EV Authenticode signing (a paid
+  certificate) would remove the warning and is a documented follow-up, not
+  shipped in this build.
 - WebView2 runtime. Beam renders through the Microsoft Edge WebView2 Evergreen
   runtime, preinstalled on Windows 11 and most current Windows 10. If it is
   missing the app cannot render its UI; install the free WebView2 runtime from
