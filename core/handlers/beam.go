@@ -294,11 +294,10 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		directFingerprint = fp
 	}
 
-	// Presence-driven gate: when a relay is registered we obscure the node and omit
-	// direct hints; when none is, we hand the client the node's direct addresses
-	// (LAN IPs + public IP on the pinned-TLS beam port) so a solo deployment can
-	// connect without a gateway. resolveRelay reads the same settings GetBeamConfig
-	// uses.
+	// Presence-driven gate: the node's LAN IPs are handed out regardless of relay
+	// presence (a co-located client can take the fast path); the public IP is added
+	// only when no relay is registered, since with a relay it would deanonymize the
+	// node. resolveRelay reads the same settings GetBeamConfig uses.
 	getSetting := func(key string) string {
 		val, _ := h.state.Store.GetSetting(key)
 		return val
@@ -324,11 +323,11 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// takes claims by value and sets ExpiresAt on its own copy, so claims.ExpiresAt
 	// here is still nil; dereferencing it panicked the handler (the connection drop
 	// surfaced as a 502).
-	// Direct-connect hints (lanHints): the node's LAN IPs + public address on the
-	// pinned-TLS beam port, handed out ONLY when no relay is present so a solo
-	// client can reach the node directly. Omitted when a relay is registered - the
-	// client uses the relay and the node IP stays hidden. The JWT ticket gates auth
-	// (node+server bound) on either path. Returned only to a caller already
+	// Direct-connect hints (lanHints): the node's LAN IPs on the pinned-TLS beam port,
+	// plus its public address when no relay is present. The LAN IPs are handed out even
+	// when a relay is registered so a co-located client can take the fast path; the
+	// public address is omitted with a relay so the node IP stays hidden. The JWT ticket
+	// gates auth (node+server bound) on either path. Returned only to a caller already
 	// authorized for this server.
 	resp := map[string]interface{}{
 		"success": true,
@@ -346,10 +345,12 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 // fingerprint above. Distinct from the plain overlay port (25521) used by the relay.
 const beamLANPort = "25523"
 
-// beamDirectHints is the presence-driven direct-connect payload on a beam ticket
-// (serialized as the JSON field "lanHints"). It carries the node's LAN IPs and
-// public address on the pinned-TLS beam port so a solo client (no relay present)
-// can dial the node directly. Absent from the ticket when a relay is registered.
+// beamDirectHints is the direct-connect payload on a beam ticket (serialized as the
+// JSON field "lanHints"). It carries the node's LAN IPs and, when no relay is present,
+// its public address on the pinned-TLS beam port. The LAN IPs are emitted whenever the
+// node has a pinnable fingerprint - even with a relay - so a co-located client can take
+// the fast path; the public address is emitted ONLY when no relay is present, so a
+// relay-fronted node's public IP stays hidden.
 type beamDirectHints struct {
 	IPs         []string `json:"ips"`
 	PublicAddr  string   `json:"publicAddr"`
@@ -357,22 +358,26 @@ type beamDirectHints struct {
 	Fingerprint string   `json:"fingerprint"`
 }
 
-// buildBeamDirectHints applies the presence-driven gate. When a relay is
-// registered (relayAddr != "") it returns nil: the client must use the relay so
-// the node IP stays hidden. Otherwise it returns the node's dialable direct
-// targets (LAN IPs + public address) on the pinned-TLS beam port. Returns nil when
-// there is no fingerprint to pin (never advertise an unpinnable, plaintext-risk
-// path) or when nothing is dialable. Pure (no I/O) so it is unit-tested directly.
+// buildBeamDirectHints returns the node's dialable direct targets on the pinned-TLS
+// beam port. The LAN IPs are always emitted when a fingerprint exists (a co-located
+// client can use them even when a relay is present; a remote client's LAN probe just
+// misses and falls back to the relay). The public address is emitted ONLY when no
+// relay is present - with a relay it is the deanonymizing target and stays hidden.
+// Returns nil when there is no fingerprint to pin (never advertise an unpinnable,
+// plaintext-risk path) or when nothing is dialable. Pure (no I/O) so it is unit-tested
+// directly.
 func buildBeamDirectHints(relayAddr string, lanIPs []string, publicIP, port, fingerprint string) *beamDirectHints {
-	if strings.TrimSpace(relayAddr) != "" {
-		return nil // relay present -> obscure the node, hand out no direct hints
-	}
 	if fingerprint == "" {
 		return nil // no pin -> refuse to advertise an unpinnable direct path
 	}
 	h := &beamDirectHints{IPs: lanIPs, Port: port, Fingerprint: fingerprint}
-	if ip := strings.TrimSpace(publicIP); ip != "" {
-		h.PublicAddr = net.JoinHostPort(ip, port)
+	// The public IP is the deanonymizing target: emit it ONLY with no relay. With a
+	// relay the LAN IPs are still handed out (a co-located client uses them; a remote
+	// client's LAN probe just misses), but the public address stays hidden.
+	if strings.TrimSpace(relayAddr) == "" {
+		if ip := strings.TrimSpace(publicIP); ip != "" {
+			h.PublicAddr = net.JoinHostPort(ip, port)
+		}
 	}
 	if len(h.IPs) == 0 && h.PublicAddr == "" {
 		return nil // nothing to dial

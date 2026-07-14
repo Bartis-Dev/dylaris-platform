@@ -18,11 +18,26 @@ func TestBuildBeamDirectHints(t *testing.T) {
 		wantPublic  string
 	}{
 		{
-			name:        "relay present omits hints even with addresses",
+			name:        "relay present emits lan omits public",
 			relayAddr:   "beam.example.com:25550",
-			lanIPs:      []string{"10.0.0.5"},
+			lanIPs:      []string{"10.0.0.5", "192.168.1.9"},
 			publicIP:    "203.0.113.7",
 			fingerprint: fp,
+			wantIPs:     []string{"10.0.0.5", "192.168.1.9"},
+			wantPublic:  "",
+		},
+		{
+			name:        "relay present with only public is nil",
+			relayAddr:   "beam.example.com:25550",
+			publicIP:    "203.0.113.7",
+			fingerprint: fp,
+			wantNil:     true,
+		},
+		{
+			name:        "relay present without fingerprint is nil",
+			relayAddr:   "beam.example.com:25550",
+			lanIPs:      []string{"10.0.0.5"},
+			fingerprint: "",
 			wantNil:     true,
 		},
 		{
