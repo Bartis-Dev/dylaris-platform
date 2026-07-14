@@ -122,3 +122,31 @@ export async function mintTabProxyAuth(serverId: number, tabId: number): Promise
         }
     } catch (err) { return handleError(err); }
 }
+
+// mintPublicTabProxyAuth authorizes the standalone /c/[token] share page
+// (WS5 Task 14) for a PRIVATE-visibility tab: it calls Core's session-authed
+// public proxy-auth endpoint (core/handlers/tab_proxy.go
+// MintPublicProxyAuth), which mirrors mintTabProxyAuth above but is scoped to
+// the share token's proxy prefix instead of a server/tab id pair. Same
+// 204-cookie-only contract - no token ever appears in the iframe src. Unlike
+// the sibling helper, callers here also need the HTTP status on failure
+// (401 = no/invalid panel session -> bounce to /login; 403 = logged in but
+// no access to this tab's server; anything else -> treat the link as
+// invalid), so this returns `status` alongside `success`/`message`.
+export async function mintPublicTabProxyAuth(token: string): Promise<{ success: boolean; status?: number; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/tabproxy/${encodeURIComponent(token)}/auth`, {
+            headers: getAuthHeader(),
+            credentials: 'include',
+        });
+        if (res.status === 204) return { success: true };
+        // Same body-shape convention as mintTabProxyAuth: every non-success
+        // response carries a JSON {message} body.
+        try {
+            const data = await res.json();
+            return { success: false, status: res.status, message: data?.message || 'Unknown error' };
+        } catch {
+            return { success: false, status: res.status, message: `Failed to authorize tab proxy (HTTP ${res.status})` };
+        }
+    } catch (err) { return handleError(err); }
+}
