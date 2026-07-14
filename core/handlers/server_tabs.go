@@ -153,6 +153,14 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == "" {
 		req.Mode = "direct"
 	}
+	db := h.db()
+	if db == nil {
+		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	userID, _ := ctx.Value("userID").(string)
+
 	targetPort := 0
 	if req.Mode == "proxied" {
 		if req.Surface == "" {
@@ -171,6 +179,19 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if !h.state.FeatureFlags.IsTabProxyEnabled(ctx) {
+			sendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
+			return
+		}
+		if req.Visibility == "public" && !h.state.FeatureFlags.TabProxyAllowPublicLinks(ctx) {
+			sendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
+			return
+		}
+		if count, cerr := h.countProxiedTabs(db, serverID); cerr == nil &&
+			capReached(count, h.state.FeatureFlags.TabProxyMaxPerServer(ctx)) {
+			sendJSONError(w, "This server has reached its proxied-tab limit.", http.StatusConflict)
+			return
+		}
 	} else {
 		req.Mode = "direct"
 		req.Surface = "tab"
@@ -181,11 +202,26 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	db := h.db()
-	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
-		return
+
+	// A proxied page tab gets an unguessable share slug immediately (per-user
+	// cap enforced first).
+	var shareToken interface{}
+	if req.Mode == "proxied" && (req.Surface == "page" || req.Surface == "both") {
+		if userID != "" {
+			if used, uerr := h.countUserShareLinks(db, userID); uerr == nil &&
+				capReached(used, h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx)) {
+				sendJSONError(w, "You have reached your share-link limit.", http.StatusConflict)
+				return
+			}
+		}
+		tok, terr := generateShareToken()
+		if terr != nil {
+			sendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
+			return
+		}
+		shareToken = tok
 	}
+
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -194,7 +230,6 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.OpenInPanel != nil {
 		openInPanel = *req.OpenInPanel
 	}
-	userID, _ := r.Context().Value("userID").(string)
 	var createdBy interface{}
 	if userID != "" {
 		createdBy = userID
@@ -206,10 +241,10 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var id int
 	err := db.QueryRow(`INSERT INTO server_tabs
 		(server_id, name, icon, url, position, enabled, open_in_panel, created_by,
-		 mode, target_port, target_path, surface, visibility)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+		 mode, target_port, target_path, surface, visibility, share_token)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
 		serverID, req.Name, req.Icon, req.URL, req.Position, enabled, openInPanel, createdBy,
-		req.Mode, portArg, req.TargetPath, req.Surface, req.Visibility,
+		req.Mode, portArg, req.TargetPath, req.Surface, req.Visibility, shareToken,
 	).Scan(&id)
 	if err != nil {
 		sendJSONError(w, "Failed to create tab", http.StatusInternalServerError)
@@ -242,6 +277,14 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.TargetPath = strings.TrimSpace(req.TargetPath)
 	req.Surface = strings.TrimSpace(req.Surface)
 	req.Visibility = strings.TrimSpace(req.Visibility)
+	if req.Mode == "proxied" && !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+		sendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
+		return
+	}
+	if req.Visibility == "public" && !h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context()) {
+		sendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
+		return
+	}
 	if req.URL != "" {
 		if err := validateTabURL(strings.TrimSpace(req.URL)); err != nil {
 			sendJSONError(w, err.Error(), http.StatusBadRequest)
@@ -259,6 +302,28 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := validateProxiedTabPatch(targetPort, req.TargetPath, req.Mode, req.Surface, req.Visibility); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if req.Mode == "proxied" {
+		port := 0
+		if req.TargetPort != nil {
+			port = *req.TargetPort
+		}
+		surface := req.Surface
+		if surface == "" {
+			surface = "tab"
+		}
+		visibility := req.Visibility
+		if visibility == "" {
+			visibility = "private"
+		}
+		path := req.TargetPath
+		if path == "" {
+			path = "/"
+		}
+		if err := validateProxiedTab(port, path, surface, visibility); err != nil {
+			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	db := h.db()
 	if db == nil {

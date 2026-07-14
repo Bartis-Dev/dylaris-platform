@@ -644,6 +644,8 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(serverTabsHandler.Create)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Update)).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Delete)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(serverTabsHandler.RotateShareLink)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(serverTabsHandler.RevokeShareLink)).Methods("DELETE")
 
 	// --- Modrinth PAT ---
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")
