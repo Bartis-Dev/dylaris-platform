@@ -360,7 +360,7 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25523` | node | Beam LAN fast-path (`BEAM_LAN_PORT`; pinned-TLS, direct client<->node). Publish on the node's LAN (self-host/BYON) to enable the fast path even when a gateway is present; unpublished simply falls back to relay/public. |
 | `25600–30000` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
 
-> The optional Gateway stack adds public ingress ports (`25565` Minecraft, `80`/`443` HTTP(S)) and the Warp leader (`25599/udp`) — see the `dylaris-gateway` repo.
+> The optional Gateway stack adds public ingress ports (`25565` Minecraft) and the Warp leader (`25599/udp`); it no longer serves HTTP(S) (`80`/`443`) - see the `dylaris-gateway` repo.
 
 ## Reverse proxy and TLS
 
