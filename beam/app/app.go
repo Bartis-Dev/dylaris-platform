@@ -36,6 +36,7 @@ type App struct {
 	client      *CoreClient     // REST API client (login, config, tickets)
 	relayClient *BeamNodeClient // gRPC client via BeamRelay (file ops)
 	relayAddr   string          // cached relay address from GetBeamConfig
+	connMode    string          // active transport for the live tunnel: "lan-fastpath" | "relay" | "direct"; "" when not connected
 	panelURL    string          // URL the webview navigates to on startup (Panel)
 
 	// Active chunked uploads, keyed by an opaque JS-supplied uploadID.
@@ -364,6 +365,25 @@ func (a *App) setRelayAddr(s string) {
 	a.relayAddr = s
 }
 
+// setConnMode records the transport that won the preference chain for the live tunnel
+// ("lan-fastpath", "relay", or "direct"). Read back by the bound GetConnectionMode so
+// the FileBrowser can show a connection-mode badge.
+func (a *App) setConnMode(mode string) {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	a.connMode = mode
+}
+
+// GetConnectionMode returns the active transport label for the live tunnel, or ""
+// when not connected. Bound to the frontend (read-only): it exposes no secret and has
+// no side effect, so it is deliberately NOT shell-token gated (the WS2 gate guards the
+// three side-effecting methods, not a passive getter).
+func (a *App) GetConnectionMode() string {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	return a.connMode
+}
+
 // setRelay swaps in a new relay client and returns the previous one for the
 // caller to Close outside the lock.
 func (a *App) setRelay(rc *BeamNodeClient) *BeamNodeClient {
@@ -382,6 +402,7 @@ func (a *App) newClientResetRelay(c *CoreClient) *BeamNodeClient {
 	old := a.relayClient
 	a.client = c
 	a.relayClient = nil
+	a.connMode = ""
 	return old
 }
 
@@ -394,6 +415,7 @@ func (a *App) resetSession() *BeamNodeClient {
 	a.client = nil
 	a.relayClient = nil
 	a.relayAddr = ""
+	a.connMode = ""
 	return old
 }
 
