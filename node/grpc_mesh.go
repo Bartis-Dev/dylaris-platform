@@ -36,6 +36,15 @@ type coreConnection struct {
 	stream  pb.NodeService_NodeConnectClient
 	cancel  context.CancelFunc
 	handler *StreamHandler
+	sendMu  sync.Mutex // serializes stream.Send across the read loop + WS pumps
+}
+
+// send serializes all writes to this Core stream. gRPC streams are not safe
+// for concurrent Send; the WS bridge introduced the first background sender.
+func (cc *coreConnection) send(msg *pb.NodeMessage) error {
+	cc.sendMu.Lock()
+	defer cc.sendMu.Unlock()
+	return cc.stream.Send(msg)
 }
 
 // pendingWrite tracks an in-flight file write operation (WriteReq → Chunks → TransferDone).
@@ -59,6 +68,8 @@ type MeshManager struct {
 	mu            sync.Mutex
 	pendingWrites map[string]*pendingWrite // requestID → write buffer
 	writeMu       sync.Mutex
+	wsBridges     map[string]*wsBridge // requestID -> open WS bridge (WS5)
+	wsMu          sync.Mutex
 }
 
 func NewMeshManager(nodeToken string, rdb *redis.Client, handler *StreamHandler) *MeshManager {
@@ -68,6 +79,7 @@ func NewMeshManager(nodeToken string, rdb *redis.Client, handler *StreamHandler)
 		handler:       handler,
 		connections:   make(map[string]*coreConnection),
 		pendingWrites: make(map[string]*pendingWrite),
+		wsBridges:     make(map[string]*wsBridge),
 	}
 }
 
@@ -277,7 +289,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		}
 
 		// Sequential to preserve message ordering (WriteReq → Chunks → TransferDone)
-		m.handleRequest(stream, msg)
+		m.handleRequest(cc, msg)
 	}
 
 	// Cleanup
@@ -289,7 +301,17 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	log.Printf("gRPC Mesh: Disconnected from Core %s", info.ID)
 }
 
-func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg *pb.NodeMessage) {
+func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
+	// WS bridge (WS5): open, or route a frame/close to an existing bridge.
+	if open := msg.GetWsOpen(); open != nil {
+		m.handleWSOpen(cc, msg.RequestId, msg.ServerUuid, open)
+		return
+	}
+	if msg.GetWsFrame() != nil || msg.GetWsClose() != nil {
+		m.routeWSInbound(msg.RequestId, msg)
+		return
+	}
+
 	// Handle write data chunks — write directly to temp file on disk
 	if chunk := msg.GetChunk(); chunk != nil {
 		m.writeMu.Lock()
@@ -305,9 +327,9 @@ func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
-					stream.Send(errorMsg(msg.RequestId, 413, "Storage quota exceeded"))
+					cc.send(errorMsg(msg.RequestId, 413, "Storage quota exceeded"))
 				} else {
-					stream.Send(errorMsg(msg.RequestId, 500, "Failed to write upload to disk"))
+					cc.send(errorMsg(msg.RequestId, 500, "Failed to write upload to disk"))
 				}
 				return
 			}
@@ -332,17 +354,17 @@ func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg
 			if err != nil {
 				log.Printf("gRPC Mesh: Resolve path failed (request_id=%s): %v", msg.RequestId, err)
 				os.Remove(pw.tempPath)
-				stream.Send(errorMsg(msg.RequestId, 500, err.Error()))
+				cc.send(errorMsg(msg.RequestId, 500, err.Error()))
 			} else if err := os.Rename(pw.tempPath, finalPath); err != nil {
 				log.Printf("gRPC Mesh: Move file failed (request_id=%s): %v", msg.RequestId, err)
 				os.Remove(pw.tempPath)
 				if errors.Is(err, syscall.EDQUOT) {
-					stream.Send(errorMsg(msg.RequestId, 413, "Speicherlimit erreicht"))
+					cc.send(errorMsg(msg.RequestId, 413, "Speicherlimit erreicht"))
 				} else {
-					stream.Send(errorMsg(msg.RequestId, 500, err.Error()))
+					cc.send(errorMsg(msg.RequestId, 500, err.Error()))
 				}
 			} else {
-				stream.Send(&pb.NodeMessage{
+				cc.send(&pb.NodeMessage{
 					RequestId: msg.RequestId,
 					Payload:   &pb.NodeMessage_Result{Result: &pb.OpResult{Message: "written"}},
 				})
@@ -375,25 +397,21 @@ func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg
 
 	// HttpProxyReq (WS5): stream the container HTTP response back over the mesh.
 	if proxyReq := msg.GetHttpProxyReq(); proxyReq != nil {
-		m.handler.handleHTTPProxy(msg.RequestId, msg.ServerUuid, proxyReq, func(resp *pb.NodeMessage) error {
-			return stream.Send(resp)
-		})
+		m.handler.handleHTTPProxy(msg.RequestId, msg.ServerUuid, proxyReq, cc.send)
 		return
 	}
 
 	// ReadReq / SelectiveReadReq / BackupOpenReq: streaming downloads
 	// (io.Pipe / file read, constant ~128KB RAM regardless of size).
 	if msg.GetReadReq() != nil || msg.GetSelectiveReadReq() != nil || msg.GetBackupOpenReq() != nil {
-		m.handler.HandleStreaming(msg, func(resp *pb.NodeMessage) error {
-			return stream.Send(resp)
-		})
+		m.handler.HandleStreaming(msg, cc.send)
 		return
 	}
 
 	// Normal request handling (List, Write, Create, Delete, Rename, Copy)
 	responses := m.handler.Handle(msg)
 	for _, resp := range responses {
-		if err := stream.Send(resp); err != nil {
+		if err := cc.send(resp); err != nil {
 			log.Printf("gRPC Mesh: Failed to send response (request_id=%s): %v", msg.RequestId, err)
 			return
 		}
