@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	pb "dylaris-proto/beam"
@@ -202,23 +203,50 @@ func ConnectBeamNodeDirect(addr, ticket, fingerprint string) (*BeamNodeClient, e
 	return &BeamNodeClient{conn: conn, svc: svc, ServerUUID: resp.ServerUuid}, nil
 }
 
-// probeBeamLAN returns the first ip:port that accepts a TCP connection within a
-// short budget, or "" if none do. A cheap reachability check run before the gRPC
-// dial so an unreachable LAN hint costs at most a few hundred ms before we fall
-// back to the relay. Nodes typically advertise one or two private IPs.
+// probeBeamLAN returns the first ip:port that accepts a TCP connection within a short
+// budget, or "" if none do. A cheap reachability check run before the gRPC dial so an
+// unreachable LAN hint costs at most one budget before we fall back to the relay.
+//
+// The dials run CONCURRENTLY so the total probe cost stays within one budget instead
+// of len(ips) x budget: the preference chain now probes LAN on EVERY connect (even
+// when a relay is present), so a serial probe of several unreachable hints would
+// delay the relay fallback unacceptably.
 func probeBeamLAN(ips []string, port string) string {
 	if port == "" {
 		port = "25521"
 	}
-	for _, ip := range ips {
-		addr := net.JoinHostPort(ip, port)
-		conn, err := net.DialTimeout("tcp", addr, 700*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return addr
-		}
+	if len(ips) == 0 {
+		return ""
 	}
-	return ""
+	const budget = 700 * time.Millisecond
+	found := make(chan string, len(ips)) // buffered so late successes never block
+	var wg sync.WaitGroup
+	for _, ip := range ips {
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			conn, err := net.DialTimeout("tcp", addr, budget)
+			if err == nil {
+				conn.Close()
+				select {
+				case found <- addr:
+				default:
+				}
+			}
+		}(net.JoinHostPort(ip, port))
+	}
+	// Close found once every dial has settled so a range/receive terminates when
+	// nothing is reachable. Each dial is capped at `budget`, so this resolves in
+	// ~budget regardless of how many IPs are unreachable.
+	go func() {
+		wg.Wait()
+		close(found)
+	}()
+	addr, ok := <-found
+	if !ok {
+		return "" // channel closed with no success
+	}
+	return addr
 }
 
 func (c *BeamNodeClient) Close() {
