@@ -269,8 +269,20 @@ func (a *App) OpenUpdateDownload(token string) {
 	if info.DownloadURL == "" || a.ctx == nil {
 		return
 	}
-	if u, err := url.Parse(info.DownloadURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	if !isBrowserOpenableURL(info.DownloadURL) {
 		return
 	}
 	wailsruntime.BrowserOpenURL(a.ctx, info.DownloadURL)
+}
+
+// isBrowserOpenableURL reports whether raw is an http or https URL - the only
+// two schemes safe to hand to the OS browser-open. The manifest DownloadURL is
+// Go-origin, but a poisoned or MITM'd manifest could still carry a file://, UNC,
+// javascript:, or mailto: URL; gating here keeps even that off the native
+// shell-open path. Extracted from OpenUpdateDownload so the invariant is unit-
+// testable without the network fetch GetUpdateInfo performs; behavior is
+// identical to the previous inline url.Parse + scheme check.
+func isBrowserOpenableURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
 }
