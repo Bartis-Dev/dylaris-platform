@@ -10,16 +10,19 @@ permissions:
 
 jobs:
   build-beam:
-    # Phase 1: self-hosted Linux ships linux/amd64 only. Wails builds native per
-    # OS, so a Windows/macOS binary needs its own runner. When switching to
-    # GitHub-hosted runners, convert this into a matrix, e.g.:
+    # Phase 2 (WS6): the ONE self-hosted Linux job now cross-builds BOTH
+    # linux/amd64 and windows/amd64. Wails renders Windows via the pure-Go
+    # go-webview2 loader (no CGO) and embeds the icon/manifest via a pure-Go
+    # .syso, so GOOS=windows GOARCH=amd64 cross-compiles from Linux with the
+    # stock toolchain - no windows-latest runner. macOS still needs its own
+    # runner; when that lands, convert this into a matrix, e.g.:
     #   strategy:
     #     matrix:
     #       include:
-    #         - { os: ubuntu-latest,  platform: linux/amd64,   slug: linux-amd64 }
-    #         - { os: windows-latest, platform: windows/amd64, slug: windows-amd64 }
+    #         - { os: ubuntu-latest, platform: linux/amd64,  slug: linux-amd64 }
+    #         - { os: macos-latest,  platform: darwin/amd64, slug: darwin-amd64 }
     #   runs-on: ${{ matrix.os }}
-    # and drive -platform / the slug from matrix. Phase 1 stays single-target.
+    # and drive -platform / the slug from matrix.
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +55,23 @@ jobs:
         # separate wails install). AppVersion is injected for the updater.
         run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform linux/amd64 -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
 
+      - name: Build beam (windows/amd64 cross)
+        working-directory: beam/app
+        # Cross-compile the Windows binary from Linux (no CGO). Single target, so
+        # Wails names it build/bin/DylarisBeam.exe (no arch suffix).
+        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
+
+      - name: Build Windows NSIS installer (best-effort)
+        working-directory: beam/app
+        # Best-effort. Re-runs the windows build with -nsis so the windows/amd64
+        # target is present in the same invocation (Wails needs it to build the
+        # installer). If makensis is absent, Wails logs a warning and skips the
+        # installer WITHOUT failing; if makensis errors, this step fails and
+        # continue-on-error keeps the raw .exe shipping. On success it writes
+        # build/bin/DylarisBeam-amd64-installer.exe.
+        continue-on-error: true
+        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -nsis -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
+
       - name: Stage + sign release assets
         working-directory: beam/app
         env:
@@ -59,19 +79,38 @@ jobs:
         run: |
           mkdir -p dist-release
           cp build/bin/DylarisBeam dist-release/DylarisBeam-linux-amd64
+          # Windows: a human double-click artifact (.exe) AND a byte-identical
+          # extensionless copy. beam-release sign derives the manifest download
+          # URL as "<base-url>/DylarisBeam-<slug>" (no extension), so updater.go
+          # fetches DylarisBeam-windows-amd64; the release must carry that exact
+          # name. Signing the extensionless copy makes the signed bytes equal the
+          # fetched bytes.
+          cp build/bin/DylarisBeam.exe dist-release/DylarisBeam-windows-amd64.exe
+          cp build/bin/DylarisBeam.exe dist-release/DylarisBeam-windows-amd64
+          # NSIS installer only if the best-effort step produced one.
+          if [ -f build/bin/DylarisBeam-amd64-installer.exe ]; then
+            cp build/bin/DylarisBeam-amd64-installer.exe dist-release/DylarisBeam-windows-amd64-installer.exe
+          fi
           go run ./cmd/beam-release sign \
             -version "${{ steps.ver.outputs.VERSION }}" \
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download" \
             -out dist-release \
-            linux-amd64=dist-release/DylarisBeam-linux-amd64
+            linux-amd64=dist-release/DylarisBeam-linux-amd64 \
+            windows-amd64=dist-release/DylarisBeam-windows-amd64
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
+        # fail_on_unmatched_files defaults to false, so the installer line is a
+        # no-op when the best-effort NSIS step did not produce one.
         with:
           tag_name: ${{ github.ref_name }}
           name: Beam ${{ steps.ver.outputs.VERSION }}
           files: |
             beam/app/dist-release/DylarisBeam-linux-amd64
             beam/app/dist-release/DylarisBeam-linux-amd64.sig
+            beam/app/dist-release/DylarisBeam-windows-amd64
+            beam/app/dist-release/DylarisBeam-windows-amd64.exe
+            beam/app/dist-release/DylarisBeam-windows-amd64.sig
+            beam/app/dist-release/DylarisBeam-windows-amd64-installer.exe
             beam/app/dist-release/latest.json
             beam/app/dist-release/latest.json.sig
