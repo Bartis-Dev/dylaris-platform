@@ -34,12 +34,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 )
 
 const proxyCookieName = "dyl_tabproxy"
@@ -240,6 +242,14 @@ func (h *ProxyHandler) InDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Read-only session", http.StatusForbidden)
 		return
 	}
+	// Security invariant (WS): a bidirectional WebSocket cannot be constrained
+	// by the GET/HEAD method gate above (the handshake itself is a GET, but
+	// once upgraded either side can send write-frames), so a read-only/demo
+	// ticket must never be allowed to open one at all.
+	if readOnly && isWebSocketUpgrade(r) {
+		http.Error(w, "Read-only session", http.StatusForbidden)
+		return
+	}
 	// Security invariant #5 (cont.): only a tab explicitly in "proxied" mode
 	// may be proxied - a "direct" (plain external URL) tab must never route
 	// through the mesh.
@@ -258,8 +268,7 @@ func (h *ProxyHandler) InDashboard(w http.ResponseWriter, r *http.Request) {
 // serve branches to the WS bridge (Task 10) or the HTTP path.
 func (h *ProxyHandler) serve(w http.ResponseWriter, r *http.Request, tab *proxyTab, basePath, subPath string) {
 	if isWebSocketUpgrade(r) {
-		// Replaced by h.serveWS in Task 10.
-		http.Error(w, "WebSocket proxying not available", http.StatusNotImplemented)
+		h.serveWS(w, r, tab)
 		return
 	}
 	h.serveHTTP(w, r, tab, basePath, subPath)
@@ -730,9 +739,168 @@ func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Read-only session", http.StatusForbidden)
 		return
 	}
+	// Security invariant (WS), mirroring InDashboard: a read-only/demo ticket
+	// must never be allowed to open a WebSocket, since a bidirectional stream
+	// cannot be constrained by the GET/HEAD gate above once upgraded. This
+	// only ever fires on the private ticket path - readOnly stays false for a
+	// public-visibility link, which is intentionally left unrestricted.
+	if readOnly && isWebSocketUpgrade(r) {
+		http.Error(w, "Read-only session", http.StatusForbidden)
+		return
+	}
 
 	// The proxied page is per-share-link and, for a private link, per-ticket -
 	// never let a shared cache or the browser's disk cache keep it.
 	w.Header().Set("Cache-Control", "no-store")
 	h.serve(w, r, tab, publicProxyBasePath(token), subPath)
+}
+
+// --- Task 10: WebSocket upgrade bridge ---
+
+const coreWSFragmentSize = 60 * 1024
+
+// splitProxyBytes splits data into <=max fragments (reassembled on the far
+// side); an empty message yields one empty fragment. Keeps a WsFrame under
+// Core's 128KB gRPC receive cap.
+func splitProxyBytes(data []byte, max int) [][]byte {
+	if max <= 0 {
+		max = coreWSFragmentSize
+	}
+	if len(data) == 0 {
+		return [][]byte{{}}
+	}
+	var out [][]byte
+	for off := 0; off < len(data); off += max {
+		end := off + max
+		if end > len(data) {
+			end = len(data)
+		}
+		out = append(out, data[off:end])
+	}
+	return out
+}
+
+// serveWS upgrades the browser connection and bridges it to the container WS
+// over the mesh: WsOpen, then WsFrame/WsClose in both directions. Application
+// messages are fragmented at coreWSFragmentSize and reassembled on the far side
+// via the WsFrame.fin flag. V1 does not append the forwarded sub-path (the
+// live-WS endpoint sits at the app base path in target_path).
+//
+// Concurrency/teardown mirrors the node-side bridge (node/grpc_tabproxy_ws.go):
+// exactly one reader goroutine (browser->container, below) and exactly one
+// writer (the container->browser loop, which is this function's own
+// goroutine - the http.Handler call itself), so gorilla's single-reader/
+// single-writer requirement on bconn is never violated. Teardown is
+// exactly-once via closeOnce/done regardless of which side triggers it: the
+// browser closing/erroring, the container sending WsClose/an error, or the
+// node connection dying (registry.Unregister closes every pending channel,
+// so ch is closed and the `!ok` branch fires here). CleanupRequest is
+// deferred so the registry's pending-request map never leaks an entry past
+// this handler's return, matching the SendRequestStreaming contract used by
+// every other mesh caller (see serveHTTP above).
+func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *proxyTab) {
+	bconn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer bconn.Close()
+
+	target := tab.TargetPath
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	// A fresh, unique request_id per WS open (never reused) - the registry
+	// keys the node-side bridge and pending-response channel by this id, so a
+	// collision with any other in-flight request (a concurrent WS, or an
+	// HTTP proxy call) would let one overwrite the other's bridge/channel.
+	reqID := uuid.NewString()
+	openMsg := &pb.NodeMessage{
+		RequestId:  reqID,
+		ServerUuid: tab.ServerUUID,
+		Payload: &pb.NodeMessage_WsOpen{WsOpen: &pb.WsOpen{
+			TargetPort: int32(tab.TargetPort),
+			Path:       target,
+			Headers:    h.forwardRequestHeaders(r),
+		}},
+	}
+	ch, err := h.state.GRPCRegistry.SendRequestStreaming(tab.NodeID, openMsg)
+	if err != nil {
+		return
+	}
+	defer h.state.GRPCRegistry.CleanupRequest(tab.NodeID, reqID)
+
+	done := make(chan struct{})
+	var closeOnce sync.Once
+	closeAll := func() {
+		closeOnce.Do(func() {
+			// Best-effort: if the node/connection is already gone this send
+			// simply fails and is ignored - there is nothing left to notify.
+			h.state.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
+				RequestId:  reqID,
+				ServerUuid: tab.ServerUUID,
+				Payload:    &pb.NodeMessage_WsClose{WsClose: &pb.WsClose{Code: 1000}},
+			})
+			close(done)
+			bconn.Close()
+		})
+	}
+
+	// browser -> container (sole reader of bconn)
+	go func() {
+		defer closeAll()
+		for {
+			mt, data, rerr := bconn.ReadMessage()
+			if rerr != nil {
+				return
+			}
+			frags := splitProxyBytes(data, coreWSFragmentSize)
+			for i, f := range frags {
+				if serr := h.state.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
+					RequestId:  reqID,
+					ServerUuid: tab.ServerUUID,
+					Payload: &pb.NodeMessage_WsFrame{WsFrame: &pb.WsFrame{
+						Opcode: int32(mt), Data: f, Fin: i == len(frags)-1,
+					}},
+				}); serr != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// container -> browser (sole writer of bconn)
+	var rxBuf []byte
+	rxOpcode := websocket.TextMessage
+	for {
+		select {
+		case <-done:
+			return
+		case resp, ok := <-ch:
+			if !ok {
+				// Node/connection died: registry.Unregister closed ch.
+				closeAll()
+				return
+			}
+			if resp.GetWsClose() != nil || resp.GetError() != nil {
+				closeAll()
+				return
+			}
+			fr := resp.GetWsFrame()
+			if fr == nil {
+				continue
+			}
+			rxBuf = append(rxBuf, fr.Data...)
+			if fr.Opcode != 0 {
+				rxOpcode = int(fr.Opcode)
+			}
+			if !fr.Fin {
+				continue
+			}
+			if werr := bconn.WriteMessage(rxOpcode, rxBuf); werr != nil {
+				closeAll()
+				return
+			}
+			rxBuf = nil
+		}
+	}
 }
