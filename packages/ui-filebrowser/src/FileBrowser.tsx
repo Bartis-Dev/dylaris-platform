@@ -6,6 +6,7 @@ import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLef
 import type { FileEntry, FileBrowserProps } from './types';
 import { formatBytes, validFilenameRegex, editableExtensions, getCopyName, getTruncatedPath } from './utils';
 import { useDelayedFlag } from './useDelayedFlag';
+import { beamConnectionModeMeta } from './connectionMode';
 import Toast from './Toast';
 import Breadcrumbs from './Breadcrumbs';
 import DownloadProgress from './DownloadProgress';
@@ -17,7 +18,7 @@ const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
 
-const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false }) => {
+const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false, connectionMode }) => {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [currentPath, setCurrentPath] = useState(currentServerPath);
   const [error, setError] = useState('');
@@ -763,6 +764,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       `}</style>
       <div className="flex items-center gap-3 mb-4">
         <div className="flex-1 min-w-0"><Breadcrumbs currentPath={currentPath} onNavigate={fetchFiles} /></div>
+        {connectionMode && (
+          <span
+            title={beamConnectionModeMeta(connectionMode).description}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-(--base-04) bg-(--base-03) px-2.5 h-[37px] font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-07) cursor-help"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-(--accent)" aria-hidden="true" />
+            {beamConnectionModeMeta(connectionMode).label}
+          </span>
+        )}
         <label className="flex items-center gap-2 bg-(--base-03) border border-(--base-04) rounded-md px-3 w-56 h-[37px] shrink-0 cursor-text transition-[border-color,box-shadow] focus-within:border-(--accent) focus-within:shadow-[0_0_0_3px_rgba(112,72,200,0.15)]">
             <Search size={16} className="text-(--base-07) shrink-0" />
             <input

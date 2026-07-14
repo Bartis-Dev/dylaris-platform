@@ -1,3 +1,5 @@
+import type { BeamConnectionMode } from './connectionMode';
+
 export interface FileEntry {
   name: string;
   is_dir: boolean;
@@ -36,4 +38,8 @@ export interface FileBrowserProps {
   // editor opens for reading with no Save. The backend 403s these anyway
   // (default-deny); this is purely the client-side UX.
   readOnly?: boolean;
+  // Active beam transport for the connection-mode badge. Only the Beam Desktop app
+  // sets this (via GetConnectionMode); the web Panel uses Core REST and passes
+  // nothing, so no badge renders there.
+  connectionMode?: BeamConnectionMode | null;
 }
