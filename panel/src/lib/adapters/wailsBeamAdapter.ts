@@ -58,6 +58,9 @@ interface WailsAppBindings {
     Logout(): Promise<void>;
     GetBeamConfig(): Promise<{ relay_address: string }>;
     ConnectToServer(serverUUID: string): Promise<void>;
+    // Read-only: the active beam transport ("lan-fastpath" | "relay" | "direct") for
+    // the live tunnel, or "" when not connected. Optional - older app builds omit it.
+    GetConnectionMode?(): Promise<string>;
     ListFiles(path: string, serverUUID: string): Promise<{ success: boolean; files?: FileEntry[]; message?: string }>;
     GetFileContent(path: string, serverUUID: string): Promise<{ success: boolean; content?: string; message?: string }>;
     SaveFile(path: string, content: string, serverUUID: string): Promise<void>;
@@ -96,6 +99,20 @@ export function getWailsApp(): WailsAppBindings | null {
 
 export function isWails(): boolean {
     return getWailsApp() !== null;
+}
+
+// getWailsConnectionMode reads the active beam transport ("lan-fastpath" | "relay" |
+// "direct") from the Wails side after a successful ConnectToServer. Returns "" when
+// the binding is missing (older app build) or the call fails, so the caller renders no
+// badge rather than surfacing an error.
+export async function getWailsConnectionMode(): Promise<string> {
+    const app = getWailsApp();
+    if (!app || typeof app.GetConnectionMode !== 'function') return '';
+    try {
+        return await app.GetConnectionMode();
+    } catch {
+        return '';
+    }
 }
 
 // syncSessionWithWails pushes the panel's session token + API base to

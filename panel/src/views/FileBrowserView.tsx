@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { FileBrowser } from '@dylaris/ui-filebrowser';
-import { createBeamAdapter, isWails, syncSessionWithWails, connectWailsToServer } from '@/lib/adapters';
+import type { BeamConnectionMode } from '@dylaris/ui-filebrowser';
+import { createBeamAdapter, isWails, syncSessionWithWails, connectWailsToServer, getWailsConnectionMode } from '@/lib/adapters';
 import { useDevMode, devLog } from '@/lib/devLog';
 import DebugLogPanel from '@/components/DebugLogPanel';
 
@@ -20,6 +21,10 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
   const adapter = useMemo(() => createBeamAdapter(), []);
   const devMode = useDevMode();
 
+  // Active beam transport for the toolbar badge. Only set inside Beam Desktop; the
+  // browser leaves it null so FileBrowser renders no badge.
+  const [connectionMode, setConnectionMode] = useState<BeamConnectionMode | null>(null);
+
   // Inside Beam Desktop, point the native relay tunnel at whatever server
   // the user is browsing. Re-runs whenever the URL changes server.
   // syncSessionWithWails MUST finish before connecting — ConnectToServer
@@ -32,7 +37,11 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
     devLog('beam.view', 'info', `FileBrowserView mounted in Wails mode, serverUuid=${serverUuid}`);
     (async () => {
       await syncSessionWithWails();
-      if (serverUuid) await connectWailsToServer(serverUuid);
+      if (serverUuid) {
+        await connectWailsToServer(serverUuid);
+        const mode = await getWailsConnectionMode();
+        setConnectionMode(mode ? (mode as BeamConnectionMode) : null);
+      }
     })();
   }, [serverUuid]);
 
@@ -44,6 +53,7 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
           serverUuid={serverUuid}
           adapter={adapter}
           readOnly={readOnly}
+          connectionMode={connectionMode}
         />
       </div>
       {devMode && (
