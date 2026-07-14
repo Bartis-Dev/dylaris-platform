@@ -5,6 +5,15 @@ package handlers
 // browser only ever talks to Core on the panel origin. Two entry points:
 // InDashboard (session-authed) and Public (share-token, Task 9). Both share
 // serve().
+//
+// Auth is cookie-only (Task 8 fast-follow, closing two Important review
+// findings): MintProxyAuth runs behind the normal /api subrouter's
+// AuthMiddleware (inheriting 2FA-setup-lock + demo-read-only gating for
+// free) and, after re-checking overview access + the feature gate, mints a
+// short-lived (5min) tab-proxy-scoped ticket and stamps it as an HttpOnly,
+// path-scoped dyl_tabproxy cookie. InDashboard then trusts ONLY that cookie -
+// it never accepts a session JWT via header/query, so the 24h session token
+// is never carried in this endpoint's URL.
 
 import (
 	"bytes"
@@ -24,6 +33,7 @@ import (
 
 const proxyCookieName = "dyl_tabproxy"
 const proxyMaxRequestBody = 1 << 20 // 1 MB inline request-body cap
+const proxyMaxHTMLBuffer = 10 << 20 // 10 MB cap on buffered text/html (base-href injection); see serveHTTP.
 
 // coreHopByHop lists headers dropped in both directions (RFC 7230 6.1).
 var coreHopByHop = map[string]bool{
@@ -89,75 +99,109 @@ func (h *ProxyHandler) getTabByID(serverID, tabID int) (*proxyTab, error) {
 	return &t, nil
 }
 
-// resolveIdentity authenticates a proxy request from the Authorization header,
-// the ?token= query, or the scoped dyl_tabproxy cookie. Returns ok=false when
-// no valid session token is present. This is the ONLY auth gate for this
-// endpoint (security invariant #3): InDashboard is registered on the root
-// router, bypassing the /api subrouter's AuthMiddleware/setup-lock/maintenance
-// chain entirely, so every check here must be self-contained.
-func (h *ProxyHandler) resolveIdentity(r *http.Request) (username string, isAdmin bool, userID string, ok bool) {
-	tokenStr := ""
-	if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
-		tokenStr = strings.TrimPrefix(a, "Bearer ")
-	}
-	if tokenStr == "" {
-		tokenStr = r.URL.Query().Get("token")
-	}
-	if tokenStr == "" {
-		if c, err := r.Cookie(proxyCookieName); err == nil {
-			tokenStr = c.Value
-		}
-	}
-	if tokenStr == "" {
-		return "", false, "", false
-	}
-	claims, err := h.auth.ParseSessionToken(tokenStr)
-	if err != nil {
-		return "", false, "", false
-	}
-	uid := ""
-	if h.state.Store != nil {
-		if u, uerr := h.state.Store.GetUserByUsername(claims.Username); uerr == nil && u != nil {
-			uid = u.ID
-		}
-	}
-	return claims.Username, claims.IsAdmin, uid, true
+// proxyBasePath builds the proxy prefix a given server/tab is served (and
+// cookie-scoped) under. Shared by MintProxyAuth (cookie Path) and InDashboard
+// (base-href injection) so the two can never drift apart.
+func proxyBasePath(serverID, tabID int) string {
+	return fmt.Sprintf("/api/servers/%d/tabs/%d/proxy/", serverID, tabID)
 }
 
-// setProxyCookie stamps a short-lived, path-scoped HttpOnly cookie carrying the
-// JWT so the iframe's relative sub-requests authenticate. Only when the request
-// authenticated via header/query (not from the cookie itself). Security
-// invariant #4: HttpOnly (unreadable to the proxied page's JS), SameSite=Strict
-// (never sent on a cross-site navigation/subrequest), and Path scoped to THIS
-// tab's proxy prefix only — never site-wide, so it cannot leak into any other
-// tab's, server's, or the panel's own requests.
-func (h *ProxyHandler) setProxyCookie(w http.ResponseWriter, r *http.Request, basePath string) {
-	tokenStr := ""
-	if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
-		tokenStr = strings.TrimPrefix(a, "Bearer ")
-	}
-	if tokenStr == "" {
-		tokenStr = r.URL.Query().Get("token")
-	}
-	if tokenStr == "" {
+// MintProxyAuth: GET /api/servers/{id}/tabs/{tabId}/proxy-auth, registered on
+// the NORMAL /api subrouter behind AuthMiddleware - this inherits the full
+// session gating (2FA-setup-lock, demo read-only, signature/expiry) for free
+// instead of re-implementing it here. After re-checking overview access +
+// the feature gate, it mints a short-lived tab-proxy-scoped ticket and
+// stamps it as an HttpOnly cookie scoped to exactly this server/tab's proxy
+// prefix, so InDashboard never needs the 24h session JWT in a URL.
+//
+// This does NOT re-check the tab's own state (enabled/mode/surface) - that
+// stays the DB-backed getTabByID gate InDashboard runs on every actual proxy
+// request regardless of the ticket, so a ticket minted here for a bad tabId
+// simply 404s the moment it is used. Keeping this endpoint to the
+// server-level access check only is what lets it run without a raw-SQL
+// dependency of its own.
+func (h *ProxyHandler) MintProxyAuth(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, _ := strconv.Atoi(vars["id"])
+	tabID, _ := strconv.Atoi(vars["tabId"])
+
+	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+		sendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
+
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+
+	srv, serr := h.state.Store.GetServerByID(serverID)
+	if serr != nil || srv == nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// The demo account is forced read-only by AuthMiddleware for every other
+	// endpoint; carry that same restriction into the ticket so it survives
+	// through the proxy, which has no AuthMiddleware of its own to re-derive
+	// it from.
+	readOnly := !isAdmin && isDemoAccount(h.state, userID)
+
+	ticket, err := h.auth.IssueTabProxyTicket(username, isAdmin, serverID, tabID, readOnly)
+	if err != nil {
+		sendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
+		return
+	}
+
 	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     proxyCookieName,
-		Value:    tokenStr,
-		Path:     basePath,
+		Value:    ticket,
+		Path:     proxyBasePath(serverID, tabID),
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   3600,
+		MaxAge:   int(tabProxyTicketTTL.Seconds()),
 	})
+	// Defense in depth: this response carries no token in the body, but the
+	// codebase's convention for any auth-adjacent endpoint is to keep it out
+	// of caches/Referer regardless.
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// InDashboard: ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - session +
-// overview access to the server (same gate as tab read). Order matters: the
-// feature gate is checked before touching the DB or trusting any identity, so
-// a disabled feature never exposes even the existence of a tab/server.
+// resolveProxyTicket validates the dyl_tabproxy cookie and confirms its
+// server-id + tab-id claims match this request's URL. This is the ONLY auth
+// gate for this endpoint (security invariant #3): InDashboard is registered
+// on the root router, bypassing the /api subrouter's
+// AuthMiddleware/setup-lock/maintenance chain entirely. Unlike the old
+// design, this handler does NOT re-derive identity from a bearer/query
+// session token - the ticket's claims are trusted as-is because they were
+// only ever minted by MintProxyAuth, which already ran the full
+// AuthMiddleware + checkServerAccess("overview") + feature-gate chain.
+func (h *ProxyHandler) resolveProxyTicket(r *http.Request, serverID, tabID int) (username string, isAdmin, readOnly, ok bool) {
+	c, err := r.Cookie(proxyCookieName)
+	if err != nil || c.Value == "" {
+		return "", false, false, false
+	}
+	claims, err := h.auth.ParseTabProxyTicket(c.Value)
+	if err != nil {
+		return "", false, false, false
+	}
+	if claims.ServerID != serverID || claims.TabID != tabID {
+		return "", false, false, false
+	}
+	return claims.Username, claims.IsAdmin, claims.ReadOnly, true
+}
+
+// InDashboard: ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only
+// ticket auth (see MintProxyAuth). Order matters: the feature gate is checked
+// before touching the ticket or the DB, so a disabled feature never exposes
+// even the existence of a tab/server.
 func (h *ProxyHandler) InDashboard(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	serverID, _ := strconv.Atoi(vars["id"])
@@ -165,19 +209,28 @@ func (h *ProxyHandler) InDashboard(w http.ResponseWriter, r *http.Request) {
 	subPath := vars["rest"]
 
 	// Security invariant #5: master feature gate. A disabled feature must
-	// reject every request here regardless of session validity.
+	// reject every request here regardless of ticket validity.
 	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
 		http.Error(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
-	// Security invariant #3: in-handler session auth (no middleware to lean on).
-	username, isAdmin, userID, ok := h.resolveIdentity(r)
+	// Security invariant #3: cookie-only ticket auth. Missing, expired,
+	// wrong-signature, wrong-purpose or wrong-server/tab all collapse to the
+	// same 401 so the panel knows to re-mint via MintProxyAuth.
+	_, _, readOnly, ok := h.resolveProxyTicket(r, serverID, tabID)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Security invariant #7: a ticket minted for a demo/read-only session may
+	// only ever GET/HEAD through the proxy, mirroring AuthMiddleware's
+	// demo-read-only gate on every other endpoint.
+	if readOnly && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Read-only session", http.StatusForbidden)
+		return
+	}
 	// Security invariant #5 (cont.): only a tab explicitly in "proxied" mode
-	// may be proxied — a "direct" (plain external URL) tab must never route
+	// may be proxied - a "direct" (plain external URL) tab must never route
 	// through the mesh.
 	tab, err := h.getTabByID(serverID, tabID)
 	if err != nil || tab == nil || !tab.Enabled || tab.Mode != "proxied" {
@@ -188,20 +241,7 @@ func (h *ProxyHandler) InDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Not a dashboard tab", http.StatusNotFound)
 		return
 	}
-	srv, serr := h.state.Store.GetServerByID(serverID)
-	if serr != nil || srv == nil {
-		http.Error(w, "Server not found", http.StatusNotFound)
-		return
-	}
-	// Security invariant #3 (cont.): explicit permission check, same class as
-	// the read-only tab list ("overview"), enforced in-handler.
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	basePath := fmt.Sprintf("/api/servers/%d/tabs/%d/proxy/", serverID, tabID)
-	h.setProxyCookie(w, r, basePath)
-	h.serve(w, r, tab, basePath, subPath)
+	h.serve(w, r, tab, proxyBasePath(serverID, tabID), subPath)
 }
 
 // serve branches to the WS bridge (Task 10) or the HTTP path.
@@ -225,7 +265,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 	// Security invariant #2: normalize to a safe origin-form path before it
 	// crosses the mesh boundary. tab.TargetPath is DB-validated at tab
 	// creation/update (must start with "/"), but subPath is the raw,
-	// client-controlled {rest:.*} route capture — sanitize the JOINED result
+	// client-controlled {rest:.*} route capture - sanitize the JOINED result
 	// so a request like .../proxy/@evil.com/x or .../proxy//evil.com/x can
 	// never be turned into something that re-targets the host on the node
 	// side, however the node ends up building/parsing the outbound URL.
@@ -245,7 +285,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 		ServerUuid: tab.ServerUUID,
 		Payload: &pb.NodeMessage_HttpProxyReq{HttpProxyReq: &pb.HttpProxyReq{
 			// Security invariant #1: the port sent to the node is ALWAYS the
-			// DB-stored value fetched via getTabByID — never anything derived
+			// DB-stored value fetched via getTabByID - never anything derived
 			// from the request or the client. This is what closes the SSRF
 			// containment: the node dials whatever port Core asks for, so
 			// Core must never let a client choose it.
@@ -265,6 +305,9 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 
 	var head *pb.HttpProxyRespHead
 	isHTML := false
+	// htmlOverflowed flips once the buffered text/html body exceeds
+	// proxyMaxHTMLBuffer; see the cap comment below.
+	htmlOverflowed := false
 	var htmlBuf bytes.Buffer
 	headerWritten := false
 	flusher, canFlush := w.(http.Flusher)
@@ -279,6 +322,9 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 		if hd := resp.GetHttpProxyRespHead(); hd != nil {
 			head = hd
 			isHTML = strings.HasPrefix(strings.ToLower(headerValue(hd.Headers, "Content-Type")), "text/html")
+			// The proxied page is per-user/per-ticket - never let a shared
+			// cache in front of Core (or the browser's disk cache) keep it.
+			w.Header().Set("Cache-Control", "no-store")
 			if !isHTML {
 				writeProxyHeaders(w, hd.Headers, false)
 				w.WriteHeader(int(hd.StatusCode))
@@ -286,23 +332,49 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			}
 			continue
 		}
-		if chunk := resp.GetChunk(); chunk != nil {
-			if isHTML {
-				htmlBuf.Write(chunk.Data)
-			} else {
-				if !headerWritten {
-					w.WriteHeader(http.StatusOK)
-					headerWritten = true
-				}
-				w.Write(chunk.Data)
-				if canFlush {
-					flusher.Flush()
-				}
-			}
+		chunk := resp.GetChunk()
+		if chunk == nil {
+			continue
 		}
+		if !isHTML {
+			if !headerWritten {
+				w.WriteHeader(http.StatusOK)
+				headerWritten = true
+			}
+			w.Write(chunk.Data)
+			if canFlush {
+				flusher.Flush()
+			}
+			continue
+		}
+		// text/html is buffered (up to proxyMaxHTMLBuffer) so a <base href>
+		// can be injected once the full body is known. Buffering it
+		// unconditionally would let a single large text/html response grow
+		// this handler's memory without bound - a per-request memory-DoS
+		// (WS5 Task 8 follow-up fix). Past the cap, buffering stops and the
+		// rest of the body streams straight through with no base-href
+		// injection: a 502 would be simpler but would break an otherwise
+		// perfectly servable large page for no real security benefit, so
+		// graceful degradation is the better tradeoff here.
+		if !htmlOverflowed && htmlBuf.Len()+len(chunk.Data) > proxyMaxHTMLBuffer {
+			htmlOverflowed = true
+			writeProxyHeaders(w, head.Headers, true) // drop upstream Content-Length; body no longer matches
+			w.WriteHeader(int(head.StatusCode))
+			headerWritten = true
+			w.Write(htmlBuf.Bytes())
+			htmlBuf.Reset()
+		}
+		if htmlOverflowed {
+			w.Write(chunk.Data)
+			if canFlush {
+				flusher.Flush()
+			}
+			continue
+		}
+		htmlBuf.Write(chunk.Data)
 	}
 
-	if isHTML && head != nil {
+	if isHTML && !htmlOverflowed && head != nil {
 		out := injectBaseHref(htmlBuf.Bytes(), basePath)
 		writeProxyHeaders(w, head.Headers, true) // drop upstream Content-Length; body changed
 		w.Header().Set("Content-Length", strconv.Itoa(len(out)))
@@ -313,7 +385,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 
 // forwardRequestHeaders converts the browser request headers into the wire
 // slice, dropping hop-by-hop, the panel session cookie/Authorization (never
-// forwarded to the container — security invariant #6), and Accept-Encoding
+// forwarded to the container - security invariant #6), and Accept-Encoding
 // (so text/html arrives uncompressed for <base> injection).
 func (h *ProxyHandler) forwardRequestHeaders(r *http.Request) []*pb.HttpHeader {
 	out := []*pb.HttpHeader{}
@@ -407,7 +479,7 @@ func singleJoin(base, sub string) string {
 // the node in HttpProxyReq.Path (security invariant #2, carried forward from
 // earlier task reviews). The node currently builds the outbound URL by plain
 // string concatenation ("http://"+addr+path, see node/grpc_tabproxy.go),
-// which already keeps the host fixed regardless of what's in path — but this
+// which already keeps the host fixed regardless of what's in path - but this
 // is the last point Core controls before the value crosses the mesh
 // boundary, so it is normalized defensively rather than trusted to stay safe
 // under some future node-side refactor:

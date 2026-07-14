@@ -40,17 +40,49 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) 
 	return token.SignedString(h.jwtKey)
 }
 
-// ParseSessionToken validates a session JWT string and returns its claims. The
-// tab-proxy endpoints use it because they authenticate from the header, the
-// ?token= query, or the scoped dyl_tabproxy cookie rather than the standard
-// AuthMiddleware chain.
-func (h *AuthHandler) ParseSessionToken(tokenString string) (*Claims, error) {
+// tabProxyTicketTTL is the lifetime of a tab-proxy-scoped ticket (Claims.Purpose
+// == "tab_proxy"). Short-lived because it lives in a cookie for the duration of
+// one dashboard-tab iframe session, not a general 24h session token.
+const tabProxyTicketTTL = 5 * time.Minute
+
+// IssueTabProxyTicket signs a short-lived, tab-proxy-scoped JWT. The caller
+// (ProxyHandler.MintProxyAuth) has already run this request through
+// AuthMiddleware plus checkServerAccess("overview") for this exact
+// server/tab, so the ticket just carries that already-verified identity +
+// scope forward: username/isAdmin, the server+tab it is valid for, and
+// whether the underlying session is read-only (demo account). It is signed
+// with the same key as a normal session token but is rejected by
+// AuthMiddleware everywhere else (Purpose == "tab_proxy" is 403'd, see
+// below) - it can never stand in for the real session token.
+func (h *AuthHandler) IssueTabProxyTicket(username string, isAdmin bool, serverID, tabID int, readOnly bool) (string, error) {
+	expiresAt := time.Now().Add(tabProxyTicketTTL)
+	claims := &Claims{
+		Username:         username,
+		IsAdmin:          isAdmin,
+		Purpose:          "tab_proxy",
+		ServerID:         serverID,
+		TabID:            tabID,
+		ReadOnly:         readOnly,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expiresAt)},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(h.jwtKey)
+}
+
+// ParseTabProxyTicket validates a tab-proxy ticket string: signature, not
+// expired, and Purpose == "tab_proxy". It deliberately does NOT check the
+// server/tab-id claims against a request URL - the caller (tab_proxy.go)
+// does that, since only it knows which {id}/{tabId} the request is for.
+func (h *AuthHandler) ParseTabProxyTicket(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 		return h.jwtKey, nil
 	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil || !token.Valid {
 		return nil, errors.New("invalid token")
+	}
+	if claims.Purpose != "tab_proxy" {
+		return nil, errors.New("wrong token purpose")
 	}
 	return claims, nil
 }
@@ -97,6 +129,12 @@ type Claims struct {
 	Username string `json:"username"`
 	IsAdmin  bool   `json:"isAdmin"`
 	Purpose  string `json:"purpose,omitempty"`
+	// ServerID, TabID and ReadOnly are only set when Purpose == "tab_proxy":
+	// the server + tab this ticket authorizes, and whether the underlying
+	// session was read-only (demo account) at mint time.
+	ServerID int  `json:"serverId,omitempty"`
+	TabID    int  `json:"tabId,omitempty"`
+	ReadOnly bool `json:"readOnly,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -193,12 +231,21 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Setup tokens are scoped to a tiny allowlist. Any other endpoint
-		// must reject them with 403 — bearer doesn't have a full session yet.
+		// must reject them with 403 - bearer doesn't have a full session yet.
 		if claims.Purpose == "2fa_setup" {
 			if !setupTokenAllowedPaths[r.URL.Path] {
-				sendJSONError(w, "Token is restricted to 2FA setup — finish enrollment first", http.StatusForbidden)
+				sendJSONError(w, "Token is restricted to 2FA setup - finish enrollment first", http.StatusForbidden)
 				return
 			}
+		}
+
+		// tab_proxy tickets are validated exclusively by the tab-proxy
+		// handler's own cookie parsing (root router, not behind
+		// AuthMiddleware) - they must never authenticate a normal /api call,
+		// even though they share the session signing key.
+		if claims.Purpose == "tab_proxy" {
+			sendJSONError(w, "Token is restricted to the tab proxy", http.StatusForbidden)
+			return
 		}
 
 		ctx := context.WithValue(r.Context(), "username", claims.Username)

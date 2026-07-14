@@ -574,7 +574,10 @@ func main() {
 
 	// WS5 custom-tab reverse proxy. On the ROOT router (like /api/share) so it
 	// bypasses the /api subrouter's StrictSlash + setup-lock + maintenance
-	// middleware; auth (session/token) is enforced inside the handler.
+	// middleware. Auth is cookie-only: the handler trusts ONLY the
+	// dyl_tabproxy ticket cookie minted by proxy-auth below (registered on the
+	// normal /api subrouter behind AuthMiddleware) - no session JWT is ever
+	// accepted here via header or query (WS5 Task 8 fast-follow).
 	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", proxyHandler.InDashboard)
 	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", proxyHandler.InDashboard)
 
@@ -653,6 +656,11 @@ func main() {
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Delete)).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(serverTabsHandler.RotateShareLink)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(serverTabsHandler.RevokeShareLink)).Methods("DELETE")
+	// Mints the dyl_tabproxy cookie the root-router proxy below trusts.
+	// Registered on the normal /api subrouter (unlike the proxy itself) so it
+	// runs through AuthMiddleware and inherits 2FA-setup-lock + demo
+	// read-only gating instead of re-implementing them (WS5 Task 8 fast-follow).
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(proxyHandler.MintProxyAuth)).Methods("GET")
 
 	// --- Modrinth PAT ---
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")

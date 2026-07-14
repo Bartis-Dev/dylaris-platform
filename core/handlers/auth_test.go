@@ -131,3 +131,109 @@ func TestIsAdminToken_RejectsNonHS256Alg(t *testing.T) {
 		t.Fatal("IsAdminToken must reject a non-HS256 token even with a valid signature under the same key")
 	}
 }
+
+// --- Tab-proxy ticket (WS5 Task 8 fast-follow: cookie-only proxy auth) ---
+
+// TestIssueTabProxyTicket_ClaimsAndExpiry checks the minted ticket's shape:
+// right purpose, right server/tab/identity/readOnly claims, and an expiry
+// ~tabProxyTicketTTL out - independent of the mint HTTP handler.
+func TestIssueTabProxyTicket_ClaimsAndExpiry(t *testing.T) {
+	h := newTestAuthHandler()
+
+	before := time.Now()
+	tok, err := h.IssueTabProxyTicket("alice", true, 42, 7, true)
+	after := time.Now()
+	if err != nil {
+		t.Fatalf("IssueTabProxyTicket: %v", err)
+	}
+
+	claims, err := h.ParseTabProxyTicket(tok)
+	if err != nil {
+		t.Fatalf("ParseTabProxyTicket: %v", err)
+	}
+	if claims.Purpose != "tab_proxy" {
+		t.Errorf("Purpose = %q, want tab_proxy", claims.Purpose)
+	}
+	if claims.Username != "alice" || !claims.IsAdmin {
+		t.Errorf("identity = %q/%v, want alice/true", claims.Username, claims.IsAdmin)
+	}
+	if claims.ServerID != 42 || claims.TabID != 7 {
+		t.Errorf("server/tab = %d/%d, want 42/7", claims.ServerID, claims.TabID)
+	}
+	if !claims.ReadOnly {
+		t.Error("ReadOnly = false, want true")
+	}
+	if claims.ExpiresAt == nil {
+		t.Fatal("ExpiresAt not set")
+	}
+	exp := claims.ExpiresAt.Time
+	if exp.Before(before.Add(tabProxyTicketTTL-2*time.Second)) || exp.After(after.Add(tabProxyTicketTTL+2*time.Second)) {
+		t.Errorf("ExpiresAt = %v, want ~%v from mint time", exp, tabProxyTicketTTL)
+	}
+}
+
+// TestParseTabProxyTicket_RejectsNonTabProxyPurpose is the pure-claims
+// counterpart to the proxy's cookie check: any Purpose other than
+// "tab_proxy" (a normal session token, a "2fa_setup" token, or anything
+// else) must fail ParseTabProxyTicket even with a valid signature.
+func TestParseTabProxyTicket_RejectsNonTabProxyPurpose(t *testing.T) {
+	h := newTestAuthHandler()
+
+	cases := []struct {
+		name    string
+		purpose string
+	}{
+		{"empty (normal session)", ""},
+		{"2fa_setup", "2fa_setup"},
+		{"unrelated purpose", "something_else"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			claims := &Claims{
+				Username:         "owner",
+				Purpose:          c.purpose,
+				RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+			}
+			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+			signed, err := tok.SignedString(h.jwtKey)
+			if err != nil {
+				t.Fatalf("signing: %v", err)
+			}
+			if _, err := h.ParseTabProxyTicket(signed); err == nil {
+				t.Errorf("ParseTabProxyTicket accepted Purpose=%q, want rejected", c.purpose)
+			}
+		})
+	}
+}
+
+// TestAuthMiddleware_RejectsTabProxyPurposeToken is defense-in-depth beyond
+// what the task strictly requires: a Purpose == "tab_proxy" ticket (minted by
+// ProxyHandler.MintProxyAuth, meant to be validated only by the proxy's own
+// cookie parsing in tab_proxy.go) must never authenticate a normal /api call
+// through AuthMiddleware, even though it is signed with the same key as a
+// real session token - mirroring the existing "2fa_setup" purpose gate.
+func TestAuthMiddleware_RejectsTabProxyPurposeToken(t *testing.T) {
+	h := &AuthHandler{state: &AppState{}, jwtKey: []byte("test-jwt-secret-value-not-a-real-secret")}
+
+	ticket, err := h.IssueTabProxyTicket("owner", false, 1, 2, false)
+	if err != nil {
+		t.Fatalf("IssueTabProxyTicket: %v", err)
+	}
+
+	called := false
+	next := func(w http.ResponseWriter, r *http.Request) { called = true }
+	wrapped := h.AuthMiddleware(next)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/servers", nil)
+	req.Header.Set("Authorization", "Bearer "+ticket)
+	rec := httptest.NewRecorder()
+
+	wrapped(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (tab_proxy purpose token used as a normal Bearer)", rec.Code, http.StatusForbidden)
+	}
+	if called {
+		t.Error("next handler was called - tab_proxy purpose token must be rejected before reaching it")
+	}
+}
