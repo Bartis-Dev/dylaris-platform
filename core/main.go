@@ -581,6 +581,20 @@ func main() {
 	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", proxyHandler.InDashboard)
 	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", proxyHandler.InDashboard)
 
+	// Standalone share-token twin of the above (Task 9): same bypass reasoning,
+	// but auth is per-share-link instead of per-dashboard-session. Public alone
+	// decides public-vs-private visibility; the mint route that sets its
+	// ticket cookie is registered on the /api subrouter instead (proxy-auth's
+	// sibling, see below), which is NOT shadowed by the {rest:.*} catch-all
+	// here: gorilla/mux tried the whole /api subrouter (added to this root
+	// router once, at its own PathPrefix("/api") registration point, which is
+	// earlier in this router's route list than these two lines) before ever
+	// reaching these root-level routes, so a request under /api that the
+	// subrouter itself can match (like GET /api/tabproxy/{token}/auth) never
+	// falls through to {rest:.*} here at all.
+	r.HandleFunc("/api/tabproxy/{token}", proxyHandler.Public)
+	r.HandleFunc("/api/tabproxy/{token}/{rest:.*}", proxyHandler.Public)
+
 	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
 	authLimiter := handlers.NewIPRateLimiter()
@@ -661,6 +675,12 @@ func main() {
 	// runs through AuthMiddleware and inherits 2FA-setup-lock + demo
 	// read-only gating instead of re-implementing them (WS5 Task 8 fast-follow).
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(proxyHandler.MintProxyAuth)).Methods("GET")
+	// Mints the same dyl_tabproxy cookie, but Path-scoped to a share token's
+	// proxy prefix (/api/tabproxy/{token}/) for the standalone Public path
+	// (Task 9) instead of the in-dashboard one. Registered here (not on the
+	// root router with Public) for the same reason as proxy-auth above: it
+	// must run through AuthMiddleware.
+	api.HandleFunc("/tabproxy/{token}/auth", authHandler.AuthMiddleware(proxyHandler.MintPublicProxyAuth)).Methods("GET")
 
 	// --- Modrinth PAT ---
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")

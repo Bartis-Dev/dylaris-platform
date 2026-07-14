@@ -14,6 +14,17 @@ package handlers
 // path-scoped dyl_tabproxy cookie. InDashboard then trusts ONLY that cookie -
 // it never accepts a session JWT via header/query, so the 24h session token
 // is never carried in this endpoint's URL.
+//
+// Public (Task 9) is the standalone share-link twin of the same idea: a
+// public-visibility link is served anonymously (subject to the
+// TabProxyAllowPublicLinks flag), while a private-visibility link requires
+// the SAME dyl_tabproxy ticket cookie, minted by MintPublicProxyAuth
+// (registered on the /api subrouter behind AuthMiddleware, mirroring
+// MintProxyAuth) and Path-scoped to this share token's proxy prefix instead
+// of the in-dashboard one. Public never mints or sets the cookie itself -
+// it only validates it via the same ParseTabProxyTicket InDashboard uses,
+// so there is exactly one place that ever parses a tab-proxy ticket's
+// signature/claims.
 
 import (
 	"bytes"
@@ -508,5 +519,208 @@ func sanitizeProxyPath(p string) string {
 	return p
 }
 
-// keep the time import used even before Task 9 references it (share expiry).
-var _ = time.Time{}
+// --- Task 9: public share-token endpoint ---
+
+// getTabByShareToken resolves a share-token slug to its proxied tab + owning
+// server, mirroring getTabByID's query shape but keyed on the public slug
+// the standalone page has instead of a server+tab id pair.
+func (h *ProxyHandler) getTabByShareToken(token string) (*proxyTab, error) {
+	db := h.rawDB()
+	if db == nil {
+		return nil, fmt.Errorf("db unavailable")
+	}
+	var t proxyTab
+	err := db.QueryRow(`SELECT t.id, t.server_id, s.uuid, s.node_id, t.mode,
+		COALESCE(t.target_port,0), t.target_path, t.surface, t.visibility, t.share_expires_at, t.enabled
+		FROM server_tabs t JOIN servers s ON s.id = t.server_id
+		WHERE t.share_token=$1`, token).Scan(
+		&t.ID, &t.ServerID, &t.ServerUUID, &t.NodeID, &t.Mode,
+		&t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareExpires, &t.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// decideProxyAccess resolves the visibility gate for a share-token request.
+// public + allowed serves anyone (even anon); public + disabled hides (404);
+// private requires a valid tab-proxy ticket (401 if none/invalid) scoped to
+// this exact tab (403 if the ticket is valid but minted for a different tab).
+func decideProxyAccess(visibility string, allowPublic, authed, hasAccess bool) (allow bool, status int) {
+	if visibility == "public" {
+		if allowPublic {
+			return true, http.StatusOK
+		}
+		return false, http.StatusNotFound
+	}
+	if !authed {
+		return false, http.StatusUnauthorized
+	}
+	if !hasAccess {
+		return false, http.StatusForbidden
+	}
+	return true, http.StatusOK
+}
+
+// shareTokenExpired reports whether an optional expiry is in the past (an
+// expiry is "used up" the instant it's reached, not the instant after -
+// hence !now.Before(expires.Time) rather than a strict After).
+func shareTokenExpired(expires sql.NullTime, now time.Time) bool {
+	return expires.Valid && !now.Before(expires.Time)
+}
+
+// publicProxyBasePath builds the proxy prefix (and cookie Path) for a
+// share-token tab, mirroring proxyBasePath for the in-dashboard path so
+// MintPublicProxyAuth and Public can never drift apart.
+func publicProxyBasePath(token string) string {
+	return "/api/tabproxy/" + token + "/"
+}
+
+// resolvePublicTicket validates the dyl_tabproxy cookie against an
+// already-resolved share-token tab, mirroring resolveProxyTicket for
+// InDashboard. authed reports whether a valid (signature + Purpose ==
+// "tab_proxy" + unexpired) ticket was present at all; hasAccess additionally
+// requires the ticket's server-id + tab-id claims to match THIS tab - a
+// ticket that is valid but was minted for a different tab is
+// authed-but-no-access, which decideProxyAccess turns into 403 rather than
+// the 401 a missing/invalid cookie gets.
+func (h *ProxyHandler) resolvePublicTicket(r *http.Request, tab *proxyTab) (authed, hasAccess bool) {
+	c, err := r.Cookie(proxyCookieName)
+	if err != nil || c.Value == "" {
+		return false, false
+	}
+	claims, err := h.auth.ParseTabProxyTicket(c.Value)
+	if err != nil {
+		return false, false
+	}
+	return true, claims.ServerID == tab.ServerID && claims.TabID == tab.ID
+}
+
+// MintPublicProxyAuth: GET /api/tabproxy/{token}/auth, registered on the
+// NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this
+// inherits the full session gating (2FA-setup-lock, demo read-only,
+// signature/expiry) for free instead of re-implementing it. Only a
+// visibility=="private" link needs a ticket at all (a public link is served
+// anonymously by Public with no cookie involved), so any other visibility is
+// rejected outright. After re-checking overview access on the tab's server,
+// it mints a short-lived tab-proxy-scoped ticket and stamps it as an
+// HttpOnly cookie scoped to exactly this share link's proxy prefix, so
+// Public never needs the 24h session JWT either.
+//
+// Like MintProxyAuth, this does NOT re-check the tab's enabled/mode/surface/
+// expiry state - that stays Public's DB-backed gate on every actual proxy
+// request regardless of the ticket, so a ticket minted here for a
+// since-revoked or expired link simply 410/404s the moment it is used.
+func (h *ProxyHandler) MintPublicProxyAuth(w http.ResponseWriter, r *http.Request) {
+	token := mux.Vars(r)["token"]
+
+	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+		sendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
+		return
+	}
+
+	tab, err := h.getTabByShareToken(token)
+	if err != nil || tab == nil {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+	if tab.Visibility != "private" {
+		// A public link is served anonymously by Public with no cookie at
+		// all - minting a ticket for it would be pointless.
+		sendJSONError(w, "Link does not require authentication", http.StatusBadRequest)
+		return
+	}
+
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+
+	srv, serr := h.state.Store.GetServerByID(tab.ServerID)
+	if serr != nil || srv == nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Same read-only determination as MintProxyAuth: the demo account is
+	// forced read-only everywhere else by AuthMiddleware, so carry that
+	// forward into the ticket for a path that has no AuthMiddleware of its
+	// own to re-derive it from.
+	readOnly := !isAdmin && isDemoAccount(h.state, userID)
+
+	ticket, err := h.auth.IssueTabProxyTicket(username, isAdmin, tab.ServerID, tab.ID, readOnly)
+	if err != nil {
+		sendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
+		return
+	}
+
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	http.SetCookie(w, &http.Cookie{
+		Name:     proxyCookieName,
+		Value:    ticket,
+		Path:     publicProxyBasePath(token),
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(tabProxyTicketTTL.Seconds()),
+	})
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Public: ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} -
+// resolves the share token, applies the visibility gate, and dispatches to
+// the same mesh serve() path InDashboard uses. Registered on the ROOT
+// router (like /api/share) so it bypasses the /api subrouter's setup-lock +
+// maintenance middleware; auth on the private path is cookie-only via the
+// SAME ParseTabProxyTicket InDashboard trusts - there is no hand-rolled
+// session parsing here, and this handler never sets the cookie itself
+// (MintPublicProxyAuth does that, behind AuthMiddleware).
+func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	token := vars["token"]
+	subPath := vars["rest"]
+
+	// Security invariant: master feature gate, checked before touching the
+	// DB or the cookie - a disabled feature must reject every request here
+	// regardless of ticket validity, mirroring InDashboard.
+	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	tab, err := h.getTabByShareToken(token)
+	if err != nil || tab == nil || !tab.Enabled || tab.Mode != "proxied" {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	if tab.Surface != "page" && tab.Surface != "both" {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	if shareTokenExpired(tab.ShareExpires, time.Now()) {
+		http.Error(w, "This link has expired", http.StatusGone)
+		return
+	}
+
+	allowPublic := h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context())
+	// A public-visibility link serves anyone with no cookie involved at all;
+	// only a private one needs the ticket-cookie check.
+	var authed, hasAccess bool
+	if tab.Visibility != "public" {
+		authed, hasAccess = h.resolvePublicTicket(r, tab)
+	}
+	allow, status := decideProxyAccess(tab.Visibility, allowPublic, authed, hasAccess)
+	if !allow {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+
+	// The proxied page is per-share-link and, for a private link, per-ticket -
+	// never let a shared cache or the browser's disk cache keep it.
+	w.Header().Set("Cache-Control", "no-store")
+	h.serve(w, r, tab, publicProxyBasePath(token), subPath)
+}
