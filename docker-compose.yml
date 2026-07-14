@@ -89,12 +89,14 @@ services:
     ports:
       - "25600-30000:25600-30000"
       - "25520:25520"   # SFTP (when file access = sftp/both)
-      # Beam direct-connect: the node's pinned-TLS, fingerprint-verified beam port.
-      # Published here (self-host only) so a solo Beam Desktop client can reach the
-      # node directly when no gateway/relay is present. NOTE: a NAT'd node still
-      # needs a router port-forward for 25523, or a gateway - direct connect cannot
-      # traverse NAT. Never publish the plain overlay port 25521.
-      - "25523:25523"   # Beam direct (TLS, fingerprint-pinned)
+      # Beam LAN fast-path: the node's pinned-TLS, fingerprint-verified beam port.
+      # Published here (self-host / BYON only) so a co-located Beam Desktop client on
+      # this LAN can take the direct fast path - now even when a gateway/relay is
+      # present (the client tries LAN first, then falls back to the relay). Leaving it
+      # unpublished simply falls back to relay/public. NOTE: a NAT'd node still needs a
+      # router port-forward for 25523, or a gateway - direct connect cannot traverse
+      # NAT. Never publish the plain overlay port 25521.
+      - "25523:25523"   # Beam LAN fast-path (TLS, fingerprint-pinned)
     networks:
       - dylaris_net
 
