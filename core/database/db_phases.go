@@ -31,6 +31,31 @@ func applyPhase13Schema(db *sql.DB) error {
 	return nil
 }
 
+// applyWS5TabProxySchema extends the Custom Tabs schema (WS5) with the
+// reverse-proxy columns. All columns are nullable or defaulted so existing
+// `direct` rows are untouched. share_token is UNIQUE where present so a
+// tokenized `/c/<token>` slug can never collide. Idempotent.
+func applyWS5TabProxySchema(db *sql.DB) error {
+	for _, q := range []string{
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS mode             VARCHAR(16)  NOT NULL DEFAULT 'direct'`,
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS target_port      INTEGER`,
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS target_path      TEXT         NOT NULL DEFAULT '/'`,
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS surface          VARCHAR(16)  NOT NULL DEFAULT 'tab'`,
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS visibility       VARCHAR(16)  NOT NULL DEFAULT 'private'`,
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS share_token      VARCHAR(32)`,
+		`ALTER TABLE server_tabs ADD COLUMN IF NOT EXISTS share_expires_at TIMESTAMPTZ`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("ws5 tab proxy: alter server_tabs: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_server_tabs_share_token
+		ON server_tabs(share_token) WHERE share_token IS NOT NULL`); err != nil {
+		return fmt.Errorf("ws5 tab proxy: create share_token index: %w", err)
+	}
+	return nil
+}
+
 // applyPhase11Schema sets up the Spark Profiler schema:
 //   - spark_profiles: profile-completion records keyed by spark.lucko.me URL
 func applyPhase11Schema(db *sql.DB) error {

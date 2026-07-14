@@ -121,6 +121,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyPhase13Schema(db); err != nil {
 		return err
 	}
+	if err := applyWS5TabProxySchema(db); err != nil {
+		return err
+	}
 	if err := applyPhase14Schema(db); err != nil {
 		return err
 	}
