@@ -351,6 +351,20 @@ export default function FeaturesTab() {
                         <span className={`toggle-knob ${tabProxy.allowPublicLinks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
+                {/* Same-origin security note (WS5 C1 follow-up): proxied content is
+                    served on the panel's own origin under allow-same-origin, so a
+                    compromised/malicious container can read the viewer's session.
+                    Applies to the master toggle above too, not just public links. */}
+                <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                    <span>
+                        Proxied tab content runs on this panel&apos;s own origin. On a shared or
+                        multi-tenant instance, a malicious server container could read a viewer&apos;s
+                        panel session. Safe for single-operator / self-host. Do not enable public
+                        share links (or expose proxied tabs to users who do not fully trust the
+                        target container) on a multi-user instance until origin-isolated proxying ships.
+                    </span>
+                </p>
                 <div className="grid grid-cols-2 gap-3 border-t border-(--base-03) pt-3">
                     <div>
                         <label className="input-label">Max proxied tabs / server</label>

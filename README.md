@@ -462,6 +462,14 @@ works even on gateway-routed / BYON nodes with no browser-reachable node address
   (`tab_proxy_allow_public_links`, default off), and per-server / per-user caps.
 - No new port: the proxied content rides the panel origin's existing front TLS.
 
+> **Security:** proxied content is served on the panel's own origin under
+> `allow-same-origin`, so a compromised or malicious server container can read
+> the viewing user's panel session (localStorage token) and act as them. Keep
+> public share links and multi-tenant proxied-tab exposure disabled until
+> origin-isolated proxying (serving proxied content from a separate dedicated
+> origin) lands. Safe for a single-operator self-host instance, where you
+> control your own containers.
+
 ## Development
 
 The backend is a Go workspace (`go.work`) with `core`, `node`, the `log-shipper`, the `agent` library, and shared `pkg`/`proto` modules. The frontend is a Next.js app in `panel/`.
