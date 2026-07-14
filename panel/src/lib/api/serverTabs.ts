@@ -93,3 +93,32 @@ export async function revokeShareLink(serverId: number, tabId: number): Promise<
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }
+
+// mintTabProxyAuth authorizes the in-dashboard proxy iframe for one tab: it
+// calls Core's session-authed proxy-auth endpoint (core/handlers/tab_proxy.go
+// MintProxyAuth), which on success stamps a short-lived, path-scoped
+// dyl_tabproxy HttpOnly cookie (204 No Content, no body) instead of returning
+// a token - the proxy iframe src therefore never carries a session
+// credential. Unlike the rest of this file, this call needs credentials:
+// 'include' so the Set-Cookie actually sticks on the panel origin; that only
+// works same-origin (the production /api reverse-proxy layout), since Core's
+// CORS config grants no Access-Control-Allow-Credentials for a cross-origin
+// dev split (see main.go's allowedOrigin/corsObj - deliberately Bearer-only).
+export async function mintTabProxyAuth(serverId: number, tabId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/tabs/${tabId}/proxy-auth`, {
+            headers: getAuthHeader(),
+            credentials: 'include',
+        });
+        if (res.status === 204) return { success: true };
+        // Every non-success response from this endpoint (feature off, no
+        // access, expired/invalid session) carries a JSON {message} body -
+        // only the 204 success path above has none.
+        try {
+            const data = await res.json();
+            return { success: false, message: data?.message || 'Unknown error' };
+        } catch {
+            return { success: false, message: `Failed to authorize tab proxy (HTTP ${res.status})` };
+        }
+    } catch (err) { return handleError(err); }
+}

@@ -2,21 +2,38 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { AlertTriangle, ExternalLink } from 'lucide-react';
-import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
+import { AlertTriangle, ExternalLink, Link2 } from 'lucide-react';
+import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
+import { tabDashboardProxySrc } from '@/lib/tabProxy';
 import { Skeleton } from '@/components/Skeleton';
 
-// dynamic renderer for custom tabs. Loads the tab metadata, then
-// embeds the configured URL in an iframe (open_in_panel=true) or shows a
-// landing card with a popout button (false). Reacts to server_tabs.changed
-// SSE so URL edits in another tab refresh here without reload.
+// dynamic renderer for custom tabs. Loads the tab metadata, then either:
+//  - direct: embeds the configured URL in an iframe (open_in_panel=true) or
+//    shows a landing card with a popout button (false).
+//  - proxied, surface tab|both: mints the dyl_tabproxy cookie (see
+//    core/handlers/tab_proxy.go MintProxyAuth) and then embeds Core's
+//    same-origin proxy endpoint - the iframe src never carries a token.
+//  - proxied, surface page: not embeddable here, points at the share link.
+// Reacts to server_tabs.changed SSE so edits in another tab refresh here
+// without reload.
+
+// The dyl_tabproxy ticket cookie Core mints is short-lived (~5min,
+// tabProxyTicketTTL server-side); re-mint comfortably inside that window so
+// the cookie never expires out from under an in-flight sub-request while the
+// tab stays open. The iframe src itself does not need to change on refresh -
+// keeping the cookie fresh is enough for its ongoing sub-requests.
+const PROXY_AUTH_REFRESH_MS = 4 * 60 * 1000;
+
+type ProxyAuthState = 'pending' | 'ready' | 'error';
 
 export default function ServerCustomTabPage() {
     const params = useParams();
     const serverId = Number(params?.id);
     const tabId = Number(params?.tabId);
     const [tab, setTab] = useState<ServerTab | null | undefined>(undefined);
+    const [proxyAuth, setProxyAuth] = useState<ProxyAuthState>('pending');
+    const [proxyAuthError, setProxyAuthError] = useState<string | null>(null);
 
     const refresh = async () => {
         const list = await listServerTabs(serverId);
@@ -32,6 +49,34 @@ export default function ServerCustomTabPage() {
         });
         return () => { unsub(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ };
     }, [serverId]);
+
+    // Embeddable-proxied tab: mint the dyl_tabproxy cookie before the iframe
+    // is allowed to load, then keep it fresh on an interval for as long as
+    // this page stays mounted. Every other branch (not-found/disabled/
+    // page-only/direct) leaves isEmbeddedProxy false, so no proxy-auth call
+    // is ever made for a tab that isn't actually going to be proxy-embedded.
+    const isEmbeddedProxy = !!tab && tab.enabled && tab.mode === 'proxied' && tab.surface !== 'page';
+    useEffect(() => {
+        if (!isEmbeddedProxy) return;
+        let cancelled = false;
+        setProxyAuth('pending');
+        setProxyAuthError(null);
+
+        const mint = async () => {
+            const res = await mintTabProxyAuth(serverId, tabId);
+            if (cancelled) return;
+            if (res.success) {
+                setProxyAuth('ready');
+            } else {
+                setProxyAuth('error');
+                setProxyAuthError(res.message || 'Failed to authorize this tab.');
+            }
+        };
+
+        mint();
+        const interval = setInterval(mint, PROXY_AUTH_REFRESH_MS);
+        return () => { cancelled = true; clearInterval(interval); };
+    }, [isEmbeddedProxy, serverId, tabId]);
 
     if (tab === undefined) {
         return (
@@ -56,6 +101,55 @@ export default function ServerCustomTabPage() {
                 <div className="card p-6 max-w-md text-center">
                     <p className="text-sm text-(--base-07)">This tab is disabled.</p>
                 </div>
+            </main>
+        );
+    }
+
+    if (tab.mode === 'proxied') {
+        if (tab.surface === 'page') {
+            // Published as a standalone page only - not embeddable here.
+            return (
+                <main className="flex-1 flex items-center justify-center p-6">
+                    <div className="card p-6 max-w-md text-center space-y-2">
+                        <Link2 size={20} className="text-(--accent-light) mx-auto" />
+                        <p className="text-sm text-(--base-07)">
+                            {tab.name} is published as a standalone page. Open it via its share link.
+                        </p>
+                    </div>
+                </main>
+            );
+        }
+
+        if (proxyAuth === 'pending') {
+            return (
+                <main className="flex-1 overflow-hidden bg-(--base-01) p-4">
+                    <Skeleton className="w-full h-full rounded" />
+                </main>
+            );
+        }
+        if (proxyAuth === 'error') {
+            return (
+                <main className="flex-1 flex items-center justify-center p-6">
+                    <div className="card p-6 max-w-md text-center">
+                        <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
+                        <p className="text-sm text-(--base-07)">{proxyAuthError}</p>
+                    </div>
+                </main>
+            );
+        }
+
+        // proxyAuth === 'ready': the dyl_tabproxy cookie is minted and
+        // path-scoped to exactly this proxy prefix, so the src below never
+        // needs (and never gets) a token of its own.
+        return (
+            <main className="flex-1 overflow-hidden bg-(--base-01)">
+                <iframe
+                    src={tabDashboardProxySrc(serverId, tabId)}
+                    title={tab.name}
+                    className="w-full h-full border-0"
+                    referrerPolicy="no-referrer"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+                />
             </main>
         );
     }
