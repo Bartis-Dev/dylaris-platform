@@ -373,6 +373,14 @@ func (m *MeshManager) handleRequest(stream pb.NodeService_NodeConnectClient, msg
 		}
 	}
 
+	// HttpProxyReq (WS5): stream the container HTTP response back over the mesh.
+	if proxyReq := msg.GetHttpProxyReq(); proxyReq != nil {
+		m.handler.handleHTTPProxy(msg.RequestId, msg.ServerUuid, proxyReq, func(resp *pb.NodeMessage) error {
+			return stream.Send(resp)
+		})
+		return
+	}
+
 	// ReadReq / SelectiveReadReq / BackupOpenReq: streaming downloads
 	// (io.Pipe / file read, constant ~128KB RAM regardless of size).
 	if msg.GetReadReq() != nil || msg.GetSelectiveReadReq() != nil || msg.GetBackupOpenReq() != nil {
