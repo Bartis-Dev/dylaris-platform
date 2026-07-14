@@ -54,6 +54,11 @@ type NodeMessage struct {
 	//	*NodeMessage_BackupUsageResp
 	//	*NodeMessage_RconExecReq
 	//	*NodeMessage_RconExecResp
+	//	*NodeMessage_HttpProxyReq
+	//	*NodeMessage_HttpProxyRespHead
+	//	*NodeMessage_WsOpen
+	//	*NodeMessage_WsFrame
+	//	*NodeMessage_WsClose
 	//	*NodeMessage_Result
 	//	*NodeMessage_Error
 	Payload       isNodeMessage_Payload `protobuf_oneof:"payload"`
@@ -346,6 +351,51 @@ func (x *NodeMessage) GetRconExecResp() *RconExecResp {
 	return nil
 }
 
+func (x *NodeMessage) GetHttpProxyReq() *HttpProxyReq {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_HttpProxyReq); ok {
+			return x.HttpProxyReq
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetHttpProxyRespHead() *HttpProxyRespHead {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_HttpProxyRespHead); ok {
+			return x.HttpProxyRespHead
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetWsOpen() *WsOpen {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_WsOpen); ok {
+			return x.WsOpen
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetWsFrame() *WsFrame {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_WsFrame); ok {
+			return x.WsFrame
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetWsClose() *WsClose {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_WsClose); ok {
+			return x.WsClose
+		}
+	}
+	return nil
+}
+
 func (x *NodeMessage) GetResult() *OpResult {
 	if x != nil {
 		if x, ok := x.Payload.(*NodeMessage_Result); ok {
@@ -490,6 +540,31 @@ type NodeMessage_RconExecResp struct {
 	RconExecResp *RconExecResp `protobuf:"bytes,111,opt,name=rcon_exec_resp,json=rconExecResp,proto3,oneof"`
 }
 
+type NodeMessage_HttpProxyReq struct {
+	// Custom-tab reverse proxy (WS5). Core->Node request + Node->Core streamed
+	// response over the same bidi stream, request_id-correlated. HTTP request
+	// body is inlined in HttpProxyReq.body (Core caps it); the HTTP response
+	// rides HttpProxyRespHead + DataChunk(60) + TransferDone(61). WebSocket is
+	// WsOpen (Core->Node) then WsFrame/WsClose in both directions.
+	HttpProxyReq *HttpProxyReq `protobuf:"bytes,112,opt,name=http_proxy_req,json=httpProxyReq,proto3,oneof"`
+}
+
+type NodeMessage_HttpProxyRespHead struct {
+	HttpProxyRespHead *HttpProxyRespHead `protobuf:"bytes,113,opt,name=http_proxy_resp_head,json=httpProxyRespHead,proto3,oneof"`
+}
+
+type NodeMessage_WsOpen struct {
+	WsOpen *WsOpen `protobuf:"bytes,114,opt,name=ws_open,json=wsOpen,proto3,oneof"`
+}
+
+type NodeMessage_WsFrame struct {
+	WsFrame *WsFrame `protobuf:"bytes,115,opt,name=ws_frame,json=wsFrame,proto3,oneof"`
+}
+
+type NodeMessage_WsClose struct {
+	WsClose *WsClose `protobuf:"bytes,116,opt,name=ws_close,json=wsClose,proto3,oneof"`
+}
+
 type NodeMessage_Result struct {
 	// Generic result / error
 	Result *OpResult `protobuf:"bytes,90,opt,name=result,proto3,oneof"`
@@ -551,6 +626,16 @@ func (*NodeMessage_RconExecReq) isNodeMessage_Payload() {}
 
 func (*NodeMessage_RconExecResp) isNodeMessage_Payload() {}
 
+func (*NodeMessage_HttpProxyReq) isNodeMessage_Payload() {}
+
+func (*NodeMessage_HttpProxyRespHead) isNodeMessage_Payload() {}
+
+func (*NodeMessage_WsOpen) isNodeMessage_Payload() {}
+
+func (*NodeMessage_WsFrame) isNodeMessage_Payload() {}
+
+func (*NodeMessage_WsClose) isNodeMessage_Payload() {}
+
 func (*NodeMessage_Result) isNodeMessage_Payload() {}
 
 func (*NodeMessage_Error) isNodeMessage_Payload() {}
@@ -560,7 +645,7 @@ type NodeAuth struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	NodeToken string                 `protobuf:"bytes,1,opt,name=node_token,json=nodeToken,proto3" json:"node_token,omitempty"`
 	Ips       *NodeIPs               `protobuf:"bytes,2,opt,name=ips,proto3" json:"ips,omitempty"`
-	// BYON Redis-ACL bootstrap (only set when the node runs REDIS_ACL_ENABLED):
+	// Per-node Redis-ACL bootstrap fields (Redis ACL is mandatory; always set):
 	EnrollToken  string `protobuf:"bytes,3,opt,name=enroll_token,json=enrollToken,proto3" json:"enroll_token,omitempty"`     // first enrollment only
 	SecretProof  string `protobuf:"bytes,4,opt,name=secret_proof,json=secretProof,proto3" json:"secret_proof,omitempty"`     // HMAC proof of possession on later connects
 	AclSupported bool   `protobuf:"varint,5,opt,name=acl_supported,json=aclSupported,proto3" json:"acl_supported,omitempty"` // node advertises it can use scoped creds
@@ -648,16 +733,19 @@ type AuthResult struct {
 	Ok      bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
 	CoreId  string                 `protobuf:"bytes,2,opt,name=core_id,json=coreId,proto3" json:"core_id,omitempty"`
 	Message string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
-	// BYON Redis-ACL bootstrap response (only set when feature_redis_acl is on):
-	AclEnabled bool   `protobuf:"varint,4,opt,name=acl_enabled,json=aclEnabled,proto3" json:"acl_enabled,omitempty"` // informational: Core provisioned this node's ACL (node still gates on its own REDIS_ACL_ENABLED)
-	NodeSecret string `protobuf:"bytes,5,opt,name=node_secret,json=nodeSecret,proto3" json:"node_secret,omitempty"`  // hex per-node secret (returned once on first issue / enroll)
+	// Per-node Redis-ACL bootstrap response (Redis ACL is mandatory).
+	// Deprecated: advisory only. Core always provisions the node's ACL and no longer
+	// gates on this field; kept physically to avoid a protoc regen. (No .pb.go regen in TP2f.)
+	AclEnabled bool   `protobuf:"varint,4,opt,name=acl_enabled,json=aclEnabled,proto3" json:"acl_enabled,omitempty"`
+	NodeSecret string `protobuf:"bytes,5,opt,name=node_secret,json=nodeSecret,proto3" json:"node_secret,omitempty"` // hex per-node secret (returned once on first issue / enroll)
 	// Core-minted, unguessable node identity. Set ONLY on the enroll (first-issuance)
 	// response; the node persists it and uses it as its token on every later connect.
-	// Empty on reconnect and on the OFF path. (field 6 was the removed redis_addr.)
+	// Empty on reconnect. (field 6 was the removed redis_addr.)
 	AssignedId string `protobuf:"bytes,6,opt,name=assigned_id,json=assignedId,proto3" json:"assigned_id,omitempty"`
 	// Per-node Link sidecar tunnel credentials, delivered on every ACL auth so a
 	// secret-free node can spawn + run its Link sidecar without holding CLUSTER_SECRET.
-	// Empty on the OFF path. Derived by Core from CLUSTER_SECRET; validated by the Hub.
+	// Set on every successful bootstrap/enroll or reconnect auth. Derived by Core
+	// from CLUSTER_SECRET; validated by the Hub.
 	LinkSecret         string `protobuf:"bytes,7,opt,name=link_secret,json=linkSecret,proto3" json:"link_secret,omitempty"`                           // = DeriveLinkToken(assigned_id, CLUSTER_SECRET)
 	LinkDiscoveryProof string `protobuf:"bytes,8,opt,name=link_discovery_proof,json=linkDiscoveryProof,proto3" json:"link_discovery_proof,omitempty"` // = DeriveDiscoveryProof(assigned_id, CLUSTER_SECRET)
 	unknownFields      protoimpl.UnknownFields
@@ -2301,11 +2389,366 @@ func (x *RconExecResp) GetDurationMs() int64 {
 	return 0
 }
 
+// --- Custom-tab reverse proxy (WS5) ---
+// request_id + server_uuid are carried by the NodeMessage envelope, not
+// repeated here (same convention as RconExecReq).
+type HttpHeader struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpHeader) Reset() {
+	*x = HttpHeader{}
+	mi := &file_node_node_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpHeader) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpHeader) ProtoMessage() {}
+
+func (x *HttpHeader) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpHeader.ProtoReflect.Descriptor instead.
+func (*HttpHeader) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *HttpHeader) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *HttpHeader) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type HttpProxyReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TargetPort    int32                  `protobuf:"varint,1,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"` // container port, 1..65535
+	Method        string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`                            // GET, POST, ...
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                                // target_path + forwarded sub-path, incl. ?query
+	Headers       []*HttpHeader          `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty"`
+	Body          []byte                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"` // inline request body, empty for GET (Core caps size)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyReq) Reset() {
+	*x = HttpProxyReq{}
+	mi := &file_node_node_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyReq) ProtoMessage() {}
+
+func (x *HttpProxyReq) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyReq.ProtoReflect.Descriptor instead.
+func (*HttpProxyReq) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *HttpProxyReq) GetTargetPort() int32 {
+	if x != nil {
+		return x.TargetPort
+	}
+	return 0
+}
+
+func (x *HttpProxyReq) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *HttpProxyReq) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *HttpProxyReq) GetHeaders() []*HttpHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *HttpProxyReq) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+type HttpProxyRespHead struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StatusCode    int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
+	Headers       []*HttpHeader          `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyRespHead) Reset() {
+	*x = HttpProxyRespHead{}
+	mi := &file_node_node_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyRespHead) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyRespHead) ProtoMessage() {}
+
+func (x *HttpProxyRespHead) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyRespHead.ProtoReflect.Descriptor instead.
+func (*HttpProxyRespHead) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *HttpProxyRespHead) GetStatusCode() int32 {
+	if x != nil {
+		return x.StatusCode
+	}
+	return 0
+}
+
+func (x *HttpProxyRespHead) GetHeaders() []*HttpHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+type WsOpen struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TargetPort    int32                  `protobuf:"varint,1,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"` // incl. ?query
+	Headers       []*HttpHeader          `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WsOpen) Reset() {
+	*x = WsOpen{}
+	mi := &file_node_node_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WsOpen) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WsOpen) ProtoMessage() {}
+
+func (x *WsOpen) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WsOpen.ProtoReflect.Descriptor instead.
+func (*WsOpen) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *WsOpen) GetTargetPort() int32 {
+	if x != nil {
+		return x.TargetPort
+	}
+	return 0
+}
+
+func (x *WsOpen) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *WsOpen) GetHeaders() []*HttpHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+type WsFrame struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Opcode        int32                  `protobuf:"varint,1,opt,name=opcode,proto3" json:"opcode,omitempty"` // gorilla messageType: 1=text, 2=binary
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	Fin           bool                   `protobuf:"varint,3,opt,name=fin,proto3" json:"fin,omitempty"` // last fragment of one application message
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WsFrame) Reset() {
+	*x = WsFrame{}
+	mi := &file_node_node_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WsFrame) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WsFrame) ProtoMessage() {}
+
+func (x *WsFrame) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WsFrame.ProtoReflect.Descriptor instead.
+func (*WsFrame) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *WsFrame) GetOpcode() int32 {
+	if x != nil {
+		return x.Opcode
+	}
+	return 0
+}
+
+func (x *WsFrame) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *WsFrame) GetFin() bool {
+	if x != nil {
+		return x.Fin
+	}
+	return false
+}
+
+type WsClose struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WsClose) Reset() {
+	*x = WsClose{}
+	mi := &file_node_node_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WsClose) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WsClose) ProtoMessage() {}
+
+func (x *WsClose) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WsClose.ProtoReflect.Descriptor instead.
+func (*WsClose) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *WsClose) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *WsClose) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_node_node_proto protoreflect.FileDescriptor
 
 const file_node_node_proto_rawDesc = "" +
 	"\n" +
-	"\x0fnode/node.proto\x12\fdylaris.node\"\xf7\x0e\n" +
+	"\x0fnode/node.proto\x12\fdylaris.node\"\xa8\x11\n" +
 	"\vNodeMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n" +
@@ -2342,7 +2785,12 @@ const file_node_node_proto_rawDesc = "" +
 	"\x10backup_usage_req\x18h \x01(\v2\x1c.dylaris.node.BackupUsageReqH\x00R\x0ebackupUsageReq\x12K\n" +
 	"\x11backup_usage_resp\x18i \x01(\v2\x1d.dylaris.node.BackupUsageRespH\x00R\x0fbackupUsageResp\x12?\n" +
 	"\rrcon_exec_req\x18n \x01(\v2\x19.dylaris.node.RconExecReqH\x00R\vrconExecReq\x12B\n" +
-	"\x0ercon_exec_resp\x18o \x01(\v2\x1a.dylaris.node.RconExecRespH\x00R\frconExecResp\x120\n" +
+	"\x0ercon_exec_resp\x18o \x01(\v2\x1a.dylaris.node.RconExecRespH\x00R\frconExecResp\x12B\n" +
+	"\x0ehttp_proxy_req\x18p \x01(\v2\x1a.dylaris.node.HttpProxyReqH\x00R\fhttpProxyReq\x12R\n" +
+	"\x14http_proxy_resp_head\x18q \x01(\v2\x1f.dylaris.node.HttpProxyRespHeadH\x00R\x11httpProxyRespHead\x12/\n" +
+	"\aws_open\x18r \x01(\v2\x14.dylaris.node.WsOpenH\x00R\x06wsOpen\x122\n" +
+	"\bws_frame\x18s \x01(\v2\x15.dylaris.node.WsFrameH\x00R\awsFrame\x122\n" +
+	"\bws_close\x18t \x01(\v2\x15.dylaris.node.WsCloseH\x00R\awsClose\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
 	"\apayload\"\xe2\x01\n" +
@@ -2463,7 +2911,34 @@ const file_node_node_proto_rawDesc = "" +
 	"\x06output\x18\x02 \x01(\tR\x06output\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x12\x1f\n" +
 	"\vduration_ms\x18\x04 \x01(\x03R\n" +
-	"durationMs2V\n" +
+	"durationMs\"4\n" +
+	"\n" +
+	"HttpHeader\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xa3\x01\n" +
+	"\fHttpProxyReq\x12\x1f\n" +
+	"\vtarget_port\x18\x01 \x01(\x05R\n" +
+	"targetPort\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x122\n" +
+	"\aheaders\x18\x04 \x03(\v2\x18.dylaris.node.HttpHeaderR\aheaders\x12\x12\n" +
+	"\x04body\x18\x05 \x01(\fR\x04body\"h\n" +
+	"\x11HttpProxyRespHead\x12\x1f\n" +
+	"\vstatus_code\x18\x01 \x01(\x05R\n" +
+	"statusCode\x122\n" +
+	"\aheaders\x18\x02 \x03(\v2\x18.dylaris.node.HttpHeaderR\aheaders\"q\n" +
+	"\x06WsOpen\x12\x1f\n" +
+	"\vtarget_port\x18\x01 \x01(\x05R\n" +
+	"targetPort\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x122\n" +
+	"\aheaders\x18\x03 \x03(\v2\x18.dylaris.node.HttpHeaderR\aheaders\"G\n" +
+	"\aWsFrame\x12\x16\n" +
+	"\x06opcode\x18\x01 \x01(\x05R\x06opcode\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x10\n" +
+	"\x03fin\x18\x03 \x01(\bR\x03fin\"5\n" +
+	"\aWsClose\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason2V\n" +
 	"\vNodeService\x12G\n" +
 	"\vNodeConnect\x12\x19.dylaris.node.NodeMessage\x1a\x19.dylaris.node.NodeMessage(\x010\x01B\x14Z\x12dylaris-proto/nodeb\x06proto3"
 
@@ -2479,7 +2954,7 @@ func file_node_node_proto_rawDescGZIP() []byte {
 	return file_node_node_proto_rawDescData
 }
 
-var file_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_node_node_proto_goTypes = []any{
 	(*NodeMessage)(nil),           // 0: dylaris.node.NodeMessage
 	(*NodeAuth)(nil),              // 1: dylaris.node.NodeAuth
@@ -2514,6 +2989,12 @@ var file_node_node_proto_goTypes = []any{
 	(*OpError)(nil),               // 30: dylaris.node.OpError
 	(*RconExecReq)(nil),           // 31: dylaris.node.RconExecReq
 	(*RconExecResp)(nil),          // 32: dylaris.node.RconExecResp
+	(*HttpHeader)(nil),            // 33: dylaris.node.HttpHeader
+	(*HttpProxyReq)(nil),          // 34: dylaris.node.HttpProxyReq
+	(*HttpProxyRespHead)(nil),     // 35: dylaris.node.HttpProxyRespHead
+	(*WsOpen)(nil),                // 36: dylaris.node.WsOpen
+	(*WsFrame)(nil),               // 37: dylaris.node.WsFrame
+	(*WsClose)(nil),               // 38: dylaris.node.WsClose
 }
 var file_node_node_proto_depIdxs = []int32{
 	1,  // 0: dylaris.node.NodeMessage.auth:type_name -> dylaris.node.NodeAuth
@@ -2542,19 +3023,27 @@ var file_node_node_proto_depIdxs = []int32{
 	28, // 23: dylaris.node.NodeMessage.backup_usage_resp:type_name -> dylaris.node.BackupUsageResp
 	31, // 24: dylaris.node.NodeMessage.rcon_exec_req:type_name -> dylaris.node.RconExecReq
 	32, // 25: dylaris.node.NodeMessage.rcon_exec_resp:type_name -> dylaris.node.RconExecResp
-	29, // 26: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
-	30, // 27: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
-	5,  // 28: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
-	8,  // 29: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
-	20, // 30: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
-	23, // 31: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
-	0,  // 32: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
-	0,  // 33: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
-	33, // [33:34] is the sub-list for method output_type
-	32, // [32:33] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	34, // 26: dylaris.node.NodeMessage.http_proxy_req:type_name -> dylaris.node.HttpProxyReq
+	35, // 27: dylaris.node.NodeMessage.http_proxy_resp_head:type_name -> dylaris.node.HttpProxyRespHead
+	36, // 28: dylaris.node.NodeMessage.ws_open:type_name -> dylaris.node.WsOpen
+	37, // 29: dylaris.node.NodeMessage.ws_frame:type_name -> dylaris.node.WsFrame
+	38, // 30: dylaris.node.NodeMessage.ws_close:type_name -> dylaris.node.WsClose
+	29, // 31: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
+	30, // 32: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
+	5,  // 33: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
+	8,  // 34: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
+	20, // 35: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
+	23, // 36: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
+	33, // 37: dylaris.node.HttpProxyReq.headers:type_name -> dylaris.node.HttpHeader
+	33, // 38: dylaris.node.HttpProxyRespHead.headers:type_name -> dylaris.node.HttpHeader
+	33, // 39: dylaris.node.WsOpen.headers:type_name -> dylaris.node.HttpHeader
+	0,  // 40: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
+	0,  // 41: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
+	41, // [41:42] is the sub-list for method output_type
+	40, // [40:41] is the sub-list for method input_type
+	40, // [40:40] is the sub-list for extension type_name
+	40, // [40:40] is the sub-list for extension extendee
+	0,  // [0:40] is the sub-list for field type_name
 }
 
 func init() { file_node_node_proto_init() }
@@ -2589,6 +3078,11 @@ func file_node_node_proto_init() {
 		(*NodeMessage_BackupUsageResp)(nil),
 		(*NodeMessage_RconExecReq)(nil),
 		(*NodeMessage_RconExecResp)(nil),
+		(*NodeMessage_HttpProxyReq)(nil),
+		(*NodeMessage_HttpProxyRespHead)(nil),
+		(*NodeMessage_WsOpen)(nil),
+		(*NodeMessage_WsFrame)(nil),
+		(*NodeMessage_WsClose)(nil),
 		(*NodeMessage_Result)(nil),
 		(*NodeMessage_Error)(nil),
 	}
@@ -2598,7 +3092,7 @@ func file_node_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_node_node_proto_rawDesc), len(file_node_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   33,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
