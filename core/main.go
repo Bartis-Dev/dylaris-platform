@@ -412,6 +412,7 @@ func main() {
 	telemetrySettingsHandler := handlers.NewTelemetrySettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
+	tabProxySettingsHandler := handlers.NewTabProxySettingsHandler(appState)
 	usageHandler := handlers.NewUsageHandler(appState)
 	billingHandler := handlers.NewBillingHandler(appState)
 	plansHandler := handlers.NewPlansHandler(appState)
@@ -725,6 +726,8 @@ func main() {
 	// (still works for back-compat; this is the new canonical surface).
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
+	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(tabProxySettingsHandler.Get)).Methods("GET")
+	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(tabProxySettingsHandler.Set)).Methods("PUT")
 	// P0b-5 node admission (admin-gated inside the handler; read directly per enroll).
 	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(nodeAdmissionHandler.GetAdmission)).Methods("GET")
 	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(nodeAdmissionHandler.SetAdmission)).Methods("PUT")

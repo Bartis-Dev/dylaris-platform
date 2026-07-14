@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,6 +23,7 @@ type FeatureFlags struct {
 	store    settingsReader
 	mu       sync.Mutex
 	cache    map[string]cachedFlag
+	cacheInt map[string]cachedInt
 	cacheTTL time.Duration
 }
 
@@ -30,10 +32,16 @@ type cachedFlag struct {
 	at    time.Time
 }
 
+type cachedInt struct {
+	value int
+	at    time.Time
+}
+
 func NewFeatureFlags(st settingsReader) *FeatureFlags {
 	return &FeatureFlags{
 		store:    st,
 		cache:    map[string]cachedFlag{},
+		cacheInt: map[string]cachedInt{},
 		cacheTTL: 60 * time.Second,
 	}
 }
@@ -56,6 +64,26 @@ func (f *FeatureFlags) Get(_ context.Context, key string, defaultV bool) bool {
 	}
 	f.cache[key] = cachedFlag{value: b, at: time.Now()}
 	return b
+}
+
+// GetInt returns the integer value for key, defaulting to defaultV when the
+// setting is missing or unparseable. Cached like Get.
+func (f *FeatureFlags) GetInt(_ context.Context, key string, defaultV int) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ci, ok := f.cacheInt[key]; ok && time.Since(ci.at) < f.cacheTTL {
+		return ci.value
+	}
+	v, err := f.store.GetSetting(key)
+	if err != nil || v == "" {
+		return defaultV
+	}
+	n, perr := strconv.Atoi(strings.TrimSpace(v))
+	if perr != nil {
+		return defaultV
+	}
+	f.cacheInt[key] = cachedInt{value: n, at: time.Now()}
+	return n
 }
 
 // IsModpacksEnabled is a convenience wrapper for the most-checked flag.
@@ -94,10 +122,38 @@ func (f *FeatureFlags) IsShareLinksEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "modpack_share_links_enabled", false)
 }
 
+// IsTabProxyEnabled is the WS5 master toggle. Default false: the custom-tab
+// reverse proxy is inert until an admin enables it.
+func (f *FeatureFlags) IsTabProxyEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_tab_proxy_enabled", false)
+}
+
+// TabProxyAllowPublicLinks gates anonymous public share links. Default false.
+func (f *FeatureFlags) TabProxyAllowPublicLinks(ctx context.Context) bool {
+	return f.Get(ctx, "tab_proxy_allow_public_links", false)
+}
+
+// TabProxyMaxPerServer caps proxied tabs per server. Default 10 (floored >0).
+func (f *FeatureFlags) TabProxyMaxPerServer(ctx context.Context) int {
+	if v := f.GetInt(ctx, "tab_proxy_max_per_server", 10); v > 0 {
+		return v
+	}
+	return 10
+}
+
+// TabProxyMaxShareLinksPerUser caps active share links per user. Default 20.
+func (f *FeatureFlags) TabProxyMaxShareLinksPerUser(ctx context.Context) int {
+	if v := f.GetInt(ctx, "tab_proxy_max_share_links_per_user", 20); v > 0 {
+		return v
+	}
+	return 20
+}
+
 // Invalidate drops the cached entry for a key so the next Get re-reads from
 // the store. Called by settings PUT handlers after a write.
 func (f *FeatureFlags) Invalidate(key string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.cache, key)
+	delete(f.cacheInt, key)
 }
