@@ -40,6 +40,21 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) 
 	return token.SignedString(h.jwtKey)
 }
 
+// ParseSessionToken validates a session JWT string and returns its claims. The
+// tab-proxy endpoints use it because they authenticate from the header, the
+// ?token= query, or the scoped dyl_tabproxy cookie rather than the standard
+// AuthMiddleware chain.
+func (h *AuthHandler) ParseSessionToken(tokenString string) (*Claims, error) {
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return h.jwtKey, nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+	return claims, nil
+}
+
 // DemoLogin POST /api/auth/demo-login — public, rate-limited.
 // Issues a normal session for the designated read-only demo account, so the
 // website/panel can offer a one-click "View demo" with no credentials. The

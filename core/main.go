@@ -402,6 +402,7 @@ func main() {
 	serverModsHandler := handlers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
+	proxyHandler := handlers.NewProxyHandler(appState, authHandler)
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := handlers.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
@@ -570,6 +571,12 @@ func main() {
 	// limited; the modpacks feature is gated in-handler with a uniform 404.
 	shareLimiter := handlers.NewIPRateLimiter()
 	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeShare)).Methods("GET")
+
+	// WS5 custom-tab reverse proxy. On the ROOT router (like /api/share) so it
+	// bypasses the /api subrouter's StrictSlash + setup-lock + maintenance
+	// middleware; auth (session/token) is enforced inside the handler.
+	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", proxyHandler.InDashboard)
+	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", proxyHandler.InDashboard)
 
 	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
