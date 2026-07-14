@@ -440,6 +440,28 @@ docker compose exec timescaledb pg_dump -U "$DB_USER" "$DB_NAME" > dylaris-backu
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
 
+## Custom-tab reverse proxy
+
+Custom tabs can run in two modes. A **direct** tab renders a browser-reachable
+URL in an iframe (or popout). A **proxied** tab streams a Minecraft server
+container's own web UI (BlueMap, squaremap, Dynmap, plugin dashboards) through
+Core over the existing reverse gRPC mesh, so the browser only ever talks to Core
+on the panel origin - no public container port and no extra ingress needed. It
+works even on gateway-routed / BYON nodes with no browser-reachable node address.
+
+- In-dashboard: `ANY /api/servers/{id}/tabs/{tabId}/proxy/...` (session + overview
+  access, same gate as reading the tab).
+- Standalone share link: `/c/<token>` -> `ANY /api/tabproxy/{token}/...`. A
+  `public` link serves anyone with the unguessable token; a `private` link needs
+  a logged-in session with access.
+- HTTP and WebSocket are both proxied. Proxied apps must use relative asset paths
+  or a configurable web base-path; Core injects `<base href>` into `text/html`.
+  Apps that hard-code absolute-root paths (`/tiles/...`) are a known V1 limitation.
+- Admin gates live in Settings -> Features: master toggle
+  (`feature_tab_proxy_enabled`, default off), anonymous public links
+  (`tab_proxy_allow_public_links`, default off), and per-server / per-user caps.
+- No new port: the proxied content rides the panel origin's existing front TLS.
+
 ## Development
 
 The backend is a Go workspace (`go.work`) with `core`, `node`, the `log-shipper`, the `agent` library, and shared `pkg`/`proto` modules. The frontend is a Next.js app in `panel/`.
