@@ -11,15 +11,27 @@ export interface ServerTab {
     position: number;
     enabled: boolean;
     openInPanel: boolean;
+    mode: string;          // "direct" | "proxied"
+    targetPort: number;    // proxied only
+    targetPath: string;    // proxied only
+    surface: string;       // "tab" | "page" | "both"
+    visibility: string;    // "private" | "public"
+    shareToken: string;    // "" when none
+    shareExpiresAt: string | null;
 }
 
 export interface ServerTabInput {
     name: string;
     icon?: string;
-    url: string;
+    url?: string;
     position?: number;
     enabled?: boolean;
     openInPanel?: boolean;
+    mode?: string;
+    targetPort?: number;
+    targetPath?: string;
+    surface?: string;
+    visibility?: string;
 }
 
 export async function listServerTabs(serverId: number): Promise<ServerTab[]> {
@@ -55,6 +67,26 @@ export async function updateServerTab(serverId: number, tabId: number, input: Pa
 export async function deleteServerTab(serverId: number, tabId: number): Promise<{ success: boolean; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/tabs/${tabId}`, {
+            method: 'DELETE',
+            headers: getAuthHeader(),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+export async function rotateShareLink(serverId: number, tabId: number): Promise<{ success: boolean; shareToken?: string; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/tabs/${tabId}/share-link`, {
+            method: 'POST',
+            headers: getAuthHeader(),
+        });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}
+
+export async function revokeShareLink(serverId: number, tabId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/tabs/${tabId}/share-link`, {
             method: 'DELETE',
             headers: getAuthHeader(),
         });
