@@ -26,6 +26,7 @@ const wsFragmentSize = 60 * 1024
 // wsBridge tracks one open container WS for a request_id.
 type wsBridge struct {
 	conn      *websocket.Conn
+	owner     *coreConnection      // Core connection that opened this bridge (WS5 I1 reaper)
 	inbound   chan *pb.NodeMessage // Core->node WsFrame/WsClose for this request_id
 	done      chan struct{}
 	closeOnce sync.Once
@@ -101,7 +102,7 @@ func (m *MeshManager) handleWSOpen(cc *coreConnection, reqID, serverUUID string,
 		return
 	}
 
-	bridge := &wsBridge{conn: conn, inbound: make(chan *pb.NodeMessage, 64), done: make(chan struct{})}
+	bridge := &wsBridge{conn: conn, owner: cc, inbound: make(chan *pb.NodeMessage, 64), done: make(chan struct{})}
 	m.wsMu.Lock()
 	m.wsBridges[reqID] = bridge
 	m.wsMu.Unlock()
@@ -169,6 +170,12 @@ func (m *MeshManager) handleWSOpen(cc *coreConnection, reqID, serverUUID string,
 }
 
 // routeWSInbound delivers a Core->node WsFrame/WsClose to the open bridge.
+// The enqueue is non-blocking (WS5 I2-inbound): this runs on the single
+// per-connection read loop shared by every other Core->node request on this
+// connection (file browser, RCON, ...), so a slow/stalled container must
+// never be able to stall it by filling the bridge's 64-slot buffer. If the
+// buffer is full we drop that one bridge instead of blocking the read loop;
+// the browser reconnects and a fresh bridge is opened.
 func (m *MeshManager) routeWSInbound(reqID string, msg *pb.NodeMessage) {
 	m.wsMu.Lock()
 	bridge, ok := m.wsBridges[reqID]
@@ -179,6 +186,12 @@ func (m *MeshManager) routeWSInbound(reqID string, msg *pb.NodeMessage) {
 	select {
 	case bridge.inbound <- msg:
 	case <-bridge.done:
+	default:
+		// Buffer full and bridge not already closing: closeWSBridge does the
+		// same atomic lookup-delete-under-wsMu + sync.Once close as every
+		// other teardown path (see below), so this can never double-close a
+		// bridge that a pump is concurrently tearing down itself.
+		m.closeWSBridge(reqID)
 	}
 }
 
@@ -192,5 +205,50 @@ func (m *MeshManager) closeWSBridge(reqID string) {
 	m.wsMu.Unlock()
 	if ok {
 		bridge.close()
+	}
+}
+
+// closeWSBridgesForConn closes and unregisters every bridge owned by cc
+// (WS5 I1 reaper). Call this from the per-connection read-loop cleanup path
+// when a Core connection dies, so an orphaned bridge (e.g. pump 1 blocked in
+// ReadMessage on an idle silent container, pump 2 blocked in select) is torn
+// down deterministically instead of leaking on every Core restart.
+//
+// Uses the same atomic lookup-delete-under-wsMu + sync.Once close as
+// closeWSBridge: the map delete happens while holding wsMu, so of any
+// concurrent deleters racing on the same reqID (this reaper, a pump's own
+// closeWSBridge call, or closeAllWSBridges), exactly one observes the entry
+// present and removes it; the others see it already gone and skip closing.
+// bridge.close() is therefore invoked at most once per bridge through this
+// map-ownership discipline, with wsBridge's own sync.Once as a second,
+// independent guard against a double close/panic.
+func (m *MeshManager) closeWSBridgesForConn(cc *coreConnection) {
+	m.wsMu.Lock()
+	var owned []*wsBridge
+	for reqID, b := range m.wsBridges {
+		if b.owner == cc {
+			owned = append(owned, b)
+			delete(m.wsBridges, reqID)
+		}
+	}
+	m.wsMu.Unlock()
+	for _, b := range owned {
+		b.close()
+	}
+}
+
+// closeAllWSBridges closes and unregisters every open bridge regardless of
+// owner (WS5 I1 reaper). Used on full mesh shutdown (closeAll). Same
+// exactly-once discipline as closeWSBridgesForConn.
+func (m *MeshManager) closeAllWSBridges() {
+	m.wsMu.Lock()
+	owned := make([]*wsBridge, 0, len(m.wsBridges))
+	for reqID, b := range m.wsBridges {
+		owned = append(owned, b)
+		delete(m.wsBridges, reqID)
+	}
+	m.wsMu.Unlock()
+	for _, b := range owned {
+		b.close()
 	}
 }

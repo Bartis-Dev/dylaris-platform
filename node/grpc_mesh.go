@@ -298,6 +298,10 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	m.mu.Unlock()
 	cancel()
 	conn.Close()
+	// WS5 I1: tear down every WS bridge this dying connection owned instead
+	// of leaving it to leak until its own next I/O error (or forever, on an
+	// idle silent container).
+	m.closeWSBridgesForConn(cc)
 	log.Printf("gRPC Mesh: Disconnected from Core %s", info.ID)
 }
 
@@ -439,12 +443,15 @@ func (m *MeshManager) resolveAddr(info CoreInfo) string {
 
 func (m *MeshManager) closeAll() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for id, conn := range m.connections {
 		conn.cancel()
 		conn.conn.Close()
 		delete(m.connections, id)
 	}
+	m.mu.Unlock()
+	// WS5 I1: shutdown must also reap every open WS bridge, not just the
+	// Core connections themselves.
+	m.closeAllWSBridges()
 }
 
 // NodeIPInfo holds the Node's network addresses for auth.
