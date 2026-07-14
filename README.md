@@ -25,6 +25,7 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Ports](#ports)
 - [Scalability](#scalability)
 - [Operations](#operations)
+- [Beam desktop client](#beam-desktop-client)
 - [Development](#development)
 - [Tech stack](#tech-stack)
 - [Anonymous usage stats](#anonymous-usage-stats)
@@ -469,6 +470,41 @@ works even on gateway-routed / BYON nodes with no browser-reachable node address
 > origin-isolated proxying (serving proxied content from a separate dedicated
 > origin) lands. Safe for a single-operator self-host instance, where you
 > control your own containers.
+
+## Beam desktop client
+
+Beam is the optional desktop client for browsing and transferring server files
+over the overlay gRPC transport (LAN fast-path, relay, or pinned-TLS direct) that
+never exposes a node IP. It is a Wails app in `beam/app/`, released from the
+`beam-release.yml` workflow on `beam-v*` tags as Ed25519-signed GitHub Release
+assets.
+
+**Platform builds**
+
+- `linux/amd64` - `DylarisBeam-linux-amd64`.
+- `windows/amd64` - `DylarisBeam-windows-amd64.exe` (double-click) plus the
+  extensionless `DylarisBeam-windows-amd64` asset the in-app updater fetches, and
+  a best-effort NSIS installer `DylarisBeam-windows-amd64-installer.exe` when the
+  runner has `makensis`. Cross-compiled from the Linux CI runner: Wails renders
+  Windows through the pure-Go go-webview2 loader, so no CGO and no Windows runner
+  are needed.
+
+**Windows: known limitations**
+
+- Unsigned binary. The `.exe` and installer are not Authenticode-signed, so
+  Windows SmartScreen shows an "unknown publisher" warning on first run. Click
+  "More info", then "Run anyway". Integrity is still protected by the Ed25519
+  update chain (below). OV/EV Authenticode signing (a paid certificate) would
+  remove the warning and is a documented follow-up, not shipped in this build.
+- WebView2 runtime. Beam renders through the Microsoft Edge WebView2 Evergreen
+  runtime, preinstalled on Windows 11 and most current Windows 10. If it is
+  missing the app cannot render its UI; install the free WebView2 runtime from
+  Microsoft (the NSIS installer also fetches it when absent).
+- Auto-updates. The in-app updater covers `windows-amd64` with the same
+  fail-closed sha256 + Ed25519 verification as Linux. It stays inert until the
+  owner runs `go run ./cmd/beam-release keygen`, embeds the real public key in
+  `beam/app/update_pubkey.go`, and publishes a release that carries a
+  `windows-amd64` manifest entry.
 
 ## Development
 
