@@ -583,17 +583,20 @@ func publicProxyBasePath(token string) string {
 // requires the ticket's server-id + tab-id claims to match THIS tab - a
 // ticket that is valid but was minted for a different tab is
 // authed-but-no-access, which decideProxyAccess turns into 403 rather than
-// the 401 a missing/invalid cookie gets.
-func (h *ProxyHandler) resolvePublicTicket(r *http.Request, tab *proxyTab) (authed, hasAccess bool) {
+// the 401 a missing/invalid cookie gets. readOnly carries the ticket's own
+// ReadOnly claim (set by MintPublicProxyAuth from the demo-account check) so
+// Public can apply the same read-only method gate InDashboard does - it is
+// meaningless (and always false) when authed is false.
+func (h *ProxyHandler) resolvePublicTicket(r *http.Request, tab *proxyTab) (authed, hasAccess, readOnly bool) {
 	c, err := r.Cookie(proxyCookieName)
 	if err != nil || c.Value == "" {
-		return false, false
+		return false, false, false
 	}
 	claims, err := h.auth.ParseTabProxyTicket(c.Value)
 	if err != nil {
-		return false, false
+		return false, false, false
 	}
-	return true, claims.ServerID == tab.ServerID && claims.TabID == tab.ID
+	return true, claims.ServerID == tab.ServerID && claims.TabID == tab.ID, claims.ReadOnly
 }
 
 // MintPublicProxyAuth: GET /api/tabproxy/{token}/auth, registered on the
@@ -709,13 +712,22 @@ func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
 	allowPublic := h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context())
 	// A public-visibility link serves anyone with no cookie involved at all;
 	// only a private one needs the ticket-cookie check.
-	var authed, hasAccess bool
+	var authed, hasAccess, readOnly bool
 	if tab.Visibility != "public" {
-		authed, hasAccess = h.resolvePublicTicket(r, tab)
+		authed, hasAccess, readOnly = h.resolvePublicTicket(r, tab)
 	}
 	allow, status := decideProxyAccess(tab.Visibility, allowPublic, authed, hasAccess)
 	if !allow {
 		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	// Security invariant (mirrors InDashboard's own gate): a ticket minted for
+	// a demo/read-only session may only ever GET/HEAD through the proxy. This
+	// only ever fires on the PRIVATE ticket path - readOnly stays false above
+	// for a public-visibility link, which has no ticket and is intentionally
+	// left unrestricted by the admin's allowPublic choice.
+	if readOnly && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Read-only session", http.StatusForbidden)
 		return
 	}
 

@@ -84,17 +84,17 @@ func TestResolvePublicTicket(t *testing.T) {
 	}
 
 	t.Run("no cookie", func(t *testing.T) {
-		authed, hasAccess := h.resolvePublicTicket(newReq(nil), tab)
-		if authed || hasAccess {
-			t.Errorf("got (%v,%v), want (false,false)", authed, hasAccess)
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(nil), tab)
+		if authed || hasAccess || readOnly {
+			t.Errorf("got (%v,%v,%v), want (false,false,false)", authed, hasAccess, readOnly)
 		}
 	})
 
 	t.Run("invalid cookie value", func(t *testing.T) {
 		cookie := &http.Cookie{Name: proxyCookieName, Value: "not-a-jwt"}
-		authed, hasAccess := h.resolvePublicTicket(newReq(cookie), tab)
-		if authed || hasAccess {
-			t.Errorf("got (%v,%v), want (false,false)", authed, hasAccess)
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(cookie), tab)
+		if authed || hasAccess || readOnly {
+			t.Errorf("got (%v,%v,%v), want (false,false,false)", authed, hasAccess, readOnly)
 		}
 	})
 
@@ -104,9 +104,9 @@ func TestResolvePublicTicket(t *testing.T) {
 			t.Fatalf("IssueToken: %v", err)
 		}
 		cookie := &http.Cookie{Name: proxyCookieName, Value: sessionTok}
-		authed, hasAccess := h.resolvePublicTicket(newReq(cookie), tab)
-		if authed || hasAccess {
-			t.Errorf("got (%v,%v), want (false,false)", authed, hasAccess)
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(cookie), tab)
+		if authed || hasAccess || readOnly {
+			t.Errorf("got (%v,%v,%v), want (false,false,false)", authed, hasAccess, readOnly)
 		}
 	})
 
@@ -116,9 +116,21 @@ func TestResolvePublicTicket(t *testing.T) {
 			t.Fatalf("IssueTabProxyTicket: %v", err)
 		}
 		cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
-		authed, hasAccess := h.resolvePublicTicket(newReq(cookie), tab)
-		if !authed || !hasAccess {
-			t.Errorf("got (%v,%v), want (true,true)", authed, hasAccess)
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(cookie), tab)
+		if !authed || !hasAccess || readOnly {
+			t.Errorf("got (%v,%v,%v), want (true,true,false)", authed, hasAccess, readOnly)
+		}
+	})
+
+	t.Run("valid read-only ticket scoped to this exact tab", func(t *testing.T) {
+		ticket, err := ah.IssueTabProxyTicket("owner", false, 1, 2, true)
+		if err != nil {
+			t.Fatalf("IssueTabProxyTicket: %v", err)
+		}
+		cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(cookie), tab)
+		if !authed || !hasAccess || !readOnly {
+			t.Errorf("got (%v,%v,%v), want (true,true,true)", authed, hasAccess, readOnly)
 		}
 	})
 
@@ -128,9 +140,9 @@ func TestResolvePublicTicket(t *testing.T) {
 			t.Fatalf("IssueTabProxyTicket: %v", err)
 		}
 		cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
-		authed, hasAccess := h.resolvePublicTicket(newReq(cookie), tab)
-		if !authed || hasAccess {
-			t.Errorf("got (%v,%v), want (true,false) - valid ticket for the wrong scope", authed, hasAccess)
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(cookie), tab)
+		if !authed || hasAccess || readOnly {
+			t.Errorf("got (%v,%v,%v), want (true,false,false) - valid ticket for the wrong scope", authed, hasAccess, readOnly)
 		}
 	})
 
@@ -140,9 +152,9 @@ func TestResolvePublicTicket(t *testing.T) {
 			t.Fatalf("IssueTabProxyTicket: %v", err)
 		}
 		cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
-		authed, hasAccess := h.resolvePublicTicket(newReq(cookie), tab)
-		if !authed || hasAccess {
-			t.Errorf("got (%v,%v), want (true,false) - valid ticket for the wrong scope", authed, hasAccess)
+		authed, hasAccess, readOnly := h.resolvePublicTicket(newReq(cookie), tab)
+		if !authed || hasAccess || readOnly {
+			t.Errorf("got (%v,%v,%v), want (true,false,false) - valid ticket for the wrong scope", authed, hasAccess, readOnly)
 		}
 	})
 }
@@ -231,11 +243,15 @@ func expectShareTokenQuery(mock sqlmock.Sqlmock, row shareTokenRow) {
 }
 
 func publicRequest(token, rest string, cookie *http.Cookie) *http.Request {
+	return publicRequestMethod("GET", token, rest, cookie)
+}
+
+func publicRequestMethod(method, token, rest string, cookie *http.Cookie) *http.Request {
 	url := "/api/tabproxy/" + token
 	if rest != "" {
 		url += "/" + rest
 	}
-	r := httptest.NewRequest("GET", url, nil)
+	r := httptest.NewRequest(method, url, nil)
 	vars := map[string]string{"token": token}
 	if rest != "" {
 		vars["rest"] = rest
@@ -377,6 +393,64 @@ func TestPublic_PrivateVisibility_ValidScopedCookieAllowed(t *testing.T) {
 	// 502 past the gate is the signal the ticket authorized the request.
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d (valid scoped ticket should pass the gate): %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+}
+
+// TestPublic_PrivateVisibility_ReadOnlyTicket_RejectsNonGET covers the WS5
+// Task 9 fast-follow gap: a read-only (demo) ticket minted for a PRIVATE
+// share link must not be able to issue a write method through the
+// standalone proxy, mirroring InDashboard's own read-only method gate.
+func TestPublic_PrivateVisibility_ReadOnlyTicket_RejectsNonGET(t *testing.T) {
+	h, ah, mock, _ := newTabProxyPublicTestHandler(t, true, true)
+	ticket, err := ah.IssueTabProxyTicket("demo", false, 1, 2, true)
+	if err != nil {
+		t.Fatalf("IssueTabProxyTicket: %v", err)
+	}
+	cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
+
+	for _, method := range []string{"POST", "PUT", "DELETE", "PATCH"} {
+		t.Run(method, func(t *testing.T) {
+			expectShareTokenQuery(mock, shareTokenRow{
+				id: 2, serverID: 1, serverUUID: "srv-1-uuid", nodeID: 7, mode: "proxied",
+				targetPort: 8080, targetPath: "/", surface: "page", visibility: "private", enabled: true,
+			})
+			rec := httptest.NewRecorder()
+
+			h.Public(rec, publicRequestMethod(method, "tok", "", cookie))
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d (%s on read-only ticket)", rec.Code, http.StatusForbidden, method)
+			}
+		})
+	}
+}
+
+// TestPublic_PrivateVisibility_ReadOnlyTicket_AllowsGETPastGate is the
+// counterpart: the same read-only ticket must still be allowed through for
+// GET/HEAD, reaching the serve() path (signaled by the 502 the fake
+// AppState's connection-less gRPC registry produces past the access gate).
+func TestPublic_PrivateVisibility_ReadOnlyTicket_AllowsGETPastGate(t *testing.T) {
+	h, ah, mock, _ := newTabProxyPublicTestHandler(t, true, true)
+	ticket, err := ah.IssueTabProxyTicket("demo", false, 1, 2, true)
+	if err != nil {
+		t.Fatalf("IssueTabProxyTicket: %v", err)
+	}
+	cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
+
+	for _, method := range []string{"GET", "HEAD"} {
+		t.Run(method, func(t *testing.T) {
+			expectShareTokenQuery(mock, shareTokenRow{
+				id: 2, serverID: 1, serverUUID: "srv-1-uuid", nodeID: 7, mode: "proxied",
+				targetPort: 8080, targetPath: "/", surface: "page", visibility: "private", enabled: true,
+			})
+			rec := httptest.NewRecorder()
+
+			h.Public(rec, publicRequestMethod(method, "tok", "", cookie))
+
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, want %d (%s on read-only ticket should pass the gate): %s", rec.Code, http.StatusBadGateway, method, rec.Body.String())
+			}
+		})
 	}
 }
 
