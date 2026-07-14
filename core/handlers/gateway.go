@@ -385,8 +385,16 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if len(finalDomain) > 2 && finalDomain[:2] == "*." && req.TargetPort != 80 && req.TargetPort != 443 {
-		http.Error(w, "Wildcard domains are only allowed for port 80/443", http.StatusBadRequest)
+	// The gateway routes Minecraft TCP only (WS7): the HTTP/HTTPS edge ingress
+	// was removed, so web (80/443) target ports and wildcard domains - which
+	// only ever existed for that web data-plane - are no longer accepted. MC
+	// routes target a specific hostname on an MC port.
+	if req.TargetPort == 80 || req.TargetPort == 443 {
+		http.Error(w, "Web routes (port 80/443) are no longer supported; the gateway routes Minecraft TCP only", http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(finalDomain, "*.") {
+		http.Error(w, "Wildcard domains are not supported", http.StatusBadRequest)
 		return
 	}
 

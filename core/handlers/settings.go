@@ -22,8 +22,8 @@ func NewSettingsHandler(state *AppState, lh *LibraryHandler) *SettingsHandler {
 }
 
 type LibrarySettings struct {
-	Type        string `json:"type"`        // "local", "s3"
-	Path        string `json:"path"`        // for local
+	Type        string `json:"type"` // "local", "s3"
+	Path        string `json:"path"` // for local
 	S3Endpoint  string `json:"s3Endpoint"`
 	S3Bucket    string `json:"s3Bucket"`
 	S3Region    string `json:"s3Region"`
@@ -104,17 +104,17 @@ func (h *SettingsHandler) SaveLibrarySettings(w http.ResponseWriter, r *http.Req
 // --- File Manager Settings ---
 
 type FileManagerSettings struct {
-	AdminUploadLimit  int64 `json:"adminUploadLimit"`  // bytes
+	AdminUploadLimit   int64 `json:"adminUploadLimit"`   // bytes
 	AdminDownloadLimit int64 `json:"adminDownloadLimit"` // bytes
-	UserUploadLimit   int64 `json:"userUploadLimit"`   // bytes
-	UserDownloadLimit int64 `json:"userDownloadLimit"` // bytes
+	UserUploadLimit    int64 `json:"userUploadLimit"`    // bytes
+	UserDownloadLimit  int64 `json:"userDownloadLimit"`  // bytes
 }
 
 var defaultFileManagerSettings = FileManagerSettings{
-	AdminUploadLimit:   2 * 1024 * 1024 * 1024,  // 2 GB
-	AdminDownloadLimit: 5 * 1024 * 1024 * 1024,  // 5 GB
-	UserUploadLimit:    500 * 1024 * 1024,         // 500 MB
-	UserDownloadLimit:  1 * 1024 * 1024 * 1024,   // 1 GB
+	AdminUploadLimit:   2 * 1024 * 1024 * 1024, // 2 GB
+	AdminDownloadLimit: 5 * 1024 * 1024 * 1024, // 5 GB
+	UserUploadLimit:    500 * 1024 * 1024,      // 500 MB
+	UserDownloadLimit:  1 * 1024 * 1024 * 1024, // 1 GB
 }
 
 // GetFileManagerSettings GET /api/settings/filemanager
@@ -308,15 +308,11 @@ var defaultBlockedRoutePrefixes = []string{
 }
 
 type GatewayLimits struct {
-	Global           int  `json:"global"`
-	UserDefault      int  `json:"userDefault"`
-	PerServer        int  `json:"perServer"`
-	PortMc           int  `json:"portMc"`
-	PortMcEnabled    bool `json:"portMcEnabled"`
-	PortHttps        int  `json:"portHttps"`
-	PortHttpsEnabled bool `json:"portHttpsEnabled"`
-	PortHttp         int  `json:"portHttp"`
-	PortHttpEnabled  bool `json:"portHttpEnabled"`
+	Global        int  `json:"global"`
+	UserDefault   int  `json:"userDefault"`
+	PerServer     int  `json:"perServer"`
+	PortMc        int  `json:"portMc"`
+	PortMcEnabled bool `json:"portMcEnabled"`
 }
 
 // HosterDomain is one of the platform-provided base domains under which a
@@ -355,15 +351,11 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 
 	settings := GatewaySettings{
 		Limits: GatewayLimits{
-			Global:           getLimit("global"),
-			UserDefault:      getLimit("user_default"),
-			PerServer:        getLimit("per_server"),
-			PortMc:           getLimit("port:25565"),
-			PortMcEnabled:    getSetting("gateway_port_mc_enabled") != "false",
-			PortHttps:        getLimit("port:443"),
-			PortHttpsEnabled: getSetting("gateway_port_https_enabled") != "false",
-			PortHttp:         getLimit("port:80"),
-			PortHttpEnabled:  getSetting("gateway_port_http_enabled") == "true",
+			Global:        getLimit("global"),
+			UserDefault:   getLimit("user_default"),
+			PerServer:     getLimit("per_server"),
+			PortMc:        getLimit("port:25565"),
+			PortMcEnabled: getSetting("gateway_port_mc_enabled") != "false",
 		},
 		HosterDomains:        h.loadHosterDomains(),
 		CustomDomainsEnabled: getSetting("gateway_custom_domains_enabled") == "true",
@@ -484,8 +476,6 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	// Save port-enable settings
 	portSettings := []struct{ k, v string }{
 		{"gateway_port_mc_enabled", fmt.Sprintf("%t", req.Limits.PortMcEnabled)},
-		{"gateway_port_https_enabled", fmt.Sprintf("%t", req.Limits.PortHttpsEnabled)},
-		{"gateway_port_http_enabled", fmt.Sprintf("%t", req.Limits.PortHttpEnabled)},
 		{"gateway_hoster_domains", string(hostersJSON)},
 		{"gateway_custom_domains_enabled", fmt.Sprintf("%t", req.CustomDomainsEnabled)},
 		{"gateway_cname_target", strings.TrimSpace(req.CnameTarget)},
@@ -507,8 +497,6 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		{"user_default", req.Limits.UserDefault},
 		{"per_server", req.Limits.PerServer},
 		{"port:25565", req.Limits.PortMc},
-		{"port:443", req.Limits.PortHttps},
-		{"port:80", req.Limits.PortHttp},
 	}
 	for _, l := range limits {
 		if err := h.state.Store.SetGatewayRouteLimit(l.scope, l.max); err != nil {
@@ -547,8 +535,8 @@ type PlacementSettings struct {
 }
 
 var defaultPlacementSettings = PlacementSettings{
-	CPUOvercommitDefault: 2.0,  // CPU is time-shared, 2.0x = 200% is conservative
-	RAMOvercommitDefault: 1.0,  // RAM has no default overcommit (safer); 100%
+	CPUOvercommitDefault: 2.0, // CPU is time-shared, 2.0x = 200% is conservative
+	RAMOvercommitDefault: 1.0, // RAM has no default overcommit (safer); 100%
 	DiskBufferGB:         10,
 	RebalanceEnabled:     false,
 	RebalanceThreshold:   90,
@@ -815,8 +803,8 @@ type BeamSettings struct {
 	// rate.Limiter so older deploys keep working. The four-direction
 	// fields below are saved alongside and will replace it once asymmetric
 	// node + dedicated relay throttles ship.
-	BwLimit      int64 `json:"bwLimit"`
-	Enabled      bool  `json:"enabled"`
+	BwLimit      int64  `json:"bwLimit"`
+	Enabled      bool   `json:"enabled"`
 	DownloadLink string `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
 
 	// MinVersion is the Beam force-update floor (empty = gating off). Persisted
@@ -1191,8 +1179,8 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":        true,
-		"serversQueued":  queued,
+		"success":       true,
+		"serversQueued": queued,
 	})
 }
 

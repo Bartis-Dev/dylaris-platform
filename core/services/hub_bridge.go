@@ -24,13 +24,13 @@ const hubQueueKey = "dylaris:hub:queue"
 // the dylaris:edge:{id}:stats stream by the Edge service every few seconds and
 // merged in by GetEdgesFromRedis.
 type GatewayEdgeInfo struct {
-	EdgeID      string         `json:"edge_id"`
-	Name        string         `json:"name"`
-	IP          string         `json:"ip"`
-	PrivateIP   string         `json:"private_ip"`
-	ServicePort string         `json:"service_port"`
-	SplicePort  string         `json:"splice_port"`
-	Status      string         `json:"status"`
+	EdgeID      string `json:"edge_id"`
+	Name        string `json:"name"`
+	IP          string `json:"ip"`
+	PrivateIP   string `json:"private_ip"`
+	ServicePort string `json:"service_port"`
+	SplicePort  string `json:"splice_port"`
+	Status      string `json:"status"`
 	// Region + Wildcard are advertised by regional edges for the DNS updater.
 	// Region groups edges (eu/us); Wildcard is the A-record name the reconciler
 	// points at this region's edge IPs (e.g. "*.eu.dylaris.com"). Empty on edges
@@ -85,12 +85,12 @@ type GatewayRoute struct {
 
 // hubQueueMessage is the payload pushed to dylaris:hub:queue.
 type hubQueueMessage struct {
-	Action       string `json:"action"`
-	Domain       string `json:"domain,omitempty"`
-	TargetIP     string `json:"target_ip,omitempty"`
-	TargetPort   int    `json:"target_port,omitempty"`
-	LinkToken    string `json:"link_token,omitempty"`
-	ServerUUID   string `json:"server_uuid,omitempty"`
+	Action       string  `json:"action"`
+	Domain       string  `json:"domain,omitempty"`
+	TargetIP     string  `json:"target_ip,omitempty"`
+	TargetPort   int     `json:"target_port,omitempty"`
+	LinkToken    string  `json:"link_token,omitempty"`
+	ServerUUID   string  `json:"server_uuid,omitempty"`
 	ServerID     *uint   `json:"server_id,omitempty"`
 	OwnerID      *string `json:"owner_id,omitempty"`
 	NewLinkToken string  `json:"new_link_token,omitempty"`
@@ -158,11 +158,6 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 			return fmt.Errorf("minecraft port (25565) routing is disabled")
 		}
 	}
-	if port == 443 {
-		if val, _ := g.store.GetSetting("gateway_port_https_enabled"); val == "false" {
-			return fmt.Errorf("HTTPS port (443) routing is disabled")
-		}
-	}
 
 	// 4. Push to queue
 	sID := uint(serverID)
@@ -191,11 +186,6 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 	if port == 25565 {
 		if val, _ := g.store.GetSetting("gateway_port_mc_enabled"); val == "false" {
 			return fmt.Errorf("minecraft port (25565) routing is disabled")
-		}
-	}
-	if port == 443 {
-		if val, _ := g.store.GetSetting("gateway_port_https_enabled"); val == "false" {
-			return fmt.Errorf("HTTPS port (443) routing is disabled")
 		}
 	}
 	if linkToken == "" {
