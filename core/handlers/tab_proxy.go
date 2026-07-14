@@ -60,6 +60,20 @@ var coreHopByHop = map[string]bool{
 	"upgrade":             true,
 }
 
+// coreResponseStrip lists headers dropped ONLY from the container's response
+// on its way back to the browser (WS5 final-review hardening) - never
+// applied to forwardRequestHeaders' outbound direction. The proxied response
+// is served under the panel's own origin, so a container that emitted
+// Set-Cookie/Set-Cookie2 could set or clobber a cookie in the visitor's
+// browser on that origin (cookie-bomb/fixation surface, worse on the public
+// share path - Public can serve a tab anonymously). The map/plugin web UIs
+// this proxy serves (BlueMap/squaremap/Dynmap) use localStorage, not
+// cookies, so nothing legitimate depends on this passing through.
+var coreResponseStrip = map[string]bool{
+	"set-cookie":  true,
+	"set-cookie2": true,
+}
+
 type ProxyHandler struct {
 	state *AppState
 	auth  *AuthHandler
@@ -423,10 +437,15 @@ func (h *ProxyHandler) forwardRequestHeaders(r *http.Request) []*pb.HttpHeader {
 
 // --- pure helpers ---
 
+// coreStripHopByHop drops both the true hop-by-hop headers (coreHopByHop) and
+// the response-only strip set (coreResponseStrip, e.g. Set-Cookie) - the
+// single chokepoint writeProxyHeaders relies on before anything from a
+// container response reaches the browser on the panel origin.
 func coreStripHopByHop(hs []*pb.HttpHeader) []*pb.HttpHeader {
 	out := make([]*pb.HttpHeader, 0, len(hs))
 	for _, h := range hs {
-		if coreHopByHop[strings.ToLower(h.Key)] {
+		lk := strings.ToLower(h.Key)
+		if coreHopByHop[lk] || coreResponseStrip[lk] {
 			continue
 		}
 		out = append(out, h)
@@ -434,6 +453,9 @@ func coreStripHopByHop(hs []*pb.HttpHeader) []*pb.HttpHeader {
 	return out
 }
 
+// writeProxyHeaders is the single chokepoint both InDashboard and Public
+// relay a container's response headers through (via serve -> serveHTTP), so
+// every response-side header rule lives here exactly once.
 func writeProxyHeaders(w http.ResponseWriter, hs []*pb.HttpHeader, dropContentLength bool) {
 	for _, h := range coreStripHopByHop(hs) {
 		if dropContentLength && strings.EqualFold(h.Key, "Content-Length") {
@@ -441,6 +463,10 @@ func writeProxyHeaders(w http.ResponseWriter, hs []*pb.HttpHeader, dropContentLe
 		}
 		w.Header().Add(h.Key, h.Value)
 	}
+	// WS5 final-review hardening: Set (not Add) so this always wins over any
+	// container-supplied value - defense-in-depth against MIME-sniffing of
+	// content relayed onto the panel origin.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 func headerValue(hs []*pb.HttpHeader, key string) string {

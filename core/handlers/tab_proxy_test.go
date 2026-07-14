@@ -45,6 +45,8 @@ func TestCoreStripHopByHop(t *testing.T) {
 		{Key: "Connection", Value: "keep-alive"},
 		{Key: "Transfer-Encoding", Value: "chunked"},
 		{Key: "Upgrade", Value: "websocket"},
+		{Key: "Set-Cookie", Value: "session=evil; Path=/"},
+		{Key: "set-cookie2", Value: "session2=evil"},
 		{Key: "X-Keep", Value: "yes"},
 	}
 	got := coreStripHopByHop(in)
@@ -52,15 +54,39 @@ func TestCoreStripHopByHop(t *testing.T) {
 	for _, h := range got {
 		kept[h.Key] = true
 	}
-	for _, drop := range []string{"Connection", "Transfer-Encoding", "Upgrade"} {
+	for _, drop := range []string{"Connection", "Transfer-Encoding", "Upgrade", "Set-Cookie", "set-cookie2"} {
 		if kept[drop] {
-			t.Errorf("hop-by-hop %q not stripped", drop)
+			t.Errorf("header %q not stripped", drop)
 		}
 	}
 	for _, keep := range []string{"Content-Type", "X-Keep"} {
 		if !kept[keep] {
 			t.Errorf("header %q dropped", keep)
 		}
+	}
+}
+
+// TestWriteProxyHeaders_ForcesNosniffAndDropsSetCookie covers the WS5
+// final-review hardening: writeProxyHeaders is the single chokepoint both
+// InDashboard and Public relay a container's response headers through, so
+// this exercises the http.ResponseWriter side directly (coreStripHopByHop
+// above only covers the pure header-list filtering).
+func TestWriteProxyHeaders_ForcesNosniffAndDropsSetCookie(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeProxyHeaders(rec, []*pb.HttpHeader{
+		{Key: "Content-Type", Value: "text/html"},
+		{Key: "Set-Cookie", Value: "session=evil; Path=/"},
+		{Key: "X-Content-Type-Options", Value: "sniff-me-anyway"},
+	}, false)
+
+	if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
+		t.Errorf("Set-Cookie = %v, want stripped", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html" {
+		t.Errorf("Content-Type = %q, want text/html (unrelated header must pass through)", got)
 	}
 }
 
