@@ -142,6 +142,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyPhase18Schema(db); err != nil {
 		return err
 	}
+	if err := applyAuthzFoundationSchema(db); err != nil {
+		return err
+	}
 	if err := applyWarpSchema(db); err != nil {
 		return err
 	}

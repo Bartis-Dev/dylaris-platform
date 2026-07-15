@@ -137,6 +137,17 @@ type Store interface {
 	CountInvitesPerServer() (map[int]int, error)
 	ListServersForUser(userID string, isAdmin bool) ([]models.Server, error)
 
+	// --- Authz (permission-system foundation, phase 1; additive) ---
+	// Read-side accessors the authz.Resolver depends on. Write-side CRUD
+	// (create/update panel + server roles, reworked invites) lands in phases
+	// 3-4. GetServerGrant/GetAccountGrant read the reworked server_invites
+	// columns; the legacy GetInvite path stays intact for existing callers.
+	GetPanelRole(id int) (*PanelRole, error)
+	GetServerRole(id int) (*ServerRole, error)
+	GetUserPanelAuthz(userID string) (*int, CapOverrides, error)
+	GetServerGrant(serverID int, userID string) (*ServerGrant, error)
+	GetAccountGrant(ownerUserID, userID string) (*ServerGrant, error)
+
 	// --- Backups ---
 	ListBackupStorages() ([]models.BackupStorage, error)
 	GetBackupStorage(id int) (*models.BackupStorage, error)
