@@ -9,21 +9,23 @@ import {
     createFirstAdmin,
     type SetupMode,
 } from '@/lib/api/setup';
+import { setupUiState, type SetupUiState } from '@/lib/setupUiState';
 
 type Step = 1 | 2;
 
 export default function SetupWizard() {
     const router = useRouter();
     const [mode, setMode] = useState<SetupMode | null>(null);
+    const [adminSecretConfigured, setAdminSecretConfigured] = useState(false);
     const [frontendUrl, setFrontendUrl] = useState<string>('');
 
     const [step, setStep] = useState<Step>(1);
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [passwordRepeat, setPasswordRepeat] = useState('');
-    const [token, setToken] = useState('');
+    const [adminSecret, setAdminSecret] = useState('');
 
-    // TOTP — secret is generated client-side at mount so the QR code can
+    // TOTP - secret is generated client-side at mount so the QR code can
     // render without a backend round-trip. Backend re-verifies the code
     // against this secret when the wizard submits.
     const [totpSecret] = useState(() => genBase32(20));
@@ -35,23 +37,28 @@ export default function SetupWizard() {
 
     useEffect(() => {
         getSetupStatus().then(s => {
-            if (s.mode === 'complete') {
+            const ui = setupUiState({ mode: s.mode, adminSecretConfigured: s.adminSecretConfigured });
+            if (ui === 'complete') {
                 router.replace('/login');
                 return;
             }
             setMode(s.mode);
+            setAdminSecretConfigured(s.adminSecretConfigured);
             setFrontendUrl(s.frontendUrl || '');
         });
     }, [router]);
 
-    const requiresToken = mode === 'lost_admin';
+    const uiState: SetupUiState | null = mode
+        ? setupUiState({ mode, adminSecretConfigured })
+        : null;
+    const secretRequired = uiState === 'secret_required';
 
     const step1Valid =
         username.trim().length >= 3 &&
         /^[a-zA-Z0-9_-]{3,32}$/.test(username.trim()) &&
         password.length >= 8 &&
         password === passwordRepeat &&
-        (!requiresToken || token.trim().length > 0);
+        (!secretRequired || adminSecret.trim().length > 0);
 
     const otpAuthURL = useMemo(() => {
         if (!username) return '';
@@ -65,7 +72,7 @@ export default function SetupWizard() {
         const res = await createFirstAdmin({
             username: username.trim(),
             password,
-            recoveryToken: requiresToken ? token.trim() : undefined,
+            adminSecret: secretRequired ? adminSecret.trim() : undefined,
             totp: withTotp ? { secret: totpSecret, code: totpCode.trim() } : undefined,
         });
         setSubmitting(false);
@@ -84,9 +91,34 @@ export default function SetupWizard() {
         router.replace('/servers');
     };
 
-    if (!mode) {
+    if (!mode || !uiState) {
         return (
-            <div className="text-(--base-06) text-sm">Loading setup status…</div>
+            <div className="text-(--base-06) text-sm">Loading setup status...</div>
+        );
+    }
+
+    if (uiState === 'recovery_closed') {
+        return (
+            <div className="card p-6 w-full max-w-md">
+                <header className="mb-4">
+                    <div className="flex items-center gap-2 mb-1">
+                        <ShieldCheck size={18} className="text-(--accent-light)" />
+                        <h1 className="text-lg font-display text-(--base-09)">Dylaris Setup</h1>
+                    </div>
+                </header>
+                <div className="text-xs text-(--base-06) flex items-start gap-1.5">
+                    <CircleAlert size={12} className="mt-0.5 shrink-0" />
+                    <span>
+                        No admin recovery available. Set the <code className="font-mono">ADMIN_SECRET</code> env
+                        and restart Core, then reload.
+                    </span>
+                </div>
+                {frontendUrl && (
+                    <footer className="mt-5 pt-4 border-t border-(--base-03) text-[10px] font-mono text-(--base-06)">
+                        Platform URL: {frontendUrl}
+                    </footer>
+                )}
+            </div>
         );
     }
 
@@ -97,23 +129,23 @@ export default function SetupWizard() {
                     <ShieldCheck size={18} className="text-(--accent-light)" />
                     <h1 className="text-lg font-display text-(--base-09)">Dylaris Setup</h1>
                 </div>
-                {mode === 'fresh_install' && (
+                {uiState === 'open' && (
                     <p className="text-xs text-(--base-06)">
                         Fresh install detected. Create the first administrator account to unlock the platform.
                     </p>
                 )}
-                {mode === 'lost_admin' && (
+                {secretRequired && (
                     <p className="text-xs text-(--base-06)">
-                        No administrator is currently configured on this platform. Paste the recovery token from your Core logs to set up a new admin.
+                        Enter the admin secret configured on this Core to create an administrator.
                     </p>
                 )}
             </header>
 
             {/* Step indicator */}
             <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) mb-4">
-                <span className={step === 1 ? 'text-(--accent-light)' : ''}>1 — Account</span>
+                <span className={step === 1 ? 'text-(--accent-light)' : ''}>1 - Account</span>
                 <span>·</span>
-                <span className={step === 2 ? 'text-(--accent-light)' : ''}>2 — Two-Factor (optional)</span>
+                <span className={step === 2 ? 'text-(--accent-light)' : ''}>2 - Two-Factor (optional)</span>
             </div>
 
             {step === 1 && (
@@ -160,18 +192,19 @@ export default function SetupWizard() {
                         )}
                     </div>
 
-                    {requiresToken && (
+                    {secretRequired && (
                         <div>
-                            <div className="mono-label">Recovery token</div>
+                            <div className="mono-label">Admin secret</div>
                             <input
-                                type="text"
-                                value={token}
-                                onChange={e => setToken(e.target.value)}
-                                placeholder="64 hex chars from Core logs"
+                                type="password"
+                                value={adminSecret}
+                                onChange={e => setAdminSecret(e.target.value)}
+                                placeholder="ADMIN_SECRET from Core's environment"
+                                autoComplete="off"
                                 className="input w-full font-mono text-xs"
                             />
                             <div className="text-[10px] text-(--base-06) mt-1">
-                                Printed in your Core's stdout every 30s. Search for "[SETUP] No admin in DB".
+                                The value of the ADMIN_SECRET env configured on this Core.
                             </div>
                         </div>
                     )}
@@ -264,7 +297,7 @@ export default function SetupWizard() {
                 </div>
             )}
 
-            {(mode === 'fresh_install' || mode === 'lost_admin') && frontendUrl && (
+            {frontendUrl && (
                 <footer className="mt-5 pt-4 border-t border-(--base-03) text-[10px] font-mono text-(--base-06)">
                     Platform URL: {frontendUrl}
                 </footer>

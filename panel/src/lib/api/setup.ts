@@ -13,7 +13,7 @@ export type SetupMode = 'fresh_install' | 'lost_admin' | 'complete';
 export interface SetupStatus {
     success: boolean;
     mode: SetupMode;
-    requiresRecoveryToken: boolean;
+    adminSecretConfigured: boolean;
     frontendUrl?: string;
     message?: string;
 }
@@ -26,7 +26,7 @@ export interface SetupTOTPInfo {
 export interface SetupAdminRequest {
     username: string;
     password: string;
-    recoveryToken?: string;
+    adminSecret?: string;
     totp?: SetupTOTPInfo;
 }
 
@@ -53,7 +53,7 @@ export async function getSetupStatus(): Promise<SetupStatus> {
         // network doesn't lock the user into the wizard forever. The next
         // user action that fetches anything else will reveal whether the
         // backend is actually reachable.
-        return { success: false, mode: 'complete', requiresRecoveryToken: false };
+        return { success: false, mode: 'complete', adminSecretConfigured: false };
     }
 }
 
