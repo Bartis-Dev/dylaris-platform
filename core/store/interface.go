@@ -148,6 +148,17 @@ type Store interface {
 	GetServerGrant(serverID int, userID string) (*ServerGrant, error)
 	GetAccountGrant(ownerUserID, userID string) (*ServerGrant, error)
 
+	// Write-side panel-role CRUD + per-user assignment (phase 2). Server-role
+	// + reworked-invite writes land in phase 4. Capability validation against
+	// the catalog happens in the handler (the store package must not import
+	// authz - authz imports store).
+	CreatePanelRole(name string, capabilities []string, createdBy *string) (int, error)
+	ListPanelRoles() ([]PanelRole, error)
+	UpdatePanelRole(id int, name string, capabilities []string) error
+	DeletePanelRole(id int) error
+	SetUserPanelRole(userID string, roleID *int) error
+	SetUserPanelCapOverrides(userID string, ov CapOverrides) error
+
 	// --- Backups ---
 	ListBackupStorages() ([]models.BackupStorage, error)
 	GetBackupStorage(id int) (*models.BackupStorage, error)
