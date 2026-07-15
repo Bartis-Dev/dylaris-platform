@@ -119,7 +119,11 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	if serr != nil || srv == nil {
 		return res, nil // unknown server: SERVER/OWNER stay empty (deny)
 	}
-	if srv.OwnerID == id.UserID || (id.Username != "" && srv.OwnerName == id.Username) {
+	// Owner short-circuit keyed ONLY on the immutable owner UUID. The username is
+	// mutable and reusable (a rename frees the old name), so it must never be an
+	// authorization key - the UUID is always populated (the owner JOIN drops rows
+	// with no valid owner, yielding deny).
+	if srv.OwnerID == id.UserID {
 		res.ownerSelf = true // server owner short-circuit
 		return res, nil
 	}
@@ -162,10 +166,13 @@ func (r *Resolver) applyGrant(res *Resolution, g *store.ServerGrant) {
 		if !ok {
 			continue
 		}
-		if c.Scope == ScopeOwner {
+		switch c.Scope {
+		case ScopeOwner:
 			res.ownerCaps[capID] = true
-		} else {
+		case ScopeServer:
 			res.serverCaps[capID] = true
+			// A PANEL-scoped cap must never enter the resolution via an
+			// owner-scoped grant (server role / invite override): drop it.
 		}
 	}
 }
