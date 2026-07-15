@@ -47,6 +47,9 @@ func TestCoreStripHopByHop(t *testing.T) {
 		{Key: "Upgrade", Value: "websocket"},
 		{Key: "Set-Cookie", Value: "session=evil; Path=/"},
 		{Key: "set-cookie2", Value: "session2=evil"},
+		{Key: "Cache-Control", Value: "public, max-age=3600"},
+		{Key: "Expires", Value: "Wed, 21 Oct 2099 07:28:00 GMT"},
+		{Key: "Pragma", Value: "cache"},
 		{Key: "X-Keep", Value: "yes"},
 	}
 	got := coreStripHopByHop(in)
@@ -54,7 +57,7 @@ func TestCoreStripHopByHop(t *testing.T) {
 	for _, h := range got {
 		kept[h.Key] = true
 	}
-	for _, drop := range []string{"Connection", "Transfer-Encoding", "Upgrade", "Set-Cookie", "set-cookie2"} {
+	for _, drop := range []string{"Connection", "Transfer-Encoding", "Upgrade", "Set-Cookie", "set-cookie2", "Cache-Control", "Expires", "Pragma"} {
 		if kept[drop] {
 			t.Errorf("header %q not stripped", drop)
 		}
@@ -63,6 +66,44 @@ func TestCoreStripHopByHop(t *testing.T) {
 		if !kept[keep] {
 			t.Errorf("header %q dropped", keep)
 		}
+	}
+}
+
+// TestWriteProxyHeaders_CacheControlStaysSingleNoStore covers the WS5/B5
+// cache-correctness fix: serveHTTP/Public always stamp their own
+// authoritative "Cache-Control: no-store" via Set BEFORE relaying the
+// container's response headers via writeProxyHeaders (which uses Add). If a
+// container-supplied Cache-Control (or Expires/Pragma) were not stripped
+// first, the response would carry two Cache-Control values and a lenient
+// shared cache on the panel origin could honor the container's permissive
+// one for this per-user/per-ticket content.
+func TestWriteProxyHeaders_CacheControlStaysSingleNoStore(t *testing.T) {
+	rec := httptest.NewRecorder()
+	// Mirrors the real call order in serveHTTP: no-store is Set first.
+	rec.Header().Set("Cache-Control", "no-store")
+
+	writeProxyHeaders(rec, []*pb.HttpHeader{
+		{Key: "Content-Type", Value: "text/html"},
+		{Key: "Cache-Control", Value: "public, max-age=3600"},
+		{Key: "Expires", Value: "Wed, 21 Oct 2099 07:28:00 GMT"},
+		{Key: "Pragma", Value: "cache"},
+		{Key: "Set-Cookie", Value: "session=evil; Path=/"},
+	}, false)
+
+	if got := rec.Header().Values("Cache-Control"); len(got) != 1 || got[0] != "no-store" {
+		t.Errorf("Cache-Control = %v, want exactly [\"no-store\"]", got)
+	}
+	if got := rec.Header().Get("Expires"); got != "" {
+		t.Errorf("Expires = %q, want stripped", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "" {
+		t.Errorf("Pragma = %q, want stripped", got)
+	}
+	if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
+		t.Errorf("Set-Cookie = %v, want stripped", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html" {
+		t.Errorf("Content-Type = %q, want text/html (unrelated header must pass through)", got)
 	}
 }
 

@@ -69,9 +69,22 @@ var coreHopByHop = map[string]bool{
 // share path - Public can serve a tab anonymously). The map/plugin web UIs
 // this proxy serves (BlueMap/squaremap/Dynmap) use localStorage, not
 // cookies, so nothing legitimate depends on this passing through.
+//
+// Cache-Control/Expires/Pragma are stripped for a second reason: serveHTTP
+// and Public both stamp their own authoritative "Cache-Control: no-store" on
+// this per-user/per-ticket response via Set, but relaying a container's own
+// Cache-Control (e.g. "public, max-age=3600") through afterwards via Add
+// would put TWO Cache-Control values on the wire - a lenient shared cache
+// could honor the container's permissive one and cache per-user content on
+// the shared panel origin. Stripping them here (the single chokepoint every
+// container header passes through) guarantees "no-store" stays the sole,
+// authoritative value.
 var coreResponseStrip = map[string]bool{
-	"set-cookie":  true,
-	"set-cookie2": true,
+	"set-cookie":    true,
+	"set-cookie2":   true,
+	"cache-control": true,
+	"expires":       true,
+	"pragma":        true,
 }
 
 type ProxyHandler struct {
@@ -358,6 +371,10 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			isHTML = strings.HasPrefix(strings.ToLower(headerValue(hd.Headers, "Content-Type")), "text/html")
 			// The proxied page is per-user/per-ticket - never let a shared
 			// cache in front of Core (or the browser's disk cache) keep it.
+			// This stays the SOLE Cache-Control value: coreResponseStrip
+			// drops any container-supplied Cache-Control/Expires/Pragma
+			// before writeProxyHeaders relays the rest, so a later Add can
+			// never append a second, more permissive value.
 			w.Header().Set("Cache-Control", "no-store")
 			if !isHTML {
 				writeProxyHeaders(w, hd.Headers, false)
@@ -805,6 +822,26 @@ func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
 
 const coreWSFragmentSize = 60 * 1024
 
+// maxWSMessageBytes caps one reassembled container->browser application
+// message (see the container->browser loop in serveWS below). Without it, a
+// container/node pair streaming endless Fin=false fragments (or one huge
+// message) grows rxBuf here until Core OOMs, which takes the mesh-facing
+// side down for EVERY tab-proxy session, not just this one - the same DoS
+// shape the node side already closes for its own Core->container
+// reassembly. This value MUST mirror the node's own maxWSMessageBytes
+// (node/grpc_tabproxy_ws.go) since both sides are bounding the same
+// conceptual message size, just in opposite directions.
+const maxWSMessageBytes = 8 * 1024 * 1024 // 8 MiB
+
+// wsReassemblyExceeded reports whether appending add bytes to a reassembly
+// buffer that already holds cur bytes would push it past max. Pulled out as
+// a pure helper (mirroring the shape of the node's wsBridge.appendInbound
+// check) so the cap logic is table-testable without standing up a full
+// WS/gRPC bridge.
+func wsReassemblyExceeded(cur, add, max int) bool {
+	return cur+add > max
+}
+
 // splitProxyBytes splits data into <=max fragments (reassembled on the far
 // side); an empty message yields one empty fragment. Keeps a WsFrame under
 // Core's 128KB gRPC receive cap.
@@ -938,6 +975,14 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 			fr := resp.GetWsFrame()
 			if fr == nil {
 				continue
+			}
+			// DoS-mirror fix: cap the reassembled message the same way the
+			// node side caps its own Core->container reassembly. Past the
+			// cap, stop reassembling and tear the bridge down via the
+			// existing teardown path instead of growing rxBuf unboundedly.
+			if wsReassemblyExceeded(len(rxBuf), len(fr.Data), maxWSMessageBytes) {
+				closeAll()
+				return
 			}
 			rxBuf = append(rxBuf, fr.Data...)
 			if fr.Opcode != 0 {
