@@ -178,3 +178,28 @@ func TestResolveTabProxyOrigin(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAdminSecret(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{"empty is valid (feature disabled)", "", false},
+		{"too short (5)", "short", true},
+		{"one below the floor (15)", "012345678901234", true},
+		{"exactly the floor (16)", "0123456789012345", false},
+		{"comfortably long", "correct-horse-battery-staple-2026", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAdminSecret(tc.in)
+			if tc.wantErr && err == nil {
+				t.Fatalf("validateAdminSecret(%q) = nil, want error", tc.in)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("validateAdminSecret(%q) = %v, want nil", tc.in, err)
+			}
+		})
+	}
+}

@@ -89,6 +89,11 @@ type AppState struct {
 	// tokens and Redis passwords. Never sent to a tenant.
 	ClusterSecret string
 
+	// AdminSecret mirrors config.AdminSecret: the RAM-only break-glass secret
+	// that gates /setup admin creation. Empty = feature disabled. Never
+	// persisted, never logged.
+	AdminSecret string
+
 	// SuspendGrace mirrors config.SuspendGrace: how long after a tenant is marked
 	// "suspended" the LinkBoot gate keeps letting their route-only links boot. The
 	// gate uses it via linkHardSuspended; MUST match the reconciler + enforcement
@@ -102,3 +107,6 @@ type AppState struct {
 	// cross-tenant token-theft vector. InDashboard is NOT gated by it.
 	TabProxyIsolationActive bool
 }
+
+// AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.
+func (s *AppState) AdminSecretConfigured() bool { return s.AdminSecret != "" }

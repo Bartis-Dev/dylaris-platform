@@ -17,6 +17,12 @@ type Config struct {
 	FrontendURL string
 	JWTSecret   string
 
+	// AdminSecret is the optional RAM-only break-glass secret. When non-empty,
+	// creating an admin via /setup requires this exact value in every mode
+	// (fresh_install, lost_admin, complete). Empty disables the feature. Read
+	// via ADMIN_SECRET (or ADMIN_SECRET_FILE). Never persisted, never logged.
+	AdminSecret string
+
 	// Cluster
 	ClusterSecret string
 	CoreID        string
@@ -145,6 +151,7 @@ func LoadConfig() (Config, error) {
 		APIPort:       getEnv("API_PORT", "25500"),
 		FrontendURL:   frontendURL,
 		JWTSecret:     getSecret("JWT_SECRET", "change-this-secret"),
+		AdminSecret:   getSecret("ADMIN_SECRET", ""),
 		ClusterSecret: getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
 		CoreID:         coreID,
 		GRPCPort:       grpcPort,
@@ -194,6 +201,13 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.ClusterSecret == "" || cfg.ClusterSecret == "dylaris-cluster-secret" {
 		return cfg, fmt.Errorf("CLUSTER_SECRET is unset or still the default placeholder — set a strong random value")
+	}
+
+	// ADMIN_SECRET is OPTIONAL (empty = disabled), unlike JWT/Cluster. When set
+	// it must be strong enough to gate admin creation; a bad value fails the boot
+	// (main.go log.Fatals on any LoadConfig error).
+	if err := validateAdminSecret(cfg.AdminSecret); err != nil {
+		return cfg, err
 	}
 
 	return cfg, nil
@@ -250,6 +264,20 @@ func getSecret(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// validateAdminSecret checks the optional break-glass ADMIN_SECRET. Empty is
+// valid and disables the feature. A configured secret must be at least 16
+// characters so a trivially-guessable value cannot gate admin creation. Pure so
+// it can be unit-tested without booting LoadConfig (which main.go log.Fatals on).
+func validateAdminSecret(s string) error {
+	if s == "" {
+		return nil
+	}
+	if len(s) < 16 {
+		return fmt.Errorf("ADMIN_SECRET must be at least 16 characters when set (got %d); unset it to disable break-glass admin creation", len(s))
+	}
+	return nil
 }
 
 // effectivePort returns the URL's explicit port, or the scheme default (443 for
