@@ -35,14 +35,19 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
       return;
     }
     devLog('beam.view', 'info', `FileBrowserView mounted in Wails mode, serverUuid=${serverUuid}`);
+    let cancelled = false;
     (async () => {
       await syncSessionWithWails();
+      if (cancelled) return;
       if (serverUuid) {
         await connectWailsToServer(serverUuid);
+        if (cancelled) return;
         const mode = await getWailsConnectionMode();
+        if (cancelled) return;
         setConnectionMode(mode ? (mode as BeamConnectionMode) : null);
       }
     })();
+    return () => { cancelled = true; };
   }, [serverUuid]);
 
   return (

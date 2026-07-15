@@ -68,19 +68,26 @@ export default function ServerCustomTabPage() {
         setProxyAuth('pending');
         setProxyAuthError(null);
 
-        const mint = async () => {
+        // isInitial distinguishes the first mint (before the iframe has ever
+        // rendered) from the periodic background refresh. Only the initial
+        // mint may flip the UI into the error card - a background refresh
+        // that fails (transient network blip, brief backend hiccup) must
+        // never tear down an iframe that is already loaded and working, so
+        // it just leaves the state alone and lets the next interval tick retry.
+        const mint = async (isInitial: boolean) => {
             const res = await mintTabProxyAuth(serverId, tabId);
             if (cancelled) return;
             if (res.success) {
                 setProxyAuth('ready');
-            } else {
-                setProxyAuth('error');
-                setProxyAuthError(res.message || 'Failed to authorize this tab.');
+                return;
             }
+            if (!isInitial) return;
+            setProxyAuth('error');
+            setProxyAuthError(res.message || 'Failed to authorize this tab.');
         };
 
-        mint();
-        const interval = setInterval(mint, PROXY_AUTH_REFRESH_MS);
+        mint(true);
+        const interval = setInterval(() => mint(false), PROXY_AUTH_REFRESH_MS);
         return () => { cancelled = true; clearInterval(interval); };
     }, [isEmbeddedProxy, serverId, tabId]);
 

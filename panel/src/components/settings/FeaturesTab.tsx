@@ -14,7 +14,7 @@ export default function FeaturesTab() {
     // Auto-move is gateway-only — gate its toggle on the live routing mode.
     // ip_port means the gateway is off, so enabling auto-move would 409 on the
     // backend; we disable the control instead of letting that happen.
-    const { routingMode } = useAppData();
+    const { routingMode, coreInfo } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
     const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: true });
@@ -351,20 +351,34 @@ export default function FeaturesTab() {
                         <span className={`toggle-knob ${tabProxy.allowPublicLinks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
-                {/* Same-origin security note (WS5 C1 follow-up): proxied content is
-                    served on the panel's own origin under allow-same-origin, so a
-                    compromised/malicious container can read the viewer's session.
-                    Applies to the master toggle above too, not just public links. */}
-                <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                    <span>
-                        Proxied tab content runs on this panel&apos;s own origin. On a shared or
-                        multi-tenant instance, a malicious server container could read a viewer&apos;s
-                        panel session. Safe for single-operator / self-host. Do not enable public
-                        share links (or expose proxied tabs to users who do not fully trust the
-                        target container) on a multi-user instance until origin-isolated proxying ships.
-                    </span>
-                </p>
+                {/* Same-origin security note (WS5 C1 follow-up, closed by spec B5):
+                    when origin isolation is active, proxied content is served from
+                    a dedicated, different-origin proxy host, so a compromised/
+                    malicious container can no longer read the viewer's panel
+                    session. When it is NOT active (older Core, or disabled),
+                    proxied content still runs on the panel's own origin and the
+                    original warning applies. */}
+                {coreInfo?.tabProxyIsolationActive ? (
+                    <p className="flex items-start gap-1.5 text-xs text-(--success-light)">
+                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                        <span>
+                            Origin isolation is active: proxied tab content is served from a
+                            dedicated, different-origin proxy host, not the panel&apos;s own origin.
+                            Public share links are safe to enable on a multi-tenant instance.
+                        </span>
+                    </p>
+                ) : (
+                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
+                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                        <span>
+                            Proxied tab content runs on this panel&apos;s own origin. On a shared or
+                            multi-tenant instance, a malicious server container could read a viewer&apos;s
+                            panel session. Safe for single-operator / self-host. Do not enable public
+                            share links (or expose proxied tabs to users who do not fully trust the
+                            target container) on a multi-user instance until origin-isolated proxying ships.
+                        </span>
+                    </p>
+                )}
                 <div className="grid grid-cols-2 gap-3 border-t border-(--base-03) pt-3">
                     <div>
                         <label className="input-label">Max proxied tabs / server</label>

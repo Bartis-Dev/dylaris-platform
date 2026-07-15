@@ -62,11 +62,15 @@ export default function StandaloneTabProxyPage() {
         let cancelled = false;
         let refreshInterval: ReturnType<typeof setInterval> | undefined;
 
-        // authorize applies the same 401/403/other classification whether it
-        // runs right after the initial preflight's 401 or from the periodic
-        // refresh tick, so a session that lapses mid-view degrades exactly
-        // the same way a first visit without one would.
-        const authorize = async () => {
+        // authorize applies the same 401 classification whether it runs right
+        // after the initial preflight's 401 or from the periodic refresh
+        // tick - a 401 is a genuine session loss either way, so it always
+        // bounces to /login. Everything else (403/notfound/network error)
+        // only tears down the UI on the INITIAL mint (isInitial=true): once
+        // the iframe is up and ready, a background refresh that hits a
+        // transient blip must not replace a working iframe with an error
+        // card - it just leaves the state alone and retries next tick.
+        const authorize = async (isInitial: boolean) => {
             const mint = await mintPublicTabProxyAuth(token);
             if (cancelled) return;
             if (mint.success) {
@@ -78,6 +82,7 @@ export default function StandaloneTabProxyPage() {
                 router.push('/login');
                 return;
             }
+            if (!isInitial) return;
             if (mint.status === 403) { setState('forbidden'); return; }
             setState('notfound');
         };
@@ -115,12 +120,14 @@ export default function StandaloneTabProxyPage() {
                 if (res.status === 410) { setState('expired'); return; }
                 if (res.status === 403) { setState('forbidden'); return; }
                 if (res.status === 401) {
-                    await authorize();
+                    await authorize(true);
                     if (cancelled) return;
-                    // Only the FIRST mint gets here (a failed one already
-                    // redirected or showed an error card - nothing left to
-                    // keep fresh), so the interval is armed exactly once.
-                    refreshInterval = setInterval(authorize, PROXY_AUTH_REFRESH_MS);
+                    // Arm the periodic refresh regardless of the initial
+                    // mint's outcome: a redirect-to-login already navigates
+                    // away, and an error card still wants a background
+                    // authorize(false) call to leave it alone / retry rather
+                    // than escalate further.
+                    refreshInterval = setInterval(() => authorize(false), PROXY_AUTH_REFRESH_MS);
                     return;
                 }
                 setState('notfound');
