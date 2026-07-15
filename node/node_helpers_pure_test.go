@@ -1,0 +1,294 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestLanCandidates(t *testing.T) {
+	t.Run("endpoint with port reuses that port", func(t *testing.T) {
+		got := lanCandidates("10.0.0.1:9999", []string{"10.0.0.2", "10.0.0.3"})
+		want := []string{"10.0.0.2:9999", "10.0.0.3:9999"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	})
+
+	t.Run("endpoint without a parseable port falls back to default", func(t *testing.T) {
+		got := lanCandidates("no-port-here", []string{"10.0.0.2"})
+		want := []string{"10.0.0.2:25522"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	})
+
+	t.Run("duplicate private IPs collapse", func(t *testing.T) {
+		got := lanCandidates("10.0.0.1:9999", []string{"10.0.0.2", "10.0.0.2", "10.0.0.3"})
+		want := []string{"10.0.0.2:9999", "10.0.0.3:9999"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	})
+
+	t.Run("empty private IPs yields empty result", func(t *testing.T) {
+		got := lanCandidates("10.0.0.1:9999", nil)
+		if len(got) != 0 {
+			t.Fatalf("got %v, want empty", got)
+		}
+	})
+
+	t.Run("empty endpoint and nil IPs yields empty result", func(t *testing.T) {
+		got := lanCandidates("", nil)
+		if len(got) != 0 {
+			t.Fatalf("got %v, want empty", got)
+		}
+	})
+}
+
+func TestStagedArchivePath(t *testing.T) {
+	storagePath := t.TempDir()
+	got := stagedArchivePath(storagePath, "abc-123")
+	want := filepath.Join(storagePath, migrationStagingDir, "abc-123.zip")
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestMatchAny(t *testing.T) {
+	cases := []struct {
+		name     string
+		path     string
+		patterns []string
+		want     bool
+	}{
+		{"suffix glob matches basename anywhere", "world/logs/latest.log", []string{"*.log"}, true},
+		{"no match", "world/region/r.0.0.mca", []string{"*.log"}, false},
+		{"exact basename match", "world.dat", []string{"world.dat"}, true},
+		{"multiple patterns, second matches", "cache/x.tmp", []string{"*.log", "cache/**"}, true},
+		{"empty patterns list", "anything", nil, false},
+		{"all-empty-string patterns are skipped", "anything", []string{"", ""}, false},
+		// Real (non-obvious) behavior: a "/**" pattern is anchored at the
+		// ROOT of path, not "anywhere in the tree". "logs/**" only matches
+		// paths that themselves start with "logs/" from the top; it does
+		// NOT match a nested "world/logs/..." path. Flagging this as a
+		// documented quirk, not a bug: callers must write the full
+		// root-relative prefix (e.g. "world/logs/**") to match nested dirs.
+		{"double-star pattern does NOT match a nested dir unless anchored at root", "world/logs/latest.log", []string{"logs/**"}, false},
+		{"double-star pattern matches when anchored at the correct root prefix", "world/logs/latest.log", []string{"world/logs/**"}, true},
+		{"double-star pattern matches the bare directory itself", "world/logs", []string{"world/logs/**"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := matchAny(c.path, c.patterns); got != c.want {
+				t.Fatalf("matchAny(%q, %v) = %v, want %v", c.path, c.patterns, got, c.want)
+			}
+		})
+	}
+}
+
+func TestNodeLocalArchiveName(t *testing.T) {
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"job-1/server-uuid/archive.tar.gz", "archive.tar.gz"},
+		{"archive.tar.gz", "archive.tar.gz"},
+		{"a/b/c", "c"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := nodeLocalArchiveName(c.key); got != c.want {
+			t.Errorf("nodeLocalArchiveName(%q) = %q, want %q", c.key, got, c.want)
+		}
+	}
+}
+
+func TestDepthBelow(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "servers", "uuid1")
+
+	t.Run("root equals path is depth 0", func(t *testing.T) {
+		if got := depthBelow(root, root); got != 0 {
+			t.Fatalf("got %d want 0", got)
+		}
+	})
+
+	t.Run("one level below root is depth 1", func(t *testing.T) {
+		p := filepath.Join(root, "world")
+		if got := depthBelow(root, p); got != 1 {
+			t.Fatalf("got %d want 1", got)
+		}
+	})
+
+	t.Run("nested path counts every path component", func(t *testing.T) {
+		p := filepath.Join(root, "world", "region", "r.0.0.mca")
+		if got := depthBelow(root, p); got != 3 {
+			t.Fatalf("got %d want 3", got)
+		}
+	})
+
+	// Real (non-obvious) behavior: depthBelow does NOT verify containment.
+	// filepath.Rel happily returns a "../.." relative path for a sibling or
+	// ancestor, and depthBelow just counts its slash-separated components,
+	// so a path OUTSIDE root still returns a small positive number instead
+	// of, say, -1 or an error. This is safe in practice only because the
+	// walker (restore_cleanup.go) always calls it with paths yielded by
+	// WalkDir starting AT root, so an out-of-root path never actually
+	// occurs at the real call site. Flagging as a smell, not fixing.
+	t.Run("path outside root is not detected, just counted (documented real behavior)", func(t *testing.T) {
+		sibling := filepath.Join(filepath.Dir(root), "uuid2", "world")
+		got := depthBelow(root, sibling)
+		if got <= 0 {
+			t.Fatalf("got %d, expected a positive hop count even though sibling is not under root", got)
+		}
+	})
+}
+
+func TestFirstPersistedStoragePath(t *testing.T) {
+	t.Run("single path returns its absolute form", func(t *testing.T) {
+		dir := t.TempDir()
+		want, err := filepath.Abs(dir)
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := firstPersistedStoragePath(dir); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("multiple paths: first non-empty wins", func(t *testing.T) {
+		dir1 := t.TempDir()
+		dir2 := t.TempDir()
+		csv := " ," + dir1 + "," + dir2
+		want, err := filepath.Abs(dir1)
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if got := firstPersistedStoragePath(csv); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("empty CSV falls back to default", func(t *testing.T) {
+		baseDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		want := filepath.Join(baseDir, "dylaris_data", "servers")
+		if got := firstPersistedStoragePath(""); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("whitespace-only CSV falls back to default", func(t *testing.T) {
+		baseDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		want := filepath.Join(baseDir, "dylaris_data", "servers")
+		if got := firstPersistedStoragePath("   "); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+}
+
+func TestStripJava8IncompatibleFlags(t *testing.T) {
+	t.Run("strips known java-9+ only flags", func(t *testing.T) {
+		in := "-XX:+UseG1GC -XX:-ShrinkHeapInSteps -Xlog:gc::utctime,level,tags -Dfoo=bar"
+		want := "-XX:+UseG1GC -Dfoo=bar"
+		if got := stripJava8IncompatibleFlags(in); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("leaves java-8-safe flags untouched (whitespace normalized)", func(t *testing.T) {
+		in := "-XX:+UseG1GC   -Dfoo=bar"
+		want := "-XX:+UseG1GC -Dfoo=bar"
+		if got := stripJava8IncompatibleFlags(in); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("single bad flag strips to empty", func(t *testing.T) {
+		if got := stripJava8IncompatibleFlags("-XX:+ShrinkHeapInSteps"); got != "" {
+			t.Fatalf("got %q want empty", got)
+		}
+	})
+
+	t.Run("empty input returns empty", func(t *testing.T) {
+		if got := stripJava8IncompatibleFlags(""); got != "" {
+			t.Fatalf("got %q want empty", got)
+		}
+	})
+}
+
+func TestExtractJvmFlagsFromCommand(t *testing.T) {
+	t.Run("buildStartCommand-style jar command", func(t *testing.T) {
+		cmd := "java -Xlog:gc::utctime,level,tags -XX:+UseG1GC -Xms4096M -Xmx4096M -jar paper-1.20.1.jar nogui"
+		// Real (non-obvious) behavior: extraction only special-cases java,
+		// -Xms*/-Xmx*, "-jar <file>", "nogui" and "@..." tokens. It has NO
+		// special case for -Xlog:, so the platform's own GC-logging flag
+		// (added by buildStartCommand, see launch.go gcLogFlag) is NOT
+		// stripped and comes back out as if it were a user-set flag. Any
+		// caller that round-trips extract -> buildStartCommand would end up
+		// with -Xlog re-added twice conceptually (once via extraJvmFlags,
+		// once via the isJava8-gated gcLogFlag itself in buildStartCommand -
+		// buildStartCommand only prepends gcLogFlag once, but if this
+		// extracted string is persisted as "extra flags" it now carries the
+		// GC flag baked in). Flagging as a smell, not fixing.
+		want := "-Xlog:gc::utctime,level,tags -XX:+UseG1GC"
+		if got := extractJvmFlagsFromCommand(cmd); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("legacy Core format (Xms/Xmx before flags)", func(t *testing.T) {
+		cmd := "java -Xms2048M -Xmx2048M -XX:+UseG1GC -Dfoo=bar -jar server.jar nogui"
+		want := "-XX:+UseG1GC -Dfoo=bar"
+		if got := extractJvmFlagsFromCommand(cmd); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("argfile form with only structural tokens yields empty", func(t *testing.T) {
+		cmd := "java @user_jvm_args.txt -Xms4096M -Xmx4096M " +
+			"@libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt nogui"
+		if got := extractJvmFlagsFromCommand(cmd); got != "" {
+			t.Fatalf("got %q want empty", got)
+		}
+	})
+
+	t.Run("empty command returns empty", func(t *testing.T) {
+		if got := extractJvmFlagsFromCommand(""); got != "" {
+			t.Fatalf("got %q want empty", got)
+		}
+	})
+}
+
+func TestProxyNetworkName(t *testing.T) {
+	cases := []struct {
+		uuid string
+		want string
+	}{
+		{"ABC-123", "dylaris_proxy_abc-123"},
+		{"already-lower", "dylaris_proxy_already-lower"},
+		{"", "dylaris_proxy_"},
+	}
+	for _, c := range cases {
+		if got := proxyNetworkName(c.uuid); got != c.want {
+			t.Errorf("proxyNetworkName(%q) = %q, want %q", c.uuid, got, c.want)
+		}
+	}
+}

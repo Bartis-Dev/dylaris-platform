@@ -1,0 +1,212 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/docker/docker/api/types/container"
+)
+
+// envMap turns a "KEY=VALUE" env slice (as built by buildRedisEnv/buildLinkEnv)
+// into a map for easy per-key assertions. Fails the test on any malformed entry.
+func envMap(t *testing.T, env []string) map[string]string {
+	t.Helper()
+	m := make(map[string]string, len(env))
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			t.Fatalf("malformed env entry %q", kv)
+		}
+		m[parts[0]] = parts[1]
+	}
+	return m
+}
+
+// These tests read and mutate PACKAGE GLOBALS (nodeID, mcRedisAddr, mcRedisDB,
+// nodeSecret). Every subtest saves the old values and restores them via
+// defer/t.Cleanup, and none of them call t.Parallel(), per the wave brief -
+// mutating shared package state concurrently would corrupt other tests.
+
+func TestBuildRedisEnv(t *testing.T) {
+	origNodeID := nodeID
+	origMCRedisAddr := mcRedisAddr
+	origMCRedisDB := mcRedisDB
+	origNodeSecret := nodeSecret
+	t.Cleanup(func() {
+		nodeID = origNodeID
+		mcRedisAddr = origMCRedisAddr
+		mcRedisDB = origMCRedisDB
+		nodeSecret = origNodeSecret
+	})
+
+	nodeID = "node-test-1"
+	mcRedisAddr = "10.1.2.3:6379"
+	mcRedisDB = "2"
+	nodeSecret = []byte("unit-test-secret-value-buildredisenv")
+
+	t.Run("with sub-server: full 7-entry env, correctly scoped ACL user/pass", func(t *testing.T) {
+		got := buildRedisEnv("uuid-abc", "sub1")
+		if len(got) != 7 {
+			t.Fatalf("got %d env entries, want 7: %v", len(got), got)
+		}
+		m := envMap(t, got)
+
+		wantUser := aclShipperUsername(nodeID)
+		wantPass := aclShipperPassword(nodeSecret, nodeID)
+
+		if m["REDIS_ADDR"] != mcRedisAddr {
+			t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], mcRedisAddr)
+		}
+		if m["REDIS_USER"] != wantUser {
+			t.Errorf("REDIS_USER = %q, want %q (scoped shipper user, NOT plain node user)", m["REDIS_USER"], wantUser)
+		}
+		if m["REDIS_PASS"] != wantPass {
+			t.Errorf("REDIS_PASS = %q, want %q", m["REDIS_PASS"], wantPass)
+		}
+		if m["REDIS_DB"] != mcRedisDB {
+			t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], mcRedisDB)
+		}
+		if m["SERVER_UUID"] != "uuid-abc" {
+			t.Errorf("SERVER_UUID = %q, want %q", m["SERVER_UUID"], "uuid-abc")
+		}
+		if m["TERM"] != "xterm-256color" {
+			t.Errorf("TERM = %q, want xterm-256color", m["TERM"])
+		}
+		if m["SUB_SERVER"] != "sub1" {
+			t.Errorf("SUB_SERVER = %q, want %q", m["SUB_SERVER"], "sub1")
+		}
+	})
+
+	t.Run("without sub-server: SUB_SERVER omitted (6 entries)", func(t *testing.T) {
+		got := buildRedisEnv("uuid-abc", "")
+		if len(got) != 6 {
+			t.Fatalf("got %d env entries, want 6: %v", len(got), got)
+		}
+		m := envMap(t, got)
+		if _, ok := m["SUB_SERVER"]; ok {
+			t.Errorf("SUB_SERVER should be absent when subServer is empty, got %v", got)
+		}
+	})
+}
+
+func TestBuildLinkEnv(t *testing.T) {
+	origMCRedisAddr := mcRedisAddr
+	origMCRedisDB := mcRedisDB
+	origNodeSecret := nodeSecret
+	t.Cleanup(func() {
+		mcRedisAddr = origMCRedisAddr
+		mcRedisDB = origMCRedisDB
+		nodeSecret = origNodeSecret
+	})
+
+	mcRedisAddr = "10.9.9.9:6379"
+	mcRedisDB = "5"
+	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
+
+	// buildLinkEnv takes nodeID as a PARAMETER (it shadows the package
+	// global inside the function body), so the package-global nodeID is
+	// deliberately left untouched by this test.
+	testNodeID := "nodeXYZ"
+	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1")
+
+	if len(got) != 7 {
+		t.Fatalf("got %d env entries, want 7: %v", len(got), got)
+	}
+	m := envMap(t, got)
+
+	wantUser := aclLinkUsername(testNodeID)
+	wantPass := aclLinkPassword(nodeSecret, testNodeID)
+
+	if m["NODE_ID"] != testNodeID {
+		t.Errorf("NODE_ID = %q, want %q", m["NODE_ID"], testNodeID)
+	}
+	if m["LINK_SECRET"] != "tunnel-secret-1" {
+		t.Errorf("LINK_SECRET = %q, want %q", m["LINK_SECRET"], "tunnel-secret-1")
+	}
+	if m["LINK_DISCOVERY_PROOF"] != "discovery-proof-1" {
+		t.Errorf("LINK_DISCOVERY_PROOF = %q, want %q", m["LINK_DISCOVERY_PROOF"], "discovery-proof-1")
+	}
+	if m["REDIS_ADDR"] != mcRedisAddr {
+		t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], mcRedisAddr)
+	}
+	if m["REDIS_USER"] != wantUser {
+		t.Errorf("REDIS_USER = %q, want %q (scoped link user, NOT plain node user)", m["REDIS_USER"], wantUser)
+	}
+	if m["REDIS_PASS"] != wantPass {
+		t.Errorf("REDIS_PASS = %q, want %q", m["REDIS_PASS"], wantPass)
+	}
+	if m["REDIS_DB"] != mcRedisDB {
+		t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], mcRedisDB)
+	}
+}
+
+func TestApplyPidsLimit(t *testing.T) {
+	origPidsLimit := pidsLimit
+	t.Cleanup(func() { pidsLimit = origPidsLimit })
+
+	t.Run("zero (unlimited) leaves PidsLimit nil", func(t *testing.T) {
+		pidsLimit = 0
+		hc := &container.HostConfig{}
+		applyPidsLimit(hc)
+		if hc.Resources.PidsLimit != nil {
+			t.Fatalf("PidsLimit = %v, want nil", *hc.Resources.PidsLimit)
+		}
+	})
+
+	t.Run("positive limit is applied", func(t *testing.T) {
+		pidsLimit = 512
+		hc := &container.HostConfig{}
+		applyPidsLimit(hc)
+		if hc.Resources.PidsLimit == nil {
+			t.Fatal("PidsLimit is nil, want set to 512")
+		}
+		if *hc.Resources.PidsLimit != 512 {
+			t.Fatalf("PidsLimit = %d, want 512", *hc.Resources.PidsLimit)
+		}
+	})
+
+	// Real (non-obvious) behavior: the guard is strictly "> 0", so a
+	// negative value (which some Docker conventions use as an explicit
+	// "unlimited" sentinel) is NOT applied here either - it just silently
+	// leaves the field nil, same as 0. Flagging as a read-source note, not
+	// a bug: negative pidsLimit is not a value this config path is meant to
+	// produce (loaded from Redis and clamped elsewhere).
+	t.Run("negative limit is not applied (guard is strictly > 0)", func(t *testing.T) {
+		pidsLimit = -1
+		hc := &container.HostConfig{}
+		applyPidsLimit(hc)
+		if hc.Resources.PidsLimit != nil {
+			t.Fatalf("PidsLimit = %v, want nil for negative pidsLimit", *hc.Resources.PidsLimit)
+		}
+	})
+}
+
+func TestApplyIOWeight(t *testing.T) {
+	origIOWeight := ioWeight
+	t.Cleanup(func() { ioWeight = origIOWeight })
+
+	cases := []struct {
+		name        string
+		weight      uint16
+		wantApplied bool
+		wantValue   uint16
+	}{
+		{"zero (unset) is not applied", 0, false, 0},
+		{"below range (9) is not applied", 9, false, 0},
+		{"lower bound (10) is applied", 10, true, 10},
+		{"mid range (500) is applied", 500, true, 500},
+		{"upper bound (1000) is applied", 1000, true, 1000},
+		{"above range (1001) is not applied", 1001, false, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ioWeight = c.weight
+			hc := &container.HostConfig{}
+			applyIOWeight(hc)
+			if hc.Resources.BlkioWeight != c.wantValue {
+				t.Fatalf("BlkioWeight = %d, want %d (ioWeight=%d, applied=%v)",
+					hc.Resources.BlkioWeight, c.wantValue, c.weight, c.wantApplied)
+			}
+		})
+	}
+}
