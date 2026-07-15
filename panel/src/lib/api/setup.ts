@@ -1,8 +1,8 @@
 // first-run setup wizard client. Two endpoints:
-//   GET  /api/setup/status — what mode are we in?
-//   POST /api/setup/admin  — create the first admin
+//   GET  /api/setup/status - what mode are we in?
+//   POST /api/setup/admin  - create the first admin
 //
-// Both are open routes (no auth header needed) — the setup-lock middleware
+// Both are open routes (no auth header needed) - the setup-lock middleware
 // short-circuits /api/setup/* even in Fresh-Install mode where every other
 // API route returns 503 setup_required.
 
