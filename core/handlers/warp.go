@@ -89,6 +89,10 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Connection limit reached for this key", http.StatusConflict)
 			return
 		}
+		if errors.Is(err, services.ErrInvalidFixedWGIP) || errors.Is(err, store.ErrWarpIPTaken) {
+			sendJSONError(w, err.Error(), http.StatusConflict)
+			return
+		}
 		log.Printf("warp enroll failed (key=%d): %v", key.ID, err)
 		sendJSONError(w, "Enrollment failed", http.StatusInternalServerError)
 		return
@@ -126,6 +130,23 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxConns < 1 {
 		req.MaxConns = 1
+	}
+	// A pinned fixed overlay IP must be a legitimate host inside a known region's
+	// subnet. Reject early so a junk key is never stored (the enroll path re-checks).
+	if req.FixedWGIP != "" {
+		if req.Region == "" {
+			sendJSONError(w, "fixed_wg_ip requires a region", http.StatusBadRequest)
+			return
+		}
+		reg, rerr := h.state.Store.GetWarpRegion(req.Region)
+		if rerr != nil || reg == nil {
+			sendJSONError(w, "Unknown region for fixed_wg_ip", http.StatusBadRequest)
+			return
+		}
+		if verr := services.ValidateFixedWGIP(req.FixedWGIP, reg.Subnet); verr != nil {
+			sendJSONError(w, verr.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	plaintext, err := generatePlaintextKey()
 	if err != nil {

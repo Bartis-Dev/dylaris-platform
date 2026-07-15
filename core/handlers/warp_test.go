@@ -77,9 +77,48 @@ func (f *warpFakeStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 	return wgIP, "", nil
 }
 
+func (f *warpFakeStore) CreateWarpAPIKey(k store.WarpAPIKey) (int, error) {
+	f.nextID++
+	return f.nextID, nil
+}
+
 type warpErr string
 
 func (e warpErr) Error() string { return string(e) }
+
+func adminMintReq(body map[string]interface{}) *http.Request {
+	b, _ := json.Marshal(body)
+	r := httptest.NewRequest("POST", "/api/admin/warp/keys", bytes.NewReader(b))
+	return r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
+}
+
+func TestMintAPIKey_FixedWGIP_RequiresRegion(t *testing.T) {
+	h := newWarpTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.MintAPIKey(rec, adminMintReq(map[string]interface{}{"fixed_wg_ip": "10.0.99.50"}))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMintAPIKey_FixedWGIP_Invalid(t *testing.T) {
+	h := newWarpTestHandler(t)
+	rec := httptest.NewRecorder()
+	// .1 is the leader-reserved first host of 10.0.99.0/24.
+	h.MintAPIKey(rec, adminMintReq(map[string]interface{}{"fixed_wg_ip": "10.0.99.1", "region": "leader-01"}))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMintAPIKey_FixedWGIP_Valid(t *testing.T) {
+	h := newWarpTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.MintAPIKey(rec, adminMintReq(map[string]interface{}{"fixed_wg_ip": "10.0.99.50", "region": "leader-01"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
 
 func newWarpTestHandler(t *testing.T) *WarpHandler {
 	t.Helper()

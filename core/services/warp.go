@@ -360,6 +360,15 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 		return EnrollResult{}, fmt.Errorf("region %q: %w", region, err)
 	}
 
+	// A caller-pinned fixed IP must be a legitimate host inside the region subnet.
+	// Authoritative gate: also catches keys minted before this check and post-mint
+	// subnet changes. Empty FixedWGIP (auto-allocation) is unaffected.
+	if key.FixedWGIP != "" {
+		if verr := ValidateFixedWGIP(key.FixedWGIP, reg.Subnet); verr != nil {
+			return EnrollResult{}, verr
+		}
+	}
+
 	limit := key.MaxConns
 	if key.Policy == "fixed" {
 		limit = 1

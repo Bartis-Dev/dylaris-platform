@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -180,6 +181,35 @@ func TestEnroll_Idempotent_SamePubkeySameIP(t *testing.T) {
 	}
 	if r1.WGIP != r2.WGIP {
 		t.Fatalf("re-enroll changed IP: %s -> %s", r1.WGIP, r2.WGIP)
+	}
+}
+
+func TestEnroll_FixedWGIP_Invalid_Rejected(t *testing.T) {
+	svc, _, mr := enrollTestService(t)
+	// .1 is the leader-reserved first host of 10.0.99.0/24 - must be refused, and no
+	// leader command must be queued on rejection.
+	key := store.WarpAPIKey{ID: 1, Policy: "fixed", MaxConns: 1, OnNewConn: "block", FixedWGIP: "10.0.99.1"}
+	_, err := svc.Enroll(context.Background(), key, "pubA", nil)
+	if err == nil {
+		t.Fatal("expected enroll to reject the leader-reserved fixed IP")
+	}
+	if !errors.Is(err, ErrInvalidFixedWGIP) {
+		t.Fatalf("error %v does not wrap ErrInvalidFixedWGIP", err)
+	}
+	if vals, _ := mr.List("dylaris:warp:leader-01:queue"); len(vals) != 0 {
+		t.Fatalf("expected no leader command on rejection, got %d", len(vals))
+	}
+}
+
+func TestEnroll_FixedWGIP_Valid_UsesIt(t *testing.T) {
+	svc, _, _ := enrollTestService(t)
+	key := store.WarpAPIKey{ID: 1, Policy: "fixed", MaxConns: 1, OnNewConn: "block", FixedWGIP: "10.0.99.50"}
+	resp, err := svc.Enroll(context.Background(), key, "pubA", nil)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	if resp.WGIP != "10.0.99.50" {
+		t.Fatalf("expected WGIP 10.0.99.50, got %q", resp.WGIP)
 	}
 }
 
