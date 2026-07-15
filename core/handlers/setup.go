@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 
 	"github.com/pquerna/otp/totp"
@@ -36,16 +37,21 @@ var setupUsernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 type setupStatusResp struct {
 	Success               bool   `json:"success"`
 	Mode                  string `json:"mode"`
-	RequiresRecoveryToken bool   `json:"requiresRecoveryToken"`
+	AdminSecretConfigured bool   `json:"adminSecretConfigured"`
 	FrontendURL           string `json:"frontendUrl,omitempty"`
 }
 
-// Status GET /api/setup/status — open route. Always reachable (the setup-lock
-// middleware passes /api/setup/* through unchanged).
+// Status GET /api/setup/status - open route. Always reachable (the setup-lock
+// middleware passes /api/setup/* through unchanged). adminSecretConfigured lets
+// the panel pick its wizard UI without exposing the secret itself.
 func (h *SetupHandler) Status(w http.ResponseWriter, r *http.Request) {
 	adminCount, _ := h.state.Store.CountAdmins()
 	userCount, _ := h.state.Store.CountUsers()
-	out := setupStatusResp{Success: true, FrontendURL: h.state.FrontendURL}
+	out := setupStatusResp{
+		Success:               true,
+		FrontendURL:           h.state.FrontendURL,
+		AdminSecretConfigured: h.state.AdminSecretConfigured(),
+	}
 	switch {
 	case adminCount > 0:
 		out.Mode = "complete"
@@ -53,7 +59,6 @@ func (h *SetupHandler) Status(w http.ResponseWriter, r *http.Request) {
 		out.Mode = "fresh_install"
 	default:
 		out.Mode = "lost_admin"
-		out.RequiresRecoveryToken = true
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
@@ -65,10 +70,10 @@ type setupTOTPInfo struct {
 }
 
 type setupAdminReq struct {
-	Username      string         `json:"username"`
-	Password      string         `json:"password"`
-	RecoveryToken string         `json:"recoveryToken,omitempty"`
-	TOTP          *setupTOTPInfo `json:"totp,omitempty"`
+	Username    string         `json:"username"`
+	Password    string         `json:"password"`
+	AdminSecret string         `json:"adminSecret,omitempty"`
+	TOTP        *setupTOTPInfo `json:"totp,omitempty"`
 }
 
 type setupAdminResp struct {
@@ -79,14 +84,30 @@ type setupAdminResp struct {
 	Token   string      `json:"token,omitempty"`
 }
 
-// CreateAdmin POST /api/setup/admin — open route, atomic CTE in
-// CreateFirstAdmin guards against racing inserts across N Cores.
+// CreateAdmin POST /api/setup/admin - open route (rate-limited). adminCreateAllowed
+// enforces the ADMIN_SECRET rule BEFORE any username/password work so an
+// unauthorized caller learns nothing about validation. The guarded CTE in
+// CreateFirstAdmin still protects against racing first-admin inserts across
+// N Cores; CreateAdditionalAdmin serves the break-glass path.
 func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	var req setupAdminReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendSetupError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON.")
 		return
 	}
+
+	userCount, _ := h.state.Store.CountUsers()
+	adminCount, _ := h.state.Store.CountAdmins()
+
+	if !adminCreateAllowed(userCount, h.state.AdminSecret, req.AdminSecret) {
+		if h.state.AdminSecretConfigured() {
+			sendSetupError(w, http.StatusForbidden, "invalid_admin_secret", "The admin secret is missing or incorrect.")
+		} else {
+			sendSetupError(w, http.StatusForbidden, "admin_recovery_disabled", "Admin creation is closed. Set ADMIN_SECRET in Core's environment and restart to create a new admin.")
+		}
+		return
+	}
+
 	req.Username = strings.TrimSpace(req.Username)
 	if !setupUsernameRegex.MatchString(req.Username) {
 		sendSetupError(w, http.StatusBadRequest, "invalid_username", "Username must be 3-32 chars (alphanumeric, _ or -).")
@@ -116,22 +137,25 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		totpSecret = req.TOTP.Secret
 	}
 
-	user, err := h.state.Store.CreateFirstAdmin(req.Username, string(hash), totpSecret)
+	var user *models.User
+	if adminCount == 0 {
+		// Guarded CTE: race-safe first admin (Fresh-Install or Lost-Admin).
+		user, err = h.state.Store.CreateFirstAdmin(req.Username, string(hash), totpSecret)
+	} else {
+		// Only reachable with a matching secret (break-glass additional admin).
+		user, err = h.state.Store.CreateAdditionalAdmin(req.Username, string(hash), totpSecret)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrSetupAlreadyComplete):
 			sendSetupError(w, http.StatusConflict, "setup_already_complete", "Setup is already complete. Go to /login.")
-		case errors.Is(err, store.ErrSetupInvalidToken):
-			sendSetupError(w, http.StatusForbidden, "invalid_recovery_token", "The recovery token is invalid or already used.")
+		case errors.Is(err, store.ErrUsernameTaken):
+			sendSetupError(w, http.StatusConflict, "username_taken", "That username is already taken. Choose another.")
 		default:
 			sendSetupError(w, http.StatusInternalServerError, "create_failed", err.Error())
 		}
 		return
 	}
-
-	// Best-effort token wipe. Status check + CTE guard re-reject this path
-	// even if the SET fails.
-	_ = h.state.Store.SetSetting("setup_recovery_token", "")
 
 	token, err := h.auth.IssueToken(user.Username, user.IsAdmin)
 	if err != nil {
