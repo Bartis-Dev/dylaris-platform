@@ -338,7 +338,7 @@ func main() {
 	nodeHandler := handlers.NewNodeHandler(appState)
 	userHandler := handlers.NewUserHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
-	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID)
+	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyOrigin, cfg.TabProxyIsolationActive)
 	fileHandler := handlers.NewFileHandler(appState)
 	nodeGRPCHandler := handlers.NewNodeGRPCHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
