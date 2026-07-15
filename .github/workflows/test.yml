@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [core, node, pkg, log-shipper]
+        module: [core, node, pkg, log-shipper, beam/app]
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +31,20 @@ jobs:
       - name: go vet
         working-directory: ${{ matrix.module }}
         run: go vet ./...
+
+      # staticcheck correctness gate (pinned). Runs the SA (correctness) checks
+      # only; the SA/ST/S1/U/QF style families are intentionally not enforced.
+      # Three SA checks are excluded as pre-existing, deliberately-deferred
+      # findings so the gate stays green and meaningful for NEW code:
+      #   SA1019 - deprecated APIs still in use (go-redis SetNX, aws uploader,
+      #            tar.TypeRegA); tracked, not a correctness bug.
+      #   SA1029 - built-in string context keys; a codebase-wide pattern set by
+      #            the auth middleware, a broad refactor tracked separately.
+      #   SA9003 - two pre-existing empty branches in handlers/tickets.go.
+      # `go run ...@version` pins the tool and does not modify go.mod/go.sum.
+      - name: staticcheck
+        working-directory: ${{ matrix.module }}
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,-SA1019,-SA1029,-SA9003' ./...
 
       - name: go test
         working-directory: ${{ matrix.module }}
