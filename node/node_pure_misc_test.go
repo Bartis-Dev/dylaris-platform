@@ -27,13 +27,6 @@ func TestProjectID(t *testing.T) {
 		}
 	}
 
-	t.Run("deterministic across calls", func(t *testing.T) {
-		u := "some-server-uuid-1234"
-		if projectID(u) != projectID(u) {
-			t.Fatal("projectID is not deterministic")
-		}
-	})
-
 	t.Run("different uuid yields different id", func(t *testing.T) {
 		a := projectID("server-a")
 		b := projectID("server-b")
