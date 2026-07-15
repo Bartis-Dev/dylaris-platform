@@ -340,6 +340,7 @@ func main() {
 	serverHandler := handlers.NewServerHandler(appState)
 	nodeHandler := handlers.NewNodeHandler(appState)
 	userHandler := handlers.NewUserHandler(appState)
+	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyOrigin, cfg.TabProxyIsolationActive)
 	fileHandler := handlers.NewFileHandler(appState)
@@ -831,6 +832,12 @@ func main() {
 	// --- Roles + capability flags ---
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/role", authHandler.AuthMiddleware(userHandler.SetUserRoleHandler)).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/permissions", authHandler.AuthMiddleware(userHandler.SetUserPermissionsHandler)).Methods("PUT")
+
+	// --- Panel roles (level-1 staff roles; admin-gated inline for now) ---
+	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(panelRolesHandler.ListPanelRoles)).Methods("GET")
+	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(panelRolesHandler.CreatePanelRole)).Methods("POST")
+	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.UpdatePanelRole)).Methods("PATCH")
+	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.DeletePanelRole)).Methods("DELETE")
 
 	// --- Maintenance mode ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
