@@ -556,10 +556,14 @@ type Store interface {
 	// --- Setup wizard ---
 	// CountUsers is declared above in the Users block; only CountAdmins is new.
 	CountAdmins() (int, error)
-	// CreateFirstAdmin atomically inserts the first admin via a guarded CTE.
-	// Returns ErrSetupAlreadyComplete / ErrSetupInvalidToken to let the
-	// handler map outcomes to HTTP status codes without parsing strings.
-	CreateFirstAdmin(username, passwordHash, totpSecret, recoveryToken string) (*models.User, error)
+	// CreateFirstAdmin atomically inserts the first admin via a guarded CTE
+	// (guard: no admin exists yet). Returns ErrSetupAlreadyComplete when an
+	// admin already exists, so the handler can map outcomes to HTTP status
+	// codes without parsing strings.
+	CreateFirstAdmin(username, passwordHash, totpSecret string) (*models.User, error)
+	// CreateAdditionalAdmin unconditionally inserts another admin (break-glass
+	// path). Returns ErrUsernameTaken on a username-unique violation.
+	CreateAdditionalAdmin(username, passwordHash, totpSecret string) (*models.User, error)
 }
 
 // InactiveCandidate is the minimal slice of user data the auto-delete job

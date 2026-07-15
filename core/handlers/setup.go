@@ -116,7 +116,7 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		totpSecret = req.TOTP.Secret
 	}
 
-	user, err := h.state.Store.CreateFirstAdmin(req.Username, string(hash), totpSecret, req.RecoveryToken)
+	user, err := h.state.Store.CreateFirstAdmin(req.Username, string(hash), totpSecret)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrSetupAlreadyComplete):

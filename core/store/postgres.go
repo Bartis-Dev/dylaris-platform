@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lib/pq"
 	"log"
 	"time"
 )
@@ -1785,41 +1786,54 @@ func (s *PostgresStore) CountAdmins() (int, error) {
 }
 
 // CreateFirstAdmin atomically inserts the first admin via a guarded CTE so
-// N Cores can race without producing duplicate admins. The guard fires when:
-//  1. No admin exists yet (covers both Fresh-Install and Lost-Admin modes)
-//  2. AND (no users at all  OR  recoveryToken matches settings)
+// N Cores can race without producing duplicate admins. The guard fires only
+// when no admin exists yet (covers both Fresh-Install and Lost-Admin modes).
+// Recovery is now enforced at the handler layer by ADMIN_SECRET, not a DB
+// token, so the CTE has no token condition and no recoveryToken parameter.
 //
-// Returns ErrSetupAlreadyComplete when an admin already exists at insert time.
-// Returns ErrSetupInvalidToken when the token guard rejected the insert.
-func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret, recoveryToken string) (*models.User, error) {
+// Returns ErrSetupAlreadyComplete when an admin already exists at insert time
+// (the guarded CTE then inserts zero rows -> sql.ErrNoRows).
+func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret string) (*models.User, error) {
 	const q = `
 		WITH guard AS (
 			SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = true)
-				AND (
-					NOT EXISTS (SELECT 1 FROM users)
-					OR (SELECT value FROM settings WHERE key = 'setup_recovery_token') = $4
-				)
 		)
-		INSERT INTO users (id, username, password_hash, is_admin, role, totp_secret, created_at)
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at)
 		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW()
 		FROM guard
 		RETURNING id, username, is_admin, role, totp_secret, created_at
 	`
 	var u models.User
-	err := s.db.QueryRow(q, username, passwordHash, totpSecret, recoveryToken).
+	err := s.db.QueryRow(q, username, passwordHash, totpSecret).
 		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.CreatedAt)
 	if err == sql.ErrNoRows {
-		// The guard rejected the insert. Figure out which condition failed
-		// by re-querying — this is the slow path only; happy path is one
-		// round-trip.
-		var adminCount int
-		_ = s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin = true`).Scan(&adminCount)
-		if adminCount > 0 {
-			return nil, ErrSetupAlreadyComplete
-		}
-		return nil, ErrSetupInvalidToken
+		return nil, ErrSetupAlreadyComplete
 	}
 	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// CreateAdditionalAdmin unconditionally inserts a new admin row into the real
+// password column. It backs the break-glass path (a matching ADMIN_SECRET) when
+// an admin already exists; the caller has already authorized the request. The
+// username UNIQUE constraint is the only guard - a collision maps to
+// ErrUsernameTaken so the handler answers 409 instead of a raw 500.
+func (s *PostgresStore) CreateAdditionalAdmin(username, passwordHash, totpSecret string) (*models.User, error) {
+	const q = `
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at)
+		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW())
+		RETURNING id, username, is_admin, role, totp_secret, created_at
+	`
+	var u models.User
+	err := s.db.QueryRow(q, username, passwordHash, totpSecret).
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.CreatedAt)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return nil, ErrUsernameTaken
+		}
 		return nil, err
 	}
 	return &u, nil
