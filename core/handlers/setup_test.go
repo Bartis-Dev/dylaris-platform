@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,12 +20,13 @@ type setupFakeStore struct {
 	store.Store
 	userCount  int
 	adminCount int
+	countErr   error
 	createErr  error
 	created    []string
 }
 
-func (f *setupFakeStore) CountUsers() (int, error)  { return f.userCount, nil }
-func (f *setupFakeStore) CountAdmins() (int, error) { return f.adminCount, nil }
+func (f *setupFakeStore) CountUsers() (int, error)  { return f.userCount, f.countErr }
+func (f *setupFakeStore) CountAdmins() (int, error) { return f.adminCount, f.countErr }
 
 func (f *setupFakeStore) CreateFirstAdmin(username, passwordHash, totpSecret string) (*models.User, error) {
 	if f.createErr != nil {
@@ -208,5 +210,36 @@ func TestCreateAdmin_Matrix(t *testing.T) {
 				t.Fatalf("secret leaked into response body: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+// TestCreateAdmin_CountErrorFailsClosed: a transient DB error on either count must
+// return 500 before the adminCreateAllowed gate ever runs. Without this, a mis-read
+// count (userCount=0 instead of the real 3) would make a real lost_admin system with
+// no ADMIN_SECRET configured look like a fresh install, reopening secret-less admin
+// creation - exactly what adminCreateAllowed(0, "", "") == true would allow.
+func TestCreateAdmin_CountErrorFailsClosed(t *testing.T) {
+	fs := &setupFakeStore{userCount: 3, adminCount: 0, countErr: errors.New("db down")}
+	h := newSetupTestHandler(fs, "") // no ADMIN_SECRET configured
+	body := map[string]interface{}{"username": "alice", "password": "password123"}
+
+	rec := postCreateAdmin(h, body)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	var out struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Success || out.Error != "count_failed" {
+		t.Fatalf("error = %q (success=%v), want count_failed: %s", out.Error, out.Success, rec.Body.String())
+	}
+	if len(fs.created) != 0 {
+		t.Fatalf("expected no user created, got %v", fs.created)
 	}
 }

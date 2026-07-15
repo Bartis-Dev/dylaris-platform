@@ -16,8 +16,8 @@ import (
 
 // SetupHandler covers /api/setup/*. Two open routes:
 //
-//	GET  /api/setup/status — what mode are we in?
-//	POST /api/setup/admin  — create the first admin
+//	GET  /api/setup/status - what mode are we in?
+//	POST /api/setup/admin  - create the first admin
 //
 // Mode is inferred per-request from the DB:
 //   - fresh_install: user_count = 0 (no users at all)
@@ -96,8 +96,19 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userCount, _ := h.state.Store.CountUsers()
-	adminCount, _ := h.state.Store.CountAdmins()
+	// Fail closed: if we cannot determine the setup state, do NOT fall through to
+	// the authorization gate (a mis-read count could treat lost_admin as a fresh
+	// install and reopen secret-less admin creation).
+	userCount, err := h.state.Store.CountUsers()
+	if err != nil {
+		sendSetupError(w, http.StatusInternalServerError, "count_failed", "Could not determine setup state.")
+		return
+	}
+	adminCount, err := h.state.Store.CountAdmins()
+	if err != nil {
+		sendSetupError(w, http.StatusInternalServerError, "count_failed", "Could not determine setup state.")
+		return
+	}
 
 	if !adminCreateAllowed(userCount, h.state.AdminSecret, req.AdminSecret) {
 		if h.state.AdminSecretConfigured() {
