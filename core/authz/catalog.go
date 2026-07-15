@@ -1,0 +1,260 @@
+// Package authz is the single source of truth for the capability-based
+// permission system: the code-defined capability catalog, the EffectiveCaps
+// resolver, and the RequireCap enforcement middleware. Phase 1 (foundation)
+// ships the catalog, resolver, middleware and route-coverage harness; the
+// ~400 routes are annotated and the old checks removed in phase 2.
+package authz
+
+// Scope classifies where a capability is enforced.
+type Scope string
+
+const (
+	// ScopePanel is a platform-wide staff/operator capability, checked against
+	// the user's panel role + per-user overrides.
+	ScopePanel Scope = "panel"
+	// ScopeServer is a per-server capability, checked against the invite/grant
+	// for the {id}/{uuid} in the request path.
+	ScopeServer Scope = "server"
+	// ScopeOwner is an owner's cross-server tools/artifacts (modpacks, library,
+	// the owner's custom server-roles, the owner's API keys).
+	ScopeOwner Scope = "owner"
+)
+
+// Verb is the action portion of a capability ID. Read/write/delete are used
+// wherever CRUD applies; explicit action verbs are used otherwise.
+type Verb string
+
+const (
+	VerbRead    Verb = "read"
+	VerbWrite   Verb = "write"
+	VerbDelete  Verb = "delete"
+	VerbCreate  Verb = "create"
+	VerbRestore Verb = "restore"
+	VerbStart   Verb = "start"
+	VerbStop    Verb = "stop"
+	VerbRestart Verb = "restart"
+	VerbKill    Verb = "kill"
+	VerbExec    Verb = "exec"
+	VerbAccess  Verb = "access"
+	VerbUse     Verb = "use"
+	VerbManage  Verb = "manage"
+	VerbSend    Verb = "send"
+)
+
+// Capability is one entry in the catalog. ID is the stored/enforced unit and
+// is globally unique across all scopes (the coverage test + API-key vocabulary
+// depend on uniqueness). Where a resource name would collide across scopes the
+// ID is disambiguated (e.g. SERVER network.* vs PANEL topology.*, OWNER roles.*
+// vs PANEL panelroles.*, PANEL settings.* vs SERVER server.settings.write).
+type Capability struct {
+	ID       string
+	Label    string
+	Category string
+	Scope    Scope
+	Verb     Verb
+}
+
+// catalog is the ordered single source of truth. Order is preserved by All(),
+// ByScope() and Grouped() so the frontend renders a stable list. This is the
+// representative structured set for phase 1; phase 2 confirms every one of the
+// ~400 routes maps to exactly one of these IDs.
+var catalog = []Capability{
+	// --- SERVER scope ---
+	{ID: "overview.read", Label: "View overview", Category: "Overview", Scope: ScopeServer, Verb: VerbRead},
+
+	{ID: "console.read", Label: "Read console", Category: "Console", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "console.send", Label: "Send console command", Category: "Console", Scope: ScopeServer, Verb: VerbSend},
+
+	{ID: "power.start", Label: "Start server", Category: "Power", Scope: ScopeServer, Verb: VerbStart},
+	{ID: "power.stop", Label: "Stop server", Category: "Power", Scope: ScopeServer, Verb: VerbStop},
+	{ID: "power.restart", Label: "Restart server", Category: "Power", Scope: ScopeServer, Verb: VerbRestart},
+	{ID: "power.kill", Label: "Kill server", Category: "Power", Scope: ScopeServer, Verb: VerbKill},
+
+	{ID: "rcon.exec", Label: "Run RCON command", Category: "RCON", Scope: ScopeServer, Verb: VerbExec},
+
+	{ID: "players.read", Label: "View players", Category: "Players", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "players.manage", Label: "Manage players", Category: "Players", Scope: ScopeServer, Verb: VerbManage},
+
+	{ID: "files.read", Label: "Read files", Category: "Files", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "files.write", Label: "Write files", Category: "Files", Scope: ScopeServer, Verb: VerbWrite},
+	{ID: "files.delete", Label: "Delete files", Category: "Files", Scope: ScopeServer, Verb: VerbDelete},
+
+	{ID: "sftp.access", Label: "Use SFTP", Category: "SFTP", Scope: ScopeServer, Verb: VerbAccess},
+
+	{ID: "config.read", Label: "Read configuration", Category: "Config", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "config.write", Label: "Write configuration", Category: "Config", Scope: ScopeServer, Verb: VerbWrite},
+
+	{ID: "mods.read", Label: "View mods", Category: "Mods", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "mods.write", Label: "Install/update mods", Category: "Mods", Scope: ScopeServer, Verb: VerbWrite},
+	{ID: "mods.delete", Label: "Remove mods", Category: "Mods", Scope: ScopeServer, Verb: VerbDelete},
+
+	{ID: "backups.read", Label: "View backups", Category: "Backups", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "backups.create", Label: "Create backup", Category: "Backups", Scope: ScopeServer, Verb: VerbCreate},
+	{ID: "backups.delete", Label: "Delete backup", Category: "Backups", Scope: ScopeServer, Verb: VerbDelete},
+	{ID: "backups.restore", Label: "Restore backup", Category: "Backups", Scope: ScopeServer, Verb: VerbRestore},
+
+	{ID: "network.read", Label: "View network", Category: "Network", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "network.write", Label: "Edit network", Category: "Network", Scope: ScopeServer, Verb: VerbWrite},
+
+	{ID: "tabs.read", Label: "View custom tabs", Category: "Tabs", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "tabs.write", Label: "Manage custom tabs", Category: "Tabs", Scope: ScopeServer, Verb: VerbWrite},
+
+	{ID: "schedule.read", Label: "View scheduled tasks", Category: "Schedule", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "schedule.write", Label: "Manage scheduled tasks", Category: "Schedule", Scope: ScopeServer, Verb: VerbWrite},
+	{ID: "schedule.delete", Label: "Delete scheduled tasks", Category: "Schedule", Scope: ScopeServer, Verb: VerbDelete},
+
+	{ID: "stats.read", Label: "View stats", Category: "Stats", Scope: ScopeServer, Verb: VerbRead},
+
+	{ID: "spark.use", Label: "Use Spark profiler", Category: "Spark", Scope: ScopeServer, Verb: VerbUse},
+
+	{ID: "members.read", Label: "View members", Category: "Members", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "members.write", Label: "Invite/edit members", Category: "Members", Scope: ScopeServer, Verb: VerbWrite},
+	{ID: "members.delete", Label: "Remove members", Category: "Members", Scope: ScopeServer, Verb: VerbDelete},
+
+	{ID: "server.settings.write", Label: "Edit server settings", Category: "Server", Scope: ScopeServer, Verb: VerbWrite},
+	{ID: "server.delete", Label: "Delete server", Category: "Server", Scope: ScopeServer, Verb: VerbDelete},
+
+	// --- OWNER scope ---
+	{ID: "modpack.read", Label: "View modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "modpack.write", Label: "Edit modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbWrite},
+	{ID: "modpack.delete", Label: "Delete modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbDelete},
+
+	{ID: "library.read", Label: "View library", Category: "Library", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "library.write", Label: "Edit library", Category: "Library", Scope: ScopeOwner, Verb: VerbWrite},
+	{ID: "library.delete", Label: "Delete library items", Category: "Library", Scope: ScopeOwner, Verb: VerbDelete},
+
+	{ID: "roles.read", Label: "View server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "roles.write", Label: "Edit server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbWrite},
+	{ID: "roles.delete", Label: "Delete server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbDelete},
+
+	{ID: "apikeys.read", Label: "View API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "apikeys.write", Label: "Create API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbWrite},
+	{ID: "apikeys.delete", Label: "Revoke API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbDelete},
+
+	// --- PANEL scope ---
+	{ID: "users.read", Label: "View users", Category: "Users", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "users.write", Label: "Edit users", Category: "Users", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "users.delete", Label: "Delete users", Category: "Users", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "panelroles.read", Label: "View panel roles", Category: "Panel roles", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "panelroles.write", Label: "Edit panel roles", Category: "Panel roles", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "panelroles.delete", Label: "Delete panel roles", Category: "Panel roles", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "nodes.read", Label: "View nodes", Category: "Nodes", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "nodes.write", Label: "Edit nodes", Category: "Nodes", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "nodes.delete", Label: "Delete nodes", Category: "Nodes", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "topology.read", Label: "View global topology", Category: "Topology", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "topology.write", Label: "Edit global topology", Category: "Topology", Scope: ScopePanel, Verb: VerbWrite},
+
+	{ID: "regions.read", Label: "View regions", Category: "Regions", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "regions.write", Label: "Edit regions", Category: "Regions", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "regions.delete", Label: "Delete regions", Category: "Regions", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "tickets.read", Label: "View tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "tickets.write", Label: "Edit tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "tickets.delete", Label: "Delete tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "settings.read", Label: "View platform settings", Category: "Settings", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "settings.write", Label: "Edit platform settings", Category: "Settings", Scope: ScopePanel, Verb: VerbWrite},
+
+	{ID: "plans.read", Label: "View plans", Category: "Plans", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "plans.write", Label: "Edit plans", Category: "Plans", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "plans.delete", Label: "Delete plans", Category: "Plans", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "servers.read", Label: "View all servers", Category: "Servers (oversight)", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "servers.write", Label: "Edit any server", Category: "Servers (oversight)", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "servers.delete", Label: "Delete any server", Category: "Servers (oversight)", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "staff.modpack.read", Label: "View all modpacks (staff)", Category: "Modpacks (staff)", Scope: ScopePanel, Verb: VerbRead},
+	{ID: "staff.modpack.write", Label: "Edit any modpack (staff)", Category: "Modpacks (staff)", Scope: ScopePanel, Verb: VerbWrite},
+	{ID: "staff.modpack.delete", Label: "Delete any modpack (staff)", Category: "Modpacks (staff)", Scope: ScopePanel, Verb: VerbDelete},
+
+	{ID: "audit.read", Label: "View audit log", Category: "Audit", Scope: ScopePanel, Verb: VerbRead},
+}
+
+var byID = func() map[string]Capability {
+	m := make(map[string]Capability, len(catalog))
+	for _, c := range catalog {
+		m[c.ID] = c
+	}
+	return m
+}()
+
+// Get returns the capability for id, and ok=false when it is not in the
+// catalog. An unknown capability is deny-by-default at every call site.
+func Get(id string) (Capability, bool) {
+	c, ok := byID[id]
+	return c, ok
+}
+
+// Has reports whether id is a known capability.
+func Has(id string) bool {
+	_, ok := byID[id]
+	return ok
+}
+
+// All returns a copy of the ordered catalog.
+func All() []Capability {
+	out := make([]Capability, len(catalog))
+	copy(out, catalog)
+	return out
+}
+
+// ByScope returns the catalog filtered to one scope, order preserved.
+func ByScope(s Scope) []Capability {
+	var out []Capability
+	for _, c := range catalog {
+		if c.Scope == s {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// --- Grouped UI payload (GET /api/authz/catalog) ---
+
+type CatalogCapability struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Verb  string `json:"verb"`
+}
+
+type CatalogCategory struct {
+	Category     string              `json:"category"`
+	Capabilities []CatalogCapability `json:"capabilities"`
+}
+
+type CatalogScope struct {
+	Scope      string            `json:"scope"`
+	Categories []CatalogCategory `json:"categories"`
+}
+
+// Grouped returns the catalog grouped by scope then category, for the panel
+// role editor and simple/advanced UI. Scope order is fixed [server, owner,
+// panel]; categories and capabilities keep registry order so the payload is
+// stable across requests.
+func Grouped() []CatalogScope {
+	scopeOrder := []Scope{ScopeServer, ScopeOwner, ScopePanel}
+	out := make([]CatalogScope, 0, len(scopeOrder))
+	for _, sc := range scopeOrder {
+		cs := CatalogScope{Scope: string(sc)}
+		catIndex := map[string]int{} // category -> index in cs.Categories
+		for _, c := range catalog {
+			if c.Scope != sc {
+				continue
+			}
+			idx, ok := catIndex[c.Category]
+			if !ok {
+				cs.Categories = append(cs.Categories, CatalogCategory{Category: c.Category})
+				idx = len(cs.Categories) - 1
+				catIndex[c.Category] = idx
+			}
+			cs.Categories[idx].Capabilities = append(cs.Categories[idx].Capabilities, CatalogCapability{
+				ID: c.ID, Label: c.Label, Verb: string(c.Verb),
+			})
+		}
+		out = append(out, cs)
+	}
+	return out
+}
