@@ -47,6 +47,7 @@ const (
 	// Roles + maintenance.
 	AuditEventUserRoleChanged        = "user_role_changed"
 	AuditEventUserPermissionsChanged = "user_permissions_changed"
+	AuditEventUserPanelRoleChanged   = "user_panel_role_changed"
 	AuditEventMaintenanceToggled     = "maintenance_toggled"
 
 	// Tickets (ticket-scoped audit, written to ticket_audit_events

@@ -29,6 +29,16 @@ type userRoleFakeStore struct {
 	setRoleCalls []setRoleCall
 
 	setPermsCalls []setPermsCall
+
+	panelRole         *store.PanelRole
+	panelRoleErr      error
+	setPanelRoleCalls []setPanelRoleCall
+	setOverridesCalls []store.CapOverrides
+}
+
+type setPanelRoleCall struct {
+	userID string
+	roleID *int
 }
 
 type setRoleCall struct {
@@ -56,6 +66,17 @@ func (f *userRoleFakeStore) SetUserPermissionFlags(userID string, canDeleteServe
 	return nil
 }
 func (f *userRoleFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
+func (f *userRoleFakeStore) GetPanelRole(int) (*store.PanelRole, error) {
+	return f.panelRole, f.panelRoleErr
+}
+func (f *userRoleFakeStore) SetUserPanelRole(userID string, roleID *int) error {
+	f.setPanelRoleCalls = append(f.setPanelRoleCalls, setPanelRoleCall{userID, roleID})
+	return nil
+}
+func (f *userRoleFakeStore) SetUserPanelCapOverrides(userID string, ov store.CapOverrides) error {
+	f.setOverridesCalls = append(f.setOverridesCalls, ov)
+	return nil
+}
 
 const testTargetID = "11111111-1111-1111-1111-111111111111"
 const testOtherAdminID = "22222222-2222-2222-2222-222222222222"
@@ -224,5 +245,96 @@ func TestSetUserPermissionsHandler_Success(t *testing.T) {
 	call := fs.setPermsCalls[0]
 	if call.userID != testTargetID || !call.canDeleteServers || call.canChangeResources || call.supportTeam != "billing" {
 		t.Fatalf("call = %+v, want userID=%s canDeleteServers=true canChangeResources=false supportTeam=billing", call, testTargetID)
+	}
+}
+
+func setPanelRoleReq(targetID, actorID string, isAdmin bool, body map[string]interface{}) *http.Request {
+	b, _ := json.Marshal(body)
+	r := httptest.NewRequest("PUT", "/api/admin/users/"+targetID+"/panel-role", bytes.NewReader(b))
+	r = mux.SetURLVars(r, map[string]string{"id": targetID})
+	ctx := context.WithValue(r.Context(), "isAdmin", isAdmin)
+	if actorID != "" {
+		ctx = context.WithValue(ctx, "userID", actorID)
+	}
+	return r.WithContext(ctx)
+}
+
+func TestSetUserPanelRoleHandler_Forbidden(t *testing.T) {
+	fs := &userRoleFakeStore{}
+	h := NewUserHandler(&AppState{Store: fs})
+	rec := httptest.NewRecorder()
+
+	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, "", false, map[string]interface{}{"panelRoleId": 1}))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.setPanelRoleCalls) != 0 {
+		t.Fatalf("expected no store mutation, got %+v", fs.setPanelRoleCalls)
+	}
+}
+
+func TestSetUserPanelRoleHandler_RejectsNonPanelOverride(t *testing.T) {
+	// files.read is a SERVER-scope cap; a panel override must reject it.
+	fs := &userRoleFakeStore{}
+	h := NewUserHandler(&AppState{Store: fs})
+	rec := httptest.NewRecorder()
+
+	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{
+		"grantCaps": []string{"files.read"},
+	}))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.setPanelRoleCalls) != 0 {
+		t.Fatalf("expected no store mutation, got %+v", fs.setPanelRoleCalls)
+	}
+}
+
+func TestSetUserPanelRoleHandler_RoleNotFound(t *testing.T) {
+	fs := &userRoleFakeStore{panelRoleErr: errors.New("no rows")}
+	h := NewUserHandler(&AppState{Store: fs})
+	rec := httptest.NewRecorder()
+
+	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{
+		"panelRoleId": 99,
+	}))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.setPanelRoleCalls) != 0 {
+		t.Fatalf("expected no store mutation, got %+v", fs.setPanelRoleCalls)
+	}
+}
+
+func TestSetUserPanelRoleHandler_Success(t *testing.T) {
+	fs := &userRoleFakeStore{panelRole: &store.PanelRole{ID: 3, Name: "support"}}
+	h := NewUserHandler(&AppState{Store: fs})
+	rec := httptest.NewRecorder()
+
+	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{
+		"panelRoleId": 3,
+		"grantCaps":   []string{"nodes.read"},
+		"denyCaps":    []string{"users.delete"},
+	}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.setPanelRoleCalls) != 1 {
+		t.Fatalf("expected 1 SetUserPanelRole call, got %d", len(fs.setPanelRoleCalls))
+	}
+	call := fs.setPanelRoleCalls[0]
+	if call.userID != testTargetID || call.roleID == nil || *call.roleID != 3 {
+		t.Fatalf("call = %+v, want userID=%s roleID=3", call, testTargetID)
+	}
+	if len(fs.setOverridesCalls) != 1 {
+		t.Fatalf("expected 1 SetUserPanelCapOverrides call, got %d", len(fs.setOverridesCalls))
+	}
+	ov := fs.setOverridesCalls[0]
+	if len(ov.Grant) != 1 || ov.Grant[0] != "nodes.read" || len(ov.Deny) != 1 || ov.Deny[0] != "users.delete" {
+		t.Fatalf("overrides = %+v, want grant=[nodes.read] deny=[users.delete]", ov)
 	}
 }
