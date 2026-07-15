@@ -142,3 +142,33 @@ func TestGetSecret_FilePrecedence(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveTabProxyOrigin(t *testing.T) {
+	cases := []struct {
+		name        string
+		rawOrigin   string
+		frontendURL string
+		wantOrigin  string
+		wantActive  bool
+	}{
+		{"empty origin disables", "", "https://mc.example.com", "", false},
+		{"same host different port active", "https://mc.example.com:25502", "https://mc.example.com", "https://mc.example.com:25502", true},
+		{"same host no port active", "https://mc.example.com", "https://mc.example.com", "https://mc.example.com", true},
+		{"host mismatch disables", "https://proxy.other.com:25502", "https://mc.example.com", "", false},
+		{"frontend has port, origin host-matches", "http://localhost:25502", "http://localhost:25510", "http://localhost:25502", true},
+		{"non-http scheme disables", "ftp://mc.example.com:25502", "https://mc.example.com", "", false},
+		{"unparseable origin disables", "://bad", "https://mc.example.com", "", false},
+		{"origin missing host disables", "http://", "https://mc.example.com", "", false},
+		{"case-insensitive host match", "https://MC.example.com:25502", "https://mc.example.com", "https://MC.example.com:25502", true},
+		{"whitespace trimmed", "  https://mc.example.com:25502  ", "https://mc.example.com", "https://mc.example.com:25502", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotOrigin, gotActive := resolveTabProxyOrigin(tc.rawOrigin, tc.frontendURL)
+			if gotOrigin != tc.wantOrigin || gotActive != tc.wantActive {
+				t.Errorf("resolveTabProxyOrigin(%q, %q) = (%q, %v), want (%q, %v)",
+					tc.rawOrigin, tc.frontendURL, gotOrigin, gotActive, tc.wantOrigin, tc.wantActive)
+			}
+		})
+	}
+}

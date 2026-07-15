@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -82,6 +83,22 @@ type Config struct {
 	// BILLING_SUSPEND_GRACE (Go duration), default 48h; 0 = enforce on the next
 	// hourly lifecycle tick (no grace).
 	SuspendGrace time.Duration
+
+	// TabProxyPort, if set, makes Core bind a SECOND HTTP listener on this port
+	// serving ONLY the WS5 tab-proxy data plane (spec B5). The browser reaches
+	// it as a distinct ORIGIN (same host, different port) so a proxied
+	// container's JS runs on that origin and can never read the panel token from
+	// the panel origin's localStorage. Empty = the second listener is not started.
+	TabProxyPort string
+	// TabProxyOrigin is the browser-facing absolute base URL of that isolated
+	// origin (what the panel builds proxied-iframe srcs against; behind a front
+	// proxy it maps to TabProxyPort). Normalized scheme://host[:port], no
+	// trailing slash; "" whenever origin-isolation is inactive.
+	TabProxyOrigin string
+	// TabProxyIsolationActive is true iff TAB_PROXY_ORIGIN is set AND host-matches
+	// FRONTEND_URL. Gates the public-share mint/serve refusal (Core) and drives
+	// the panel's absolute-vs-relative iframe src choice.
+	TabProxyIsolationActive bool
 }
 
 func LoadConfig() (Config, error) {
@@ -118,9 +135,15 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
+	// FRONTEND_URL is read once here so both the Config field and the
+	// TAB_PROXY_ORIGIN host-match validation below use the exact same value.
+	frontendURL := getEnv("FRONTEND_URL", "http://localhost:25510")
+	tabProxyPort := strings.TrimSpace(getEnv("TAB_PROXY_PORT", ""))
+	tabProxyOrigin, tabProxyIsolationActive := resolveTabProxyOrigin(getEnv("TAB_PROXY_ORIGIN", ""), frontendURL)
+
 	cfg := Config{
 		APIPort:       getEnv("API_PORT", "25500"),
-		FrontendURL:   getEnv("FRONTEND_URL", "http://localhost:25510"),
+		FrontendURL:   frontendURL,
 		JWTSecret:     getSecret("JWT_SECRET", "change-this-secret"),
 		ClusterSecret: getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
 		CoreID:         coreID,
@@ -157,6 +180,10 @@ func LoadConfig() (Config, error) {
 		StoreEnabled:   storeURL != "" && storeSharedKey != "",
 
 		SuspendGrace: suspendGrace,
+
+		TabProxyPort:            tabProxyPort,
+		TabProxyOrigin:          tabProxyOrigin,
+		TabProxyIsolationActive: tabProxyIsolationActive,
 	}
 
 	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET
@@ -223,4 +250,39 @@ func getSecret(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// resolveTabProxyOrigin decides whether origin-isolation for the WS5 custom-tab
+// reverse proxy (spec B5) is active and returns the normalized browser-facing
+// proxy origin the panel builds iframe srcs against.
+//
+// Origin-isolation is active only when TAB_PROXY_ORIGIN is set, parses as an
+// absolute http(s) URL, and shares the panel's (FRONTEND_URL) HOST. The
+// browser-facing proxy origin MUST differ from the panel only in PORT: the
+// dyl_tabproxy ticket cookie is host-only, so a different host would drop the
+// cookie and break proxy auth. Rather than silently break auth on a
+// misconfiguration, a host mismatch (or an unparseable / non-http origin) logs a
+// clear warning and disables isolation, falling back to today's same-origin
+// behavior. The returned origin is scheme://host[:port] with no trailing slash;
+// it is "" whenever isolation is inactive.
+func resolveTabProxyOrigin(rawOrigin, frontendURL string) (origin string, active bool) {
+	rawOrigin = strings.TrimSpace(rawOrigin)
+	if rawOrigin == "" {
+		return "", false
+	}
+	u, err := url.Parse(rawOrigin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		log.Printf("config: TAB_PROXY_ORIGIN %q is not a valid absolute http(s) origin; origin-isolation disabled (same-origin fallback)", rawOrigin)
+		return "", false
+	}
+	fu, ferr := url.Parse(strings.TrimSpace(frontendURL))
+	if ferr != nil || fu.Hostname() == "" {
+		log.Printf("config: FRONTEND_URL %q is not parseable; cannot host-match TAB_PROXY_ORIGIN; origin-isolation disabled", frontendURL)
+		return "", false
+	}
+	if !strings.EqualFold(u.Hostname(), fu.Hostname()) {
+		log.Printf("config: TAB_PROXY_ORIGIN host %q != FRONTEND_URL host %q; the host-only dyl_tabproxy cookie cannot reach a different host, so origin-isolation is disabled (same-origin fallback)", u.Hostname(), fu.Hostname())
+		return "", false
+	}
+	return u.Scheme + "://" + u.Host, true
 }
