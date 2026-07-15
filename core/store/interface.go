@@ -167,6 +167,12 @@ type Store interface {
 	UpdateServerRole(id int, ownerUserID, name string, capabilities []string) error
 	DeleteServerRole(id int, ownerUserID string) error
 
+	// Write-side reworked-invite grant upsert/delete (phase 3). serverID nil =
+	// account-wide grant (relies on the F6 partial unique index). Capability +
+	// delegation-cap checks are the handler's job.
+	UpsertServerGrant(serverID *int, userID, ownerUserID string, serverRoleID *int, overrides CapOverrides, inherit bool) error
+	DeleteServerGrant(serverID *int, ownerUserID, userID string) error
+
 	// --- Backups ---
 	ListBackupStorages() ([]models.BackupStorage, error)
 	GetBackupStorage(id int) (*models.BackupStorage, error)
