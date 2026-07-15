@@ -56,8 +56,12 @@ func TestDefaultPanelRoleSeeds_Content(t *testing.T) {
 			t.Errorf("support cap %q is not a real panel cap", c)
 		}
 	}
+	supportSet := map[string]bool{}
+	for _, c := range supportCaps {
+		supportSet[c] = true
+	}
 	for _, forbidden := range []string{"users.delete", "plans.read", "plans.write", "settings.write", "panelroles.write"} {
-		if want[forbidden] {
+		if supportSet[forbidden] {
 			t.Errorf("support seed must not include %q", forbidden)
 		}
 	}
