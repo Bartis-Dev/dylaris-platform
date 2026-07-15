@@ -359,6 +359,10 @@ func (s *PostgresStore) SeedWarpRegionIfEmpty(region, subnet, leaderID, endpoint
 // limit is hit under a "block" policy.
 var ErrWarpLimitReached = errors.New("warp connection limit reached")
 
+// ErrWarpIPTaken is returned when a caller-pinned fixed WG IP is already allocated
+// to another peer - a graceful form of the wg_ip UNIQUE violation.
+var ErrWarpIPTaken = errors.New("warp fixed IP already allocated")
+
 // warpEnrollLock serializes all warp enrollments cluster-wide via a Postgres
 // transaction advisory lock, so concurrent enrolls (across N Cores) can never
 // exceed a key's max connections or collide on an allocated IP. Enroll is rare,
@@ -399,8 +403,19 @@ func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 		}
 	}
 
-	wgIP = fixedIP
-	if wgIP == "" {
+	if fixedIP != "" {
+		// A caller-pinned fixed IP bypasses allocIP. Reject it here - race-safe under
+		// the advisory lock held above - if it is already allocated, instead of
+		// surfacing a raw wg_ip UNIQUE violation from the INSERT below.
+		var count int
+		if err = tx.QueryRow(`SELECT COUNT(*) FROM warp_peers WHERE wg_ip = $1`, fixedIP).Scan(&count); err != nil {
+			return "", "", err
+		}
+		if count > 0 {
+			return "", "", ErrWarpIPTaken
+		}
+		wgIP = fixedIP
+	} else {
 		taken := map[string]bool{}
 		rows, qerr := tx.Query(`SELECT wg_ip FROM warp_peers`)
 		if qerr != nil {
