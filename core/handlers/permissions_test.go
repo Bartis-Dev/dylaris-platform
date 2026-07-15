@@ -1,0 +1,201 @@
+package handlers
+
+import (
+	"errors"
+	"reflect"
+	"testing"
+
+	"dylaris-core/models"
+	"dylaris-core/store"
+)
+
+// permissionsFakeStore embeds store.Store (nil) so it satisfies the full
+// interface at compile time; only the methods LoadEffectivePermissions
+// touches are overridden. Any other call would panic - these tests never
+// make one.
+type permissionsFakeStore struct {
+	store.Store
+	user       *models.User
+	userErr    error
+	regions    []string
+	regionsErr error
+}
+
+func (f *permissionsFakeStore) GetUserByID(string) (*models.User, error) { return f.user, f.userErr }
+func (f *permissionsFakeStore) GetUserRegionIDs(string) ([]string, error) {
+	return f.regions, f.regionsErr
+}
+
+func TestComputeEffectivePermissions(t *testing.T) {
+	cases := []struct {
+		name           string
+		user           *models.User
+		allowedRegions []string
+		want           EffectivePermissions
+	}{
+		{
+			name: "nil user denies everything by default",
+			user: nil,
+			want: EffectivePermissions{Role: "user"},
+		},
+		{
+			name: "is_admin flag grants everything regardless of per-user flags",
+			user: &models.User{IsAdmin: true, Role: "user", CanDeleteServers: false, CanChangeResources: false},
+			want: EffectivePermissions{
+				Role: "admin", IsAdmin: true, CanAccessAllRegions: true,
+				CanDeleteServers: true, CanChangeResources: true,
+			},
+		},
+		{
+			name: "role=admin grants everything even without the is_admin flag",
+			user: &models.User{IsAdmin: false, Role: "admin"},
+			want: EffectivePermissions{
+				Role: "admin", IsAdmin: true, CanAccessAllRegions: true,
+				CanDeleteServers: true, CanChangeResources: true,
+			},
+		},
+		{
+			name: "empty role defaults to user",
+			user: &models.User{Role: ""},
+			want: EffectivePermissions{Role: "user"},
+		},
+		{
+			name: "support role is flagged as support, not admin",
+			user: &models.User{Role: "support"},
+			want: EffectivePermissions{Role: "support", IsSupport: true},
+		},
+		{
+			name:           "regular user carries per-user flags and allowed regions through unchanged",
+			user:           &models.User{Role: "user", CanDeleteServers: true, CanChangeResources: false, AllRegionsAccess: false},
+			allowedRegions: []string{"eu", "us"},
+			want: EffectivePermissions{
+				Role: "user", CanDeleteServers: true, CanChangeResources: false,
+				CanAccessAllRegions: false, AllowedRegions: []string{"eu", "us"},
+			},
+		},
+		{
+			name: "AllRegionsAccess grants all-regions without being admin",
+			user: &models.User{Role: "user", AllRegionsAccess: true},
+			want: EffectivePermissions{Role: "user", CanAccessAllRegions: true},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ComputeEffectivePermissions(tc.user, tc.allowedRegions)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ComputeEffectivePermissions = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanAccessRegion(t *testing.T) {
+	cases := []struct {
+		name   string
+		perms  EffectivePermissions
+		region string
+		want   bool
+	}{
+		{"all-regions always passes, even an empty region", EffectivePermissions{CanAccessAllRegions: true}, "", true},
+		{"all-regions passes for any specific region", EffectivePermissions{CanAccessAllRegions: true}, "eu", true},
+		{"explicit region membership matches", EffectivePermissions{AllowedRegions: []string{"eu", "us"}}, "eu", true},
+		{"explicit region membership rejects a non-member", EffectivePermissions{AllowedRegions: []string{"eu"}}, "us", false},
+		{"empty region defensively maps to default and matches", EffectivePermissions{AllowedRegions: []string{"default"}}, "", true},
+		{"empty region maps to default but is denied without it", EffectivePermissions{AllowedRegions: []string{"eu"}}, "", false},
+		{"no allowed regions denies everything", EffectivePermissions{}, "eu", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.perms.CanAccessRegion(tc.region); got != tc.want {
+				t.Errorf("CanAccessRegion(%q) = %v, want %v", tc.region, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFilterServersByRegion(t *testing.T) {
+	servers := []models.Server{
+		{UUID: "s-eu", Region: "eu"},
+		{UUID: "s-us", Region: "us"},
+		{UUID: "s-default", Region: ""},
+	}
+
+	t.Run("all-regions returns every server unfiltered", func(t *testing.T) {
+		got := FilterServersByRegion(servers, EffectivePermissions{CanAccessAllRegions: true})
+		if len(got) != len(servers) {
+			t.Fatalf("got %d servers, want %d", len(got), len(servers))
+		}
+	})
+
+	t.Run("explicit regions filter out inaccessible servers, defaulting empty region to default", func(t *testing.T) {
+		got := FilterServersByRegion(servers, EffectivePermissions{AllowedRegions: []string{"eu", "default"}})
+		if len(got) != 2 {
+			t.Fatalf("got %d servers, want 2: %+v", len(got), got)
+		}
+		for _, s := range got {
+			if s.UUID != "s-eu" && s.UUID != "s-default" {
+				t.Errorf("unexpected server in result: %+v", s)
+			}
+		}
+	})
+
+	t.Run("no allowed regions filters everything out", func(t *testing.T) {
+		got := FilterServersByRegion(servers, EffectivePermissions{})
+		if len(got) != 0 {
+			t.Fatalf("got %d servers, want 0: %+v", len(got), got)
+		}
+	})
+}
+
+func TestLoadEffectivePermissions(t *testing.T) {
+	t.Run("nil state denies by default", func(t *testing.T) {
+		got := LoadEffectivePermissions(nil, "u1")
+		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+			t.Fatalf("got %+v, want zero-value user", got)
+		}
+	})
+
+	t.Run("nil store denies by default", func(t *testing.T) {
+		got := LoadEffectivePermissions(&AppState{}, "u1")
+		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+			t.Fatalf("got %+v, want zero-value user", got)
+		}
+	})
+
+	t.Run("empty userID denies by default", func(t *testing.T) {
+		fs := &permissionsFakeStore{}
+		got := LoadEffectivePermissions(&AppState{Store: fs}, "")
+		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+			t.Fatalf("got %+v, want zero-value user", got)
+		}
+	})
+
+	t.Run("a failed user lookup denies by default", func(t *testing.T) {
+		fs := &permissionsFakeStore{userErr: errors.New("db down")}
+		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
+		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+			t.Fatalf("got %+v, want zero-value user", got)
+		}
+	})
+
+	t.Run("a nil user (no error) denies by default", func(t *testing.T) {
+		fs := &permissionsFakeStore{user: nil}
+		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
+		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+			t.Fatalf("got %+v, want zero-value user", got)
+		}
+	})
+
+	t.Run("success path composes the user and their region IDs", func(t *testing.T) {
+		fs := &permissionsFakeStore{
+			user:    &models.User{Role: "user", CanDeleteServers: true},
+			regions: []string{"eu", "us"},
+		}
+		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
+		want := EffectivePermissions{Role: "user", CanDeleteServers: true, AllowedRegions: []string{"eu", "us"}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	})
+}
