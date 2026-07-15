@@ -13,17 +13,28 @@
 // a dedicated same-host, different-PORT origin so a proxied container's JS runs
 // there and can never read the panel token from the panel origin's localStorage.
 // The panel then builds the iframe src as an ABSOLUTE URL on that origin
-// (`origin` is Core's normalized scheme://host[:port], no trailing slash);
-// otherwise it falls back to today's relative same-origin path. The mint /
-// preflight fetches stay same-origin to the panel and are unaffected.
+// (`origin` is Core's normalized scheme://host[:port], no trailing slash).
+//
+// The IN-DASHBOARD builder keeps a relative same-origin fallback by design: that
+// surface is admin-only / self-host and is a documented best-effort limitation
+// (a single operator viewing their own containers). The PUBLIC builder does NOT
+// fall back - see tabProxyPageSrc. The mint / preflight fetches stay same-origin
+// to the panel and are unaffected.
 export function tabDashboardProxySrc(serverId: number, tabId: number, origin?: string): string {
     const path = `/api/servers/${serverId}/tabs/${tabId}/proxy/`;
     return origin ? origin + path : path;
 }
 
-export function tabProxyPageSrc(token: string, origin?: string): string {
-    const path = `/api/tabproxy/${encodeURIComponent(token)}/`;
-    return origin ? origin + path : path;
+// PUBLIC share builder. Origin isolation is MANDATORY for public shares (spec
+// B5): a public /c/<token> page is served on the panel origin, so embedding the
+// proxied iframe on a relative (same-origin) src would let the container's JS
+// read the panel token from localStorage - the exact vector B5 closes. This
+// builder therefore FAILS CLOSED: with no isolated `origin` it returns null so
+// the caller refuses to render the iframe instead of silently falling back to
+// same-origin. It never emits a relative path.
+export function tabProxyPageSrc(token: string, origin?: string): string | null {
+    if (!origin) return null;
+    return origin + `/api/tabproxy/${encodeURIComponent(token)}/`;
 }
 
 // shareLinkUrl builds the shareable standalone-page URL for a share token.

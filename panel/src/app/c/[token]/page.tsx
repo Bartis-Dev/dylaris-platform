@@ -86,8 +86,11 @@ export default function StandaloneTabProxyPage() {
             try {
                 // Learn the isolated proxy origin first so the iframe embeds the
                 // share on the dedicated origin, not the panel origin. Public
-                // core-info endpoint; a failure just leaves the same-origin
-                // fallback (the preflight below then decides notfound anyway).
+                // core-info endpoint. If this fails or yields an empty origin,
+                // proxyOrigin stays '' and the render FAILS CLOSED (spec B5):
+                // tabProxyPageSrc('' ) returns null and we show a blocked card
+                // instead of embedding the iframe same-origin, which would let
+                // the container read the panel token.
                 let origin = '';
                 try {
                     const ci = await fetch(`${API_URL}/system/core-info`);
@@ -133,6 +136,11 @@ export default function StandaloneTabProxyPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [token, router]);
 
+    // Fail closed (spec B5): only ever an ABSOLUTE isolated-origin src, never a
+    // relative same-origin one. Null when no isolated origin is known -> render
+    // the blocked card below instead of the iframe.
+    const iframeSrc = tabProxyPageSrc(token, proxyOrigin || undefined);
+
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
             <header className="shrink-0 h-12 bg-(--base-01) border-b border-(--base-03) flex items-center px-4">
@@ -172,14 +180,22 @@ export default function StandaloneTabProxyPage() {
                         </div>
                     </div>
                 )}
-                {state === 'ready' && (
+                {state === 'ready' && iframeSrc && (
                     <iframe
-                        src={tabProxyPageSrc(token, proxyOrigin || undefined)}
+                        src={iframeSrc}
                         title="Dylaris tab"
                         className="w-full h-full border-0"
                         referrerPolicy="no-referrer"
                         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
                     />
+                )}
+                {state === 'ready' && !iframeSrc && (
+                    <div className="h-full flex items-center justify-center p-6">
+                        <div className="card p-6 max-w-md text-center">
+                            <Lock size={20} className="text-(--warning-light) mx-auto mb-2" />
+                            <p className="text-sm text-(--base-07)">This share cannot be displayed securely. Origin isolation is not configured on this instance.</p>
+                        </div>
+                    </div>
                 )}
             </main>
         </div>
