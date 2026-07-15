@@ -1,11 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# DYLARIS — DOCKER SWARM deployment
+# DYLARIS — DOCKER SWARM deployment (PRODUCTION)
 #
 # A multi-host fleet on an overlay network, with `deploy:` blocks
 # (replicas, placement, restart policy, resources).
 #
+# PRODUCTION posture: Postgres and Redis are MANAGED/EXTERNAL - the bundled
+# timescaledb + redis services are commented out below. Set DB_HOST/DB_PORT/
+# DB_SSLMODE and REDIS_ADDR to your managed endpoints (see .env). To run a
+# bundled DB/Redis for a small single-region deploy, uncomment those services
+# (each carries its own re-enable checklist) and pin the DB host with the
+# `docker node update --label-add dylaris.db=true <node>` step shown there.
+#
 #   docker swarm init                                            # once, on the manager
-#   docker node update --label-add dylaris.db=true <node-id>     # pin the DB host
 #   set -a; . ./.env; set +a                                     # load env into the shell
 #   docker stack deploy -c docker-stack.yml dylaris
 #
@@ -28,21 +34,35 @@ services:
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       DYLARIS_REGION: "${DYLARIS_REGION:-default}"
-      DB_HOST: timescaledb
-      DB_PORT: "5432"
+      # PRODUCTION default = managed/external Postgres and Redis (the bundled
+      # timescaledb + redis services below are commented out). Point DB_HOST /
+      # REDIS_ADDR at your managed endpoints. If you re-enable the bundled
+      # services, the "${VAR:-<service>}" fallbacks resolve to them unchanged.
+      DB_HOST: "${DB_HOST:-timescaledb}"
+      DB_PORT: "${DB_PORT:-5432}"
       DB_USER: "${DB_USER}"
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME}"
-      REDIS_ADDR: "redis:6379"
+      # "disable" suits the bundled in-swarm DB; set "require"/"verify-full" for a
+      # managed Postgres reached over an untrusted network.
+      DB_SSLMODE: "${DB_SSLMODE:-disable}"
+      REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
       # Core admin Redis login. Empty against the bundled passwordless dev Valkey;
       # for a password-protected or external Redis set both. REDIS_PASSWORD supports
       # the _FILE secret convention (REDIS_PASSWORD_FILE=...). Scoped per-node users
       # are always Core-provisioned, never hand-set.
       REDIS_USER: "${REDIS_USER:-}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      # Origin-isolated custom-tab reverse proxy (spec B5). OFF by default: with
+      # TAB_PROXY_PORT empty, Core never starts the second listener. To enable
+      # public tab-share links, set both and publish 25502 below - TAB_PROXY_ORIGIN
+      # MUST be the same host as FRONTEND_URL on a DIFFERENT port. See .env.example.
+      TAB_PROXY_PORT: "${TAB_PROXY_PORT:-}"
+      TAB_PROXY_ORIGIN: "${TAB_PROXY_ORIGIN:-}"
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
+      # - "25502:25502" # tab-proxy data plane (uncomment when TAB_PROXY_PORT=25502)
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25500/healthz"]
       interval: 30s
@@ -80,7 +100,8 @@ services:
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       NODE_TAGS: "${NODE_TAGS:-}"
       NODE_REGION: "${NODE_REGION:-}"
-      REDIS_ADDR: "redis:6379"
+      # Managed/external Redis by default (bundled redis service commented out).
+      REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
       # Redis-ACL bootstrap (mandatory -- no open-Redis fallback). CORE_GRPC_ADDR
       # is Core's gRPC mesh port on the same Docker network (DYLARIS_GRPC_PORT,
       # default 25501). NODE_ENROLL_TOKEN (first boot) and NODE_RECOVERY_TOKEN
@@ -94,6 +115,12 @@ services:
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com
       MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
+      # Beam ticket secret. The node validates beam tickets Core signed with
+      # JWT_SECRET (node/main.go StartBeamServer). Required even in this Swarm
+      # topology, where transfers arrive via the gateway beam-relay over the
+      # overlay (25523 stays UNPUBLISHED, see below). Empty = all beam transfers
+      # rejected. Must equal Core's JWT_SECRET AND the gateway relay's BEAM_JWT_SECRET.
+      BEAM_JWT_SECRET: "${JWT_SECRET}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data
@@ -139,55 +166,58 @@ services:
         order: start-first
         parallelism: 1
 
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    environment:
-      POSTGRES_USER: "${DB_USER}"
-      POSTGRES_PASSWORD: "${DB_PASSWORD}"
-      POSTGRES_DB: "${DB_NAME}"
-    volumes:
-      - timescaledb_data:/var/lib/postgresql/data
-    networks:
-      - dylaris_net
-    deploy:
-      # Single replica pinned to a labelled host (the named volume is node-local).
-      # For real HA, point Core at an external/managed PostgreSQL instead.
-      replicas: 1
-      placement:
-        constraints: [node.labels.dylaris.db == true]
-      restart_policy:
-        condition: any
+  # ── Bundled database — DISABLED for production ──────────────────────────────
+  # Production defaults to a managed/external Postgres (set DB_HOST/DB_PORT/
+  # DB_SSLMODE on core above). A single in-swarm DB on a node-local volume is not
+  # HA and pins the whole stack to one host. To run the bundled DB anyway (small
+  # single-region deploy), UNCOMMENT this block AND the timescaledb_data volume,
+  # label the DB host (docker node update --label-add dylaris.db=true <node>), and
+  # leave DB_HOST unset so it falls back to "timescaledb".
+  # timescaledb:
+  #   image: timescale/timescaledb:latest-pg16
+  #   environment:
+  #     POSTGRES_USER: "${DB_USER}"
+  #     POSTGRES_PASSWORD: "${DB_PASSWORD}"
+  #     POSTGRES_DB: "${DB_NAME}"
+  #   volumes:
+  #     - timescaledb_data:/var/lib/postgresql/data
+  #   networks:
+  #     - dylaris_net
+  #   deploy:
+  #     replicas: 1
+  #     placement:
+  #       constraints: [node.labels.dylaris.db == true]
+  #     restart_policy:
+  #       condition: any
 
-  redis:
-    # Valkey - drop-in Redis-compatible fork. Service name stays "redis" so
-    # REDIS_ADDR=redis:6379 resolves. In-memory coordination bus.
-    # Redis ACL is mandatory. This runs the STOCK image (no custom entrypoint),
-    # so Valkey drops to its non-root `valkey` user (the stock entrypoint chowns
-    # /data and execs via setpriv). --aclfile refuses to start against a missing
-    # file, so seed the admin `default` user ONCE before the first deploy with a
-    # password equal to Core's REDIS_PASSWORD (no space in the password - ACL
-    # fields are space-delimited):
-    #   mkdir -p /etc/dylaris/valkey-acl
-    #   printf 'user default on >%s ~* &* +@all\n' "$REDIS_PASSWORD" > /etc/dylaris/valkey-acl/users.acl
-    # Core then connects as the `default` admin and provisions the per-node scoped
-    # users. The aclfile lives in /data (the WORKDIR) so the stock chown reaches
-    # it and ACL SAVE (temp-file + rename) works as non-root. See REDIS_PASSWORD
-    # in README.md's Configuration reference for the Core-side admin login.
-    image: valkey/valkey:8-alpine
-    command: ["valkey-server", "--save", "", "--appendonly", "no", "--aclfile", "/data/users.acl"]
-    volumes:
-      - /etc/dylaris/valkey-acl:/data
-    networks:
-      - dylaris_net
-    deploy:
-      replicas: 1
-      placement:
-        constraints: [node.role == manager]
-      restart_policy:
-        condition: any
+  # ── Bundled Redis (Valkey) — DISABLED for production ────────────────────────
+  # Production defaults to a managed/external Redis (set REDIS_ADDR on core+node).
+  # To run the bundled Valkey instead, UNCOMMENT this block, seed the aclfile
+  # admin user once before the first deploy (see the command below), and leave
+  # REDIS_ADDR unset so it falls back to "redis:6379". Redis ACL is mandatory:
+  # STOCK image (non-root, drops to `valkey` via setpriv), --aclfile refuses to
+  # start against a missing file, so create the admin `default` user ONCE with a
+  # password equal to Core's REDIS_PASSWORD (no space - ACL fields are space-
+  # delimited):
+  #   mkdir -p /etc/dylaris/valkey-acl
+  #   printf 'user default on >%s ~* &* +@all\n' "$REDIS_PASSWORD" > /etc/dylaris/valkey-acl/users.acl
+  # Core connects as that `default` admin and provisions the per-node scoped users.
+  # redis:
+  #   image: valkey/valkey:8-alpine
+  #   command: ["valkey-server", "--save", "", "--appendonly", "no", "--aclfile", "/data/users.acl"]
+  #   volumes:
+  #     - /etc/dylaris/valkey-acl:/data
+  #   networks:
+  #     - dylaris_net
+  #   deploy:
+  #     replicas: 1
+  #     placement:
+  #       constraints: [node.role == manager]
+  #     restart_policy:
+  #       condition: any
 
 volumes:
-  timescaledb_data:
+  # timescaledb_data:   # re-enable together with the bundled timescaledb service
   dylaris_data:
   core_data:
 

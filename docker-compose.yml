@@ -38,9 +38,16 @@ services:
       # are always Core-provisioned, never hand-set.
       REDIS_USER: "${REDIS_USER:-}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      # Origin-isolated custom-tab reverse proxy (spec B5). OFF by default: with
+      # TAB_PROXY_PORT empty, Core never starts the second listener. To enable
+      # public tab-share links, set both and publish 25502 below - TAB_PROXY_ORIGIN
+      # MUST be the same host as FRONTEND_URL on a DIFFERENT port. See .env.example.
+      TAB_PROXY_PORT: "${TAB_PROXY_PORT:-}"
+      TAB_PROXY_ORIGIN: "${TAB_PROXY_ORIGIN:-}"
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
+      # - "25502:25502" # tab-proxy data plane (uncomment when TAB_PROXY_PORT=25502)
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25500/healthz"]
       interval: 30s
@@ -80,6 +87,11 @@ services:
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com
       MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
+      # Beam ticket secret. Core signs beam tickets with JWT_SECRET; the node
+      # validates them (node/main.go StartBeamServer). Must equal Core's JWT_SECRET
+      # or EVERY beam transfer is rejected - including the 25523 LAN fast-path
+      # published below. Wired to JWT_SECRET so the two cannot silently diverge.
+      BEAM_JWT_SECRET: "${JWT_SECRET}"
     volumes:
       # The Node drives the host Docker daemon to launch MC server containers.
       - /var/run/docker.sock:/var/run/docker.sock
