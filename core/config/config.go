@@ -252,19 +252,36 @@ func getSecret(key, fallback string) string {
 	return fallback
 }
 
+// effectivePort returns the URL's explicit port, or the scheme default (443 for
+// https, 80 for http) when none is given. This normalizes so that e.g.
+// "https://h" and "https://h:443" compare equal - both address the SAME origin.
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
 // resolveTabProxyOrigin decides whether origin-isolation for the WS5 custom-tab
 // reverse proxy (spec B5) is active and returns the normalized browser-facing
 // proxy origin the panel builds iframe srcs against.
 //
 // Origin-isolation is active only when TAB_PROXY_ORIGIN is set, parses as an
-// absolute http(s) URL, and shares the panel's (FRONTEND_URL) HOST. The
-// browser-facing proxy origin MUST differ from the panel only in PORT: the
-// dyl_tabproxy ticket cookie is host-only, so a different host would drop the
-// cookie and break proxy auth. Rather than silently break auth on a
-// misconfiguration, a host mismatch (or an unparseable / non-http origin) logs a
-// clear warning and disables isolation, falling back to today's same-origin
-// behavior. The returned origin is scheme://host[:port] with no trailing slash;
-// it is "" whenever isolation is inactive.
+// absolute http(s) URL, shares the panel's (FRONTEND_URL) SCHEME and HOST, and
+// resolves to a DIFFERENT effective PORT than the panel. The browser-facing
+// proxy origin must differ from the panel ONLY in port: the dyl_tabproxy ticket
+// cookie is host-only, so a different host would drop the cookie and break proxy
+// auth; and a proxy origin equal to the panel origin is not isolation at all - a
+// proxied container's JS would run on the panel origin and could read the panel
+// token from localStorage, silently reopening the very vector B5 closes. Rather
+// than silently break auth OR silently reopen the token-theft vector, any
+// mismatch (scheme, host, or an identical effective port) logs a clear warning
+// and disables isolation, falling back to today's same-origin behavior. The
+// returned origin is scheme://host[:port] with no trailing slash; it is ""
+// whenever isolation is inactive.
 func resolveTabProxyOrigin(rawOrigin, frontendURL string) (origin string, active bool) {
 	rawOrigin = strings.TrimSpace(rawOrigin)
 	if rawOrigin == "" {
@@ -280,8 +297,16 @@ func resolveTabProxyOrigin(rawOrigin, frontendURL string) (origin string, active
 		log.Printf("config: FRONTEND_URL %q is not parseable; cannot host-match TAB_PROXY_ORIGIN; origin-isolation disabled", frontendURL)
 		return "", false
 	}
+	if !strings.EqualFold(u.Scheme, fu.Scheme) {
+		log.Printf("config: TAB_PROXY_ORIGIN scheme %q != FRONTEND_URL scheme %q; a different scheme is a different origin the cookie cannot follow, so origin-isolation is disabled (same-origin fallback)", u.Scheme, fu.Scheme)
+		return "", false
+	}
 	if !strings.EqualFold(u.Hostname(), fu.Hostname()) {
 		log.Printf("config: TAB_PROXY_ORIGIN host %q != FRONTEND_URL host %q; the host-only dyl_tabproxy cookie cannot reach a different host, so origin-isolation is disabled (same-origin fallback)", u.Hostname(), fu.Hostname())
+		return "", false
+	}
+	if effectivePort(u) == effectivePort(fu) {
+		log.Printf("config: TAB_PROXY_ORIGIN %q resolves to the SAME origin as FRONTEND_URL %q (same scheme, host and effective port); origin isolation needs a DIFFERENT port or a proxied container's JS could read the panel token, so it is disabled (same-origin fallback)", rawOrigin, frontendURL)
 		return "", false
 	}
 	return u.Scheme + "://" + u.Host, true

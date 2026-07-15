@@ -153,7 +153,13 @@ func TestResolveTabProxyOrigin(t *testing.T) {
 	}{
 		{"empty origin disables", "", "https://mc.example.com", "", false},
 		{"same host different port active", "https://mc.example.com:25502", "https://mc.example.com", "https://mc.example.com:25502", true},
-		{"same host no port active", "https://mc.example.com", "https://mc.example.com", "https://mc.example.com", true},
+		// B5 fix: a proxy origin IDENTICAL to the panel origin is not isolation -
+		// a proxied container's JS would run on the panel origin and could read the
+		// panel token. Same effective port (incl. the default) must DISABLE.
+		{"same host no port disabled (same effective origin)", "https://mc.example.com", "https://mc.example.com", "", false},
+		{"same host explicit different ports active", "https://mc.example.com:8443", "https://mc.example.com:25510", "https://mc.example.com:8443", true},
+		{"same host explicit 443 vs default https disabled", "https://mc.example.com:443", "https://mc.example.com", "", false},
+		{"scheme mismatch same host different port disabled", "http://mc.example.com:25502", "https://mc.example.com", "", false},
 		{"host mismatch disables", "https://proxy.other.com:25502", "https://mc.example.com", "", false},
 		{"frontend has port, origin host-matches", "http://localhost:25502", "http://localhost:25510", "http://localhost:25502", true},
 		{"non-http scheme disables", "ftp://mc.example.com:25502", "https://mc.example.com", "", false},
