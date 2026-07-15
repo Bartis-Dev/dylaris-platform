@@ -341,6 +341,7 @@ func main() {
 	nodeHandler := handlers.NewNodeHandler(appState)
 	userHandler := handlers.NewUserHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
+	serverRolesHandler := handlers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyOrigin, cfg.TabProxyIsolationActive)
 	fileHandler := handlers.NewFileHandler(appState)
@@ -839,6 +840,12 @@ func main() {
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.UpdatePanelRole)).Methods("PATCH")
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.DeletePanelRole)).Methods("DELETE")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/panel-role", authHandler.AuthMiddleware(userHandler.SetUserPanelRoleHandler)).Methods("PUT")
+
+	// --- Server roles (level-2 owner realm; owner/admin-gated inline for now) ---
+	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(serverRolesHandler.ListServerRoles)).Methods("GET")
+	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(serverRolesHandler.CreateServerRole)).Methods("POST")
+	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(serverRolesHandler.UpdateServerRole)).Methods("PATCH")
+	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(serverRolesHandler.DeleteServerRole)).Methods("DELETE")
 
 	// --- Maintenance mode ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
