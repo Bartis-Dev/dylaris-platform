@@ -288,7 +288,11 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 			break
 		}
 
-		// Sequential to preserve message ordering (WriteReq → Chunks → TransferDone)
+		// Handled on the read loop to preserve per-request_id ordering
+		// (WriteReq -> Chunks -> TransferDone; WsFrame delivery). handleRequest
+		// dispatches only the two blocking container dials (HttpProxyReq's Do,
+		// WsOpen's handshake) onto their own goroutines so a slow container
+		// cannot stall this shared loop - see the notes at those two branches.
 		m.handleRequest(cc, msg)
 	}
 
@@ -400,8 +404,16 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	}
 
 	// HttpProxyReq (WS5): stream the container HTTP response back over the mesh.
+	// The whole request (incl. body) is self-contained in this one message and
+	// the node only STREAMS the response back - there are no follow-up inbound
+	// messages keyed by this request_id - so dispatch the blocking Do in its own
+	// goroutine per request_id (WS5 I3). Otherwise one slow/hung container would
+	// stall the shared read loop and every other tenant's messages (uploads,
+	// RCON, other tabs) behind it. cc.send is serialized by sendMu, so response
+	// streams from concurrent proxy requests never interleave a single message.
 	if proxyReq := msg.GetHttpProxyReq(); proxyReq != nil {
-		m.handler.handleHTTPProxy(msg.RequestId, msg.ServerUuid, proxyReq, cc.send)
+		reqID, serverUUID := msg.RequestId, msg.ServerUuid
+		go m.handler.handleHTTPProxy(reqID, serverUUID, proxyReq, cc.send)
 		return
 	}
 
