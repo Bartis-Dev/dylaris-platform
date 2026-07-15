@@ -915,7 +915,10 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 			memUsage -= v // legacy Docker API
 		}
 	}
-	if memUsage < 0 {
+	// memUsage is unsigned: a cache subtraction larger than the raw usage wraps
+	// to a huge value rather than going negative, so detect that underflow by
+	// comparing against the original usage and clamp to 0 (like docker stats).
+	if memUsage > stats.MemoryStats.Usage {
 		memUsage = 0
 	}
 
