@@ -160,7 +160,6 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyUnifiedModpackSchema(db); err != nil {
 		return err
 	}
-	applyAdminResetEnvIfRequested(db)
 
 	seedSystemModules(db)
 	return nil
