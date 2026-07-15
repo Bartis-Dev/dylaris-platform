@@ -656,6 +656,14 @@ func (h *ProxyHandler) MintPublicProxyAuth(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
+	// Origin-isolation gate (spec B5): minting a share ticket only makes sense
+	// once the standalone share will actually be served, i.e. from the isolated
+	// origin. Refuse with a clear error otherwise, mirroring Public's gate, so
+	// the /c page's authorize() flow gets a clean early refusal.
+	if !h.state.TabProxyIsolationActive {
+		sendJSONError(w, "Public tab sharing requires origin isolation (set TAB_PROXY_ORIGIN)", http.StatusForbidden)
+		return
+	}
 
 	tab, err := h.getTabByShareToken(token)
 	if err != nil || tab == nil {
@@ -727,6 +735,18 @@ func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
 	// DB or the cookie - a disabled feature must reject every request here
 	// regardless of ticket validity, mirroring InDashboard.
 	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	// Origin-isolation gate (spec B5): the standalone /c/<token> share data plane
+	// is the cross-tenant C1 vector - a proxied container served on the panel's
+	// own origin could read a viewer's panel token from localStorage. It is only
+	// safe once served from a dedicated isolated origin, so refuse the entire
+	// share data plane unless origin-isolation is active. A uniform 404 (not a
+	// distinct error) avoids leaking share existence to anonymous visitors,
+	// matching this handler's other not-available responses. InDashboard is
+	// intentionally NOT gated: it keeps working in the same-origin fallback.
+	if !h.state.TabProxyIsolationActive {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}

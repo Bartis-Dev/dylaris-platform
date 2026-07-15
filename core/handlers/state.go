@@ -94,4 +94,11 @@ type AppState struct {
 	// gate uses it via linkHardSuspended; MUST match the reconciler + enforcement
 	// cutoff so a link is refused exactly when its ACL is actually gone.
 	SuspendGrace time.Duration
+
+	// TabProxyIsolationActive mirrors config.TabProxyIsolationActive (spec B5):
+	// true iff TAB_PROXY_ORIGIN is set and host-matches the panel. The
+	// standalone share data plane (Public) and its mint (MintPublicProxyAuth)
+	// refuse unless this is true, because a same-origin public share is the C1
+	// cross-tenant token-theft vector. InDashboard is NOT gated by it.
+	TabProxyIsolationActive bool
 }

@@ -156,6 +156,7 @@ func main() {
 		StoreEnabled:        cfg.StoreEnabled,
 		StoreURL:            cfg.StoreURL,
 		StoreSharedKey:      cfg.StoreSharedKey,
+		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
 	}
 
 	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it

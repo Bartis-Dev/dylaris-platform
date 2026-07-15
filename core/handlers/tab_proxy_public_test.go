@@ -227,7 +227,9 @@ func newTabProxyPublicTestHandler(t *testing.T, tabProxyEnabled, allowPublic boo
 	// 502 a real deployment would give for a node that dropped its gRPC
 	// connection, which is exactly the "past the access gate" signal these
 	// tests use.
-	state := &AppState{Store: fs, FeatureFlags: ff, GRPCRegistry: nodegrpc.NewRegistry()}
+	// B5: the standalone-share tests exercise the happy path where origin
+	// isolation is active; the refusal tests below flip this to false.
+	state := &AppState{Store: fs, FeatureFlags: ff, GRPCRegistry: nodegrpc.NewRegistry(), TabProxyIsolationActive: true}
 	authHandler := NewAuthHandler(state, tabProxyTestSecret)
 	return NewProxyHandler(state, authHandler), authHandler, mock, fs
 }
@@ -634,5 +636,40 @@ func TestMintPublicProxyAuth_Success_SetsScopedCookieAndTicketClaims(t *testing.
 	}
 	if claims.Username != "owner" {
 		t.Errorf("claims username = %q, want owner", claims.Username)
+	}
+}
+
+// TestPublic_RefusedWhenIsolationInactive covers the B5 C1 close: with origin
+// isolation inactive, the standalone share data plane refuses BEFORE any DB
+// lookup, so a same-origin public share can never be served.
+func TestPublic_RefusedWhenIsolationInactive(t *testing.T) {
+	h, _, _, _ := newTabProxyPublicTestHandler(t, true, true)
+	h.state.TabProxyIsolationActive = false
+	rec := httptest.NewRecorder()
+
+	// No sqlmock query is scripted: the gate returns before getTabByShareToken.
+	h.Public(rec, publicRequest("tok", "", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d (isolation inactive refuses the share data plane)", rec.Code, http.StatusNotFound)
+	}
+}
+
+// TestMintPublicProxyAuth_RefusedWhenIsolationInactive is the mint-side twin:
+// no ticket cookie is issued when isolation is inactive.
+func TestMintPublicProxyAuth_RefusedWhenIsolationInactive(t *testing.T) {
+	h, _, _, _ := newTabProxyPublicTestHandler(t, true, true)
+	h.state.TabProxyIsolationActive = false
+	req := withIdentity(httptest.NewRequest("GET", "/api/tabproxy/tok/auth", nil), "owner", false, "owner-id")
+	req = mux.SetURLVars(req, map[string]string{"token": "tok"})
+	rec := httptest.NewRecorder()
+
+	h.MintPublicProxyAuth(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (isolation inactive refuses mint)", rec.Code, http.StatusForbidden)
+	}
+	if got := rec.Result().Cookies(); len(got) != 0 {
+		t.Fatalf("expected no cookie when isolation inactive, got %+v", got)
 	}
 }
