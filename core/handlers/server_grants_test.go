@@ -128,6 +128,33 @@ func TestAssignGrant_NonOwnerCannotGrantCapTheyLack(t *testing.T) {
 	}
 }
 
+// Non-owner with members.write cannot smuggle a cap they lack by REFERENCING a
+// server-role that contains it (roleCaps are folded into the delegation subset check).
+func TestAssignGrant_NonOwnerCannotSmuggleCapViaRole(t *testing.T) {
+	sid := 42
+	fs := &grantFakeStore{
+		target:     &models.User{ID: friendC, Username: "friend"},
+		server:     serverOwnedBy(ownerA),
+		serverRole: &store.ServerRole{ID: 7, OwnerUserID: ownerA, Capabilities: []string{"files.delete"}},
+		actorGrant: &store.ServerGrant{
+			ServerID:     &sid,
+			UserID:       actorB,
+			CapOverrides: store.CapOverrides{Grant: []string{"members.write", "files.read"}},
+		},
+	}
+	h := NewServerRolesHandler(grantState(fs))
+	rec := httptest.NewRecorder()
+	h.AssignGrant(rec, grantReq("POST", actorB, false, map[string]interface{}{
+		"username": "friend", "serverId": 42, "serverRoleId": 7,
+	}))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.upserts) != 0 {
+		t.Fatalf("expected no upsert, got %d", len(fs.upserts))
+	}
+}
+
 // Non-owner holding members.write AND files.delete CAN grant files.delete.
 func TestAssignGrant_NonOwnerCanGrantHeldCap(t *testing.T) {
 	sid := 42
