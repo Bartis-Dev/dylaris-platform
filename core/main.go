@@ -846,6 +846,8 @@ func main() {
 	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(serverRolesHandler.CreateServerRole)).Methods("POST")
 	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(serverRolesHandler.UpdateServerRole)).Methods("PATCH")
 	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(serverRolesHandler.DeleteServerRole)).Methods("DELETE")
+	api.HandleFunc("/grants", authHandler.AuthMiddleware(serverRolesHandler.AssignGrant)).Methods("POST")
+	api.HandleFunc("/grants", authHandler.AuthMiddleware(serverRolesHandler.RevokeGrant)).Methods("DELETE")
 
 	// --- Maintenance mode ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
