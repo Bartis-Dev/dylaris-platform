@@ -280,6 +280,8 @@ secrets:
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
 | `FRONTEND_URL` | `http://localhost:25510` | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). **Must be externally reachable**: the previous compose default (`http://panel:25510`, an internal Docker-only hostname) made every emailed link unreachable outside the Docker network. For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config, kept as env. |
+| `TAB_PROXY_PORT` | *(empty)* | No | Origin-isolated custom-tab proxy (spec B5). When set, Core binds a SECOND HTTP listener on this port serving only the tab-proxy data plane. Front it on the SAME host as the panel, a different port (e.g. `25502`). Required for public tab share links; empty = second listener off (same-origin fallback). |
+| `TAB_PROXY_ORIGIN` | *(empty)* | No | Browser-facing absolute base URL of that isolated origin (e.g. `https://panel.example.com:25502`). Its HOST must equal `FRONTEND_URL`'s host (the `dyl_tabproxy` cookie is host-only); a mismatch logs a warning and disables isolation. Empty = same-origin fallback (public shares refused). |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
 | `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. The bundled Valkey runs the stock image (non-root) with `--aclfile` and is NOT auto-seeded, so this must match the `default` admin password you create in the aclfile before the first boot (see the redis service comment in the compose files). |
@@ -461,14 +463,18 @@ works even on gateway-routed / BYON nodes with no browser-reachable node address
 - Admin gates live in Settings -> Features: master toggle
   (`feature_tab_proxy_enabled`, default off), anonymous public links
   (`tab_proxy_allow_public_links`, default off), and per-server / per-user caps.
-- No new port: the proxied content rides the panel origin's existing front TLS.
+- Origin isolation (spec B5): set `TAB_PROXY_PORT` + `TAB_PROXY_ORIGIN` to serve
+  proxied content from a dedicated same-host, different-port origin. This closes
+  the same-origin token-theft vector and is REQUIRED for public share links. Left
+  unset, the in-dashboard proxy still works same-origin (single-operator only).
 
-> **Security:** proxied content is served on the panel's own origin under
-> `allow-same-origin`, so a compromised or malicious server container can read
-> the viewing user's panel session (localStorage token) and act as them. Keep
-> public share links and multi-tenant proxied-tab exposure disabled until
-> origin-isolated proxying (serving proxied content from a separate dedicated
-> origin) lands. Safe for a single-operator self-host instance, where you
+> **Security:** proxied content runs under `allow-same-origin`, so it must not
+> share the panel's origin. Set `TAB_PROXY_PORT` + `TAB_PROXY_ORIGIN` (same host,
+> different port) so proxied content is served from a dedicated origin - a
+> container's JS then runs on that origin and cannot read the panel token from
+> the panel origin's localStorage (spec B5). Public share links are REFUSED until
+> this origin isolation is active. Without it, only the in-dashboard proxy works,
+> same-origin, which is safe solely for a single-operator self-host where you
 > control your own containers.
 
 ## Beam desktop client
