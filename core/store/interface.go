@@ -159,6 +159,14 @@ type Store interface {
 	SetUserPanelRole(userID string, roleID *int) error
 	SetUserPanelCapOverrides(userID string, ov CapOverrides) error
 
+	// Write-side owner-scoped server-role CRUD (phase 3). Capability validation
+	// against the catalog happens in the handler (the store must not import
+	// authz). Update/Delete are owner-scoped so a user only touches their realm.
+	CreateServerRole(ownerUserID, name string, capabilities []string) (int, error)
+	ListServerRolesByOwner(ownerUserID string) ([]ServerRole, error)
+	UpdateServerRole(id int, ownerUserID, name string, capabilities []string) error
+	DeleteServerRole(id int, ownerUserID string) error
+
 	// --- Backups ---
 	ListBackupStorages() ([]models.BackupStorage, error)
 	GetBackupStorage(id int) (*models.BackupStorage, error)
