@@ -228,10 +228,9 @@ func probeBeamLAN(ips []string, port string) string {
 			conn, err := net.DialTimeout("tcp", addr, budget)
 			if err == nil {
 				conn.Close()
-				select {
-				case found <- addr:
-				default:
-				}
+				// found is buffered to len(ips) and each goroutine sends at most once,
+				// so this send never blocks.
+				found <- addr
 			}
 		}(net.JoinHostPort(ip, port))
 	}
