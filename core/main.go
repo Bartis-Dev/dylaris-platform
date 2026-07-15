@@ -1249,6 +1249,39 @@ func main() {
 		}
 	}()
 
+	// Origin-isolated tab-proxy data plane (spec B5). When TAB_PROXY_PORT is set,
+	// Core binds a SECOND HTTP server on that port serving ONLY the proxy data
+	// plane (InDashboard + Public + their {rest:.*} variants) with the SAME
+	// proxyHandler. It carries NO CORS and NO AuthMiddleware: those routes trust
+	// only the host-only dyl_tabproxy ticket cookie (which the browser delivers
+	// to this same-host port), and the browser reaches this port as a distinct
+	// ORIGIN (different port), so a proxied container's JS runs on this origin and
+	// can never read the panel token from the panel origin's localStorage. Route
+	// patterns mirror the root-router registrations exactly. The mint endpoints
+	// stay on the panel origin's main listener (behind AuthMiddleware) and are
+	// deliberately NOT served here. ReadHeaderTimeout/IdleTimeout mirror the main
+	// server; ReadTimeout/WriteTimeout stay unset because the proxy streams.
+	var tabProxySrv *http.Server
+	if cfg.TabProxyPort != "" {
+		tpRouter := mux.NewRouter()
+		tpRouter.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", proxyHandler.InDashboard)
+		tpRouter.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", proxyHandler.InDashboard)
+		tpRouter.HandleFunc("/api/tabproxy/{token}", proxyHandler.Public)
+		tpRouter.HandleFunc("/api/tabproxy/{token}/{rest:.*}", proxyHandler.Public)
+		tabProxySrv = &http.Server{
+			Addr:              ":" + cfg.TabProxyPort,
+			Handler:           tpRouter,
+			ReadHeaderTimeout: 15 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		log.Printf("Dylaris Core tab-proxy (origin-isolated) listener running on port %s", cfg.TabProxyPort)
+		go func() {
+			if err := tabProxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Core tab-proxy listener crashed: %v", err)
+			}
+		}()
+	}
+
 	// Graceful shutdown: mirrors node/main.go's signal handling. Rolling
 	// deploys (docker-stack.yml start-first, 2 core replicas) SIGTERM the
 	// outgoing task while the new one is already serving; without this the
@@ -1263,5 +1296,10 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Core graceful shutdown error: %v", err)
+	}
+	if tabProxySrv != nil {
+		if err := tabProxySrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Core tab-proxy graceful shutdown error: %v", err)
+		}
 	}
 }
