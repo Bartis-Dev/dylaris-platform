@@ -114,6 +114,55 @@ func incIP(ip net.IP) {
 	}
 }
 
+// ErrInvalidFixedWGIP wraps every admin FixedWGIP validation failure so callers can
+// map it to a client error (400/409) via errors.Is while surfacing the detail.
+var ErrInvalidFixedWGIP = errors.New("invalid fixed WG IP")
+
+// ValidateFixedWGIP checks that an admin-pinned fixed overlay IP is a legitimate peer
+// host inside the region subnet: a valid IPv4 address in `subnet` that is not the
+// network address, not the leader-reserved first host (network+1, e.g. .1), and not
+// the broadcast address. This mirrors NextFreeIP's reserved-address semantics so a
+// fixed IP is accepted iff NextFreeIP could have produced it. Every failure wraps
+// ErrInvalidFixedWGIP.
+func ValidateFixedWGIP(ip, subnet string) error {
+	_, ipnet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return fmt.Errorf("%w: parse subnet %q: %v", ErrInvalidFixedWGIP, subnet, err)
+	}
+	network := ipnet.IP.Mask(ipnet.Mask).To4()
+	if network == nil {
+		return fmt.Errorf("%w: only IPv4 subnets are supported: %q", ErrInvalidFixedWGIP, subnet)
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return fmt.Errorf("%w: %q is not a valid IP", ErrInvalidFixedWGIP, ip)
+	}
+	ip4 := parsed.To4()
+	if ip4 == nil {
+		return fmt.Errorf("%w: %q is not an IPv4 address", ErrInvalidFixedWGIP, ip)
+	}
+	if !ipnet.Contains(ip4) {
+		return fmt.Errorf("%w: %q is not inside region subnet %s", ErrInvalidFixedWGIP, ip, subnet)
+	}
+	if ip4.Equal(network) {
+		return fmt.Errorf("%w: %q is the subnet network address", ErrInvalidFixedWGIP, ip)
+	}
+	leader := make(net.IP, len(network))
+	copy(leader, network)
+	incIP(leader)
+	if ip4.Equal(leader) {
+		return fmt.Errorf("%w: %q is the leader-reserved address (first host)", ErrInvalidFixedWGIP, ip)
+	}
+	broadcast := make(net.IP, len(network))
+	for i := range network {
+		broadcast[i] = network[i] | ^ipnet.Mask[i]
+	}
+	if ip4.Equal(broadcast) {
+		return fmt.Errorf("%w: %q is the subnet broadcast address", ErrInvalidFixedWGIP, ip)
+	}
+	return nil
+}
+
 // EnrollResult mirrors the gateway client's enrollResponse JSON. Endpoints is the
 // full failover list for the assigned region (alive-first); LeaderEndpoint is the
 // primary (Endpoints[0]) kept for older clients.
