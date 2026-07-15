@@ -475,7 +475,10 @@ works even on gateway-routed / BYON nodes with no browser-reachable node address
 > the panel origin's localStorage (spec B5). Public share links are REFUSED until
 > this origin isolation is active. Without it, only the in-dashboard proxy works,
 > same-origin, which is safe solely for a single-operator self-host where you
-> control your own containers.
+> control your own containers. Origin isolation fully protects PUBLIC shares; the
+> in-dashboard proxy may briefly use the same origin during app-data load, so an
+> admin viewing another tenant's container in-dashboard is best-effort (the
+> single-operator / self-host assumption).
 
 ## Beam desktop client
 
