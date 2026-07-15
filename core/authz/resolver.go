@@ -1,0 +1,195 @@
+package authz
+
+import (
+	"context"
+
+	"dylaris-core/store"
+)
+
+// Identity is the request principal, extracted from the context keys that
+// AuthMiddleware sets. An admin short-circuits every capability check.
+type Identity struct {
+	UserID   string
+	Username string
+	IsAdmin  bool
+}
+
+// IdentityFromContext reads the "userID"/"username"/"isAdmin" context values
+// set by handlers.AuthHandler.AuthMiddleware. Missing values yield zero fields.
+func IdentityFromContext(ctx context.Context) Identity {
+	id := Identity{}
+	if v, ok := ctx.Value("userID").(string); ok {
+		id.UserID = v
+	}
+	if v, ok := ctx.Value("username").(string); ok {
+		id.Username = v
+	}
+	if v, ok := ctx.Value("isAdmin").(bool); ok {
+		id.IsAdmin = v
+	}
+	return id
+}
+
+// Resolver materializes effective capabilities for a request. It is the single
+// authorization chokepoint that subsumes the legacy checkServerAccess / inline
+// IsAdmin / EffectivePermissions paths (wired into routes in phase 2).
+type Resolver struct {
+	store Store
+}
+
+func NewResolver(st Store) *Resolver {
+	return &Resolver{store: st}
+}
+
+// Resolution is the materialized decision context for one (identity, scope).
+// It is deny-by-default: a capability is granted only when a short-circuit or
+// an explicit resolved cap covers it. HasCap answers individual checks.
+type Resolution struct {
+	admin      bool            // panel admin: holds every capability
+	ownerSelf  bool            // owns the realm in scope (own server, or serverID==0 self-realm)
+	panelCaps  map[string]bool // PANEL caps from panel role + per-user overrides
+	serverCaps map[string]bool // SERVER caps from direct/proxy/account grant
+	ownerCaps  map[string]bool // OWNER caps from an account grant on this realm
+}
+
+// HasCap reports whether the resolution grants capID. An unknown capability is
+// always denied. Admin grants everything. Otherwise the cap's catalog scope
+// selects which resolved set (plus the owner short-circuit) is consulted.
+//
+// Invariant (guaranteed by RequireCap): SERVER caps are only ever checked with
+// a resolution built for a concrete server, so ownerSelf there means "owns THAT
+// server"; OWNER caps are checked with serverID==0, so ownerSelf means "own
+// realm". A single ownerSelf flag is therefore correct for both.
+func (res *Resolution) HasCap(capID string) bool {
+	c, ok := Get(capID)
+	if !ok {
+		return false
+	}
+	if res.admin {
+		return true
+	}
+	switch c.Scope {
+	case ScopePanel:
+		return res.panelCaps[capID]
+	case ScopeServer:
+		return res.ownerSelf || res.serverCaps[capID]
+	case ScopeOwner:
+		return res.ownerSelf || res.ownerCaps[capID]
+	}
+	return false
+}
+
+// Resolve builds the Resolution. serverID == 0 means no specific server: PANEL
+// caps are resolved and the user is treated as owner of their own OWNER realm.
+// A non-zero serverID scopes SERVER/OWNER caps to that server's owner realm.
+func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
+	res := &Resolution{
+		panelCaps:  map[string]bool{},
+		serverCaps: map[string]bool{},
+		ownerCaps:  map[string]bool{},
+	}
+	if id.IsAdmin {
+		res.admin = true
+		return res, nil
+	}
+	if id.UserID == "" {
+		return res, nil // no identity: deny-by-default
+	}
+
+	// PANEL caps: role capabilities plus per-user grant/deny overrides.
+	roleID, overrides, err := r.store.GetUserPanelAuthz(id.UserID)
+	if err == nil {
+		if roleID != nil {
+			if role, rerr := r.store.GetPanelRole(*roleID); rerr == nil && role != nil {
+				for _, capID := range role.Capabilities {
+					res.panelCaps[capID] = true
+				}
+			}
+		}
+		applyOverrides(res.panelCaps, overrides)
+	}
+
+	if serverID == 0 {
+		// Acting on the user's own OWNER realm (their own modpacks/library/etc).
+		res.ownerSelf = true
+		return res, nil
+	}
+
+	srv, serr := r.store.GetServerByID(serverID)
+	if serr != nil || srv == nil {
+		return res, nil // unknown server: SERVER/OWNER stay empty (deny)
+	}
+	if srv.OwnerID == id.UserID || (id.Username != "" && srv.OwnerName == id.Username) {
+		res.ownerSelf = true // server owner short-circuit
+		return res, nil
+	}
+
+	// Direct per-server grant, else a proxy-inherited grant.
+	grant, gerr := r.store.GetServerGrant(serverID, id.UserID)
+	if gerr != nil || grant == nil {
+		grant = nil
+		if srv.ProxyID != nil {
+			if pg, perr := r.store.GetServerGrant(*srv.ProxyID, id.UserID); perr == nil && pg != nil && pg.Inherit {
+				grant = pg
+			}
+		}
+	}
+	if grant != nil {
+		r.applyGrant(res, grant)
+	}
+	// Account-wide grant on this server's owner realm (all servers + owner tools).
+	if acct, aerr := r.store.GetAccountGrant(srv.OwnerID, id.UserID); aerr == nil && acct != nil {
+		r.applyGrant(res, acct)
+	}
+	return res, nil
+}
+
+// applyGrant folds a grant's server-role caps + overrides into the resolution,
+// routing each resolved cap to the SERVER or OWNER set by its catalog scope so
+// a mixed server-role (SERVER + OWNER caps) lands in both sets correctly.
+func (r *Resolver) applyGrant(res *Resolution, g *store.ServerGrant) {
+	caps := map[string]bool{}
+	if g.ServerRoleID != nil {
+		if role, err := r.store.GetServerRole(*g.ServerRoleID); err == nil && role != nil {
+			for _, capID := range role.Capabilities {
+				caps[capID] = true
+			}
+		}
+	}
+	applyOverrides(caps, g.CapOverrides)
+	for capID := range caps {
+		c, ok := Get(capID)
+		if !ok {
+			continue
+		}
+		if c.Scope == ScopeOwner {
+			res.ownerCaps[capID] = true
+		} else {
+			res.serverCaps[capID] = true
+		}
+	}
+}
+
+// applyOverrides adds every Grant cap then removes every Deny cap.
+func applyOverrides(m map[string]bool, ov store.CapOverrides) {
+	for _, c := range ov.Grant {
+		m[c] = true
+	}
+	for _, c := range ov.Deny {
+		delete(m, c)
+	}
+}
+
+// CapSubset returns the subset of requested capabilities that res actually
+// holds. This is the delegation cap: a non-owner assigner can only grant caps
+// they themselves hold. Owner/admin resolutions hold everything, so nothing is
+// removed.
+func CapSubset(res *Resolution, requested []string) []string {
+	out := make([]string, 0, len(requested))
+	for _, c := range requested {
+		if res.HasCap(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
