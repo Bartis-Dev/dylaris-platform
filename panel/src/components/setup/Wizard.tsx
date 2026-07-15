@@ -158,7 +158,7 @@ export default function SetupWizard() {
                             onChange={e => setUsername(e.target.value)}
                             placeholder="alice"
                             autoComplete="username"
-                            className="input w-full"
+                            className="input-field w-full"
                         />
                         <div className="text-[10px] text-(--base-06) mt-1">
                             3-32 chars: letters, digits, _ or -
@@ -172,7 +172,7 @@ export default function SetupWizard() {
                             value={password}
                             onChange={e => setPassword(e.target.value)}
                             autoComplete="new-password"
-                            className="input w-full"
+                            className="input-field w-full"
                         />
                     </div>
 
@@ -183,7 +183,7 @@ export default function SetupWizard() {
                             value={passwordRepeat}
                             onChange={e => setPasswordRepeat(e.target.value)}
                             autoComplete="new-password"
-                            className="input w-full"
+                            className="input-field w-full"
                         />
                         {passwordRepeat && password !== passwordRepeat && (
                             <div className="text-[10px] text-(--error-light) mt-1">
@@ -201,7 +201,7 @@ export default function SetupWizard() {
                                 onChange={e => setAdminSecret(e.target.value)}
                                 placeholder="ADMIN_SECRET from Core's environment"
                                 autoComplete="off"
-                                className="input w-full font-mono text-xs"
+                                className="input-mono w-full font-mono text-xs"
                             />
                             <div className="text-[10px] text-(--base-06) mt-1">
                                 The value of the ADMIN_SECRET env configured on this Core.
@@ -256,7 +256,7 @@ export default function SetupWizard() {
                             value={totpCode}
                             onChange={e => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                             placeholder="123456"
-                            className="input w-full font-mono"
+                            className="input-mono w-full font-mono"
                             maxLength={6}
                         />
                     </div>
