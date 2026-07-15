@@ -664,8 +664,18 @@ func (a *App) ConnectToServer(serverUUID string) error {
 	}
 
 	if rc == nil {
+		// A failed switch must not leave the previous server's tunnel and badge
+		// installed - they would misrepresent the now-selected server. Tear the stale
+		// connection down so file ops fall back to Core REST for the correct server and
+		// the connection-mode badge clears.
+		a.stopHealthCheck()
+		if old := a.setRelay(nil); old != nil {
+			old.Close()
+		}
+		a.setConnMode("")
+
 		if lastErr != nil {
-			return lastErr
+			return fmt.Errorf("could not reach the server over LAN, relay, or a direct connection: %w", lastErr)
 		}
 		// Nothing was dialable: no relay and no pinnable direct target.
 		port := ticket.LANPort
