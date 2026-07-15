@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/config"
 	"dylaris-core/database"
 	nodegrpc "dylaris-core/grpc"
@@ -152,6 +153,7 @@ func main() {
 		FrontendURL:         cfg.FrontendURL,
 		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
 		FeatureFlags:        services.NewFeatureFlags(pgStore),
+		Authz:               authz.NewResolver(pgStore),
 		DBType:              cfg.DBType,
 		StoreEnabled:        cfg.StoreEnabled,
 		StoreURL:            cfg.StoreURL,

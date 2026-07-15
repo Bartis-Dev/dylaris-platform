@@ -3,6 +3,7 @@ package handlers
 import (
 	"time"
 
+	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
@@ -35,6 +36,11 @@ type AppState struct {
 	// FeatureFlags is the cached platform feature toggle reader.
 	// Read by the modpack route gates; flipped via /admin/settings/modpacks.
 	FeatureFlags *services.FeatureFlags
+
+	// Authz is the capability resolver + RequireCap middleware factory (the
+	// unified permission-system chokepoint). Constructed at boot; NOT yet wired
+	// into the ~400 routes (phase 2). Only GET /api/authz/catalog exists today.
+	Authz *authz.Resolver
 
 	// Migration is the leader-driven node-to-node migration orchestrator.
 	// The manual-move endpoint only ENQUEUES onto it; the elected Core executes.
