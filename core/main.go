@@ -346,6 +346,7 @@ func main() {
 	nodeGRPCHandler := handlers.NewNodeGRPCHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState, libraryHandler)
+	authzHandler := handlers.NewAuthzHandler()
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	warpService := services.NewWarpService(pgStore, redisClient, cfg.ClusterSecret)
@@ -809,6 +810,9 @@ func main() {
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 
 	// --- PROTECTED ENDPOINTS ---
+	// Read-only capability catalog for the permission-system redesign
+	// (foundation phase). Not yet consulted by any other route (phase 2).
+	api.HandleFunc("/authz/catalog", authHandler.AuthMiddleware(authzHandler.Catalog)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.UpdateProfileHandler)).Methods("PUT")
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
