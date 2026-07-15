@@ -119,6 +119,28 @@ func TestBelowMinVersion(t *testing.T) {
 	}
 }
 
+func TestUpdateIsNewer(t *testing.T) {
+	cases := []struct {
+		name                     string
+		manifest, current, floor string
+		want                     bool
+	}{
+		{"strictly newer accepted", "1.4.0", "1.3.9", "", true},
+		{"equal rejected (rollback guard)", "1.4.0", "1.4.0", "", false},
+		{"older rejected (rollback guard)", "1.3.0", "1.4.0", "", false},
+		{"newer but below active floor rejected", "1.4.0", "1.3.0", "1.5.0", false},
+		{"newer and at floor accepted", "1.5.0", "1.3.0", "1.5.0", true},
+		{"newer and above floor accepted", "1.6.0", "1.3.0", "1.5.0", true},
+		{"dev current fails closed", "1.4.0", "dev", "", false},
+		{"garbage manifest rejected", "nope", "1.3.0", "", false},
+	}
+	for _, c := range cases {
+		if got := updateIsNewer(c.manifest, c.current, c.floor); got != c.want {
+			t.Errorf("%s: updateIsNewer(%q,%q,%q) = %v want %v", c.name, c.manifest, c.current, c.floor, got, c.want)
+		}
+	}
+}
+
 func TestPlatformArtifactDecode(t *testing.T) {
 	key := runtime.GOOS + "-" + runtime.GOARCH
 	// A manifest whose platform map has an entry for THIS host, so the resolver

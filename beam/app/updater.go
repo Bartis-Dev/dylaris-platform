@@ -222,6 +222,24 @@ func parseSemver(s string) ([3]int, bool) {
 	return out, true
 }
 
+// updateIsNewer is the anti-rollback decision for the self-update apply path. It
+// returns true only when the signed manifest version is strictly newer than the
+// running build AND (when a force-update floor is active) not below that floor.
+// The manifest signature proves authenticity, not freshness, so without this a
+// validly-signed OLDER manifest served from a poisoned CDN/cache would be applied
+// as a silent downgrade. An unparseable running version (incl. "dev") makes
+// semverNewer return false, so the apply is refused fail-closed rather than
+// downgrading blindly. Reuses the existing semver helpers; no new parsing.
+func updateIsNewer(manifestVer, currentVer, gateMin string) bool {
+	if !semverNewer(manifestVer, currentVer) {
+		return false
+	}
+	if gateMin != "" && belowMinVersion(manifestVer, gateMin) {
+		return false
+	}
+	return true
+}
+
 // belowMinVersion is the app-side twin of Core's beamClientBelowMin: it decides
 // the MANDATORY tier. Empty/invalid min -> false (gating off). An unparseable
 // current (incl. "dev") while a valid min is set -> true (fail-closed, matching

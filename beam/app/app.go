@@ -223,6 +223,15 @@ func (a *App) gateIsBlocked() bool {
 	return a.gateBlocked
 }
 
+// gateFloor returns the currently advertised force-update minimum, or "" when no
+// gate is active. Read by runUpdate's anti-rollback check so a signed-but-older
+// manifest can never satisfy the mandatory floor.
+func (a *App) gateFloor() string {
+	a.gateMu.Lock()
+	defer a.gateMu.Unlock()
+	return a.gateMin
+}
+
 // triggerMandatoryUpdate flips the gate and pulls the webview off the Panel
 // onto the app-shell mandatory screen (/__beam/, where App.tsx renders it when
 // GetUpdateGate reports blocked). The proxy middleware also redirects Panel
@@ -294,6 +303,16 @@ func (a *App) runUpdate() {
 	m, err := fetchVerifiedManifest()
 	if err != nil {
 		emitStatus("error", "No verified update is available.")
+		return
+	}
+	// Anti-rollback: the manifest signature proves authenticity, NOT freshness. A
+	// validly-signed but older-or-equal manifest served from a compromised
+	// CDN/cache must never be downloaded and applied - that is a silent downgrade
+	// defeating the mandatory-update control. Require the offered version to be
+	// strictly newer than the running build and, when a force-update gate is
+	// active, not below its floor, BEFORE any download or apply.
+	if !updateIsNewer(m.Version, AppVersion, a.gateFloor()) {
+		emitStatus("error", "The offered update is not newer than the installed version; nothing was changed.")
 		return
 	}
 	dlURL, wantSha, sigB64, err := platformArtifact(m)
@@ -421,8 +440,32 @@ func (a *App) resetSession() *BeamNodeClient {
 
 // ─── Auth ────────────────────────────────────────────────────────────
 
+// isPanelOrigin reports whether apiURL points at the SAME origin as the
+// configured Panel: identical host AND identical scheme. Both Login and
+// SetSession are Wails-bound, so a compromised/MITM'd proxied Panel (which
+// shares the wails:// origin) could call them with an attacker-controlled URL
+// to exfiltrate the JWT-carrying REST client or hijack the session. Pinning to
+// the Panel origin blocks that. The scheme is matched against the Panel target's
+// OWN scheme rather than hard-coded https, so a legitimate localhost/self-host
+// http Panel keeps working while an http:// downgrade of an https Panel (which
+// would send the JWT in cleartext to the same host) is rejected.
+func (a *App) isPanelOrigin(apiURL string) bool {
+	u, err := url.Parse(apiURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	target := a.resolvePanelTarget()
+	return u.Host == target.Host && u.Scheme == target.Scheme
+}
+
 // Login authenticates with the Core REST API and returns the session info.
 func (a *App) Login(apiURL, username, password string) (*LoginResult, error) {
+	// Pin to the Panel origin before creating or installing any client, so a
+	// compromised Panel cannot point the credential-bearing REST client at an
+	// attacker host (exfil/SSRF) or hijack the session.
+	if !a.isPanelOrigin(apiURL) {
+		return nil, fmt.Errorf("login: apiURL must match the panel origin")
+	}
 	client, err := NewCoreClient(apiURL)
 	if err != nil {
 		return nil, err
@@ -454,11 +497,12 @@ func (a *App) SetSession(apiURL, token string) error {
 	if apiURL == "" || token == "" {
 		return fmt.Errorf("apiURL and token are required")
 	}
-	// The token is a live JWT credential. Only accept an apiURL on the
-	// configured Panel host so a compromised Panel page can't push the token
-	// to an attacker-controlled URL.
-	if u, err := url.Parse(apiURL); err != nil || u.Host != a.resolvePanelTarget().Host {
-		return fmt.Errorf("apiURL host does not match the configured Panel")
+	// The token is a live JWT credential. Only accept an apiURL on the SAME
+	// origin (host AND scheme) as the configured Panel so a compromised Panel
+	// page can neither push the token to an attacker-controlled host nor
+	// downgrade it onto an http:// transport of the Panel host.
+	if !a.isPanelOrigin(apiURL) {
+		return fmt.Errorf("apiURL does not match the configured Panel origin")
 	}
 	client, err := NewCoreClient(apiURL)
 	if err != nil {
@@ -702,11 +746,18 @@ func (a *App) dialLANFastpath(ticket *BeamTicket) (*BeamNodeClient, bool) {
 	if ticket.LANFingerprint == "" || len(ticket.LANIPs) == 0 {
 		return nil, false
 	}
+	// Client-side backstop: drop any LAN hint that is not an RFC1918/link-local LAN
+	// address before probing. Core already hard-filters these, but a poisoned ticket
+	// must never make the app dial an off-LAN (deanonymizing) target.
+	lanIPs := filterPrivateLANIPs(ticket.LANIPs)
+	if len(lanIPs) == 0 {
+		return nil, false
+	}
 	port := ticket.LANPort
 	if port == "" {
 		port = "25523" // pinned-TLS beam port (BEAM_LAN_PORT default)
 	}
-	addr := probeBeamLAN(ticket.LANIPs, port)
+	addr := probeBeamLAN(lanIPs, port)
 	if addr == "" {
 		return nil, false
 	}

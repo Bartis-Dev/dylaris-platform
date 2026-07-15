@@ -69,6 +69,70 @@ func TestSavePanelURLTokenGate(t *testing.T) {
 	}
 }
 
+// panelOriginTestApp returns an App whose Panel target is fixed to
+// https://panel.example.test, with the settings path redirected to an empty temp
+// dir so loadSettings() finds no saved override and GetPanelURL falls through to
+// a.panelURL. Keeps the origin check deterministic and off the real user config.
+func panelOriginTestApp(t *testing.T) *App {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("AppData", tmp)         // Windows
+	t.Setenv("XDG_CONFIG_HOME", tmp) // Linux
+	t.Setenv("HOME", tmp)            // macOS / Linux fallback
+	return &App{panelURL: "https://panel.example.test"}
+}
+
+func TestIsPanelOrigin(t *testing.T) {
+	a := panelOriginTestApp(t)
+	cases := []struct {
+		name   string
+		apiURL string
+		want   bool
+	}{
+		{"exact panel origin", "https://panel.example.test", true},
+		{"exact panel origin with api path", "https://panel.example.test/api", true},
+		{"http downgrade rejected", "http://panel.example.test", false},
+		{"foreign host rejected", "https://evil.test", false},
+		{"foreign host with api path rejected", "https://evil.test/api", false},
+		{"schemeless host rejected", "panel.example.test", false},
+		{"empty rejected", "", false},
+	}
+	for _, c := range cases {
+		if got := a.isPanelOrigin(c.apiURL); got != c.want {
+			t.Errorf("%s: isPanelOrigin(%q) = %v, want %v", c.name, c.apiURL, got, c.want)
+		}
+	}
+}
+
+func TestSetSessionRejectsNonPanelOrigin(t *testing.T) {
+	a := panelOriginTestApp(t)
+	// Foreign host: rejected before any client is created.
+	if err := a.SetSession("https://evil.test/api", "jwt"); err == nil {
+		t.Error("SetSession accepted a foreign host - must reject")
+	}
+	// http downgrade of the panel host: rejected on the scheme mismatch.
+	if err := a.SetSession("http://panel.example.test/api", "jwt"); err == nil {
+		t.Error("SetSession accepted an http downgrade - must reject")
+	}
+	if a.getClient() != nil {
+		t.Error("SetSession installed a client for a rejected origin")
+	}
+}
+
+func TestLoginRejectsNonPanelOrigin(t *testing.T) {
+	a := panelOriginTestApp(t)
+	// Both rejection paths return before NewCoreClient, so no network is touched.
+	if _, err := a.Login("https://evil.test", "u", "p"); err == nil {
+		t.Error("Login accepted a foreign host - must reject")
+	}
+	if _, err := a.Login("http://panel.example.test", "u", "p"); err == nil {
+		t.Error("Login accepted an http downgrade - must reject")
+	}
+	if a.getClient() != nil {
+		t.Error("Login installed a client for a rejected origin")
+	}
+}
+
 func TestApplyUpdateTokenGate(t *testing.T) {
 	a := &App{shellToken: "good"}
 	// Bad token must return before touching updateInFlight (no run started,

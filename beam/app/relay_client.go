@@ -203,6 +203,36 @@ func ConnectBeamNodeDirect(addr, ticket, fingerprint string) (*BeamNodeClient, e
 	return &BeamNodeClient{conn: conn, svc: svc, ServerUUID: resp.ServerUuid}, nil
 }
 
+// isPrivateLANIP reports whether ip is a private/link-local LAN address the beam
+// client may direct-dial: RFC1918 IPv4 (10/8, 172.16/12, 192.168/16) and IPv6
+// ULA (fc00::/7) via IsPrivate, plus IPv4 link-local (169.254/16, RFC3927) and
+// IPv6 link-local (fe80::/10) via IsLinkLocalUnicast. Public, unspecified, and
+// multicast addresses are rejected so a poisoned ticket can never point the
+// client at an off-LAN (deanonymizing) host.
+func isPrivateLANIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// filterPrivateLANIPs keeps only the entries of ips that parse as a
+// private/link-local LAN address (see isPrivateLANIP), dropping and logging the
+// rest. Core already hard-filters LAN hints to RFC1918 before signing the
+// ticket, but this is a client-side backstop: a poisoned or MITM'd ticket must
+// never make the app dial an arbitrary public target.
+func filterPrivateLANIPs(ips []string) []string {
+	out := make([]string, 0, len(ips))
+	for _, raw := range ips {
+		if ip := net.ParseIP(strings.TrimSpace(raw)); ip != nil && isPrivateLANIP(ip) {
+			out = append(out, raw)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "beam-app: dropping non-private LAN hint %q\n", raw)
+	}
+	return out
+}
+
 // probeBeamLAN returns the first ip:port that accepts a TCP connection within a short
 // budget, or "" if none do. A cheap reachability check run before the gRPC dial so an
 // unreachable LAN hint costs at most one budget before we fall back to the relay.
