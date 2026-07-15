@@ -1299,7 +1299,13 @@ func main() {
 		log.Printf("Core graceful shutdown error: %v", err)
 	}
 	if tabProxySrv != nil {
-		if err := tabProxySrv.Shutdown(shutdownCtx); err != nil {
+		// Own fresh timeout: the main server's Shutdown above may have already
+		// consumed most/all of shutdownCtx's budget, which would leave the
+		// tab-proxy listener no drain window and hard-kill in-flight proxied
+		// streams. Give it an independent 30s to drain.
+		tpCtx, tpCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer tpCancel()
+		if err := tabProxySrv.Shutdown(tpCtx); err != nil {
 			log.Printf("Core tab-proxy graceful shutdown error: %v", err)
 		}
 	}
