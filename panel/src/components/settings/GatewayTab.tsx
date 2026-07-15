@@ -1391,7 +1391,7 @@ const XDP_DEFAULTS: XDPConfig = {
     enabled: false,
     host_mode: false,
     interface: '',
-    protected_ports: '25565,80,443',
+    protected_ports: '25565',
     rate_limit: 1000,
     rate_window_ms: 1000,
     ban_duration_min: 30,
@@ -1563,7 +1563,7 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                         type="text"
                         value={cfg.protected_ports}
                         onChange={e => set('protected_ports', e.target.value)}
-                        placeholder="25565,80,443"
+                        placeholder="25565"
                         className="input-field w-72"
                     />
                 </div>

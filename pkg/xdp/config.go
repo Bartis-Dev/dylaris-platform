@@ -37,7 +37,7 @@ func Defaults() Config {
 	return Config{
 		Enabled:                false,
 		HostMode:               false,
-		ProtectedPorts:         "25565,80,443",
+		ProtectedPorts:         "25565",
 		RateLimit:              1000,
 		RateWindowMs:           1000,
 		BanDurationMin:         30,
