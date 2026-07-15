@@ -23,6 +23,14 @@ func TestProbeBeamLANReturnsReachable(t *testing.T) {
 	}
 }
 
+func TestProbeBeamLANEmptyPort(t *testing.T) {
+	// An empty port must fail safe (no LAN match, so the connect chain falls back to the
+	// relay) rather than probe a hard-coded fallback port.
+	if got := probeBeamLAN([]string{"127.0.0.1"}, ""); got != "" {
+		t.Errorf("probeBeamLAN(_, \"\") = %q, want \"\"", got)
+	}
+}
+
 func TestProbeBeamLANParallelBudget(t *testing.T) {
 	// RFC 5737 TEST-NET-1 addresses are unrouted; a dial to them stalls until the
 	// per-dial 700ms timeout. Serially, three would cost ~2.1s; concurrently they

@@ -212,10 +212,10 @@ func ConnectBeamNodeDirect(addr, ticket, fingerprint string) (*BeamNodeClient, e
 // when a relay is present), so a serial probe of several unreachable hints would
 // delay the relay fallback unacceptably.
 func probeBeamLAN(ips []string, port string) string {
-	if port == "" {
-		port = "25521"
-	}
-	if len(ips) == 0 {
+	// The sole caller (dialLANFastpath) always supplies the pinned-TLS beam port
+	// (BEAM_LAN_PORT, default 25523). An empty port fails safe - no LAN match, so the
+	// connect chain falls back to the relay - rather than probing a hard-coded port.
+	if port == "" || len(ips) == 0 {
 		return ""
 	}
 	const budget = 700 * time.Millisecond
