@@ -13,6 +13,11 @@ import { getSystemFeatures, FeatureFlags } from '@/lib/api/featureFlags';
 interface CoreInfo {
     region: string;
     coreId: string;
+    // Origin-isolation for the WS5 tab proxy (spec B5): the browser-facing
+    // isolated proxy origin the panel builds proxied-iframe srcs against, and
+    // whether isolation is active. Empty origin = same-origin fallback.
+    tabProxyOrigin: string;
+    tabProxyIsolationActive: boolean;
 }
 
 interface AppData {
@@ -109,7 +114,12 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             const res = await fetch(`${API_URL}/system/core-info`, { headers: getAuthHeader() });
             if (!res.ok) return;
             const data = await res.json();
-            if (data.success) setCoreInfo({ region: data.region, coreId: data.coreId });
+            if (data.success) setCoreInfo({
+                region: data.region,
+                coreId: data.coreId,
+                tabProxyOrigin: data.tabProxyOrigin || '',
+                tabProxyIsolationActive: !!data.tabProxyIsolationActive,
+            });
         } catch { /* network blip — keep last known state */ }
     }, []);
 

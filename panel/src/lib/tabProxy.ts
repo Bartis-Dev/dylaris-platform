@@ -9,12 +9,21 @@
 // cookie at all). Neither builder below ever puts a session token or ticket
 // in the URL - the 24h session JWT must never be carried by an iframe src.
 
-export function tabDashboardProxySrc(serverId: number, tabId: number): string {
-    return `/api/servers/${serverId}/tabs/${tabId}/proxy/`;
+// When origin-isolation is active (spec B5), Core serves the proxy data plane on
+// a dedicated same-host, different-PORT origin so a proxied container's JS runs
+// there and can never read the panel token from the panel origin's localStorage.
+// The panel then builds the iframe src as an ABSOLUTE URL on that origin
+// (`origin` is Core's normalized scheme://host[:port], no trailing slash);
+// otherwise it falls back to today's relative same-origin path. The mint /
+// preflight fetches stay same-origin to the panel and are unaffected.
+export function tabDashboardProxySrc(serverId: number, tabId: number, origin?: string): string {
+    const path = `/api/servers/${serverId}/tabs/${tabId}/proxy/`;
+    return origin ? origin + path : path;
 }
 
-export function tabProxyPageSrc(token: string): string {
-    return `/api/tabproxy/${encodeURIComponent(token)}/`;
+export function tabProxyPageSrc(token: string, origin?: string): string {
+    const path = `/api/tabproxy/${encodeURIComponent(token)}/`;
+    return origin ? origin + path : path;
 }
 
 // shareLinkUrl builds the shareable standalone-page URL for a share token.

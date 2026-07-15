@@ -54,6 +54,9 @@ export default function StandaloneTabProxyPage() {
     const router = useRouter();
     const token = String(params?.token || '');
     const [state, setState] = useState<State>('checking');
+    // spec B5: a working public share is always served from the isolated origin;
+    // learn it from the public core-info endpoint before rendering the iframe.
+    const [proxyOrigin, setProxyOrigin] = useState('');
 
     useEffect(() => {
         let cancelled = false;
@@ -81,6 +84,21 @@ export default function StandaloneTabProxyPage() {
 
         (async () => {
             try {
+                // Learn the isolated proxy origin first so the iframe embeds the
+                // share on the dedicated origin, not the panel origin. Public
+                // core-info endpoint; a failure just leaves the same-origin
+                // fallback (the preflight below then decides notfound anyway).
+                let origin = '';
+                try {
+                    const ci = await fetch(`${API_URL}/system/core-info`);
+                    if (ci.ok) {
+                        const data = await ci.json();
+                        origin = data?.tabProxyOrigin || '';
+                    }
+                } catch { /* keep same-origin fallback */ }
+                if (cancelled) return;
+                setProxyOrigin(origin);
+
                 const res = await fetch(`${API_URL}/tabproxy/${encodeURIComponent(token)}/`, {
                     method: 'GET',
                     credentials: 'include',
@@ -156,7 +174,7 @@ export default function StandaloneTabProxyPage() {
                 )}
                 {state === 'ready' && (
                     <iframe
-                        src={tabProxyPageSrc(token)}
+                        src={tabProxyPageSrc(token, proxyOrigin || undefined)}
                         title="Dylaris tab"
                         className="w-full h-full border-0"
                         referrerPolicy="no-referrer"

@@ -6,6 +6,7 @@ import { AlertTriangle, ExternalLink, Link2 } from 'lucide-react';
 import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
 import { tabDashboardProxySrc } from '@/lib/tabProxy';
+import { useAppData } from '@/lib/AppDataContext';
 import { Skeleton } from '@/components/Skeleton';
 
 // dynamic renderer for custom tabs. Loads the tab metadata, then either:
@@ -31,6 +32,11 @@ export default function ServerCustomTabPage() {
     const params = useParams();
     const serverId = Number(params?.id);
     const tabId = Number(params?.tabId);
+    // spec B5: when origin-isolation is active, coreInfo.tabProxyOrigin is the
+    // dedicated proxy origin; the builder then emits an absolute src on it. When
+    // inactive it is '' and the builder falls back to the relative same-origin
+    // path. This page is inside AppDataProvider ((authed)/layout.tsx).
+    const { coreInfo } = useAppData();
     const [tab, setTab] = useState<ServerTab | null | undefined>(undefined);
     const [proxyAuth, setProxyAuth] = useState<ProxyAuthState>('pending');
     const [proxyAuthError, setProxyAuthError] = useState<string | null>(null);
@@ -144,7 +150,7 @@ export default function ServerCustomTabPage() {
         return (
             <main className="flex-1 overflow-hidden bg-(--base-01)">
                 <iframe
-                    src={tabDashboardProxySrc(serverId, tabId)}
+                    src={tabDashboardProxySrc(serverId, tabId, coreInfo?.tabProxyOrigin || undefined)}
                     title={tab.name}
                     className="w-full h-full border-0"
                     referrerPolicy="no-referrer"
