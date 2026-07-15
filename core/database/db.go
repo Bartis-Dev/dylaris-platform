@@ -154,6 +154,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyAuthzGrantsSchema(db); err != nil {
 		return err
 	}
+	if err := migrateLegacyServerInvites(db); err != nil {
+		return err
+	}
 	if err := applyWarpSchema(db); err != nil {
 		return err
 	}
