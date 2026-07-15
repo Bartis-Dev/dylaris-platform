@@ -2,30 +2,23 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log"
 	"time"
 )
 
-// settingsRW is the slice of the Store interface this service needs. Local
-// to break the cycle (services package cannot import handlers/store directly
-// without circular references at some build configurations).
-type settingsRW interface {
-	GetSetting(key string) (string, error)
-	SetSetting(key, value string) error
+// setupStatusReader is the slice of the Store interface this loop needs. Local
+// to avoid a services->store import cycle.
+type setupStatusReader interface {
 	CountAdmins() (int, error)
 	CountUsers() (int, error)
 }
 
-// StartSetupRecoveryLoop runs a background goroutine that prints either the
-// Fresh-Install hint or the Lost-Admin recovery token + URL every 30s as
-// long as the platform has no admin. It returns immediately; the goroutine
-// stops when ctx is cancelled.
-//
-// Logs go to the default log package so they end up in whichever logger the
-// Core writes to (stdout in dev, structured log file in deploy).
-func StartSetupRecoveryLoop(ctx context.Context, store settingsRW, frontendURL string) {
+// StartSetupRecoveryLoop runs a background goroutine that logs a secret-free
+// setup hint every 30s as long as the platform has no admin: fresh install ->
+// "open <url>/setup"; no admin but users exist -> "set ADMIN_SECRET and restart
+// Core, then open <url>/setup". It never generates or logs any token. Returns
+// immediately; the goroutine stops when ctx is cancelled.
+func StartSetupRecoveryLoop(ctx context.Context, store setupStatusReader, frontendURL string) {
 	go func() {
 		printSetupHint(store, frontendURL)
 		tick := time.NewTicker(30 * time.Second)
@@ -41,7 +34,7 @@ func StartSetupRecoveryLoop(ctx context.Context, store settingsRW, frontendURL s
 	}()
 }
 
-func printSetupHint(store settingsRW, frontendURL string) {
+func printSetupHint(store setupStatusReader, frontendURL string) {
 	adminCount, _ := store.CountAdmins()
 	if adminCount > 0 {
 		return
@@ -52,22 +45,8 @@ func printSetupHint(store settingsRW, frontendURL string) {
 	}
 	userCount, _ := store.CountUsers()
 	if userCount == 0 {
-		log.Printf("[SETUP] Fresh install — open %s/setup to create the first admin", url)
+		log.Printf("[SETUP] Fresh install - open %s/setup to create the first admin", url)
 		return
 	}
-	token, _ := store.GetSetting("setup_recovery_token")
-	if token == "" {
-		token = genHexToken(32)
-		if err := store.SetSetting("setup_recovery_token", token); err != nil {
-			log.Printf("[SETUP] failed to persist recovery token: %v", err)
-			return
-		}
-	}
-	log.Printf("[SETUP] No admin in DB. Recovery: %s/setup\n          Token: %s", url, token)
-}
-
-func genHexToken(byteLen int) string {
-	b := make([]byte, byteLen)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	log.Printf("[SETUP] No admin present. Set ADMIN_SECRET in Core's environment and restart, then open %s/setup to create a new admin.", url)
 }
