@@ -16,34 +16,6 @@ func NewMemberHandler(state *AppState) *MemberHandler {
 	return &MemberHandler{state: state}
 }
 
-// checkMembersAccess checks if the requesting user is admin, owner, or an invited user with "members" permission.
-// Returns true if access is granted.
-func (h *MemberHandler) checkMembersAccess(w http.ResponseWriter, r *http.Request, serverID int) bool {
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return false
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if isAdmin || srv.OwnerName == username {
-		return true
-	}
-
-	userID, _ := r.Context().Value("userID").(string)
-	if userID == "" {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return false
-	}
-	invite, err := h.state.Store.GetInvite(serverID, userID)
-	if err != nil || !invite.Permissions.Members {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return false
-	}
-	return true
-}
-
 // capPermissions ensures the given permissions don't exceed the inviter's own permissions.
 // Owner/admin skip capping. Returns capped permissions map.
 func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[string]bool) map[string]bool {
@@ -102,10 +74,6 @@ func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.checkMembersAccess(w, r, serverID) {
-		return
-	}
-
 	invites, err := h.state.Store.ListInvitesByServer(serverID)
 	if err != nil {
 		sendJSONError(w, "Failed to load members", http.StatusInternalServerError)
@@ -149,10 +117,6 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-
-	if !h.checkMembersAccess(w, r, serverID) {
 		return
 	}
 
@@ -226,10 +190,6 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !h.checkMembersAccess(w, r, serverID) {
-		return
-	}
-
 	// Cap to what the inviter themselves holds.
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
@@ -261,10 +221,6 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	}
 	targetUserID, ok := parseUserID(w, r, "userId")
 	if !ok {
-		return
-	}
-
-	if !h.checkMembersAccess(w, r, serverID) {
 		return
 	}
 

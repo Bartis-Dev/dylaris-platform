@@ -462,6 +462,61 @@ func TestCap_StatsRead(t *testing.T) {
 	}
 }
 
+// --- Phase 4 Task 9: members + owner server-roles/grants ---
+
+func TestCap_MembersVerbs(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("mm-id", "mm", false)
+	fs.servers = map[int]*models.Server{12: {ID: 12, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{50: {ID: 50, Capabilities: []string{"members.read", "members.write"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(12, "mm-id"): {UserID: "mm-id", ServerRoleID: intPtr(50)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/12/members", testIdentity{UserID: "mm-id", Username: "mm"}); c == 403 {
+		t.Error("members.read holder must list members")
+	}
+	// holds read+write but NOT delete -> DELETE member must be 403. The path
+	// requires a 36-char {userId:[0-9a-f-]{36}} to even route.
+	if c := doAs(t, srv, "DELETE", "/api/servers/12/members/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", testIdentity{UserID: "mm-id", Username: "mm"}); c != 403 {
+		t.Errorf("members.write-only holder must be 403 on member delete (needs members.delete), got %d", c)
+	}
+}
+
+// TestCap_ServerRolesOwnerScopedChokepointOpen documents the F2 design:
+// OWNER-scope routes (no path {id}/{uuid}) pass the chokepoint for ANY
+// authenticated user (RequireCap resolves serverID==0 -> ownerSelf). The
+// handler's own owner_user_id scoping (Phase 3) is the real per-realm
+// boundary; the delegation-cap airtightness for third-party grants is
+// already covered by server_grants_test.go (TestAssignGrant_*), untouched
+// here.
+func TestCap_ServerRolesOwnerScopedChokepointOpen(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("someuser-id", "someuser", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/server-roles", testIdentity{UserID: "someuser-id", Username: "someuser"}); c == 403 {
+		t.Error("OWNER-scope /server-roles must NOT 403 at the chokepoint for an authed user (ownerSelf); handler scopes")
+	}
+}
+
+// TestCap_GrantsOwnerScopedChokepointOpen mirrors the above for /grants:
+// members.write/delete are SERVER-scope and would 403 unconditionally on a
+// path with no {id}/{uuid} to resolve a server from, so the route is gated
+// with the OWNER-scope roles.write/roles.delete instead. Prove an ordinary
+// authenticated user is not denied at the chokepoint (the handler's own
+// members.write/delete delegation check against the TARGET server, plus the
+// owner-realm scoping, remain the real boundary and are untouched).
+func TestCap_GrantsOwnerScopedChokepointOpen(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("someuser-id", "someuser", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doJSON(t, srv, "POST", "/api/grants", `{"username":"someuser"}`, testIdentity{UserID: "someuser-id", Username: "someuser"}); c == 403 {
+		t.Error("OWNER-scope /grants POST must NOT 403 at the chokepoint for an authed user (ownerSelf); handler scopes")
+	}
+	if c := doJSON(t, srv, "DELETE", "/api/grants", `{"username":"someuser"}`, testIdentity{UserID: "someuser-id", Username: "someuser"}); c == 403 {
+		t.Error("OWNER-scope /grants DELETE must NOT 403 at the chokepoint for an authed user (ownerSelf); handler scopes")
+	}
+}
+
 func TestCap_AuditForceNeedsSettingsWrite(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("owner-id", "owner", false)

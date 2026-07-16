@@ -88,7 +88,7 @@ var requiredCaps = map[string]string{
 	// the RequireCap call. /scheduled-tasks/validate has no {id} and is authed-
 	// exempt (pure cron preview) - intentionally NOT listed here.
 	"/api/servers/{id:[0-9]+}/scheduled-tasks":                   "schedule.read",
-	"/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}":    "schedule.write",
+	"/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}":   "schedule.write",
 	"/api/servers/{id:[0-9]+}/spark/profiles":                    "spark.use",
 	"/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}": "spark.use",
 
@@ -104,6 +104,31 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/audit":         "overview.read",
 	"/api/servers/{id:[0-9]+}/audit/status":  "overview.read",
 	"/api/servers/{id:[0-9]+}/audit/force":   "server.settings.write",
+
+	// Phase 4 Task 9: members (SERVER scope) + owner server-roles/grants (OWNER
+	// scope). GET+POST /members share one template -> members.read
+	// representative; the fine POST->members.write lives at the RequireCap
+	// call. PATCH+DELETE /members/{userId} share -> members.write
+	// representative; the fine DELETE->members.delete lives at the RequireCap
+	// call. GET+POST /server-roles share -> roles.read representative;
+	// PATCH+DELETE /server-roles/{id} share -> roles.write representative
+	// (fine DELETE->roles.delete at the call). /grants (POST+DELETE, no path
+	// {id}) is gated with the OWNER-scope roles.write/roles.delete, NOT the
+	// SERVER-scope members.write/delete: members.* is ScopeServer, and
+	// RequireCap 403s unconditionally for a ScopeServer cap when the path has
+	// no {id}/{uuid} to resolve a server from (see middleware.go), which would
+	// permanently break this route for every caller including admins. Using
+	// the OWNER-scope roles.* cap instead reproduces the F2 chokepoint-open
+	// pattern (serverID==0 -> ownerSelf -> any authenticated user passes). The
+	// real per-target delegation check (members.write/delete against the
+	// TARGET server) stays enforced inside AssignGrant/RevokeGrant (Phase 3)
+	// and is untouched.
+	"/api/servers/{id:[0-9]+}/members":                        "members.read",
+	"/api/servers/{id:[0-9]+}/members/inherited":              "members.read",
+	"/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}": "members.write",
+	"/api/server-roles":                                       "roles.read",
+	"/api/server-roles/{id:[0-9]+}":                           "roles.write",
+	"/api/grants":                                             "roles.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -518,13 +543,24 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.DeletePanelRole)).Methods("DELETE")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/panel-role", authHandler.AuthMiddleware(userHandler.SetUserPanelRoleHandler)).Methods("PUT")
 
-	// --- Server roles (level-2 owner realm; owner/admin-gated inline for now) ---
-	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(serverRolesHandler.ListServerRoles)).Methods("GET")
-	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(serverRolesHandler.CreateServerRole)).Methods("POST")
-	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(serverRolesHandler.UpdateServerRole)).Methods("PATCH")
-	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(serverRolesHandler.DeleteServerRole)).Methods("DELETE")
-	api.HandleFunc("/grants", authHandler.AuthMiddleware(serverRolesHandler.AssignGrant)).Methods("POST")
-	api.HandleFunc("/grants", authHandler.AuthMiddleware(serverRolesHandler.RevokeGrant)).Methods("DELETE")
+	// --- Server roles (level-2 owner realm) ---
+	// OWNER-scope caps (roles.*): neither route has a path {id}/{uuid}, so
+	// RequireCap resolves serverID==0 and every authenticated user passes via
+	// the ownerSelf short-circuit (Phase 4 Task 9, F2). This is
+	// belt-and-suspenders (it blocks the unauthenticated case and documents
+	// the cap); the real per-realm boundary is the handler's own
+	// owner_user_id scoping (Phase 3), which is untouched. /grants uses the
+	// same roles.write/roles.delete caps rather than members.write/delete
+	// (see the requiredCaps comment above for why) - the handler's own
+	// members.write/delete delegation check against the TARGET server
+	// (AssignGrant/RevokeGrant) is the real boundary for third-party grants
+	// and stays untouched.
+	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.read")(serverRolesHandler.ListServerRoles))).Methods("GET")
+	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.write")(serverRolesHandler.CreateServerRole))).Methods("POST")
+	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.write")(serverRolesHandler.UpdateServerRole))).Methods("PATCH")
+	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.delete")(serverRolesHandler.DeleteServerRole))).Methods("DELETE")
+	api.HandleFunc("/grants", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.write")(serverRolesHandler.AssignGrant))).Methods("POST")
+	api.HandleFunc("/grants", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.delete")(serverRolesHandler.RevokeGrant))).Methods("DELETE")
 
 	// --- Maintenance mode ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
@@ -667,11 +703,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/stream", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.StreamStats))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/disk", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetDisk))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(memberHandler.GetMembers)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(memberHandler.InviteMember)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/members/inherited", authHandler.AuthMiddleware(memberHandler.GetInheritedMembers)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(memberHandler.UpdateMemberPermissions)).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(memberHandler.RemoveMember)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.read")(memberHandler.GetMembers))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.write")(memberHandler.InviteMember))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/members/inherited", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.read")(memberHandler.GetInheritedMembers))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.write")(memberHandler.UpdateMemberPermissions))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.delete")(memberHandler.RemoveMember))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.delete")(serverHandler.DeleteServer))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/sub-servers/{subServerName}", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.delete")(serverHandler.DeleteSubServer))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.LinkServerToProxy))).Methods("PUT")
