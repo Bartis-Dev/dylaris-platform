@@ -525,12 +525,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// Maintenance gate: blocks writes / all traffic per block_level while
 	// maintenance is active. Runs before per-route AuthMiddleware, so it
-	// resolves admin status from the token itself — admins always pass and
+	// resolves admin status from the token itself - admins always pass and
 	// can toggle maintenance back off.
 	api.Use(handlers.MaintenanceMuxMiddleware(appState, authHandler.IsAdminToken))
 
 	// --- PUBLIC SOLDER API (Technic Launcher) ---
-	// Registered on the ROOT router with NO .Use(...) — it deliberately bypasses
+	// Registered on the ROOT router with NO .Use(...) - it deliberately bypasses
 	// the setup-lock, maintenance, and auth middleware so the launcher can reach
 	// published packs at all times. The modpacks feature is gated IN-HANDLER
 	// (Solder-shaped {"error":...} JSON), not by the 503 feature middleware.
@@ -573,7 +573,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	r.HandleFunc("/api/tabproxy/{token}", proxyHandler.Public)
 	r.HandleFunc("/api/tabproxy/{token}/{rest:.*}", proxyHandler.Public)
 
-	// Per-IP rate limiter for public auth endpoints — blunts brute-force and
+	// Per-IP rate limiter for public auth endpoints - blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
 	authLimiter := handlers.NewIPRateLimiter()
 
@@ -581,7 +581,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/login", authLimiter.Limit(10, authHandler.LoginHandler)).Methods("POST")
 	api.HandleFunc("/status", authHandler.StatusHandler).Methods("GET")
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
-	// Public — used by the topbar to display "Connected to <region> Core".
+	// Public - used by the topbar to display "Connected to <region> Core".
 	api.HandleFunc("/system/core-info", systemHandler.GetCoreInfo).Methods("GET")
 	// SSE stream of platform-wide config-change events. Panel
 	// subscribes once on boot and refreshes its caches reactively. Auth via
@@ -599,7 +599,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/setup/admin", authLimiter.Limit(10, setupHandler.CreateAdmin)).Methods("POST")
 
 	// --- Scheduled Tasks ---
-	// Cron preview — pure transform, available to anyone authed.
+	// Cron preview - pure transform, available to anyone authed.
 	api.HandleFunc("/scheduled-tasks/validate", authHandler.AuthMiddleware(scheduledTasksHandler.ValidateCron)).Methods("POST")
 	// Per-server CRUD, gated at the chokepoint by the finest matching cap.
 	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(appState.Authz.RequireCap("schedule.read")(scheduledTasksHandler.List))).Methods("GET")
@@ -870,7 +870,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/grants", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.delete")(serverRolesHandler.RevokeGrant))).Methods("DELETE")
 
 	// --- Maintenance mode ---
-	// Public state — drives the banner; never blocked by the maintenance middleware.
+	// Public state - drives the banner; never blocked by the maintenance middleware.
 	// EXEMPT (Phase 4 Task 17): unauthenticated, not RequireCap-gated, not in requiredCaps.
 	api.HandleFunc("/maintenance", maintenanceHandler.GetState).Methods("GET")
 	api.HandleFunc("/admin/maintenance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(maintenanceHandler.SaveState))).Methods("PUT")
@@ -970,7 +970,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.ListBackups)))).Methods("GET")
 	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.DownloadBackup)))).Methods("GET")
 	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DeleteBackup)))).Methods("DELETE")
-	// Restore: two-step Danger Zone (init + execute) — 2FA + 15s timer + typed phrase.
+	// Restore: two-step Danger Zone (init + execute) - 2FA + 15s timer + typed phrase.
 	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.InitRestore)))).Methods("POST")
 	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore)))).Methods("POST")
 	// Deletion audit log (admin management -> PANEL tickets.read). Note: the
@@ -1027,7 +1027,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.DeleteOrphanedFolder))).Methods("DELETE")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.ResetPairing))).Methods("POST")
 
-	// Orphan file browser (PANEL nodes.read/write; read-only browse, write on assign — no DB servers row required)
+	// Orphan file browser (PANEL nodes.read/write; read-only browse, write on assign - no DB servers row required)
 	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/files", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.ListOrphanFiles))).Methods("GET")
 	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.GetOrphanFileContent))).Methods("GET")
 	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.InspectOrphan))).Methods("GET")
@@ -1184,11 +1184,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/placement/regions", authHandler.AuthMiddleware(placementHandler.AvailableRegionsHandler)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(placementHandler.SetNodePlacement))).Methods("PUT")
 
-	// Server auto-move toggle — gated on the feature flag AND active gateway.
+	// Server auto-move toggle - gated on the feature flag AND active gateway.
 	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove)))).Methods("PATCH")
-	// Manual node-to-node move (admin oversight) — gateway-only; enqueues onto the orchestrator.
+	// Manual node-to-node move (admin oversight) - gateway-only; enqueues onto the orchestrator.
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.MoveServer)))).Methods("POST")
-	// Tenant-facing transfer (BYON) — gateway-only; owner-or-admin + placement authz inside.
+	// Tenant-facing transfer (BYON) - gateway-only; owner-or-admin + placement authz inside.
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
 	// Demo flag (admin, PANEL settings.write) - mark a normal server as a public
 	// read-only showcase. The StoreEnabled guard inside SetServerDemo stays: it is
@@ -1209,7 +1209,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
 	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")
 	api.HandleFunc("/store/provision", authLimiter.Limit(60, storeHandler.Provision)).Methods("POST")
-	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
+	// Migration progress poll - owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
 	// /gateway/route-options stays EXEMPT-authed: the user-facing route form needs
 	// the hoster/custom-domain config to render for any authed user, not just admins.
@@ -1248,7 +1248,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.write")(userRegionsHandler.SetUserRegions))).Methods("PUT")
 
 	// --- Registration + Email Verify ---
-	// Public — login page polls registration-status to decide whether to show the register link.
+	// Public - login page polls registration-status to decide whether to show the register link.
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
 	api.HandleFunc("/auth/register", authLimiter.Limit(5, registrationHandler.Register)).Methods("POST")
 	// Public one-click read-only demo session (rate-limited). 404 when no demo account is set.
@@ -1256,7 +1256,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/verify-email", registrationHandler.VerifyEmail).Methods("POST")
 	api.HandleFunc("/auth/resend-verification", registrationHandler.ResendVerification).Methods("POST")
 
-	// --- Password reset — all public, all enumeration-safe ---
+	// --- Password reset - all public, all enumeration-safe ---
 	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, passwordResetHandler.ForgotPassword)).Methods("POST")
 	api.HandleFunc("/auth/validate-reset-token", passwordResetHandler.ValidateResetToken).Methods("POST")
 	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, passwordResetHandler.ResetPassword)).Methods("POST")
@@ -1309,7 +1309,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteRun)).Methods("DELETE")
 	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
 		// The Beam desktop app is now served by gateway/beam-relay's
-		// /download/{os}-{arch} endpoint — see plan. Core redirects to it
+		// /download/{os}-{arch} endpoint - see plan. Core redirects to it
 		// using either the admin-configured beam.download_url setting or,
 		// as a convenience, derives it from beam.relay_address by swapping
 		// in the relay's HTTPS download port (default 25552).

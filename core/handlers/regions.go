@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// regionIDRegex enforces a safe ID syntax — short, lowercase, hyphen-friendly.
+// regionIDRegex enforces a safe ID syntax - short, lowercase, hyphen-friendly.
 // IDs are referenced by nodes.region / servers.region and must round-trip
 // through URLs without escaping.
 var regionIDRegex = regexp.MustCompile(`^[a-z][a-z0-9\-]{0,30}[a-z0-9]$`)
@@ -24,7 +24,7 @@ func NewRegionsHandler(state *AppState) *RegionsHandler {
 	return &RegionsHandler{state: state}
 }
 
-// ListRegions GET /api/regions — available to all authenticated users.
+// ListRegions GET /api/regions - available to all authenticated users.
 // Returns only enabled regions; the admin variant returns all.
 func (h *RegionsHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
 	regions, err := h.state.Store.ListRegions(false)
@@ -41,7 +41,7 @@ func (h *RegionsHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AdminListRegions GET /api/admin/regions — RequireCap("regions.read") at the
+// AdminListRegions GET /api/admin/regions - RequireCap("regions.read") at the
 // route; includes disabled regions.
 func (h *RegionsHandler) AdminListRegions(w http.ResponseWriter, r *http.Request) {
 	regions, err := h.state.Store.ListRegions(true)
@@ -65,7 +65,7 @@ type regionRequest struct {
 	Color       string `json:"color"`
 }
 
-// CreateRegion POST /api/admin/regions — RequireCap("regions.write") at the route.
+// CreateRegion POST /api/admin/regions - RequireCap("regions.write") at the route.
 func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 	var req regionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -119,7 +119,7 @@ func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UpdateRegion PATCH /api/admin/regions/{id} — RequireCap("regions.write") at the route.
+// UpdateRegion PATCH /api/admin/regions/{id} - RequireCap("regions.write") at the route.
 func (h *RegionsHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	existing, err := h.state.Store.GetRegion(id)
@@ -162,8 +162,8 @@ func (h *RegionsHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DeleteRegion DELETE /api/admin/regions/{id} — RequireCap("regions.delete")
-// at the route. Refuses if servers or nodes still reference the region —
+// DeleteRegion DELETE /api/admin/regions/{id} - RequireCap("regions.delete")
+// at the route. Refuses if servers or nodes still reference the region -
 // operator must reassign or delete those first.
 func (h *RegionsHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]

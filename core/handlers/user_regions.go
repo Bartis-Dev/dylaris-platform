@@ -18,7 +18,7 @@ type userRegionsResponse struct {
 	Regions    []string `json:"regions"`
 }
 
-// GetUserRegions GET /api/admin/users/{id}/regions — RequireCap("regions.read") at the route.
+// GetUserRegions GET /api/admin/users/{id}/regions - RequireCap("regions.read") at the route.
 func (h *UserRegionsHandler) GetUserRegions(w http.ResponseWriter, r *http.Request) {
 	userID, ok := parseUserID(w, r)
 	if !ok {
@@ -47,7 +47,7 @@ type setUserRegionsRequest struct {
 	Regions    []string `json:"regions"`
 }
 
-// SetUserRegions PUT /api/admin/users/{id}/regions — RequireCap("regions.write") at the route.
+// SetUserRegions PUT /api/admin/users/{id}/regions - RequireCap("regions.write") at the route.
 // Replaces the user's region assignment in one transaction. When allRegions
 // is true the explicit list is wiped and the user gets blanket access.
 func (h *UserRegionsHandler) SetUserRegions(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +95,7 @@ func (h *UserRegionsHandler) SetUserRegions(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// GetMyRegions GET /api/me/regions — current user's own region assignment
+// GetMyRegions GET /api/me/regions - current user's own region assignment
 // (any authenticated user). Drives the frontend's "should I show a region
 // selector or hide it for single-region UX?" decision.
 func (h *UserRegionsHandler) GetMyRegions(w http.ResponseWriter, r *http.Request) {
