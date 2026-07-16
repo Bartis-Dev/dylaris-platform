@@ -1,0 +1,68 @@
+"use client";
+
+import type { CatalogScope } from '@/lib/api/authzCatalog';
+import { filterScopes, capIdsForScopes, withImpliedReads } from '@/lib/access/caps';
+
+// Catalog-driven capability checkbox list. Renders every capability under the
+// requested scopes, grouped by category. No hardcoded permission arrays - the
+// catalog (from GET /api/authz/catalog) is the single source of truth.
+//
+// Checking a *.write capability also checks its *.read sibling (if the sibling
+// exists in the catalog) as a presentation convenience; the two ids are still
+// stored/enforced independently, so unchecking the write leaves the read checked.
+
+interface CapabilityPickerProps {
+    catalog: CatalogScope[];
+    scopes: string[];
+    selected: string[];
+    onChange: (selected: string[]) => void;
+    disabled?: boolean;
+}
+
+export default function CapabilityPicker({ catalog, scopes, selected, onChange, disabled }: CapabilityPickerProps) {
+    const scopedCatalog = filterScopes(catalog, scopes);
+
+    const handleToggle = (capId: string, checked: boolean) => {
+        if (checked) {
+            const next = [...selected, capId];
+            const isWrite = capId.endsWith('.write');
+            onChange(isWrite ? withImpliedReads(next, new Set(capIdsForScopes(catalog, scopes))) : next);
+        } else {
+            onChange(selected.filter(id => id !== capId));
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            {scopedCatalog.map(scope => (
+                <div key={scope.scope} className="space-y-4">
+                    {scope.categories.map(cat => (
+                        <div key={`${scope.scope}.${cat.category}`}>
+                            <div className="mono-label text-(--base-06) mb-1.5">{cat.category}</div>
+                            <div className="space-y-1.5">
+                                {cat.capabilities.map(cap => {
+                                    const checked = selected.includes(cap.id);
+                                    return (
+                                        <label
+                                            key={cap.id}
+                                            className={`flex items-center gap-2 select-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                disabled={disabled}
+                                                onChange={e => handleToggle(cap.id, e.target.checked)}
+                                                className="w-4 h-4 rounded accent-(--accent)"
+                                            />
+                                            <span className="text-sm text-(--base-09)">{cap.label}</span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ))}
+        </div>
+    );
+}
