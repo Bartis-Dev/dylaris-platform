@@ -263,6 +263,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/users":                        "settings.read",
 	"/api/admin/settings/modpacks":                     "settings.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag": "settings.write",
+	"/api/admin/settings/permissions-mode":             "settings.write",
 	"/api/admin/settings/features":                     "settings.read",
 	"/api/admin/settings/tab-proxy":                    "settings.read",
 	"/api/admin/health":                                "settings.read",
@@ -428,6 +429,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState, libraryHandler)
 	authzHandler := handlers.NewAuthzHandler()
+	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -782,6 +784,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(featureSettingsHandler.Set))).Methods("PUT")
 	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(tabProxySettingsHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(tabProxySettingsHandler.Set))).Methods("PUT")
+	api.HandleFunc("/admin/settings/permissions-mode", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(permissionsModeHandler.SetMode))).Methods("PUT")
 	// P0b-5 node admission (PANEL nodes.read/write/delete; Phase 4 Task 13).
 	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeAdmissionHandler.GetAdmission))).Methods("GET")
 	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.SetAdmission))).Methods("PUT")
@@ -826,6 +829,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Read-only capability catalog for the permission-system redesign
 	// (foundation phase). Not yet consulted by any other route (phase 2).
 	api.HandleFunc("/authz/catalog", authHandler.AuthMiddleware(authzHandler.Catalog)).Methods("GET")
+	api.HandleFunc("/authz/mode", authHandler.AuthMiddleware(permissionsModeHandler.GetMode)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.UpdateProfileHandler)).Methods("PUT")
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
