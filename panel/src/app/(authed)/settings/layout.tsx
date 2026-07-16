@@ -15,6 +15,7 @@ const ALL_TABS = [
     { slug: 'modules', label: 'Modules', always: true },
     { slug: 'users', label: 'Users', always: true },
     { slug: 'user-management', label: 'User Management', always: true },
+    { slug: 'roles', label: 'Roles', always: true },
     { slug: 'regions', label: 'Regions', always: true },
     { slug: 'nodes', label: 'Nodes', always: true },
     { slug: 'library', label: 'Library', always: true },
