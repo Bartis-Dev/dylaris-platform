@@ -1,20 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { CatalogScope } from '@/lib/api/authzCatalog';
 import type { Server } from '@/lib/api';
 import { assignGrant } from '@/lib/api/grants';
-import { listServerRoles, type ServerRole } from '@/lib/api/serverRoles';
+import type { ServerRole } from '@/lib/api/serverRoles';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
 
 // Advanced-mode owner UI: assign a friend a server role and/or granular
 // grant/deny capability overrides, account-wide or scoped to one owned
 // server. The resulting grant shows up in the shared grants list + revoke
-// (task 8), rendered by the parent page.
+// (task 8), rendered by the parent page. The server-role list itself is
+// owned by the parent page (access/page.tsx) and passed in as a prop, so
+// it stays in sync with AccessServerRoles' create/rename/delete actions.
 
 interface AccessAdvancedGrantsProps {
     catalog: CatalogScope[];
+    roles: ServerRole[];
     ownedServers: Server[];
     showToast: (msg: string, ok?: boolean) => void;
     onAssigned: () => void;
@@ -22,18 +25,10 @@ interface AccessAdvancedGrantsProps {
 
 const emptyForm = { username: '', serverId: '', serverRoleId: '', inherit: false };
 
-export default function AccessAdvancedGrants({ catalog, ownedServers, showToast, onAssigned }: AccessAdvancedGrantsProps) {
-    const [roles, setRoles] = useState<ServerRole[]>([]);
+export default function AccessAdvancedGrants({ catalog, roles, ownedServers, showToast, onAssigned }: AccessAdvancedGrantsProps) {
     const [form, setForm] = useState(emptyForm);
     const [grantCaps, setGrantCaps] = useState<string[]>([]);
     const [denyCaps, setDenyCaps] = useState<string[]>([]);
-
-    const refreshRoles = useCallback(async () => {
-        const res = await listServerRoles();
-        if (res.success && res.roles) setRoles(res.roles);
-    }, []);
-
-    useEffect(() => { refreshRoles(); }, [refreshRoles]);
 
     const handleAssign = async () => {
         const username = form.username.trim();

@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Shield, Plus, Pencil, Trash2, X, AlertTriangle } from 'lucide-react';
 import type { CatalogScope } from '@/lib/api/authzCatalog';
 import {
-    listServerRoles, createServerRole, updateServerRole, deleteServerRole,
+    createServerRole, updateServerRole, deleteServerRole,
     type ServerRole,
 } from '@/lib/api/serverRoles';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
@@ -14,30 +14,26 @@ import { SkeletonList } from '@/components/Skeleton';
 // SERVER + OWNER scope capabilities only (matches the backend
 // validateServerOwnerCaps rule); assignment of a role to a friend happens in
 // the advanced grants section (task 10), not here.
+//
+// The role list itself lives in the parent page (access/page.tsx) so both
+// this component and AccessAdvancedGrants share one up-to-date copy;
+// onRolesChanged() asks the parent to re-fetch after a create/update/delete.
 
 interface AccessServerRolesProps {
     catalog: CatalogScope[];
+    roles: ServerRole[];
+    loading: boolean;
+    onRolesChanged: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }
 
-export default function AccessServerRoles({ catalog, showToast }: AccessServerRolesProps) {
-    const [roles, setRoles] = useState<ServerRole[]>([]);
-    const [loading, setLoading] = useState(true);
-
+export default function AccessServerRoles({ catalog, roles, loading, onRolesChanged, showToast }: AccessServerRolesProps) {
     const [editing, setEditing] = useState<ServerRole | null>(null);
     const [showEditor, setShowEditor] = useState(false);
     const [name, setName] = useState('');
     const [caps, setCaps] = useState<string[]>([]);
 
     const [deleting, setDeleting] = useState<ServerRole | null>(null);
-
-    const refresh = useCallback(async () => {
-        const res = await listServerRoles();
-        if (res.success && res.roles) setRoles(res.roles);
-        setLoading(false);
-    }, []);
-
-    useEffect(() => { refresh(); }, [refresh]);
 
     const openCreate = () => {
         setEditing(null);
@@ -63,7 +59,7 @@ export default function AccessServerRoles({ catalog, showToast }: AccessServerRo
         if (res.success) {
             showToast(editing ? 'Role updated.' : 'Role created.', true);
             setShowEditor(false);
-            refresh();
+            onRolesChanged();
         } else {
             showToast(res.message || (editing ? 'Update failed' : 'Create failed'), false);
         }
@@ -75,7 +71,7 @@ export default function AccessServerRoles({ catalog, showToast }: AccessServerRo
         setDeleting(null);
         if (res.success) {
             showToast('Role deleted.', true);
-            refresh();
+            onRolesChanged();
         } else {
             showToast(res.message || 'Delete failed', false);
         }

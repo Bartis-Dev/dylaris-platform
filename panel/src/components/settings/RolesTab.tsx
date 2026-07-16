@@ -30,9 +30,9 @@ const MODE_OPTIONS: { value: PermissionsMode; label: string }[] = [
 ];
 
 const MODE_HELP: Record<PermissionsMode, string> = {
-    off: 'Every admin has unrestricted access. Panel roles and per-user overrides are ignored.',
-    simple: 'Assign one panel role per user from the list below. No per-user overrides.',
-    advanced: 'Full control: panel roles plus per-user grant/deny capability overrides.',
+    off: 'Owners cannot delegate server access to invited friends at all. Only the owner and panel staff act on a server.',
+    simple: 'Owners assign ready-made preset roles to friends. Assign-only; no custom role creation.',
+    advanced: 'Owners can create custom server roles and apply granular per-friend capability overrides.',
 };
 
 type Toast = { msg: string; ok: boolean } | null;
@@ -70,12 +70,13 @@ export default function RolesTab() {
                 getUsers(),
             ]);
             if (modeRes.success && modeRes.mode) setMode(modeRes.mode);
+            else showToast(modeRes.message || 'Failed to load permissions mode - shown value is unconfirmed', false);
             if (catalogRes.success && catalogRes.catalog) setCatalog(catalogRes.catalog);
             if (usersRes.success && usersRes.users) setUsers(usersRes.users);
             await loadRoles();
             setLoading(false);
         })();
-    }, [loadRoles]);
+    }, [loadRoles, showToast]);
 
     const handleSetMode = async (next: PermissionsMode) => {
         if (modeSaving || next === mode) return;
@@ -121,7 +122,7 @@ export default function RolesTab() {
             <section>
                 <div className="mb-3">
                     <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Permissions Mode</h2>
-                    <p className="text-sm text-(--base-07)">Controls how panel access is granted across the whole instance.</p>
+                    <p className="text-sm text-(--base-07)">Controls whether and how server owners can delegate access to invited friends on their Access page. Panel roles and per-user overrides below are unaffected and always enforced.</p>
                 </div>
                 <div className="card p-5 space-y-4">
                     <div className="flex items-center gap-2">
@@ -150,7 +151,7 @@ export default function RolesTab() {
                 <div className="flex items-center justify-between mb-3">
                     <div>
                         <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Panel Roles</h2>
-                        <p className="text-sm text-(--base-07)">Reusable capability bundles assignable to users in Simple or Advanced mode.</p>
+                        <p className="text-sm text-(--base-07)">Capability bundles for panel staff. Always available to admins, independent of the permissions mode above.</p>
                     </div>
                     <button type="button" onClick={() => setRoleModal({ role: null })} className="btn btn-primary btn-sm shrink-0">
                         <Plus size={13} />

@@ -8,6 +8,7 @@ import {
     type PermissionsMode, type CatalogScope, type Preset,
 } from '@/lib/api/authzCatalog';
 import { listGrants, assignGrant, revokeGrant, type Grant } from '@/lib/api/grants';
+import { listServerRoles, type ServerRole } from '@/lib/api/serverRoles';
 import { SkeletonList } from '@/components/Skeleton';
 import AccessServerRoles from '@/components/access/AccessServerRoles';
 import AccessAdvancedGrants from '@/components/access/AccessAdvancedGrants';
@@ -31,6 +32,9 @@ export default function AccessPage() {
     const [grants, setGrants] = useState<Grant[]>([]);
     const [grantsLoading, setGrantsLoading] = useState(true);
 
+    const [serverRoles, setServerRoles] = useState<ServerRole[]>([]);
+    const [serverRolesLoading, setServerRolesLoading] = useState(true);
+
     const [form, setForm] = useState({ username: '', serverId: '', presetId: '', inherit: false });
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -43,6 +47,12 @@ export default function AccessPage() {
         const res = await listGrants();
         if (res.success && res.grants) setGrants(res.grants);
         setGrantsLoading(false);
+    }, []);
+
+    const refreshServerRoles = useCallback(async () => {
+        const res = await listServerRoles();
+        if (res.success && res.roles) setServerRoles(res.roles);
+        setServerRolesLoading(false);
     }, []);
 
     useEffect(() => {
@@ -61,7 +71,8 @@ export default function AccessPage() {
             if (res.success && res.presets) setPresets(res.presets);
         })();
         refreshGrants();
-    }, [refreshGrants]);
+        refreshServerRoles();
+    }, [refreshGrants, refreshServerRoles]);
 
     const handleAssign = async () => {
         const username = form.username.trim();
@@ -182,10 +193,17 @@ export default function AccessPage() {
 
             {mode === 'advanced' && (
                 <>
-                    <AccessServerRoles catalog={catalog} showToast={showToast} />
+                    <AccessServerRoles
+                        catalog={catalog}
+                        roles={serverRoles}
+                        loading={serverRolesLoading}
+                        onRolesChanged={refreshServerRoles}
+                        showToast={showToast}
+                    />
 
                     <AccessAdvancedGrants
                         catalog={catalog}
+                        roles={serverRoles}
                         ownedServers={ownedServers}
                         showToast={showToast}
                         onAssigned={refreshGrants}
