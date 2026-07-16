@@ -880,6 +880,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/server-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.write")(serverRolesHandler.CreateServerRole))).Methods("POST")
 	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.write")(serverRolesHandler.UpdateServerRole))).Methods("PATCH")
 	api.HandleFunc("/server-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.delete")(serverRolesHandler.DeleteServerRole))).Methods("DELETE")
+	api.HandleFunc("/grants", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.read")(serverRolesHandler.ListGrants))).Methods("GET")
 	api.HandleFunc("/grants", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.write")(serverRolesHandler.AssignGrant))).Methods("POST")
 	api.HandleFunc("/grants", authHandler.AuthMiddleware(appState.Authz.RequireCap("roles.delete")(serverRolesHandler.RevokeGrant))).Methods("DELETE")
 

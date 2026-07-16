@@ -204,3 +204,50 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
+
+type grantView struct {
+	Username       string   `json:"username"`
+	ServerID       *int     `json:"serverId"`
+	ServerName     string   `json:"serverName"`
+	ServerRoleID   *int     `json:"serverRoleId"`
+	ServerRoleName string   `json:"serverRoleName"`
+	GrantCaps      []string `json:"grantCaps"`
+	DenyCaps       []string `json:"denyCaps"`
+	Inherit        bool     `json:"inherit"`
+	AccountWide    bool     `json:"accountWide"`
+}
+
+// ListGrants GET /api/grants - every grant in the acting owner's realm
+// (account-wide server_id NULL + per-server), for the /access grants table.
+// Gated at the route with RequireCap("roles.read"); admin short-circuits.
+func (h *ServerRolesHandler) ListGrants(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	owner := actingUserID(r)
+	if owner == "" {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	grants, err := h.state.Store.ListGrantsByOwner(owner)
+	if err != nil {
+		sendJSONError(w, "Failed to list grants", 500)
+		return
+	}
+	views := make([]grantView, 0, len(grants))
+	for _, g := range grants {
+		views = append(views, grantView{
+			Username:       g.Username,
+			ServerID:       g.ServerID,
+			ServerName:     g.ServerName,
+			ServerRoleID:   g.ServerRoleID,
+			ServerRoleName: g.ServerRoleName,
+			GrantCaps:      normalizeCaps(g.CapOverrides.Grant),
+			DenyCaps:       normalizeCaps(g.CapOverrides.Deny),
+			Inherit:        g.Inherit,
+			AccountWide:    g.ServerID == nil,
+		})
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "grants": views})
+}

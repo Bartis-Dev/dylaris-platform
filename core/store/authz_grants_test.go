@@ -43,5 +43,6 @@ func TestPostgresStoreSatisfiesAuthzMethods(t *testing.T) {
 		GetUserPanelAuthz(userID string) (*int, CapOverrides, error)
 		GetServerGrant(serverID int, userID string) (*ServerGrant, error)
 		GetAccountGrant(ownerUserID, userID string) (*ServerGrant, error)
+		ListGrantsByOwner(ownerUserID string) ([]OwnerGrant, error)
 	} = (*PostgresStore)(nil)
 }

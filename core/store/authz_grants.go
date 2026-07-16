@@ -122,6 +122,60 @@ func (s *PostgresStore) GetAccountGrant(ownerUserID, userID string) (*ServerGran
 		ownerUserID, userID)
 }
 
+// OwnerGrant is a joined server_invites row for the owner-facing grants list
+// (GET /api/grants). ServerID nil = account-wide; ServerRoleName / ServerName
+// are "" when there is no role / for account-wide rows.
+type OwnerGrant struct {
+	Username       string
+	ServerID       *int
+	ServerName     string
+	ServerRoleID   *int
+	ServerRoleName string
+	CapOverrides   CapOverrides
+	Inherit        bool
+}
+
+// ListGrantsByOwner returns every grant in an owner's realm (account-wide
+// server_id NULL + per-server), joined to the friend's username and (LEFT
+// JOIN) the server name + server-role name. Ordered by username for a stable UI.
+func (s *PostgresStore) ListGrantsByOwner(ownerUserID string) ([]OwnerGrant, error) {
+	rows, err := s.db.Query(
+		`SELECT u.username, si.server_id, COALESCE(sv.name, ''), si.server_role_id,
+		        COALESCE(sr.name, ''), COALESCE(si.cap_overrides, '{}'::jsonb),
+		        COALESCE(si.inherit, FALSE)
+		 FROM server_invites si
+		 JOIN users u ON si.user_id = u.id
+		 LEFT JOIN servers sv ON si.server_id = sv.id
+		 LEFT JOIN server_roles sr ON si.server_role_id = sr.id
+		 WHERE si.owner_user_id = $1
+		 ORDER BY u.username ASC`, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OwnerGrant
+	for rows.Next() {
+		var g OwnerGrant
+		var sid, roleID sql.NullInt64
+		var ovJSON []byte
+		if err := rows.Scan(&g.Username, &sid, &g.ServerName, &roleID, &g.ServerRoleName, &ovJSON, &g.Inherit); err != nil {
+			return nil, err
+		}
+		if sid.Valid {
+			v := int(sid.Int64)
+			g.ServerID = &v
+		}
+		if roleID.Valid {
+			v := int(roleID.Int64)
+			g.ServerRoleID = &v
+		}
+		_ = json.Unmarshal(ovJSON, &g.CapOverrides)
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) scanGrant(query string, args ...interface{}) (*ServerGrant, error) {
 	var g ServerGrant
 	var sid sql.NullInt64

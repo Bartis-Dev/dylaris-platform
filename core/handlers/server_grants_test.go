@@ -27,6 +27,7 @@ type grantFakeStore struct {
 	upserts     []upsertCall
 	deleteCalls int
 	deleteErr   error
+	grants      []store.OwnerGrant
 }
 
 type upsertCall struct {
@@ -75,6 +76,9 @@ func (f *grantFakeStore) UpsertServerGrant(serverID *int, userID, ownerUserID st
 func (f *grantFakeStore) DeleteServerGrant(*int, string, string) error {
 	f.deleteCalls++
 	return f.deleteErr
+}
+func (f *grantFakeStore) ListGrantsByOwner(string) ([]store.OwnerGrant, error) {
+	return f.grants, nil
 }
 
 func grantState(fs *grantFakeStore) *AppState {
@@ -272,5 +276,41 @@ func TestRevokeGrant_OwnerRemoves(t *testing.T) {
 	}
 	if fs.deleteCalls != 1 {
 		t.Fatalf("expected 1 DeleteServerGrant call, got %d", fs.deleteCalls)
+	}
+}
+
+func TestListGrants_ReturnsOwnerRealmGrants(t *testing.T) {
+	sid := 42
+	fs := &grantFakeStore{grants: []store.OwnerGrant{
+		{Username: "friend", ServerID: &sid, ServerName: "Survival", ServerRoleName: "Builders",
+			CapOverrides: store.CapOverrides{Grant: []string{"files.read"}}},
+		{Username: "buddy", ServerID: nil,
+			CapOverrides: store.CapOverrides{Deny: []string{"backups.delete"}}, Inherit: true},
+	}}
+	h := NewServerRolesHandler(grantState(fs))
+	rec := httptest.NewRecorder()
+	h.ListGrants(rec, grantReq("GET", ownerA, false, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Grants  []struct {
+			Username    string `json:"username"`
+			ServerName  string `json:"serverName"`
+			AccountWide bool   `json:"accountWide"`
+		} `json:"grants"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Success || len(resp.Grants) != 2 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.Grants[0].Username != "friend" || resp.Grants[0].ServerName != "Survival" || resp.Grants[0].AccountWide {
+		t.Fatalf("grant[0] = %+v", resp.Grants[0])
+	}
+	if !resp.Grants[1].AccountWide {
+		t.Fatalf("grant[1] should be account-wide: %+v", resp.Grants[1])
 	}
 }

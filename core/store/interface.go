@@ -172,6 +172,7 @@ type Store interface {
 	// delegation-cap checks are the handler's job.
 	UpsertServerGrant(serverID *int, userID, ownerUserID string, serverRoleID *int, overrides CapOverrides, inherit bool) error
 	DeleteServerGrant(serverID *int, ownerUserID, userID string) error
+	ListGrantsByOwner(ownerUserID string) ([]OwnerGrant, error)
 
 	// --- Backups ---
 	ListBackupStorages() ([]models.BackupStorage, error)
