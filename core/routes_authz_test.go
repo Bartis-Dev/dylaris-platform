@@ -442,3 +442,44 @@ func TestCap_SparkUse(t *testing.T) {
 		t.Errorf("user without spark.use must be 403, got %d", c)
 	}
 }
+
+// --- Phase 4 Task 8: stats + per-server audit ---
+
+func TestCap_StatsRead(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("viewer-id", "viewer", false)
+	fs.addUser("nobody-id", "nobody", false)
+	fs.servers = map[int]*models.Server{10: {ID: 10, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{40: {ID: 40, Capabilities: []string{"stats.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(10, "viewer-id"): {UserID: "viewer-id", ServerRoleID: intPtr(40)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/10/stats/history", testIdentity{UserID: "viewer-id", Username: "viewer"}); c == 403 {
+		t.Error("stats.read holder must read stats history")
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/10/stats/history", testIdentity{UserID: "nobody-id", Username: "nobody"}); c != 403 {
+		t.Errorf("user without stats.read must be 403, got %d", c)
+	}
+}
+
+func TestCap_AuditForceNeedsSettingsWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("viewer-id", "viewer", false)
+	fs.servers = map[int]*models.Server{10: {ID: 10, OwnerID: "owner-id", OwnerName: "owner"}}
+	// viewer holds overview.read only (can view audit) but NOT server.settings.write
+	fs.serverRoles = map[int]*store.ServerRole{41: {ID: 41, Capabilities: []string{"overview.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(10, "viewer-id"): {UserID: "viewer-id", ServerRoleID: intPtr(41)}}
+	srv := newAuthzTestServer(t, fs)
+	// owner CAN force (settings.write via ownership short-circuit)
+	if c := doAs(t, srv, "PUT", "/api/servers/10/audit/force", testIdentity{UserID: "owner-id", Username: "owner"}); c == 403 {
+		t.Error("owner must be able to force their own server audit")
+	}
+	// overview.read-only viewer CAN view audit but CANNOT force
+	if c := doAs(t, srv, "GET", "/api/servers/10/audit", testIdentity{UserID: "viewer-id", Username: "viewer"}); c == 403 {
+		t.Error("overview.read holder must view the audit log")
+	}
+	if c := doAs(t, srv, "PUT", "/api/servers/10/audit/force", testIdentity{UserID: "viewer-id", Username: "viewer"}); c != 403 {
+		t.Errorf("overview.read-only holder must be 403 on audit/force (needs server.settings.write), got %d", c)
+	}
+}

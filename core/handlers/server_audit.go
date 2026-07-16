@@ -98,8 +98,9 @@ func NewServerAuditHandler(state *AppState) *ServerAuditHandler {
 	return &ServerAuditHandler{state: state}
 }
 
-// gateView returns the loaded server when the caller is allowed to read its
-// audit log. Owner + admin always; non-admin non-owner is denied.
+// gateView loads the server for an audit-log read. Access control lives at
+// the route (RequireCap(overview.read)); this only resolves the path id and
+// 404s on a missing server.
 func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*models.Server, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
@@ -112,11 +113,6 @@ func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*
 		return nil, "", false
 	}
 	userID, _ := r.Context().Value("userID").(string)
-	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerID != userID {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return nil, "", false
-	}
 	return srv, userID, true
 }
 
@@ -173,13 +169,11 @@ type setForceRequest struct {
 	ForceOn bool `json:"forceOn"`
 }
 
-// SetForce PUT /api/servers/{id}/audit/force — admin only.
-// Lets compliance setups force audit on regardless of member state.
+// SetForce PUT /api/servers/{id}/audit/force — gated by the route
+// (RequireCap(server.settings.write)): the owner, or a role-holder granted
+// that cap, can force their own server's audit on regardless of member state.
+// Admin still passes via the resolver's admin short-circuit.
 func (h *ServerAuditHandler) SetForce(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)

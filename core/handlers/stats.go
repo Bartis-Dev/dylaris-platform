@@ -40,14 +40,6 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") && !isDemoServer(h.state, srv.UUID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		sendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
@@ -141,14 +133,6 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") && !isDemoServer(h.state, srv.UUID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
 	// Parse time range (default: 24h)
 	rangeStr := r.URL.Query().Get("range")
 	duration := 24 * time.Hour
@@ -212,14 +196,6 @@ func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") && !isDemoServer(h.state, srv.UUID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 

@@ -91,6 +91,19 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}":    "schedule.write",
 	"/api/servers/{id:[0-9]+}/spark/profiles":                    "spark.use",
 	"/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}": "spark.use",
+
+	// Phase 4 Task 8: stats + per-server audit. Stats reads rely on the demo-read
+	// short-circuit (stats.read is not in authz.demoReadDeny) rather than any
+	// in-handler isDemoServer check. Audit view is overview.read; audit/force
+	// moves from admin-only to server.settings.write so an owner (or a
+	// role-holder with that cap) controls their own server's forced audit -
+	// admin still passes via the resolver's admin short-circuit.
+	"/api/servers/{id:[0-9]+}/stats/stream":  "stats.read",
+	"/api/servers/{id:[0-9]+}/stats/history": "stats.read",
+	"/api/servers/{id:[0-9]+}/stats/disk":    "stats.read",
+	"/api/servers/{id:[0-9]+}/audit":         "overview.read",
+	"/api/servers/{id:[0-9]+}/audit/status":  "overview.read",
+	"/api/servers/{id:[0-9]+}/audit/force":   "server.settings.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -570,10 +583,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkAllRead))).Methods("POST")
 
 	// --- Server audit ---
-	// Owner + admin can view. Force-on flag is admin-only.
-	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(serverAuditHandler.ListAudit)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(serverAuditHandler.GetStatus)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/audit/force", authHandler.AuthMiddleware(serverAuditHandler.SetForce)).Methods("PUT")
+	// View is overview.read (owner + admin + any role-holder with overview.read).
+	// Force-on is server.settings.write: the owner (or a role-holder with that
+	// cap) controls their own server's forced audit; admin still passes via the
+	// resolver's admin short-circuit.
+	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverAuditHandler.ListAudit))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverAuditHandler.GetStatus))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/audit/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverAuditHandler.SetForce))).Methods("PUT")
 	// Platform-wide audit retention policy.
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.GetPolicy)).Methods("GET")
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.SavePolicy)).Methods("PUT")
@@ -648,9 +664,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/console/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.read")(consoleHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/stream", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.read")(consoleHandler.StreamConsole))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/command", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.send")(consoleHandler.SendCommand))).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/stats/stream", authHandler.AuthMiddleware(statsHandler.StreamStats)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/stats/history", authHandler.AuthMiddleware(statsHandler.GetHistory)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/stats/disk", authHandler.AuthMiddleware(statsHandler.GetDisk)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/stats/stream", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.StreamStats))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/stats/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetHistory))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/stats/disk", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetDisk))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(memberHandler.GetMembers)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(memberHandler.InviteMember)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/members/inherited", authHandler.AuthMiddleware(memberHandler.GetInheritedMembers)).Methods("GET")
