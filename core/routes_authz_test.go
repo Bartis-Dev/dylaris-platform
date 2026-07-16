@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,13 @@ func (f *authzFakeStore) GetAccountGrant(ownerUserID, userID string) (*store.Ser
 	return nil, sql.ErrNoRows
 }
 
+// CountAdmins/CountUsers back handlers.AppState.RequireSetupComplete, which
+// wraps every /api/* route (except /api/setup/*) ahead of AuthMiddleware and
+// RequireCap. Reporting one admin keeps the harness in "Complete mode" (a
+// pass-through) instead of panicking on the nil embedded store.Store.
+func (f *authzFakeStore) CountAdmins() (int, error) { return 1, nil }
+func (f *authzFakeStore) CountUsers() (int, error)  { return 1, nil }
+
 func skey(serverID int, userID string) string {
 	return strconv.Itoa(serverID) + "|" + userID
 }
@@ -168,5 +176,80 @@ func TestAuthzHarness_Smoke_Auth(t *testing.T) {
 	code := doAs(t, srv, "GET", "/api/status", testIdentity{UserID: "u1", Username: "alice"})
 	if code == 0 {
 		t.Fatal("harness produced no response")
+	}
+}
+
+func intPtr(i int) *int { return &i }
+
+// doJSON mirrors doAs but sends a JSON request body, for routes whose
+// authorization decision (or, for POWER, the in-handler resolver check) reads
+// from the parsed body rather than only the path.
+func doJSON(t *testing.T, h http.Handler, method, path, body string, id testIdentity) int {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+mintToken(t, id))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// --- Phase 4 Task 3: server lifecycle / power / proxy / storage ---
+
+func TestCap_ServerDelete(t *testing.T) {
+	fs := &authzFakeStore{}
+	owner := fs.addUser("owner-id", "owner", false)
+	fs.addUser("stranger-id", "stranger", false)
+	admin := fs.addUser("admin-id", "root", true)
+	fs.servers = map[int]*models.Server{7: {ID: 7, OwnerID: owner.ID, OwnerName: "owner"}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "DELETE", "/api/servers/7", testIdentity{UserID: owner.ID, Username: "owner"}); c == 403 {
+		t.Errorf("owner must not be 403 on server.delete, got 403")
+	}
+	if c := doAs(t, srv, "DELETE", "/api/servers/7", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Errorf("admin must not be 403, got 403")
+	}
+	if c := doAs(t, srv, "DELETE", "/api/servers/7", testIdentity{UserID: "stranger-id", Username: "stranger"}); c != 403 {
+		t.Errorf("stranger must be 403 on server.delete, got %d", c)
+	}
+}
+
+func TestCap_ServerResources_GrantHolderPasses(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("friend-id", "friend", false)
+	fs.addUser("nobody-id", "nobody", false)
+	fs.servers = map[int]*models.Server{7: {ID: 7, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{2: {ID: 2, Capabilities: []string{"server.settings.write"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{
+		skey(7, "friend-id"): {UserID: "friend-id", ServerRoleID: intPtr(2)},
+	}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "PATCH", "/api/servers/7/resources", testIdentity{UserID: "friend-id", Username: "friend"}); c == 403 {
+		t.Errorf("grant holder of server.settings.write must not be 403")
+	}
+	if c := doAs(t, srv, "PATCH", "/api/servers/7/resources", testIdentity{UserID: "nobody", Username: "nobody"}); c != 403 {
+		t.Errorf("ungranted user must be 403, got %d", c)
+	}
+}
+
+func TestCap_PowerPerAction(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("starter-id", "starter", false)
+	fs.servers = map[int]*models.Server{7: {ID: 7, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{5: {ID: 5, Capabilities: []string{"power.start"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{
+		skey(7, "starter-id"): {UserID: "starter-id", ServerRoleID: intPtr(5)},
+	}
+	srv := newAuthzTestServer(t, fs)
+	// starter holds power.start only -> a start action must NOT be 403; a kill action MUST be 403.
+	startCode := doJSON(t, srv, "POST", "/api/servers/7/power", `{"action":"start"}`, testIdentity{UserID: "starter-id", Username: "starter"})
+	if startCode == 403 {
+		t.Errorf("power.start holder must not be 403 on start, got 403")
+	}
+	killCode := doJSON(t, srv, "POST", "/api/servers/7/power", `{"action":"kill"}`, testIdentity{UserID: "starter-id", Username: "starter"})
+	if killCode != 403 {
+		t.Errorf("power.start holder must be 403 on kill, got %d", killCode)
 	}
 }

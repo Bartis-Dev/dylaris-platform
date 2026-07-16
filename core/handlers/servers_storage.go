@@ -12,13 +12,8 @@ import (
 
 // GetServerStoragePath returns the current storage path for a server and all available
 // storage paths on its node (from the node's Redis heartbeat).
-// GET /api/servers/{id}/storage-path  (admin only)
+// GET /api/servers/{id}/storage-path  (gated by RequireCap("overview.read") at the route)
 func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -69,13 +64,8 @@ func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Requ
 }
 
 // MigrateServerStorage queues a migrate_storage command on the server's node.
-// POST /api/servers/{id}/migrate-storage  (admin only)
+// POST /api/servers/{id}/migrate-storage  (gated by RequireCap("server.settings.write") at the route)
 func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {

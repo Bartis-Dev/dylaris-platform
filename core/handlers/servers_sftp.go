@@ -14,16 +14,10 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	serverID, _ := strconv.Atoi(vars["id"])
 	username, _ := r.Context().Value("username").(string)
-	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		sendJSONError(w, "Server not found", 404)
-		return
-	}
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
-		sendJSONError(w, "Access denied", 403)
 		return
 	}
 

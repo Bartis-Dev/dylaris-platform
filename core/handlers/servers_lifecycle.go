@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"encoding/json"
@@ -223,13 +224,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 
 	// Atomically claim the install cooldown (30s, admins bypass). SetNX closes
 	// the race where two concurrent requests both saw an expired TTL and both
@@ -447,12 +442,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 
 	if srv.Status == "pending_setup" {
 		sendJSONError(w, "Server must be set up before reinstalling", 400)
@@ -590,13 +580,6 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	subName := sanitizeServerName(req.SubServerName)
 	if subName == "" {
 		sendJSONError(w, "Invalid server name", 400)
@@ -711,13 +694,13 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 
-	if !isAdmin && srv.OwnerName != username {
-		// Invited users need the "power" permission
-		invite, err := h.state.Store.GetInvite(srv.ID, userID)
-		if err != nil || !invite.Permissions.Power {
-			sendJSONError(w, "Forbidden", 403)
-			return
-		}
+	// POWER is in-handler-enforced (Rule R5): the action is in the request body,
+	// so a route-level RequireCap cannot distinguish a kill-only holder from a
+	// start-only holder. Resolve the per-action cap here instead.
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
+	if rerr != nil || !res.HasCap("power."+req.Action) {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
 	}
 
 	if srv.Status == "suspended" && !isAdmin {
@@ -843,13 +826,6 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	previousName := srv.Name
 	if err := h.state.Store.UpdateServerName(serverID, name); err != nil {
 		sendJSONError(w, "Failed to update name", 500)
@@ -916,12 +892,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 
 	if err := h.state.Store.UpdateServerResources(serverID, req.RAM, req.CPULimit, req.DiskLimit); err != nil {
 		sendJSONError(w, "Failed to update resources", 500)
@@ -1057,15 +1028,8 @@ func (h *ServerHandler) SetServerAutoMove(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Invalid server ID", 400)
 		return
 	}
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
 		sendJSONError(w, "Server not found", 404)
-		return
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 	var req struct {
@@ -1145,15 +1109,12 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Server not found", 404)
 		return
 	}
-	// Authz: owner-or-admin on the server; BYON must be on for a non-admin tenant.
+	// Ownership is now enforced by the route's RequireCap("server.settings.write");
+	// BYON availability stays a separate feature-gate, not authz.
 	username, _ := r.Context().Value("username").(string)
 	if !IsAdmin(r) {
 		if !byonActive(h.state, r) {
 			sendJSONError(w, "Server transfer is not enabled", 403)
-			return
-		}
-		if srv.OwnerName != username {
-			sendJSONError(w, "Forbidden", 403)
 			return
 		}
 	}
@@ -1257,12 +1218,6 @@ func (h *ServerHandler) GetMigrationStatus(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Server not found", 404)
 		return
 	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	if h.state.Redis == nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": map[string]string{"phase": "none"}})
 		return
@@ -1310,14 +1265,6 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err == nil && h.state.Queue != nil {
 		configPayload := map[string]interface{}{
@@ -1354,8 +1301,8 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Capability gate. Admins always pass; non-admins need the
-	// can_delete_servers flag. This is in addition to the ownership check
-	// that already exists further down — both gates must be open.
+	// can_delete_servers flag. This is in addition to the route's
+	// RequireCap("server.delete") ownership/grant check — both gates must be open.
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
 	if !perms.IsAdmin && !perms.CanDeleteServers {
@@ -1373,14 +1320,6 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 

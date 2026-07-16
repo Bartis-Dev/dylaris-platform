@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -44,8 +45,48 @@ type serverPowerFakeStore struct {
 	countServersByNode    int
 	countServersByNodeErr error
 
+	// serverGrant + serverRole back the authz.Resolver's delegation path (a
+	// non-owner holding a per-server capability grant): set both to give
+	// serverGrant.UserID the caps listed on serverRole.Capabilities.
+	serverGrant *store.ServerGrant
+	serverRole  *store.ServerRole
+
 	updateDesiredStateCalls []serverPowerDesiredStateCall
 	updateStatusCalls       []serverPowerStatusCall
+}
+
+// The following satisfy authz.Store (beyond GetServerByID, already overridden
+// above) so h.state.Authz.Resolve does not panic on the nil embedded
+// store.Store. None of these tests exercise panel roles or account grants, so
+// they report "not found" unless a test explicitly sets serverGrant/serverRole.
+func (f *serverPowerFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
+	return nil, errors.New("not found")
+}
+
+func (f *serverPowerFakeStore) GetPanelRole(id int) (*store.PanelRole, error) {
+	return nil, errors.New("not found")
+}
+
+func (f *serverPowerFakeStore) GetServerRole(id int) (*store.ServerRole, error) {
+	if f.serverRole != nil && f.serverRole.ID == id {
+		return f.serverRole, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (f *serverPowerFakeStore) GetUserPanelAuthz(userID string) (*int, store.CapOverrides, error) {
+	return nil, store.CapOverrides{}, nil
+}
+
+func (f *serverPowerFakeStore) GetServerGrant(serverID int, userID string) (*store.ServerGrant, error) {
+	if f.serverGrant != nil && f.serverGrant.UserID == userID {
+		return f.serverGrant, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (f *serverPowerFakeStore) GetAccountGrant(ownerUserID, userID string) (*store.ServerGrant, error) {
+	return nil, errors.New("not found")
 }
 
 type serverPowerDesiredStateCall struct {
@@ -122,6 +163,7 @@ func newServerPowerHandler(fs *serverPowerFakeStore, rdb *redis.Client) *ServerH
 		Store: fs,
 		Redis: rdb,
 		Queue: services.NewQueueService(rdb),
+		Authz: authz.NewResolver(fs),
 	}}
 }
 
@@ -228,7 +270,7 @@ func TestServerPowerHandler_DiskFull(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.action, func(t *testing.T) {
-			fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "disk_full", OwnerName: "alice"}}
+			fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "disk_full", OwnerName: "alice", OwnerID: "u1"}}
 			h := newServerPowerHandler(fs, newServerPowerRedis(t))
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", false, "u1"))
@@ -271,11 +313,16 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 		}
 	})
 
-	t.Run("invited member with power permission proceeds", func(t *testing.T) {
+	// The legacy per-invite "power" flag is superseded by the authz.Resolver's
+	// ServerGrant/ServerRole delegation path (Phase 4 cut-over): a non-owner
+	// now needs an actual capability grant, not an Invite.Permissions.Power flag.
+	t.Run("server-grant holder with power.start proceeds", func(t *testing.T) {
+		roleID := 9
 		fs := &serverPowerFakeStore{
-			server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", NodeID: 5},
-			invite: &models.ServerInvite{Permissions: models.TabPermissions{Power: true}},
-			node:   &models.Node{ID: 5, Token: "node-tok"},
+			server:      &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1", NodeID: 5},
+			node:        &models.Node{ID: 5, Token: "node-tok"},
+			serverGrant: &store.ServerGrant{UserID: "u3", ServerRoleID: &roleID},
+			serverRole:  &store.ServerRole{ID: roleID, Capabilities: []string{"power.start"}},
 		}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
 		rec := httptest.NewRecorder()
@@ -285,9 +332,26 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 		}
 	})
 
-	t.Run("owner (non-admin) bypasses the invite check", func(t *testing.T) {
+	// Per-action distinction: a power.start-only grant must not also unlock kill.
+	t.Run("server-grant holder with power.start only is forbidden on kill", func(t *testing.T) {
+		roleID := 9
 		fs := &serverPowerFakeStore{
-			server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", NodeID: 5},
+			server:      &models.Server{ID: 1, UUID: "srv-uuid", Status: "online", OwnerName: "alice", OwnerID: "u1", NodeID: 5},
+			node:        &models.Node{ID: 5, Token: "node-tok"},
+			serverGrant: &store.ServerGrant{UserID: "u3", ServerRoleID: &roleID},
+			serverRole:  &store.ServerRole{ID: roleID, Capabilities: []string{"power.start"}},
+		}
+		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		rec := httptest.NewRecorder()
+		h.ServerPowerHandler(rec, serverPowerReq(1, "kill", "bob", false, "u3"))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("owner (non-admin) passes without any grant", func(t *testing.T) {
+		fs := &serverPowerFakeStore{
+			server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 			node:   &models.Node{ID: 5, Token: "node-tok"},
 		}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
@@ -303,7 +367,7 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 
 func TestServerPowerHandler_ServerSuspended(t *testing.T) {
 	t.Run("non-admin blocked", func(t *testing.T) {
-		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "suspended", OwnerName: "alice"}}
+		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "suspended", OwnerName: "alice", OwnerID: "u1"}}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
@@ -337,8 +401,8 @@ func TestServerPowerHandler_ServerSuspended(t *testing.T) {
 func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 	t.Run("start blocked for non-admin when billing suspended", func(t *testing.T) {
 		fs := &serverPowerFakeStore{
-			server:  &models.Server{ID: 1, Status: "stopped", OwnerName: "alice", OwnerID: "owner-1"},
-			billing: &store.UserBilling{UserID: "owner-1", Status: "suspended"},
+			server:  &models.Server{ID: 1, Status: "stopped", OwnerName: "alice", OwnerID: "u1"},
+			billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 		}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
 		rec := httptest.NewRecorder()
@@ -353,8 +417,8 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 
 	t.Run("restart blocked for non-admin when billing suspended", func(t *testing.T) {
 		fs := &serverPowerFakeStore{
-			server:  &models.Server{ID: 1, Status: "online", OwnerName: "alice", OwnerID: "owner-1"},
-			billing: &store.UserBilling{UserID: "owner-1", Status: "suspended"},
+			server:  &models.Server{ID: 1, Status: "online", OwnerName: "alice", OwnerID: "u1"},
+			billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 		}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
 		rec := httptest.NewRecorder()
@@ -366,8 +430,8 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 
 	t.Run("stop is NOT gated by billing suspension", func(t *testing.T) {
 		fs := &serverPowerFakeStore{
-			server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "online", OwnerName: "alice", OwnerID: "owner-1", NodeID: 5},
-			billing: &store.UserBilling{UserID: "owner-1", Status: "suspended"},
+			server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "online", OwnerName: "alice", OwnerID: "u1", NodeID: 5},
+			billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 			node:    &models.Node{ID: 5, Token: "node-tok"},
 		}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
@@ -397,7 +461,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 
 func TestServerPowerHandler_InstallCooldown(t *testing.T) {
 	t.Run("non-admin blocked while cooldown key has TTL", func(t *testing.T) {
-		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice"}}
+		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1"}}
 		rdb := newServerPowerRedis(t)
 		if err := rdb.Set(context.Background(), "dylaris:server:srv-uuid:install-start", "1", 30*time.Second).Err(); err != nil {
 			t.Fatalf("seed cooldown key: %v", err)
@@ -425,7 +489,7 @@ func TestServerPowerHandler_InstallCooldown(t *testing.T) {
 	})
 
 	t.Run("no cooldown key present, not blocked", func(t *testing.T) {
-		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", NodeID: 5}, node: &models.Node{ID: 5, Token: "node-tok"}}
+		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1", NodeID: 5}, node: &models.Node{ID: 5, Token: "node-tok"}}
 		h := newServerPowerHandler(fs, newServerPowerRedis(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
@@ -458,7 +522,7 @@ func TestServerPowerHandler_StatusTransitionMatrix(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.status+"_"+c.action, func(t *testing.T) {
 			fs := &serverPowerFakeStore{
-				server: &models.Server{ID: 1, UUID: "srv-uuid", Status: c.status, OwnerName: "alice", NodeID: 5},
+				server: &models.Server{ID: 1, UUID: "srv-uuid", Status: c.status, OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 				node:   &models.Node{ID: 5, Token: "node-tok"},
 			}
 			h := newServerPowerHandler(fs, newServerPowerRedis(t))
@@ -530,7 +594,7 @@ func TestServerPowerHandler_HappyPath_QueuesCommandAndUpdatesState(t *testing.T)
 	for _, c := range cases {
 		t.Run(c.action, func(t *testing.T) {
 			fs := &serverPowerFakeStore{
-				server: &models.Server{ID: 42, UUID: "srv-uuid-42", Status: c.startStatus, OwnerName: "alice", NodeID: 5},
+				server: &models.Server{ID: 42, UUID: "srv-uuid-42", Status: c.startStatus, OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 				node:   &models.Node{ID: 5, Token: "node-tok-42"},
 			}
 			rdb := newServerPowerRedis(t)
@@ -576,7 +640,7 @@ func TestServerPowerHandler_HappyPath_QueuesCommandAndUpdatesState(t *testing.T)
 // (servers_lifecycle.go:793-797). A short DialTimeout keeps the test fast.
 func TestServerPowerHandler_QueueSendCommandFailure(t *testing.T) {
 	fs := &serverPowerFakeStore{
-		server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", NodeID: 5},
+		server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 		node:   &models.Node{ID: 5, Token: "node-tok"},
 	}
 	brokenRDB := redis.NewClient(&redis.Options{
@@ -589,6 +653,7 @@ func TestServerPowerHandler_QueueSendCommandFailure(t *testing.T) {
 		Store: fs,
 		Redis: newServerPowerRedis(t), // cooldown check needs a working Redis
 		Queue: services.NewQueueService(brokenRDB),
+		Authz: authz.NewResolver(fs),
 	}}
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))

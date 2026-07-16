@@ -46,14 +46,6 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	if srv.ServerType == "proxy" {
 		sendJSONError(w, "Cannot link a proxy to another proxy", 400)
 		return
@@ -110,18 +102,6 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	user, _ := h.state.Store.GetUserByUsername(username)
-	userID := ""
-	if user != nil {
-		userID = user.ID
-	}
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "network") {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -217,14 +197,6 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-
-	if !isAdmin && srv.OwnerName != username {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 

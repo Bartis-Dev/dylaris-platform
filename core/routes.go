@@ -38,7 +38,28 @@ type routeExtras struct {
 // requiredCaps maps a route's mux path template to the capability id that
 // must gate it. Empty until the cut-over batches (Phase 4, Tasks 3+) fill it
 // in; coverage runs in permissive mode (see routes_coverage_test.go) until then.
-var requiredCaps = map[string]string{}
+var requiredCaps = map[string]string{
+	// Phase 4 Task 3: server lifecycle / power / proxy / storage.
+	// POST /api/servers/{id:[0-9]+}/power is deliberately absent: the action
+	// (start|stop|restart|kill) lives in the body, so it is in-handler-enforced
+	// (Rule R5) rather than RequireCap-gated at the route.
+	"/api/servers/{id:[0-9]+}/install-cooldown":            "overview.read",
+	"/api/servers/{id:[0-9]+}/setup":                       "server.settings.write",
+	"/api/servers/{id:[0-9]+}/reinstall":                   "server.settings.write",
+	"/api/servers/{id:[0-9]+}/switch":                      "server.settings.write",
+	"/api/servers/{id:[0-9]+}/name":                        "server.settings.write",
+	"/api/servers/{id:[0-9]+}/resources":                   "server.settings.write",
+	"/api/servers/{id:[0-9]+}":                             "server.delete",
+	"/api/servers/{id:[0-9]+}/sub-servers/{subServerName}": "server.delete",
+	"/api/servers/{id:[0-9]+}/proxy":                       "network.write",
+	"/api/servers/{id:[0-9]+}/proxy-endpoint":              "network.read",
+	"/api/servers/{id:[0-9]+}/storage-path":                "overview.read",
+	"/api/servers/{id:[0-9]+}/migrate-storage":             "server.settings.write",
+	"/api/servers/{id:[0-9]+}/sftp-credentials":            "sftp.access",
+	"/api/servers/{id:[0-9]+}/migration-status":            "overview.read",
+	"/api/servers/{id:[0-9]+}/automove":                    "server.settings.write",
+	"/api/servers/{id:[0-9]+}/transfer":                    "server.settings.write",
+}
 
 // buildAPIRouter constructs every request handler + the warp service and
 // registers every route exactly as main() used to inline them, so a test can
@@ -581,13 +602,17 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
+	// POWER is in-handler-enforced (Rule R5): the action is in the request body
+	// (start|stop|restart|kill), so a single route-level RequireCap would wrongly
+	// block e.g. a kill-only holder from starting. ServerPowerHandler resolves
+	// "power."+action itself via appState.Authz.Resolve.
 	api.HandleFunc("/servers/{id:[0-9]+}/power", authHandler.AuthMiddleware(serverHandler.ServerPowerHandler)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/install-cooldown", authHandler.AuthMiddleware(serverHandler.GetInstallCooldown)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/setup", authHandler.AuthMiddleware(serverHandler.SetupServer)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/reinstall", authHandler.AuthMiddleware(serverHandler.ReinstallServer)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/switch", authHandler.AuthMiddleware(serverHandler.SwitchSubServer)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/name", authHandler.AuthMiddleware(serverHandler.UpdateServerName)).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/resources", authHandler.AuthMiddleware(serverHandler.UpdateServerResources)).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/install-cooldown", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetInstallCooldown))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/setup", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SetupServer))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/reinstall", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.ReinstallServer))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SwitchSubServer))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/name", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerName))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/resources", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerResources))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/history", authHandler.AuthMiddleware(consoleHandler.GetHistory)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/stream", authHandler.AuthMiddleware(consoleHandler.StreamConsole)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/command", authHandler.AuthMiddleware(consoleHandler.SendCommand)).Methods("POST")
@@ -599,14 +624,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/members/inherited", authHandler.AuthMiddleware(memberHandler.GetInheritedMembers)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(memberHandler.UpdateMemberPermissions)).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(memberHandler.RemoveMember)).Methods("DELETE")
-	api.HandleFunc("/servers/{id:[0-9]+}", authHandler.AuthMiddleware(serverHandler.DeleteServer)).Methods("DELETE")
-	api.HandleFunc("/servers/{id:[0-9]+}/sub-servers/{subServerName}", authHandler.AuthMiddleware(serverHandler.DeleteSubServer)).Methods("DELETE")
-	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(serverHandler.LinkServerToProxy)).Methods("PUT")
-	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(serverHandler.UnlinkServerFromProxy)).Methods("DELETE")
-	api.HandleFunc("/servers/{id:[0-9]+}/proxy-endpoint", authHandler.AuthMiddleware(serverHandler.GetProxyEndpoint)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/storage-path", authHandler.AuthMiddleware(serverHandler.GetServerStoragePath)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/migrate-storage", authHandler.AuthMiddleware(serverHandler.MigrateServerStorage)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/sftp-credentials", authHandler.AuthMiddleware(serverHandler.GetSftpCredentials)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.delete")(serverHandler.DeleteServer))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/sub-servers/{subServerName}", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.delete")(serverHandler.DeleteSubServer))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.LinkServerToProxy))).Methods("PUT")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.UnlinkServerFromProxy))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy-endpoint", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(serverHandler.GetProxyEndpoint))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/storage-path", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetServerStoragePath))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/migrate-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.MigrateServerStorage))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/sftp-credentials", authHandler.AuthMiddleware(appState.Authz.RequireCap("sftp.access")(serverHandler.GetSftpCredentials))).Methods("GET")
 
 	api.HandleFunc("/versions/software", versionHandler.GetSoftwareList).Methods("GET")
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
@@ -698,11 +723,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(placementHandler.SetNodePlacement)).Methods("PUT")
 
 	// Server auto-move toggle — gated on the feature flag AND active gateway.
-	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove)))).Methods("PATCH")
 	// Manual node-to-node move (admin) — gateway-only; enqueues onto the orchestrator.
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.MoveServer))).Methods("POST")
 	// Tenant-facing transfer (BYON) — gateway-only; owner-or-admin + placement authz inside.
-	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.TransferServer))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
 	// Demo flag (admin) — mark a normal server as a public read-only showcase.
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/demo", authHandler.AuthMiddleware(serverHandler.SetServerDemo)).Methods("PATCH")
 	// Demo account designation (admin) — the single read-only account that sees the demo servers.
@@ -720,7 +745,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")
 	api.HandleFunc("/store/provision", authLimiter.Limit(60, storeHandler.Provision)).Methods("POST")
 	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
-	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(serverHandler.GetMigrationStatus)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.GetServerSettings)).Methods("GET")
 	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")
