@@ -169,7 +169,7 @@ type setForceRequest struct {
 	ForceOn bool `json:"forceOn"`
 }
 
-// SetForce PUT /api/servers/{id}/audit/force — gated by the route
+// SetForce PUT /api/servers/{id}/audit/force - gated by the route
 // (RequireCap(server.settings.write)): the owner, or a role-holder granted
 // that cap, can force their own server's audit on regardless of member state.
 // Admin still passes via the resolver's admin short-circuit.
