@@ -391,6 +391,13 @@ var requiredCaps = map[string]string{
 	"/api/library/mkdir":  "settings.write",
 	"/api/library/upload": "settings.write",
 	"/api/library/toggle": "settings.write",
+
+	// Phase 4 Task 21: /me/api-keys OWNER apikeys.read/write/delete, the last
+	// annotation batch. GET+POST share the read cap as the representative
+	// (the finer write/delete cap lives at the per-method RequireCap call
+	// above); DELETE gets its own delete-cap entry.
+	"/api/me/api-keys":             "apikeys.read",
+	"/api/me/api-keys/{id:[0-9]+}": "apikeys.delete",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -605,10 +612,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon", authHandler.AuthMiddleware(appState.Authz.RequireCap("rcon.exec")(rconHandler.ExecForUser))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("config.read")(rconHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("config.write")(rconHandler.SetConfig))).Methods("PUT")
-	// Per-user API key CRUD (panel surface).
-	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(apiKeysHandler.List)).Methods("GET")
-	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(apiKeysHandler.Create)).Methods("POST")
-	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(apiKeysHandler.Revoke)).Methods("DELETE")
+	// Per-user API key CRUD (panel surface). Phase 4 Task 21: OWNER
+	// apikeys.read/write/delete, chokepoint-open for any authed user (no
+	// server {id} in the path). The handler's own per-user scoping (keys are
+	// listed/created/revoked for the acting userID only) is the real boundary,
+	// same as Task 20's modpack.*/library.* OWNER routes.
+	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.read")(apiKeysHandler.List))).Methods("GET")
+	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))).Methods("POST")
+	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.delete")(apiKeysHandler.Revoke))).Methods("DELETE")
 	// External RCON: Authorization: Bearer dyl_<key>. Scope check on the
 	// path-uuid happens in the middleware itself.
 	api.HandleFunc("/external/rcon/{uuid}/exec", apiKeysHandler.APIKeyMiddleware("rcon.exec")(rconHandler.ExecExternal)).Methods("POST")

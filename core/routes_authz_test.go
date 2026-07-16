@@ -1232,3 +1232,26 @@ func TestCap_LibraryContentPanel(t *testing.T) {
 		t.Errorf("ordinary user must be 403 on library delete (needs settings.write), got %d", c)
 	}
 }
+
+// TestCap_ApiKeysOwner proves Phase 4 Task 21's /me/api-keys classification:
+// OWNER apikeys.read/write/delete is chokepoint-open for any authed user (the
+// path carries no server {id}), with the handler's own per-user scoping (a
+// user only ever lists/creates/revokes their own keys) and the key-creation
+// delegation subset-check (a minted key can only carry servers+permissions
+// the creating user already holds - see api_keys.go's checkServerAccess call)
+// as the real boundaries, same pattern as Task 20's modpack.*/library.*.
+func TestCap_ApiKeysOwner(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	srv := newAuthzTestServer(t, fs)
+	id := testIdentity{UserID: "owner-id", Username: "owner"}
+	if c := doAs(t, srv, "GET", "/api/me/api-keys", id); c == 403 {
+		t.Error("apikeys.read must not 403 at the chokepoint for an authed user (handler scopes to self)")
+	}
+	if c := doAs(t, srv, "POST", "/api/me/api-keys", id); c == 403 {
+		t.Error("apikeys.write must not 403 at the chokepoint for an authed user (handler scopes to self)")
+	}
+	if c := doAs(t, srv, "DELETE", "/api/me/api-keys/1", id); c == 403 {
+		t.Error("apikeys.delete must not 403 at the chokepoint for an authed user (handler scopes to self)")
+	}
+}
