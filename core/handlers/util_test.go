@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"testing"
-
-	"dylaris-core/models"
 )
 
 func TestSanitizeFilename(t *testing.T) {
@@ -102,29 +100,6 @@ func TestSanitizeServerName(t *testing.T) {
 	for _, c := range cases {
 		if got := sanitizeServerName(c.input); got != c.want {
 			t.Errorf("sanitizeServerName(%q) = %q, want %q", c.input, got, c.want)
-		}
-	}
-}
-
-func TestCheckPerm(t *testing.T) {
-	perms := models.TabPermissions{
-		Console: true,
-		Files:   false,
-		Config:  true,
-	}
-	cases := []struct {
-		perm string
-		want bool
-	}{
-		{"console", true},
-		{"files", false},
-		{"config", true},
-		{"overview", true},
-		{"unknown", false},
-	}
-	for _, c := range cases {
-		if got := checkPerm(perms, c.perm); got != c.want {
-			t.Errorf("checkPerm(perms, %q) = %v, want %v", c.perm, got, c.want)
 		}
 	}
 }

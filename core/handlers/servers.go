@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"dylaris-core/models"
-	"dylaris-core/store"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -29,53 +28,6 @@ const aikarsHighMemFlags = "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPa
 	"-XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 " +
 	"-XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 " +
 	"-XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1"
-
-// checkServerAccess verifies that the user has access to the server.
-// Owner and Admin always have full access. Invited users need the specific permission.
-func checkServerAccess(st store.Store, srv *models.Server, username string, isAdmin bool, userID string, requiredPerm string) bool {
-	if isAdmin || srv.OwnerName == username {
-		return true
-	}
-	if userID == "" {
-		return false
-	}
-
-	// Check direct invite first
-	invite, err := st.GetInvite(srv.ID, userID)
-	if err != nil {
-		// No direct invite — check inherited access via proxy
-		if srv.ProxyID != nil {
-			proxyInvite, proxyErr := st.GetInvite(*srv.ProxyID, userID)
-			if proxyErr == nil && proxyInvite.Permissions.Inherit {
-				return checkPerm(proxyInvite.Permissions, requiredPerm)
-			}
-		}
-		return false
-	}
-	return checkPerm(invite.Permissions, requiredPerm)
-}
-
-func checkPerm(perms models.TabPermissions, requiredPerm string) bool {
-	switch requiredPerm {
-	case "console":
-		return perms.Console
-	case "files":
-		return perms.Files
-	case "config":
-		return perms.Config
-	case "setup":
-		return perms.Setup
-	case "power":
-		return perms.Power
-	case "members":
-		return perms.Members
-	case "network":
-		return perms.Network
-	case "overview":
-		return true // Overview is always accessible for any invited user
-	}
-	return false
-}
 
 // sanitizeServerName allows only a-z A-Z 0-9 - + _  (spaces are replaced with _)
 var serverNameRegex = regexp.MustCompile(`[^a-zA-Z0-9\-_+]`)

@@ -37,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/authz"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
@@ -700,7 +701,8 @@ func (h *ProxyHandler) MintPublicProxyAuth(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
+	if rerr != nil || !res.HasCap("overview.read") {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}

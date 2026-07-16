@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -188,6 +189,22 @@ func (f *tabProxyPublicFakeStore) GetSetting(key string) (string, error) {
 	return f.settings[key], nil
 }
 
+// The three authz.Store reads Resolve touches beyond GetServerByID (already
+// above): no panel role, no direct/proxy server grant, no account grant, so a
+// non-owner/non-admin caller resolves to an empty Resolution (deny-by-default)
+// and only the owner short-circuit in Resolve can grant access in these tests.
+func (f *tabProxyPublicFakeStore) GetUserPanelAuthz(userID string) (*int, store.CapOverrides, error) {
+	return nil, store.CapOverrides{}, nil
+}
+
+func (f *tabProxyPublicFakeStore) GetServerGrant(serverID int, userID string) (*store.ServerGrant, error) {
+	return nil, nil
+}
+
+func (f *tabProxyPublicFakeStore) GetAccountGrant(ownerUserID, userID string) (*store.ServerGrant, error) {
+	return nil, nil
+}
+
 // shareTokenRow is the fixed column shape getTabByShareToken/getTabByID scan.
 type shareTokenRow struct {
 	id, serverID, nodeID, targetPort int
@@ -229,7 +246,10 @@ func newTabProxyPublicTestHandler(t *testing.T, tabProxyEnabled, allowPublic boo
 	// tests use.
 	// B5: the standalone-share tests exercise the happy path where origin
 	// isolation is active; the refusal tests below flip this to false.
-	state := &AppState{Store: fs, FeatureFlags: ff, GRPCRegistry: nodegrpc.NewRegistry(), TabProxyIsolationActive: true}
+	state := &AppState{
+		Store: fs, FeatureFlags: ff, GRPCRegistry: nodegrpc.NewRegistry(),
+		TabProxyIsolationActive: true, Authz: authz.NewResolver(fs),
+	}
 	authHandler := NewAuthHandler(state, tabProxyTestSecret)
 	return NewProxyHandler(state, authHandler), authHandler, mock, fs
 }
