@@ -232,7 +232,7 @@ func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
 	r := NewResolver(fs)
 	r.SetDemoRead(func(serverID int) bool { return serverID == 5 })
 	res, _ := r.Resolve(Identity{UserID: "stranger"}, 5)
-	for _, id := range []string{"overview.read", "console.read", "stats.read", "files.read"} {
+	for _, id := range []string{"overview.read", "console.read", "stats.read"} {
 		if !res.HasCap(id) {
 			t.Errorf("demo server should grant read cap %q to any authed user", id)
 		}
@@ -244,7 +244,10 @@ func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
 	}
 	// Topology + roster disclosure stays denied on a public demo even though these
 	// are read caps (network.read = routing/endpoint, members.read = access list).
-	for _, id := range []string{"network.read", "members.read"} {
+	// files.read is also denied: the file browser handler owns demo file access
+	// itself (via viaDemoBypass) so it can redact secrets; if the resolver granted
+	// files.read here, the handler would skip its own redaction path.
+	for _, id := range []string{"network.read", "members.read", "files.read"} {
 		if res.HasCap(id) {
 			t.Errorf("demo server must NOT grant sensitive read cap %q to a stranger", id)
 		}

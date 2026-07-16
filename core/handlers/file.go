@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/authz"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
@@ -77,24 +78,26 @@ func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) int64 
 }
 
 // getServerUUID extracts and validates the server_uuid query param for a WRITE
-// or download operation. Non-admin users must own the server or be invited with
-// the "files" permission. Demo viewers are denied here (read-only).
-func (h *FileHandler) getServerUUID(r *http.Request) (string, error) {
-	uuid, _, err := h.resolveServerUUID(r, false)
+// or download operation against requiredCap (files.write or files.delete).
+// Non-admin users must own the server or hold requiredCap via a grant. Demo
+// viewers are denied here (read-only).
+func (h *FileHandler) getServerUUID(r *http.Request, requiredCap string) (string, error) {
+	uuid, _, err := h.resolveServerUUID(r, false, requiredCap)
 	return uuid, err
 }
 
 // getServerUUIDRead is getServerUUID for read-only operations (list + view file
-// content). It additionally allows any authenticated user to READ a demo server,
-// so a logged-out-of-everything account can still browse the showcase. Write and
-// download endpoints keep using the strict getServerUUID. viaDemoBypass reports
-// whether access was granted THROUGH the demo bypass rather than real ownership
-// or an invite, so callers can redact sensitive file content on that path.
+// content), always resolved against files.read. It additionally allows any
+// authenticated user to READ a demo server, so a logged-out-of-everything
+// account can still browse the showcase. Write and download endpoints keep
+// using the strict getServerUUID. viaDemoBypass reports whether access was
+// granted THROUGH the demo bypass rather than real ownership or a grant, so
+// callers can redact sensitive file content on that path.
 func (h *FileHandler) getServerUUIDRead(r *http.Request) (uuid string, viaDemoBypass bool, err error) {
-	return h.resolveServerUUID(r, true)
+	return h.resolveServerUUID(r, true, "files.read")
 }
 
-func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool) (uuid string, viaDemoBypass bool, err error) {
+func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, requiredCap string) (uuid string, viaDemoBypass bool, err error) {
 	uuid = r.URL.Query().Get("server_uuid")
 	if uuid == "" {
 		uuid = r.FormValue("server_uuid")
@@ -115,11 +118,15 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool) (uu
 	if err != nil {
 		return "", false, fmt.Errorf("server not found")
 	}
-	// Honor invited-member permissions, not just ownership: a user invited to
-	// this server with the "files" permission may use the file browser.
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "files") {
+	// Route through the same capability resolver every other server-scoped
+	// route uses: owner short-circuit, or a direct/proxy/account grant holding
+	// requiredCap. files.read is excluded from the resolver's demo-read grant
+	// (see authz.demoReadDeny), so a demo stranger never passes here on reads -
+	// they fall into the demo-bypass branch below, which is redaction-aware.
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
+	if rerr != nil || !res.HasCap(requiredCap) {
 		if allowDemoRead && isDemoServer(h.state, uuid) {
-			return uuid, true, nil // read-only demo access, bypassing checkServerAccess
+			return uuid, true, nil // read-only demo access; redaction downstream via viaDemoBypass
 		}
 		return "", false, fmt.Errorf("access denied")
 	}
@@ -301,7 +308,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -399,7 +406,7 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 	cleanFile := sanitizeFilename(file)
 	req.Path = filepath.Join(dir, cleanFile)
 
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -446,7 +453,7 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 	_, newFile := filepath.Split(req.NewPath)
 	cleanFile := sanitizeFilename(newFile)
 
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -490,7 +497,7 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -533,7 +540,7 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.delete")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return
@@ -569,7 +576,7 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 // DownloadFileHandler handles file and folder downloads via gRPC streaming
 func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 	pathParam := r.URL.Query().Get("path")
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.read")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
@@ -649,7 +656,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	selectedPaths := r.URL.Query()["selected"]
 	selectAll := r.URL.Query().Get("select_all") == "true"
 
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.read")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
@@ -736,7 +743,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	path := r.FormValue("path")
-	serverUUID, err := h.getServerUUID(r)
+	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
 		return

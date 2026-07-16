@@ -66,6 +66,10 @@ type Resolution struct {
 var demoReadDeny = map[string]bool{
 	"network.read": true,
 	"members.read": true,
+	// files.read is handled by the file browser handler itself (it applies demo
+	// content redaction via viaDemoBypass); the resolver must NOT grant it on a
+	// demo server or redaction would be skipped for demo viewers.
+	"files.read": true,
 }
 
 // HasCap reports whether the resolution grants capID. An unknown capability is
@@ -85,9 +89,11 @@ func (res *Resolution) HasCap(capID string) bool {
 		return true
 	}
 	// Demo showcase: any authenticated viewer may READ a demo server's operational
-	// state (overview, console, stats, files, config, mods, tabs, schedule, ...).
-	// network.read and members.read stay denied (see demoReadDeny) so a public demo
-	// never discloses topology or the access roster. Writes/actions stay denied.
+	// state (overview, console, stats, config, mods, tabs, schedule, ...).
+	// network.read, members.read, and files.read stay denied (see demoReadDeny) so
+	// a public demo never discloses topology, the access roster, or unredacted
+	// file content (the file browser handler applies its own demo redaction).
+	// Writes/actions stay denied.
 	if res.demoRead && c.Scope == ScopeServer && c.Verb == VerbRead && !demoReadDeny[capID] {
 		return true
 	}
