@@ -41,14 +41,6 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "console") && !isDemoServer(h.state, srv.UUID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
 	subServer := r.URL.Query().Get("sub_server")
 	streamKey := fmt.Sprintf("dylaris:server:%s:logs", srv.UUID)
 	if subServer != "" {
@@ -95,14 +87,6 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "console") && !isDemoServer(h.state, srv.UUID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -191,14 +175,6 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "console") {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 

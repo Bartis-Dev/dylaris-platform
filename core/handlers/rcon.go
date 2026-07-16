@@ -66,13 +66,6 @@ func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	var req rconRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -185,16 +178,8 @@ type rconConfigResponse struct {
 // whether a password is set. Password value is never returned.
 func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	enabled, port, password, err := h.state.Store.GetServerRconConfig(serverID)
@@ -216,16 +201,8 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 // returned ONCE in the response so the user can copy them.
 func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	var req rconConfigRequest

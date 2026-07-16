@@ -253,3 +253,41 @@ func TestCap_PowerPerAction(t *testing.T) {
 		t.Errorf("power.start holder must be 403 on kill, got %d", killCode)
 	}
 }
+
+// --- Phase 4 Task 4: console + RCON ---
+
+func TestCap_ConsoleReadVsSend(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("reader-id", "reader", false)
+	fs.addUser("nobody-id", "nobody", false)
+	fs.servers = map[int]*models.Server{4: {ID: 4, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{9: {ID: 9, Capabilities: []string{"console.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(4, "reader-id"): {UserID: "reader-id", ServerRoleID: intPtr(9)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/4/console/history", testIdentity{UserID: "reader-id", Username: "reader"}); c == 403 {
+		t.Error("console.read holder must reach console history")
+	}
+	if c := doAs(t, srv, "POST", "/api/servers/4/console/command", testIdentity{UserID: "reader-id", Username: "reader"}); c != 403 {
+		t.Errorf("console.read holder must NOT send commands (needs console.send), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/4/console/history", testIdentity{UserID: "nobody-id", Username: "nobody"}); c != 403 {
+		t.Errorf("ungranted user must be 403 on console.read, got %d", c)
+	}
+}
+
+func TestCap_RconConfigReadVsWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("cfgreader-id", "cfgreader", false)
+	fs.servers = map[int]*models.Server{4: {ID: 4, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{11: {ID: 11, Capabilities: []string{"config.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(4, "cfgreader-id"): {UserID: "cfgreader-id", ServerRoleID: intPtr(11)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/4/rcon/config", testIdentity{UserID: "cfgreader-id", Username: "cfgreader"}); c == 403 {
+		t.Error("config.read holder must read rcon config")
+	}
+	if c := doAs(t, srv, "PUT", "/api/servers/4/rcon/config", testIdentity{UserID: "cfgreader-id", Username: "cfgreader"}); c != 403 {
+		t.Errorf("config.read holder must NOT write rcon config (needs config.write), got %d", c)
+	}
+}

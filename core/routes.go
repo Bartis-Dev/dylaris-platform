@@ -59,6 +59,15 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/migration-status":            "overview.read",
 	"/api/servers/{id:[0-9]+}/automove":                    "server.settings.write",
 	"/api/servers/{id:[0-9]+}/transfer":                    "server.settings.write",
+
+	// Phase 4 Task 4: console + RCON. /rcon/config serves both GET (config.read)
+	// and PUT (config.write) on the same template; config.read is the
+	// representative here, the per-method fine cap lives at each RequireCap call.
+	"/api/servers/{id:[0-9]+}/console/history": "console.read",
+	"/api/servers/{id:[0-9]+}/console/stream":  "console.read",
+	"/api/servers/{id:[0-9]+}/console/command": "console.send",
+	"/api/servers/{id:[0-9]+}/rcon":            "rcon.exec",
+	"/api/servers/{id:[0-9]+}/rcon/config":     "config.read",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -270,9 +279,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// --- RCON + API keys ---
 	// Panel-internal RCON. Power-class permission enforced inside the handler.
-	api.HandleFunc("/servers/{id:[0-9]+}/rcon", authHandler.AuthMiddleware(rconHandler.ExecForUser)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(rconHandler.GetConfig)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(rconHandler.SetConfig)).Methods("PUT")
+	api.HandleFunc("/servers/{id:[0-9]+}/rcon", authHandler.AuthMiddleware(appState.Authz.RequireCap("rcon.exec")(rconHandler.ExecForUser))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("config.read")(rconHandler.GetConfig))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("config.write")(rconHandler.SetConfig))).Methods("PUT")
 	// Per-user API key CRUD (panel surface).
 	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(apiKeysHandler.List)).Methods("GET")
 	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(apiKeysHandler.Create)).Methods("POST")
@@ -613,9 +622,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SwitchSubServer))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/name", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerName))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/resources", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerResources))).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/console/history", authHandler.AuthMiddleware(consoleHandler.GetHistory)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/console/stream", authHandler.AuthMiddleware(consoleHandler.StreamConsole)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/console/command", authHandler.AuthMiddleware(consoleHandler.SendCommand)).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/console/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.read")(consoleHandler.GetHistory))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/console/stream", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.read")(consoleHandler.StreamConsole))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/console/command", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.send")(consoleHandler.SendCommand))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/stream", authHandler.AuthMiddleware(statsHandler.StreamStats)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/history", authHandler.AuthMiddleware(statsHandler.GetHistory)).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/disk", authHandler.AuthMiddleware(statsHandler.GetDisk)).Methods("GET")

@@ -85,57 +85,23 @@ func decodeRconConfigResp(t *testing.T, rec *httptest.ResponseRecorder) rconConf
 	return out
 }
 
-// --- Access control (same checkServerAccess gate GetConfig/ExecForUser use) ---
+// --- Access control ---
+//
+// Phase 4 Task 4: config.read/config.write are now enforced at the route
+// chokepoint (RequireCap wrapping in routes.go), not in-handler, so the old
+// non-owner/no-invite and invited-without-power forbidden cases moved to
+// routes_authz_test.go (TestCap_RconConfigReadVsWrite) where they run through
+// the real resolver. What remains here is the handler's own, still-live
+// "server not found" existence check (independent of authz).
 
-func TestRconSetConfig_AccessControl(t *testing.T) {
-	t.Run("server not found", func(t *testing.T) {
-		fs := &rconConfigFakeStore{serverErr: errors.New("no rows")}
-		h := newRconConfigHandler(fs)
-		rec := httptest.NewRecorder()
-		h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-owner without invite is forbidden", func(t *testing.T) {
-		fs := &rconConfigFakeStore{
-			server:    &models.Server{ID: 1, OwnerName: "alice"},
-			inviteErr: errors.New("no invite"),
-		}
-		h := newRconConfigHandler(fs)
-		rec := httptest.NewRecorder()
-		h.SetConfig(rec, rconSetConfigReq(1, "mallory", false, "u2", map[string]interface{}{"enabled": true, "port": 25575}))
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-		}
-		if len(fs.setRconCalls) != 0 {
-			t.Fatalf("expected no SetServerRconConfig calls, got %+v", fs.setRconCalls)
-		}
-	})
-
-	t.Run("invited member without power permission is forbidden", func(t *testing.T) {
-		fs := &rconConfigFakeStore{
-			server: &models.Server{ID: 1, OwnerName: "alice"},
-			invite: &models.ServerInvite{Permissions: models.TabPermissions{Power: false}},
-		}
-		h := newRconConfigHandler(fs)
-		rec := httptest.NewRecorder()
-		h.SetConfig(rec, rconSetConfigReq(1, "bob", false, "u3", map[string]interface{}{"enabled": true, "port": 25575}))
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("owner (non-admin) passes", func(t *testing.T) {
-		fs := &rconConfigFakeStore{server: &models.Server{ID: 1, OwnerName: "alice"}}
-		h := newRconConfigHandler(fs)
-		rec := httptest.NewRecorder()
-		h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": false, "port": 25575}))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-		}
-	})
+func TestRconSetConfig_ServerNotFound(t *testing.T) {
+	fs := &rconConfigFakeStore{serverErr: errors.New("no rows")}
+	h := newRconConfigHandler(fs)
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestRconSetConfig_InvalidJSON(t *testing.T) {
