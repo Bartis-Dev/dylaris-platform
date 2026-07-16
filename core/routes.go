@@ -80,6 +80,17 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":            "tabs.write",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link": "tabs.write",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth": "overview.read",
+
+	// Phase 4 Task 7: scheduled tasks + spark. GET+POST /scheduled-tasks share
+	// one template -> schedule.read representative; the fine POST->schedule.write
+	// lives at the RequireCap call. PATCH+DELETE /scheduled-tasks/{taskId} share
+	// -> schedule.write representative; the fine DELETE->schedule.delete lives at
+	// the RequireCap call. /scheduled-tasks/validate has no {id} and is authed-
+	// exempt (pure cron preview) - intentionally NOT listed here.
+	"/api/servers/{id:[0-9]+}/scheduled-tasks":                   "schedule.read",
+	"/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}":    "schedule.write",
+	"/api/servers/{id:[0-9]+}/spark/profiles":                    "spark.use",
+	"/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}": "spark.use",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -283,11 +294,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Scheduled Tasks ---
 	// Cron preview — pure transform, available to anyone authed.
 	api.HandleFunc("/scheduled-tasks/validate", authHandler.AuthMiddleware(scheduledTasksHandler.ValidateCron)).Methods("POST")
-	// Per-server CRUD. Access gated to power-class (owner/admin/permitted).
-	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(scheduledTasksHandler.List)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(scheduledTasksHandler.Create)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Update)).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(scheduledTasksHandler.Delete)).Methods("DELETE")
+	// Per-server CRUD, gated at the chokepoint by the finest matching cap.
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(appState.Authz.RequireCap("schedule.read")(scheduledTasksHandler.List))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks", authHandler.AuthMiddleware(appState.Authz.RequireCap("schedule.write")(scheduledTasksHandler.Create))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("schedule.write")(scheduledTasksHandler.Update))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("schedule.delete")(scheduledTasksHandler.Delete))).Methods("DELETE")
 
 	// --- RCON + API keys ---
 	// Panel-internal RCON. Power-class permission enforced inside the handler.
@@ -319,9 +330,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/modpack-contents", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ModpackContents))).Methods("GET")
 
 	// --- Spark profiles ---
-	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.List)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.Record)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}", authHandler.AuthMiddleware(sparkHandler.Delete)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(appState.Authz.RequireCap("spark.use")(sparkHandler.List))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(appState.Authz.RequireCap("spark.use")(sparkHandler.Record))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("spark.use")(sparkHandler.Delete))).Methods("DELETE")
 
 	// --- Custom Tabs ---
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.read")(serverTabsHandler.List))).Methods("GET")

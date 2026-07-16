@@ -13,10 +13,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// ScheduledTasksHandler exposes per-server cron task CRUD. Permissions: only
-// the owner/admin can mutate (we treat scheduled tasks as a "power"-class
-// action — restart a server, broadcast as the server). Read access matches
-// the same gate.
+// ScheduledTasksHandler exposes per-server cron task CRUD. Access is enforced
+// by the RequireCap chokepoint in routes.go (schedule.read/write/delete).
 
 type ScheduledTasksHandler struct {
 	state *AppState
@@ -39,26 +37,8 @@ type scheduledTaskRequest struct {
 // cases without a third execution path.
 var validTaskTypes = map[string]bool{"restart": true, "say": true}
 
-func (h *ScheduledTasksHandler) canAccess(r *http.Request, serverID int) (*models.Server, bool) {
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
-		return nil, false
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "power") {
-		return nil, false
-	}
-	return srv, true
-}
-
 func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if _, ok := h.canAccess(r, serverID); !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	tasks, err := h.state.Store.ListScheduledTasksByServer(serverID)
 	if err != nil {
 		sendJSONError(w, "Failed to load tasks", http.StatusInternalServerError)
@@ -72,10 +52,6 @@ func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if _, ok := h.canAccess(r, serverID); !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	var req scheduledTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -152,10 +128,6 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if _, ok := h.canAccess(r, serverID); !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
 	existing, err := h.state.Store.GetScheduledTask(taskID)
 	if err != nil || existing == nil || existing.ServerID != serverID {
@@ -218,10 +190,6 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 func (h *ScheduledTasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if _, ok := h.canAccess(r, serverID); !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
 	existing, err := h.state.Store.GetScheduledTask(taskID)
 	if err != nil || existing == nil || existing.ServerID != serverID {

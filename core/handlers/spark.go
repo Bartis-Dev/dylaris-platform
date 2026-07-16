@@ -17,7 +17,9 @@ import (
 // through the existing /console/command endpoint (panel-driven). URL
 // detection happens in the panel too, watching the console SSE stream — when
 // it sees a spark.lucko.me URL during an active profile, it POSTs here to
-// persist for cross-session history.
+// persist for cross-session history. Access is enforced by the spark.use
+// RequireCap chokepoint in routes.go; the old in-handler checkServerAccess
+// gate is gone.
 
 type SparkHandler struct {
 	state *AppState
@@ -37,24 +39,9 @@ type sparkProfileRequest struct {
 	StartedAt string `json:"startedAt,omitempty"`
 }
 
-func (h *SparkHandler) canAccess(r *http.Request, serverID int) bool {
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
-		return false
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	return checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "console")
-}
-
 // Record POST /api/servers/{id}/spark/profiles
 func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	var req sparkProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -109,10 +96,6 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 // List GET /api/servers/{id}/spark/profiles
 func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	db := h.dbFromState()
 	if db == nil {
 		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
@@ -161,10 +144,6 @@ func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 // Delete DELETE /api/servers/{id}/spark/profiles/{profileId}
 func (h *SparkHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	profileID, _ := strconv.Atoi(mux.Vars(r)["profileId"])
 	db := h.dbFromState()
 	if db == nil {

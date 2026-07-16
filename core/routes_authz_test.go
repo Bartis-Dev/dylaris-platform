@@ -403,3 +403,42 @@ func TestFiles_DeleteNeedsDeleteCap(t *testing.T) {
 		t.Errorf("files.write-only holder must be 403 on delete (needs files.delete), got %d", rec.Code)
 	}
 }
+
+// --- Phase 4 Task 7: scheduled tasks + spark ---
+
+func TestCap_ScheduledTasksVerbs(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("sched-id", "sched", false)
+	fs.servers = map[int]*models.Server{9: {ID: 9, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{30: {ID: 30, Capabilities: []string{"schedule.read", "schedule.write"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(9, "sched-id"): {UserID: "sched-id", ServerRoleID: intPtr(30)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/9/scheduled-tasks", testIdentity{UserID: "sched-id", Username: "sched"}); c == 403 {
+		t.Error("schedule.read holder must list scheduled tasks")
+	}
+	if c := doAs(t, srv, "POST", "/api/servers/9/scheduled-tasks", testIdentity{UserID: "sched-id", Username: "sched"}); c == 403 {
+		t.Error("schedule.write holder must create scheduled tasks")
+	}
+	// holds read+write but NOT delete -> DELETE must be 403
+	if c := doAs(t, srv, "DELETE", "/api/servers/9/scheduled-tasks/1", testIdentity{UserID: "sched-id", Username: "sched"}); c != 403 {
+		t.Errorf("schedule.write-only holder must be 403 on delete (needs schedule.delete), got %d", c)
+	}
+}
+
+func TestCap_SparkUse(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("nospark-id", "nospark", false)
+	fs.servers = map[int]*models.Server{9: {ID: 9, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{31: {ID: 31, Capabilities: []string{"spark.use"}}}
+	fs.addUser("sparker-id", "sparker", false)
+	fs.serverGrants = map[string]*store.ServerGrant{skey(9, "sparker-id"): {UserID: "sparker-id", ServerRoleID: intPtr(31)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/9/spark/profiles", testIdentity{UserID: "sparker-id", Username: "sparker"}); c == 403 {
+		t.Error("spark.use holder must access spark profiles")
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/9/spark/profiles", testIdentity{UserID: "nospark-id", Username: "nospark"}); c != 403 {
+		t.Errorf("user without spark.use must be 403, got %d", c)
+	}
+}
