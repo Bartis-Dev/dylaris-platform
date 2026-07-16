@@ -75,13 +75,9 @@ func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetAllUsage GET /api/admin/usage — every tenant's usage for the period, busiest
-// first. Admin only.
+// GetAllUsage GET /api/admin/usage - RequireCap("plans.read") at the route.
+// Every tenant's usage for the period, busiest first.
 func (h *UsageHandler) GetAllUsage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	period := usagePeriod(r)
 	list, err := h.state.Store.ListTrafficUsage(period)
 	if err != nil {

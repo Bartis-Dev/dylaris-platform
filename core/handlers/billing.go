@@ -45,8 +45,9 @@ func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SetBillingStatus PATCH /api/admin/users/{id}/billing — admin transitions a
-// tenant between active / past_due / suspended. past_due starts the grace window
+// SetBillingStatus PATCH /api/admin/users/{id}/billing - RequireCap("plans.write")
+// at the route. Admin transitions a tenant between active / past_due /
+// suspended. past_due starts the grace window
 // + dunning email; suspended is an IMMEDIATE force-suspend (SuspendNow: stops
 // servers now and durably revokes every route-only link kit - they do NOT come
 // back on reactivation, an admin must re-mint them); active reactivates (no
@@ -54,10 +55,6 @@ func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 // automatic non-payment lifecycle and the store webhook (handlers/store.go)
 // keep the graced Suspend (deferred cutoff) - this admin path does not.
 func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	if h.state.Billing == nil {
 		sendJSONError(w, "Billing unavailable", http.StatusServiceUnavailable)
 		return
@@ -89,13 +86,10 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": req.Status})
 }
 
-// GetBillingSettings GET /api/admin/settings/billing — the platform default
-// grace + retention windows and the payment URL the banner links to.
+// GetBillingSettings GET /api/admin/settings/billing - RequireCap("plans.read")
+// at the route. The platform default grace + retention windows and the
+// payment URL the banner links to.
 func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	get := func(key, def string) string {
 		if v, _ := h.state.Store.GetSetting(key); v != "" {
 			return v
@@ -114,13 +108,10 @@ func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// SetBillingSettings PUT /api/admin/settings/billing — write the platform
-// defaults. Retention specs are validated; the payment URL is free-form.
+// SetBillingSettings PUT /api/admin/settings/billing - RequireCap("plans.write")
+// at the route. Writes the platform defaults; retention specs are validated,
+// the payment URL is free-form.
 func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		GracePeriod       string `json:"gracePeriod"`
 		R2Retention       string `json:"r2Retention"`
@@ -171,14 +162,10 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
-// SetBillingOverrides PATCH /api/admin/users/{id}/billing-overrides — per-user
-// retention overrides. An empty spec clears the override (falls back to the
-// platform default).
+// SetBillingOverrides PATCH /api/admin/users/{id}/billing-overrides -
+// RequireCap("plans.write") at the route. Per-user retention overrides; an
+// empty spec clears the override (falls back to the platform default).
 func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID := mux.Vars(r)["id"]
 	var req struct {
 		GracePeriod   string `json:"gracePeriod"`
@@ -209,15 +196,12 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
-// GetUserBilling GET /api/admin/users/{id}/billing — admin reads a tenant's full
-// lifecycle state (status + per-user retention overrides) plus the platform
-// defaults so the override modal can show "uses default" hints. Like GetMyBilling
-// it never 404s: a tenant with no row reads back as active with empty overrides.
+// GetUserBilling GET /api/admin/users/{id}/billing - RequireCap("plans.read")
+// at the route. Reads a tenant's full lifecycle state (status + per-user
+// retention overrides) plus the platform defaults so the override modal can
+// show "uses default" hints. Like GetMyBilling it never 404s: a tenant with
+// no row reads back as active with empty overrides.
 func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID := mux.Vars(r)["id"]
 	b, err := h.state.Store.GetUserBilling(userID)
 	if err != nil {

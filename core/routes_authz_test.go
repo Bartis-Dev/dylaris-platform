@@ -966,3 +966,26 @@ func TestCap_TicketsUserRouteExemptAuthed(t *testing.T) {
 		t.Error("EXEMPT-authed GET /tickets must not 403 an authed user (in-handler ACL is the boundary)")
 	}
 }
+
+// TestCap_PlansBillingPanel proves the admin plans/billing/usage routes are
+// gated by PANEL plans.* at the chokepoint (fine per-method caps: read for
+// list/GET, write for create/update/PATCH, delete for DELETE), while the
+// caller's own /me/usage stays authed-exempt (not RequireCap-gated).
+func TestCap_PlansBillingPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "bl-id", "bl", "plans.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/plans", testIdentity{UserID: "bl-id", Username: "bl"}); c == 403 {
+		t.Error("plans.read holder must list plans")
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/plans", testIdentity{UserID: "bl-id", Username: "bl"}); c != 403 {
+		t.Errorf("plans.read-only holder must be 403 on POST /admin/plans (needs plans.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/plans", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin plans, got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/me/usage", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+		t.Error("EXEMPT-authed /me/usage must not 403 an authed user")
+	}
+}

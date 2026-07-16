@@ -235,6 +235,18 @@ var requiredCaps = map[string]string{
 	"/api/admin/tickets/restore/init":                "tickets.write",
 	"/api/admin/tickets/restore/execute":             "tickets.write",
 	"/api/admin/tickets/deletion-log":                "tickets.read",
+
+	// Phase 4 Task 16: plans + billing admin (PANEL plans.*). "/api/me/usage"
+	// and "/api/me/billing" are the caller's OWN data and stay authed-exempt
+	// (deliberately NOT listed here).
+	"/api/admin/plans":                                      "plans.read",
+	"/api/admin/plans/{id:[0-9]+}":                          "plans.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/plan":              "plans.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides":   "plans.write",
+	"/api/admin/settings/billing":                           "plans.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/billing":           "plans.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides": "plans.write",
+	"/api/admin/usage":                                      "plans.read",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -545,23 +557,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/solder/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteKey)))).Methods("DELETE")
 
 	// --- Username history + account policy ---
+	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap
+	// (not in requiredCaps). /admin/usage is PANEL plans.read.
 	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
-	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(usageHandler.GetAllUsage)).Methods("GET")
+	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(usageHandler.GetAllUsage))).Methods("GET")
 
+	// /me/billing is the caller's OWN lifecycle state: EXEMPT-authed, no RequireCap
+	// (not in requiredCaps). The admin billing routes below are PANEL plans.*.
 	api.HandleFunc("/me/billing", authHandler.AuthMiddleware(billingHandler.GetMyBilling)).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(billingHandler.GetBillingSettings)).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(billingHandler.SetBillingSettings)).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(billingHandler.GetUserBilling)).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(billingHandler.SetBillingStatus)).Methods("PATCH")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(billingHandler.SetBillingOverrides)).Methods("PATCH")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(billingHandler.GetBillingSettings))).Methods("GET")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(billingHandler.SetBillingSettings))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(billingHandler.GetUserBilling))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(billingHandler.SetBillingStatus))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(billingHandler.SetBillingOverrides))).Methods("PATCH")
 
-	// --- BYON plans + per-user plan/limit overrides (admin) ---
-	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(plansHandler.List)).Methods("GET")
-	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(plansHandler.Create)).Methods("POST")
-	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(plansHandler.Update)).Methods("PUT")
-	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(plansHandler.Delete)).Methods("DELETE")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/plan", authHandler.AuthMiddleware(plansHandler.SetUserPlan)).Methods("PATCH")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(plansHandler.SetUserLimitOverrides)).Methods("PATCH")
+	// --- BYON plans + per-user plan/limit overrides (admin, PANEL plans.*) ---
+	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(plansHandler.List))).Methods("GET")
+	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(plansHandler.Create))).Methods("POST")
+	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(plansHandler.Update))).Methods("PUT")
+	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.delete")(plansHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/plan", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(plansHandler.SetUserPlan))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(plansHandler.SetUserLimitOverrides))).Methods("PATCH")
 
 	// /me/username-history is the caller's OWN history: EXEMPT-authed, no
 	// RequireCap (not in requiredCaps). The admin two below are PANEL users.*.
