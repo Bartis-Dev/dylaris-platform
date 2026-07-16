@@ -1163,3 +1163,72 @@ func TestCap_ModuleMutationsPanel(t *testing.T) {
 		t.Errorf("ordinary user must be 403 on module toggle (needs settings.write), got %d", c)
 	}
 }
+
+// TestCap_ModpackSolderOwnerChokepointOpen documents the F2 design for Phase 4
+// Task 20's OWNER-scope modpack.* routes: the modpack builder (/me/packs,
+// /packs/{id}/...) and the session-authed solder client/key management
+// (/solder/clients, /solder/keys, /packs/{id}/clients) all carry no server
+// {id}/{uuid}, so RequireCap resolves serverID==0 -> ownerSelf and passes the
+// chokepoint for ANY authenticated user. The real per-realm boundary is
+// packsHandler.ownsPack / solder_manage.go's solderCaller+ownsPackAndClient
+// (both keyed on owner_user_id), which is untouched by this batch.
+func TestCap_ModpackSolderOwnerChokepointOpen(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	srv := newAuthzTestServer(t, fs)
+	id := testIdentity{UserID: "owner-id", Username: "owner"}
+	if c := doAs(t, srv, "GET", "/api/me/packs", id); c == 403 {
+		t.Error("OWNER modpack.read must not 403 at the chokepoint for an authed user (handler scopes)")
+	}
+	if c := doAs(t, srv, "POST", "/api/me/packs", id); c == 403 {
+		t.Error("OWNER modpack.write must not 403 at the chokepoint for an authed user (handler scopes)")
+	}
+	if c := doAs(t, srv, "GET", "/api/me/modrinth-pat", id); c == 403 {
+		t.Error("OWNER modpack.read (modrinth PAT) must not 403 at the chokepoint for an authed user")
+	}
+	if c := doAs(t, srv, "GET", "/api/solder/clients", id); c == 403 {
+		t.Error("OWNER modpack.read (solder clients, session-authed) must not 403 at the chokepoint for an authed user")
+	}
+	if c := doAs(t, srv, "GET", "/api/solder/keys", id); c == 403 {
+		t.Error("OWNER modpack.read (solder keys, session-authed) must not 403 at the chokepoint for an authed user")
+	}
+}
+
+// TestCap_LibraryContentPanel proves Phase 4 Task 20's /library/* CONTENT
+// classification: GET /library (and its /download sibling) stay EXEMPT-authed
+// (any authenticated user may browse/download the platform-shared library, as
+// today - see LibraryPicker.tsx), while the four mutations (mkdir/upload/
+// delete/toggle) now RequireCap("settings.write") in place of the former
+// in-handler `if !isAdmin` block - there is no dedicated library-admin cap, so
+// this reuses the same PANEL settings.write mapping as Task 19's /modules
+// mutations. This is a PANEL (not OWNER library.*) classification because the
+// library is a single platform-shared catalog, not a per-user owned realm.
+func TestCap_LibraryContentPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "lib-id", "lib", "settings.write")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	// GET /library is EXEMPT-authed: a plain user must not be 403 at the chokepoint
+	if c := doAs(t, srv, "GET", "/api/library", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+		t.Error("EXEMPT-authed GET /library must not 403 an authed user")
+	}
+	if c := doAs(t, srv, "GET", "/api/library/download", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+		t.Error("EXEMPT-authed GET /library/download must not 403 an authed user")
+	}
+	// admin must not be 403 on a library mutation
+	if c := doAs(t, srv, "POST", "/api/library/mkdir", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must not be 403 on library mkdir")
+	}
+	// a settings.write holder can too
+	if c := doAs(t, srv, "POST", "/api/library/mkdir", testIdentity{UserID: "lib-id", Username: "lib"}); c == 403 {
+		t.Error("settings.write holder must reach library mkdir")
+	}
+	// a plain user cannot mutate the library
+	if c := doAs(t, srv, "POST", "/api/library/mkdir", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on library mkdir (needs settings.write), got %d", c)
+	}
+	if c := doAs(t, srv, "POST", "/api/library/delete", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on library delete (needs settings.write), got %d", c)
+	}
+}

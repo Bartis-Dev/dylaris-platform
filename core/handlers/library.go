@@ -93,14 +93,12 @@ func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// ToggleLibraryPathHandler POST /api/library/toggle (Admin only)
+// ToggleLibraryPathHandler POST /api/library/toggle
 // Body: { "path": "...", "enabled": false }
+//
+// Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former
+// in-handler `if !isAdmin` block is now the chokepoint's job.
 func (h *LibraryHandler) ToggleLibraryPathHandler(w http.ResponseWriter, r *http.Request) {
-	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
@@ -188,14 +186,11 @@ func isPathBlocked(path string, disabled map[string]struct{}) bool {
 	return false
 }
 
-// DeleteLibraryHandler POST /api/library/delete (Admin only)
+// DeleteLibraryHandler POST /api/library/delete
+//
+// Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former
+// in-handler `if !isAdmin` block is now the chokepoint's job.
 func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req struct {
 		Path string `json:"path"`
 	}
@@ -212,14 +207,11 @@ func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// MkdirLibraryHandler POST /api/library/mkdir (Admin only)
+// MkdirLibraryHandler POST /api/library/mkdir
+//
+// Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former
+// in-handler `if !isAdmin` block is now the chokepoint's job.
 func (h *LibraryHandler) MkdirLibraryHandler(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req struct {
 		Path string `json:"path"`
 	}
@@ -236,14 +228,11 @@ func (h *LibraryHandler) MkdirLibraryHandler(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// UploadLibraryHandler POST /api/library/upload (Admin only)
+// UploadLibraryHandler POST /api/library/upload
+//
+// Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former
+// in-handler `if !isAdmin` block is now the chokepoint's job.
 func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	// 32MiB in memory; larger files spill to a temp file on disk. Passing 2GiB
 	// here would buffer the whole upload in RAM.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {

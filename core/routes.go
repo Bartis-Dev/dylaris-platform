@@ -332,6 +332,65 @@ var requiredCaps = map[string]string{
 	"/api/modules/{id:[0-9]+}/toggle":   "settings.write",
 	"/api/modules/{id:[0-9]+}/position": "settings.write",
 	"/api/modules/{id:[0-9]+}/role":     "settings.write",
+
+	// Phase 4 Task 20: modpack builder + solder owner tools (OWNER modpack.*).
+	// These routes are chokepoint-open by design for any authenticated user
+	// (serverID==0 -> ownerSelf per the resolver); the real per-realm boundary
+	// is the handler's own owner-filter (packsHandler.ownsPack's p.OwnerID ==
+	// userID check, solder_manage.go's solderCaller/pack.OwnerID checks), which
+	// is untouched. Read-vs-write-vs-delete representative per shared template,
+	// same convention as every other batch; the fine per-method cap lives at
+	// each RequireCap call. GET /api/modrinth/* (the external proxy) and GET
+	// /api/library + GET /api/library/download stay authed-exempt and are
+	// deliberately NOT listed here (see the route registration comments).
+	"/api/me/modrinth-pat":                                                                          "modpack.read",
+	"/api/me/packs":                                                                                 "modpack.read",
+	"/api/me/packs/import-solder/preview":                                                           "modpack.write",
+	"/api/me/packs/import-solder":                                                                   "modpack.write",
+	"/api/packs/{id:[0-9]+}":                                                                        "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds":                                                                 "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}":                                                "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content":                                        "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth":                               "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload":                                 "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}":                  "modpack.delete",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side":             "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text":             "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish":                                        "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export":                                         "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader":                                         "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth": "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods":                                    "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder":                                 "modpack.write",
+	"/api/packs/{id:[0-9]+}/solder-config":                                                          "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link":                                     "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links":                                    "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}":                    "modpack.delete",
+	"/api/solder/clients":                                                                           "modpack.read",
+	"/api/solder/clients/{id:[0-9]+}":                                                               "modpack.delete",
+	"/api/packs/{id:[0-9]+}/clients":                                                                "modpack.read",
+	"/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}":                                              "modpack.write",
+	"/api/solder/keys":             "modpack.read",
+	"/api/solder/keys/{id:[0-9]+}": "modpack.delete",
+
+	// Phase 4 Task 20: /library/* CONTENT. INSPECTED and found to be a single
+	// platform-shared file catalog (buildProvider has no per-owner scoping;
+	// LibraryView is reachable by any authenticated user via the navbar, used
+	// during server setup to pick pre-uploaded files - see LibraryPicker.tsx),
+	// NOT a per-user OWNER realm - so the library.read/write/delete catalog
+	// caps (ScopeOwner) do not fit and are deliberately NOT used here. Read
+	// (GET /api/library, GET /api/library/download) has no gate beyond auth in
+	// the handler (any authed user may browse/download; admin-disabled paths
+	// are redacted in-handler, not chokepoint-enforced) and stays authed-exempt,
+	// same call as Task 19's GET /api/modules. The four mutations
+	// (mkdir/upload/delete/toggle) were hard `if !isAdmin` gated in-handler with
+	// no dedicated library-admin cap in the catalog, so they RequireCap
+	// ("settings.write") - the same faithful mapping used for /api/modules
+	// mutations in Task 19.
+	"/api/library/delete": "settings.write",
+	"/api/library/mkdir":  "settings.write",
+	"/api/library/upload": "settings.write",
+	"/api/library/toggle": "settings.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -595,51 +654,69 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/tabproxy/{token}/auth", authHandler.AuthMiddleware(proxyHandler.MintPublicProxyAuth)).Methods("GET")
 
 	// --- Modrinth PAT ---
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status))).Methods("GET")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set)))).Methods("PUT")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear)))).Methods("DELETE")
+	// Phase 4 Task 20: OWNER modpack.* - chokepoint-open by design (serverID==0
+	// -> ownerSelf for any authed user); RequireCap sits inside AuthMiddleware
+	// and outside the existing feature gates (Rule R1). The caller's own PAT
+	// row is the realm (userID from context, no path {id}), so there is no
+	// separate owner-filter to keep or remove here.
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status)))).Methods("GET")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set))))).Methods("PUT")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
 	// --- Unified pack builder (Solder + Modrinth). Reuses the modpacks feature gates. ---
-	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.List))).Methods("GET")
-	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create)))).Methods("POST")
-	api.HandleFunc("/me/packs/import-solder/preview", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolderPreview)))).Methods("POST")
-	api.HandleFunc("/me/packs/import-solder", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolder)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.Get))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Update)))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Delete)))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.ListBuilds))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateBuild)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateBuild)))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.DeleteBuild)))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.AddModrinth)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UploadContent)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RemoveContent)))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSide)))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetContentText)))).Methods("PUT")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishModrinth)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.GetBuildLoader))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateMods)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig)))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RevokeShareLink)))).Methods("DELETE")
+	// Phase 4 Task 20: OWNER modpack.read/write/delete, chokepoint-open by
+	// design. The real per-realm boundary is packsHandler.ownsPack's
+	// p.OwnerID == userID check (List/Update/Delete/CreateBuild/... inline the
+	// same check) - untouched, it is the F2 boundary this cap layer sits in
+	// front of.
+	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.List)))).Methods("GET")
+	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create))))).Methods("POST")
+	api.HandleFunc("/me/packs/import-solder/preview", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolderPreview))))).Methods("POST")
+	api.HandleFunc("/me/packs/import-solder", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolder))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Get)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Update))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Delete))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListBuilds)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateBuild))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateBuild))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.DeleteBuild))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.AddModrinth))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UploadContent))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RemoveContent))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSide))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetContentText))))).Methods("PUT")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishModrinth))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetBuildLoader)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateMods))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RevokeShareLink))))).Methods("DELETE")
 
 	// --- Solder client/key management (authed) ---
-	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListClients)))).Methods("GET")
-	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateClient)))).Methods("POST")
-	api.HandleFunc("/solder/clients/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteClient)))).Methods("DELETE")
+	// Phase 4 Task 20 INSPECT result: these ARE session-authed (authHandler.
+	// AuthMiddleware, userID from the JWT context via solderCaller/ownsPack) -
+	// NOT the Technic-launcher API-key protocol (that is the separate,
+	// deliberately unauthenticated "/solder/api/*" root-router block above,
+	// left untouched). So these get OWNER modpack.* like the pack-builder
+	// routes above; solder_manage.go's solderCaller(r)-scoped store calls and
+	// ownsPackAndClient's pack.OwnerID/client-owner checks are the kept
+	// per-realm boundary.
+	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListClients))))).Methods("GET")
+	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateClient))))).Methods("POST")
+	api.HandleFunc("/solder/clients/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteClient))))).Methods("DELETE")
 
-	api.HandleFunc("/packs/{id:[0-9]+}/clients", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListPackClientsHandler)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.AddPackClient)))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.RemovePackClient)))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/clients", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListPackClientsHandler))))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.AddPackClient))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.RemovePackClient))))).Methods("DELETE")
 
-	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListKeys)))).Methods("GET")
-	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateKey)))).Methods("POST")
-	api.HandleFunc("/solder/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteKey)))).Methods("DELETE")
+	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListKeys))))).Methods("GET")
+	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateKey))))).Methods("POST")
+	api.HandleFunc("/solder/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteKey))))).Methods("DELETE")
 
 	// --- Username history + account policy ---
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap
@@ -1039,13 +1116,24 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/files/download/selective", authHandler.AuthMiddleware(fileHandler.SelectiveDownloadHandler)).Methods("GET")
 	api.HandleFunc("/files/upload", authHandler.AuthMiddleware(fileHandler.UploadFileHandler)).Methods("POST")
 
-	// Library endpoints
+	// Library endpoints. Phase 4 Task 20 INSPECT result: this is a single
+	// platform-shared file catalog (buildProvider has no per-owner scoping),
+	// not a per-user OWNER realm, so the library.* catalog caps (ScopeOwner) do
+	// not fit - PANEL settings.write is used instead, same call as Task 19's
+	// /api/modules mutations. GET (browse) and GET /download have no gate
+	// beyond auth in the handler today (any authenticated user may browse/
+	// download during server setup - see LibraryPicker.tsx; admin-disabled
+	// paths are redacted in-handler, not chokepoint-enforced) and stay
+	// authed-exempt, deliberately NOT RequireCap-wrapped and NOT listed in
+	// requiredCaps. The four mutations were hard `if !isAdmin` gated in-handler
+	// with no dedicated library-admin cap - that gate is now the chokepoint's
+	// job, so it is removed from library.go in the same commit.
 	api.HandleFunc("/library", authHandler.AuthMiddleware(libraryHandler.GetLibraryHandler)).Methods("GET")
-	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(libraryHandler.DeleteLibraryHandler)).Methods("POST")
-	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(libraryHandler.MkdirLibraryHandler)).Methods("POST")
-	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(libraryHandler.UploadLibraryHandler)).Methods("POST")
+	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.DeleteLibraryHandler))).Methods("POST")
+	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.MkdirLibraryHandler))).Methods("POST")
+	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.UploadLibraryHandler))).Methods("POST")
 	api.HandleFunc("/library/download", authHandler.AuthMiddleware(libraryHandler.DownloadLibraryHandler)).Methods("GET")
-	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(libraryHandler.ToggleLibraryPathHandler)).Methods("POST")
+	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.ToggleLibraryPathHandler))).Methods("POST")
 
 	// Settings endpoints (PANEL settings.*; Phase 4 Task 17)
 	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetLibrarySettings))).Methods("GET")
