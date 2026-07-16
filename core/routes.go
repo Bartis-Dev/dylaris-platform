@@ -829,6 +829,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Read-only capability catalog for the permission-system redesign
 	// (foundation phase). Not yet consulted by any other route (phase 2).
 	api.HandleFunc("/authz/catalog", authHandler.AuthMiddleware(authzHandler.Catalog)).Methods("GET")
+	api.HandleFunc("/authz/presets", authHandler.AuthMiddleware(authzHandler.Presets)).Methods("GET")
 	api.HandleFunc("/authz/mode", authHandler.AuthMiddleware(permissionsModeHandler.GetMode)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.UpdateProfileHandler)).Methods("PUT")

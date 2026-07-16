@@ -23,3 +23,13 @@ func (h *AuthzHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 		"catalog": authz.Grouped(),
 	})
 }
+
+// Presets GET /api/authz/presets - the simple-mode preset bundles, so the
+// assign-only UI renders from the backend (no hard-coded frontend presets).
+func (h *AuthzHandler) Presets(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"presets": authz.Presets(),
+	})
+}

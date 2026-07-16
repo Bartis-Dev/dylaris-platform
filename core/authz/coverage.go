@@ -99,6 +99,7 @@ var ExemptRoutes = map[string]bool{
 
 	// Read-only capability catalog: any authed user, not yet consulted elsewhere.
 	"/api/authz/catalog": true, // authed; read-only reference data
+	"/api/authz/presets": true, // authed; read-only preset reference data
 	"/api/authz/mode":    true, // authed; read-only delegation mode, owner-inclusive
 
 	// Caller's own metered usage / billing / history / regions.
