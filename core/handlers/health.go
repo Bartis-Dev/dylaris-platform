@@ -50,15 +50,11 @@ const healthCheckTimeout = 3 * time.Second
 
 // GetStatus GET /api/admin/health
 //
-// Admin-only aggregated platform health. Each component is checked
-// independently; a failing optional component degrades the overall status but
-// only a DB/Redis outage marks the platform "down".
+// Aggregated platform health, PANEL settings.read (RequireCap at the route).
+// Each component is checked independently; a failing optional component
+// degrades the overall status but only a DB/Redis outage marks the platform
+// "down".
 func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	components := []healthComponent{}
 
 	dbUp := false

@@ -47,17 +47,10 @@ func acctPolicyReq(method string, body []byte, isAdmin bool) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), "isAdmin", isAdmin))
 }
 
-func TestAccountPolicyGet_Forbidden(t *testing.T) {
-	fs := &accountPolicyFakeStore{}
-	h := NewAccountPolicyHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.Get(rec, acctPolicyReq("GET", nil, false))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-}
+// Phase 4 Task 17: settings.read is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_PlatformSettingsPanel), which runs through the real resolver.
 
 func TestAccountPolicyGet_ReturnsStorePolicy(t *testing.T) {
 	fs := &accountPolicyFakeStore{allowChange: true, cooldownDays: 30}
@@ -84,21 +77,10 @@ func TestAccountPolicyGet_ReturnsStorePolicy(t *testing.T) {
 	}
 }
 
-func TestAccountPolicySet_Forbidden(t *testing.T) {
-	fs := &accountPolicyFakeStore{}
-	h := NewAccountPolicyHandler(&AppState{Store: fs})
-	body, _ := json.Marshal(map[string]interface{}{"allowNameChange": true, "nameChangeCooldownDays": 10})
-	rec := httptest.NewRecorder()
-
-	h.Set(rec, acctPolicyReq("PUT", body, false))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.setCalls) != 0 {
-		t.Fatalf("expected no store mutation, got %+v", fs.setCalls)
-	}
-}
+// Phase 4 Task 17: settings.write is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_PlatformSettingsPanel), which runs through the real resolver.
 
 func TestAccountPolicySet_InvalidJSON(t *testing.T) {
 	fs := &accountPolicyFakeStore{}

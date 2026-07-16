@@ -154,24 +154,16 @@ func LoadAuthPolicy(state *AppState) AuthPolicy {
 	return p
 }
 
-// GetAuthPolicy GET /api/admin/settings/auth
+// GetAuthPolicy GET /api/admin/settings/auth - PANEL settings.read (RequireCap at the route).
 func (h *AuthSettingsHandler) GetAuthPolicy(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"policy":  LoadAuthPolicy(h.state),
 	})
 }
 
-// SaveAuthPolicy PUT /api/admin/settings/auth
+// SaveAuthPolicy PUT /api/admin/settings/auth - PANEL settings.write (RequireCap at the route).
 func (h *AuthSettingsHandler) SaveAuthPolicy(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var p AuthPolicy
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -262,12 +254,8 @@ type SMTPConfigDTO struct {
 	PasswordSet bool `json:"passwordSet,omitempty"`
 }
 
-// GetSMTPConfig GET /api/admin/settings/smtp
+// GetSMTPConfig GET /api/admin/settings/smtp - PANEL settings.read (RequireCap at the route).
 func (h *AuthSettingsHandler) GetSMTPConfig(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	dto := loadSMTPConfigForUI(h.state, "default")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -296,12 +284,8 @@ func loadSMTPConfigForUI(state *AppState, purpose string) SMTPConfigDTO {
 	}
 }
 
-// SaveSMTPConfig PUT /api/admin/settings/smtp
+// SaveSMTPConfig PUT /api/admin/settings/smtp - PANEL settings.write (RequireCap at the route).
 func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var dto SMTPConfigDTO
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -351,12 +335,8 @@ type testSendRequest struct {
 
 // TestSendSMTP POST /api/admin/settings/smtp/test — sends a fixed body so
 // admins can verify their config works without leaking real verification tokens.
+// PANEL settings.write (RequireCap at the route).
 func (h *AuthSettingsHandler) TestSendSMTP(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req testSendRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	to := strings.TrimSpace(req.To)

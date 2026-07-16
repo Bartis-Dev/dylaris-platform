@@ -26,11 +26,8 @@ type featureSettingsPayload struct {
 }
 
 // Get GET /api/admin/settings/features — current bundle of platform toggles.
+// PANEL settings.read (RequireCap at the route).
 func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	out := featureSettingsPayload{
 		Tickets:  h.state.FeatureFlags.IsTicketsEnabled(r.Context()),
 		Modpacks: h.state.FeatureFlags.IsModpacksEnabled(r.Context()),
@@ -45,11 +42,8 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Set PUT /api/admin/settings/features — write the bundle. Each setting key
 // is persisted, its cached flag is invalidated, and a features.changed event
 // is published so the panel re-renders banners / nav gating.
+// PANEL settings.write (RequireCap at the route).
 func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req featureSettingsPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

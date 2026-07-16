@@ -18,12 +18,8 @@ type accountPolicy struct {
 	NameChangeCooldownDays int  `json:"nameChangeCooldownDays"`
 }
 
-// Get GET /api/admin/settings/users
+// Get GET /api/admin/settings/users - PANEL settings.read (RequireCap at the route).
 func (h *AccountPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	allow, days, _ := h.state.Store.GetUserAccountPolicy()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -31,12 +27,8 @@ func (h *AccountPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Set PUT /api/admin/settings/users
+// Set PUT /api/admin/settings/users - PANEL settings.write (RequireCap at the route).
 func (h *AccountPolicyHandler) Set(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req accountPolicy
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

@@ -49,11 +49,8 @@ type hubRedisStatus struct {
 }
 
 // GetStatus GET /api/settings/gateway/hub-redis-admin - non-secret status only.
+// PANEL settings.read (RequireCap at the route).
 func (h *HubRedisAdminHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	raw, err := h.state.Store.GetSetting(hubRedisStatusKey)
 	if err != nil || raw == "" {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -84,12 +81,9 @@ func (h *HubRedisAdminHandler) GetStatus(w http.ResponseWriter, r *http.Request)
 // Provision POST /api/settings/gateway/hub-redis-admin - create gw-hub-admin on
 // Core's own Redis (the ONE shared instance) and return the generated password
 // ONCE, or in manual mode return the ready-to-paste command. hubAddr only records
-// how the Hub reaches that instance; Core never dials it.
+// how the Hub reaches that instance; Core never dials it. PANEL settings.write
+// (RequireCap at the route).
 func (h *HubRedisAdminHandler) Provision(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		Mode    string `json:"mode"`
 		DB      int    `json:"db"`
@@ -165,12 +159,8 @@ func (h *HubRedisAdminHandler) Provision(w http.ResponseWriter, r *http.Request)
 
 // Roll POST /api/settings/gateway/hub-redis-admin/roll - re-mint the password on
 // the recorded target. No request body: auto rolls on Core's Redis, manual just
-// re-shows the command.
+// re-shows the command. PANEL settings.write (RequireCap at the route).
 func (h *HubRedisAdminHandler) Roll(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	raw, gerr := h.state.Store.GetSetting(hubRedisStatusKey)
 	if gerr != nil || raw == "" {
 		sendJSONError(w, "Not provisioned yet", http.StatusBadRequest)

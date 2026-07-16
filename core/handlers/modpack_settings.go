@@ -32,12 +32,8 @@ type modpackSettings struct {
 	ShareLinksEnabled        bool     `json:"shareLinksEnabled"`
 }
 
-// Get GET /api/admin/settings/modpacks
+// Get GET /api/admin/settings/modpacks - PANEL settings.read (RequireCap at the route).
 func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	get := func(k string) string {
 		v, _ := h.state.Store.GetSetting(k)
 		return v
@@ -85,10 +81,6 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // secret, send "" with a special sentinel? No — YAGNI; admin can rotate or
 // delete via DB if needed.
 func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req modpackSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -173,12 +165,9 @@ type modpackUserFlagRequest struct {
 	CanCreate bool `json:"canCreate"`
 }
 
-// SetUserFlag PATCH /api/admin/users/{id}/modpack-flag
+// SetUserFlag PATCH /api/admin/users/{id}/modpack-flag - PANEL settings.write
+// (RequireCap at the route).
 func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID, ok := parseUserID(w, r)
 	if !ok {
 		return

@@ -31,14 +31,8 @@ type LibrarySettings struct {
 	S3SecretKey string `json:"s3SecretKey,omitempty"` // omit in GET response
 }
 
-// GetLibrarySettings GET /api/settings/library
+// GetLibrarySettings GET /api/settings/library - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetLibrarySettings(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	getSetting := func(key string) string {
 		val, _ := h.state.Store.GetSetting(key)
 		return val
@@ -60,14 +54,8 @@ func (h *SettingsHandler) GetLibrarySettings(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// SaveLibrarySettings POST /api/settings/library
+// SaveLibrarySettings POST /api/settings/library - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveLibrarySettings(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req LibrarySettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -117,13 +105,8 @@ var defaultFileManagerSettings = FileManagerSettings{
 	UserDownloadLimit:  1 * 1024 * 1024 * 1024, // 1 GB
 }
 
-// GetFileManagerSettings GET /api/settings/filemanager
+// GetFileManagerSettings GET /api/settings/filemanager - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetFileManagerSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	settings := h.loadFileManagerSettings()
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -132,13 +115,8 @@ func (h *SettingsHandler) GetFileManagerSettings(w http.ResponseWriter, r *http.
 	})
 }
 
-// SaveFileManagerSettings POST /api/settings/filemanager
+// SaveFileManagerSettings POST /api/settings/filemanager - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req FileManagerSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -240,13 +218,8 @@ func (h *SettingsHandler) GetFeatureSettings(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// SaveFeatureSettings POST /api/settings/features
+// SaveFeatureSettings POST /api/settings/features - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req FeatureSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -329,13 +302,8 @@ func validHosterValidation(v string) bool {
 	return v == "letters" || v == "alphanumeric" || v == "dns"
 }
 
-// GetGatewaySettings GET /api/settings/gateway
+// GetGatewaySettings GET /api/settings/gateway - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	getSetting := func(key string) string {
 		val, _ := h.state.Store.GetSetting(key)
 		return val
@@ -422,13 +390,8 @@ func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.
 	})
 }
 
-// SaveGatewaySettings POST /api/settings/gateway
+// SaveGatewaySettings POST /api/settings/gateway - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req GatewaySettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -546,12 +509,8 @@ var defaultPlacementSettings = PlacementSettings{
 	IOWeight:             0, // unset by default — opt-in blkio fair-share
 }
 
-// GetPlacementSettings GET /api/settings/placement
+// GetPlacementSettings GET /api/settings/placement - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetPlacementSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	s := h.LoadPlacementSettings()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -559,12 +518,8 @@ func (h *SettingsHandler) GetPlacementSettings(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// SavePlacementSettings POST /api/settings/placement
+// SavePlacementSettings POST /api/settings/placement - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req PlacementSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -699,13 +654,8 @@ var defaultServerSettings = ServerSettings{
 	MaxSubServers: 3,
 }
 
-// GetServerSettings GET /api/settings/servers
+// GetServerSettings GET /api/settings/servers - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetServerSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	settings := h.LoadServerSettings()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -713,13 +663,8 @@ func (h *SettingsHandler) GetServerSettings(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// SaveServerSettings POST /api/settings/servers
+// SaveServerSettings POST /api/settings/servers - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req ServerSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -748,14 +693,8 @@ func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 	return settings
 }
 
-// TestLibraryConnection GET /api/settings/library/test
+// TestLibraryConnection GET /api/settings/library/test - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) TestLibraryConnection(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	libType, _ := h.state.Store.GetSetting("library_type")
 	libPath, _ := h.state.Store.GetSetting("library_path")
 
@@ -840,14 +779,8 @@ func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// SaveBeamSettings POST /api/settings/beam
+// SaveBeamSettings POST /api/settings/beam - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Request) {
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req BeamSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -1025,24 +958,16 @@ func validBackupMode(m string) bool {
 	return m == "s3" || m == "node-local" || m == "shared"
 }
 
-// GetBackupConfig GET /api/settings/backup — admin only.
+// GetBackupConfig GET /api/settings/backup - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetBackupConfig(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": h.LoadBackupConfig(),
 	})
 }
 
-// SaveBackupConfig POST /api/settings/backup — admin only.
+// SaveBackupConfig POST /api/settings/backup - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req BackupConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -1121,13 +1046,8 @@ func (h *SettingsHandler) GetRoutingMode(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// SaveRoutingMode POST /api/settings/routing-mode — admin only
+// SaveRoutingMode POST /api/settings/routing-mode - PANEL settings.write (RequireCap at the route)
 func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req RoutingModeSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -1243,27 +1163,20 @@ func (h *SettingsHandler) LoadWarpSpokeAllowedPorts() string {
 	return v
 }
 
-// GetWarpFirewallSettings GET /api/settings/warp-firewall - admin only.
+// GetWarpFirewallSettings GET /api/settings/warp-firewall - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": WarpFirewallSettings{AllowedPorts: h.LoadWarpSpokeAllowedPorts()},
 	})
 }
 
-// SaveWarpFirewallSettings POST /api/settings/warp-firewall - admin only.
-// Validates + normalizes the port list, persists it, and publishes it to the
-// central-Redis key the warp leaders poll. Requires at least one port: an empty
-// allowlist would silently lock every spoke out of all internal services.
+// SaveWarpFirewallSettings POST /api/settings/warp-firewall - PANEL settings.write
+// (RequireCap at the route). Validates + normalizes the port list, persists it,
+// and publishes it to the central-Redis key the warp leaders poll. Requires at
+// least one port: an empty allowlist would silently lock every spoke out of all
+// internal services.
 func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req WarpFirewallSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

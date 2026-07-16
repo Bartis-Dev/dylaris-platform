@@ -247,6 +247,50 @@ var requiredCaps = map[string]string{
 	"/api/admin/users/{id:[0-9a-f-]{36}}/billing":           "plans.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides": "plans.write",
 	"/api/admin/usage":                                      "plans.read",
+
+	// Phase 4 Task 17: admin platform-settings surface (PANEL settings.*).
+	// Uniform mapping: reads -> settings.read, writes (POST/PUT/PATCH/DELETE) ->
+	// settings.write (there is no settings.delete cap). GET /api/maintenance
+	// (public banner), GET /api/system/features (Task 19), /api/gateway/route-options,
+	// and /api/settings/filemanager/limits stay authed/public-exempt (deliberately
+	// NOT listed here). Three routes share their template with an EXEMPT-authed GET
+	// counterpart on the SAME path (GET /api/settings/features, GET /api/settings/beam,
+	// GET /api/settings/routing-mode all read for every authed user; only their
+	// POST save is settings.write) - like the "/api/nodes" precedent (Task 13), a
+	// shared template can't record two different per-method caps here, so those
+	// three are deliberately NOT listed and are deferred to the Task 22/23
+	// per-method ExemptRoutes reconciliation.
+	"/api/admin/settings/users":                        "settings.read",
+	"/api/admin/settings/modpacks":                     "settings.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag": "settings.write",
+	"/api/admin/settings/features":                     "settings.read",
+	"/api/admin/settings/tab-proxy":                    "settings.read",
+	"/api/admin/health":                                "settings.read",
+	"/api/admin/db/migration":                          "settings.read",
+	"/api/admin/db/migration/test-connection":          "settings.write",
+	"/api/admin/db/migration/verify":                   "settings.write",
+	"/api/admin/db/hypertable":                         "settings.read",
+	"/api/admin/db/hypertable/convert":                 "settings.write",
+	"/api/admin/settings/telemetry":                    "settings.read",
+	"/api/admin/maintenance":                           "settings.write",
+	"/api/admin/settings/audit":                        "settings.read",
+	"/api/admin/xdp/config":                            "settings.read",
+	"/api/settings/library":                            "settings.read",
+	"/api/settings/library/test":                       "settings.read",
+	"/api/settings/filemanager":                        "settings.read",
+	"/api/settings/gateway":                            "settings.read",
+	"/api/settings/gateway/hub-redis-admin":            "settings.read",
+	"/api/settings/gateway/hub-redis-admin/roll":       "settings.write",
+	"/api/settings/placement":                          "settings.read",
+	"/api/admin/servers/{id:[0-9]+}/demo":              "settings.write",
+	"/api/admin/settings/demo-account":                 "settings.read",
+	"/api/settings/servers":                            "settings.read",
+	"/api/settings/backup":                             "settings.read",
+	"/api/settings/warp-firewall":                      "settings.read",
+	"/api/admin/settings/security-questions-pool":      "settings.read",
+	"/api/admin/settings/auth":                         "settings.read",
+	"/api/admin/settings/smtp":                         "settings.read",
+	"/api/admin/settings/smtp/test":                    "settings.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -584,40 +628,42 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(usernameHistoryHandler.Admin))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(usernameHistoryHandler.AdminRename))).Methods("PATCH")
-	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Get)).Methods("GET")
-	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Set)).Methods("PUT")
-	// --- Modpack settings + system feature flags ---
-	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Get)).Methods("GET")
-	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(modpackSettingsHandler.Set)).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(modpackSettingsHandler.SetUserFlag)).Methods("PATCH")
+	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(accountPolicyHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(accountPolicyHandler.Set))).Methods("PUT")
+	// --- Modpack settings + system feature flags (PANEL settings.*; Phase 4 Task 17) ---
+	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.Set))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.SetUserFlag))).Methods("PATCH")
+	// GET /system/features stays EXEMPT-authed here (Phase 4 Task 19 territory - not touched by Task 17).
 	api.HandleFunc("/system/features", authHandler.AuthMiddleware(systemFeaturesHandler.Get)).Methods("GET")
 	// Bundled admin GET/PUT for all platform-wide feature toggles. Replaces
 	// the per-feature toggle that used to live inside /admin/settings/modpacks
 	// (still works for back-compat; this is the new canonical surface).
-	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Get)).Methods("GET")
-	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
-	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(tabProxySettingsHandler.Get)).Methods("GET")
-	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(tabProxySettingsHandler.Set)).Methods("PUT")
+	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(featureSettingsHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(featureSettingsHandler.Set))).Methods("PUT")
+	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(tabProxySettingsHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(tabProxySettingsHandler.Set))).Methods("PUT")
 	// P0b-5 node admission (PANEL nodes.read/write/delete; Phase 4 Task 13).
 	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeAdmissionHandler.GetAdmission))).Methods("GET")
 	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.SetAdmission))).Methods("PUT")
 	api.HandleFunc("/admin/settings/node-admission/cidrs", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.AddCIDR))).Methods("POST")
 	api.HandleFunc("/admin/settings/node-admission/cidrs/{id}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeAdmissionHandler.DeleteCIDR))).Methods("DELETE")
-	// --- Platform status / health (admin Status page) ---
-	api.HandleFunc("/admin/health", authHandler.AuthMiddleware(healthHandler.GetStatus)).Methods("GET")
+	// --- Platform status / health (admin Status page; PANEL settings.read) ---
+	api.HandleFunc("/admin/health", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(healthHandler.GetStatus))).Methods("GET")
 
-	// In-panel cross-database migration (admin-only). Shared job is pollable by
-	// every admin; the copy runs under maintenance mode on whichever Core started it.
-	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.GetMigration)).Methods("GET")
-	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(dbMigrationHandler.StartMigration)).Methods("POST")
-	api.HandleFunc("/admin/db/migration/test-connection", authHandler.AuthMiddleware(dbMigrationHandler.TestConnection)).Methods("POST")
-	api.HandleFunc("/admin/db/migration/verify", authHandler.AuthMiddleware(dbMigrationHandler.VerifyMigration)).Methods("POST")
+	// In-panel cross-database migration (admin-only, PANEL settings.*). Shared job
+	// is pollable by every settings.read holder; the copy runs under maintenance
+	// mode on whichever Core started it.
+	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dbMigrationHandler.GetMigration))).Methods("GET")
+	api.HandleFunc("/admin/db/migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dbMigrationHandler.StartMigration))).Methods("POST")
+	api.HandleFunc("/admin/db/migration/test-connection", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dbMigrationHandler.TestConnection))).Methods("POST")
+	api.HandleFunc("/admin/db/migration/verify", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dbMigrationHandler.VerifyMigration))).Methods("POST")
 	// In-place hypertable upgrade + TimescaleDB recommendation (same database).
-	api.HandleFunc("/admin/db/hypertable", authHandler.AuthMiddleware(dbMigrationHandler.HypertableStatus)).Methods("GET")
-	api.HandleFunc("/admin/db/hypertable/convert", authHandler.AuthMiddleware(dbMigrationHandler.ConvertHypertable)).Methods("POST")
-	// --- Telemetry settings ---
-	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Get)).Methods("GET")
-	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(telemetrySettingsHandler.Set)).Methods("PUT")
+	api.HandleFunc("/admin/db/hypertable", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dbMigrationHandler.HypertableStatus))).Methods("GET")
+	api.HandleFunc("/admin/db/hypertable/convert", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dbMigrationHandler.ConvertHypertable))).Methods("POST")
+	// --- Telemetry settings (PANEL settings.*) ---
+	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(telemetrySettingsHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(telemetrySettingsHandler.Set))).Methods("PUT")
 
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")
@@ -696,8 +742,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// --- Maintenance mode ---
 	// Public state — drives the banner; never blocked by the maintenance middleware.
+	// EXEMPT (Phase 4 Task 17): unauthenticated, not RequireCap-gated, not in requiredCaps.
 	api.HandleFunc("/maintenance", maintenanceHandler.GetState).Methods("GET")
-	api.HandleFunc("/admin/maintenance", authHandler.AuthMiddleware(maintenanceHandler.SaveState)).Methods("PUT")
+	api.HandleFunc("/admin/maintenance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(maintenanceHandler.SaveState))).Methods("PUT")
 
 	// --- Tickets ---
 	// Every ticket-related endpoint is wrapped in RequireTicketsEnabled so the
@@ -777,9 +824,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverAuditHandler.ListAudit))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverAuditHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/audit/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverAuditHandler.SetForce))).Methods("PUT")
-	// Platform-wide audit retention policy.
-	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.GetPolicy)).Methods("GET")
-	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.SavePolicy)).Methods("PUT")
+	// Platform-wide audit retention policy (PANEL settings.*).
+	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(auditSettingsHandler.GetPolicy))).Methods("GET")
+	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(auditSettingsHandler.SavePolicy))).Methods("PUT")
 
 	// --- Ticket DB migration + backups (admin management -> PANEL tickets.*) ---
 	// GET reads map to tickets.read; every mutation (including the backup
@@ -928,8 +975,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// XDP / eBPF DDoS Protection (deployment-wide config managed by Panel,
 	// consumed by every Edge replica via Redis poll)
 	xdpHandler := handlers.NewXDPHandler(appState)
-	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(xdpHandler.GetConfig)).Methods("GET")
-	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(xdpHandler.UpdateConfig)).Methods("PUT")
+	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(xdpHandler.GetConfig))).Methods("GET")
+	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(xdpHandler.UpdateConfig))).Methods("PUT")
 
 	api.HandleFunc("/files", authHandler.AuthMiddleware(fileHandler.GetFilesHandler)).Methods("GET")
 	api.HandleFunc("/files/content", authHandler.AuthMiddleware(fileHandler.GetFileContentHandler)).Methods("GET")
@@ -950,30 +997,39 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/library/download", authHandler.AuthMiddleware(libraryHandler.DownloadLibraryHandler)).Methods("GET")
 	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(libraryHandler.ToggleLibraryPathHandler)).Methods("POST")
 
-	// Settings endpoints
-	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(settingsHandler.GetLibrarySettings)).Methods("GET")
-	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(settingsHandler.SaveLibrarySettings)).Methods("POST")
-	api.HandleFunc("/settings/library/test", authHandler.AuthMiddleware(settingsHandler.TestLibraryConnection)).Methods("GET")
-	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(settingsHandler.GetFileManagerSettings)).Methods("GET")
-	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(settingsHandler.SaveFileManagerSettings)).Methods("POST")
+	// Settings endpoints (PANEL settings.*; Phase 4 Task 17)
+	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetLibrarySettings))).Methods("GET")
+	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveLibrarySettings))).Methods("POST")
+	api.HandleFunc("/settings/library/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.TestLibraryConnection))).Methods("GET")
+	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetFileManagerSettings))).Methods("GET")
+	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveFileManagerSettings))).Methods("POST")
+	// /settings/filemanager/limits stays EXEMPT-authed: every authenticated user
+	// (not just admins) needs their own upload/download limit to drive the file
+	// browser UI - not in requiredCaps.
 	api.HandleFunc("/settings/filemanager/limits", authHandler.AuthMiddleware(settingsHandler.GetUserLimits)).Methods("GET")
+	// GET /settings/features is EXEMPT-authed: LoadFeatureSettings is documented
+	// "available to all authenticated users" and the handler carries no admin
+	// gate (proxy/gateway flags drive UI for every user). The POST save IS
+	// admin-only -> PANEL settings.write. Same template split as GET /nodes vs
+	// POST /nodes (Task 13): not added to requiredCaps here, deferred to the
+	// Task 22/23 per-method ExemptRoutes reconciliation.
 	api.HandleFunc("/settings/features", authHandler.AuthMiddleware(settingsHandler.GetFeatureSettings)).Methods("GET")
-	api.HandleFunc("/settings/features", authHandler.AuthMiddleware(settingsHandler.SaveFeatureSettings)).Methods("POST")
-	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(settingsHandler.GetGatewaySettings)).Methods("GET")
-	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(settingsHandler.SaveGatewaySettings)).Methods("POST")
+	api.HandleFunc("/settings/features", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveFeatureSettings))).Methods("POST")
+	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetGatewaySettings))).Methods("GET")
+	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveGatewaySettings))).Methods("POST")
 
 	// Hub-admin Redis provisioner (TP2b): admin-only create/roll of the
-	// gw-hub-admin ACL user. GET status carries no secret; the password is
-	// returned once by POST provision/roll.
-	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(hubRedisAdminHandler.GetStatus)).Methods("GET")
-	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(hubRedisAdminHandler.Provision)).Methods("POST")
-	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(hubRedisAdminHandler.Roll)).Methods("POST")
+	// gw-hub-admin ACL user (PANEL settings.*). GET status carries no secret;
+	// the password is returned once by POST provision/roll.
+	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(hubRedisAdminHandler.GetStatus))).Methods("GET")
+	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Provision))).Methods("POST")
+	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Roll))).Methods("POST")
 
 	// Placement / Scheduling. /placement/pick + /tags + /regions stay authed-exempt
 	// (Phase 4 Task 13): they are node-picking helper reads/preview any authed user
 	// may call (no server {id}, not privilege-sensitive on their own).
-	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(settingsHandler.GetPlacementSettings)).Methods("GET")
-	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(settingsHandler.SavePlacementSettings)).Methods("POST")
+	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetPlacementSettings))).Methods("GET")
+	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SavePlacementSettings))).Methods("POST")
 	api.HandleFunc("/placement/pick", authHandler.AuthMiddleware(placementHandler.PickNode)).Methods("POST")
 	api.HandleFunc("/placement/tags", authHandler.AuthMiddleware(placementHandler.AvailableTagsHandler)).Methods("GET")
 	api.HandleFunc("/placement/regions", authHandler.AuthMiddleware(placementHandler.AvailableRegionsHandler)).Methods("GET")
@@ -985,11 +1041,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.MoveServer)))).Methods("POST")
 	// Tenant-facing transfer (BYON) — gateway-only; owner-or-admin + placement authz inside.
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
-	// Demo flag (admin) — mark a normal server as a public read-only showcase.
-	api.HandleFunc("/admin/servers/{id:[0-9]+}/demo", authHandler.AuthMiddleware(serverHandler.SetServerDemo)).Methods("PATCH")
-	// Demo account designation (admin) — the single read-only account that sees the demo servers.
-	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(serverHandler.GetDemoAccount)).Methods("GET")
-	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(serverHandler.SetDemoAccount)).Methods("PUT")
+	// Demo flag (admin, PANEL settings.write) - mark a normal server as a public
+	// read-only showcase. The StoreEnabled guard inside SetServerDemo stays: it is
+	// feature availability (hosted-build-only), not authorization.
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/demo", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(serverHandler.SetServerDemo))).Methods("PATCH")
+	// Demo account designation (admin, PANEL settings.*) - the single read-only
+	// account that sees the demo servers. Same StoreEnabled guard kept in-handler.
+	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(serverHandler.GetDemoAccount))).Methods("GET")
+	api.HandleFunc("/admin/settings/demo-account", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(serverHandler.SetDemoAccount))).Methods("PUT")
 
 	// Store-linking (dylaris.com). Gated by StoreEnabled inside each handler.
 	// link/start + status are panel-user authed; link/verify + verify-user are
@@ -1003,17 +1062,28 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/store/provision", authLimiter.Limit(60, storeHandler.Provision)).Methods("POST")
 	// Migration progress poll — owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
+	// /gateway/route-options stays EXEMPT-authed: the user-facing route form needs
+	// the hoster/custom-domain config to render for any authed user, not just admins.
 	api.HandleFunc("/gateway/route-options", authHandler.AuthMiddleware(settingsHandler.GetGatewayRouteOptions)).Methods("GET")
-	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.GetServerSettings)).Methods("GET")
-	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(settingsHandler.SaveServerSettings)).Methods("POST")
+	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetServerSettings))).Methods("GET")
+	api.HandleFunc("/settings/servers", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveServerSettings))).Methods("POST")
+	// GET /settings/beam is EXEMPT-authed: "all authenticated users (relay address
+	// + download link needed in Files tab)" per GetBeamSettings' own doc comment,
+	// no admin gate in the handler. POST save IS admin-only -> PANEL settings.write.
+	// Same split-template pattern as GET /settings/features above: not added to
+	// requiredCaps, deferred to Task 22/23.
 	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(settingsHandler.GetBeamSettings)).Methods("GET")
-	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(settingsHandler.SaveBeamSettings)).Methods("POST")
+	api.HandleFunc("/settings/beam", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveBeamSettings))).Methods("POST")
+	// GET /settings/routing-mode is EXEMPT-authed: "available to all authenticated
+	// users" per GetRoutingMode's own doc comment (drives file-access-mode choice
+	// in the UI), no admin gate in the handler. POST save IS admin-only -> PANEL
+	// settings.write. Same split-template pattern; not added to requiredCaps.
 	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.GetRoutingMode)).Methods("GET")
-	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(settingsHandler.SaveRoutingMode)).Methods("POST")
-	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.GetBackupConfig)).Methods("GET")
-	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(settingsHandler.SaveBackupConfig)).Methods("POST")
-	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(settingsHandler.GetWarpFirewallSettings)).Methods("GET")
-	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(settingsHandler.SaveWarpFirewallSettings)).Methods("POST")
+	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveRoutingMode))).Methods("POST")
+	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetBackupConfig))).Methods("GET")
+	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveBackupConfig))).Methods("POST")
+	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetWarpFirewallSettings))).Methods("GET")
+	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveWarpFirewallSettings))).Methods("POST")
 
 	// --- Regions ---
 	// User-facing: list of enabled regions (drives region pickers).
@@ -1048,16 +1118,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Authenticated: user manages their own questions in profile.
 	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.GetMyQuestions)).Methods("GET")
 	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.SetMyQuestions)).Methods("PUT")
-	// Admin: pool management.
-	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(securityQuestionsHandler.GetAdminPool)).Methods("GET")
-	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(securityQuestionsHandler.SetAdminPool)).Methods("PUT")
+	// Admin: pool management (PANEL settings.*).
+	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(securityQuestionsHandler.GetAdminPool))).Methods("GET")
+	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(securityQuestionsHandler.SetAdminPool))).Methods("PUT")
 
-	// --- Auth policy + SMTP config (admin) ---
-	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(authSettingsHandler.GetAuthPolicy)).Methods("GET")
-	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(authSettingsHandler.SaveAuthPolicy)).Methods("PUT")
-	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(authSettingsHandler.GetSMTPConfig)).Methods("GET")
-	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(authSettingsHandler.SaveSMTPConfig)).Methods("PUT")
-	api.HandleFunc("/admin/settings/smtp/test", authHandler.AuthMiddleware(authSettingsHandler.TestSendSMTP)).Methods("POST")
+	// --- Auth policy + SMTP config (admin, PANEL settings.*) ---
+	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(authSettingsHandler.GetAuthPolicy))).Methods("GET")
+	api.HandleFunc("/admin/settings/auth", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(authSettingsHandler.SaveAuthPolicy))).Methods("PUT")
+	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(authSettingsHandler.GetSMTPConfig))).Methods("GET")
+	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(authSettingsHandler.SaveSMTPConfig))).Methods("PUT")
+	api.HandleFunc("/admin/settings/smtp/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(authSettingsHandler.TestSendSMTP))).Methods("POST")
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")

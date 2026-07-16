@@ -21,12 +21,8 @@ type telemetrySettings struct {
 	Endpoint string `json:"endpoint"`
 }
 
-// Get GET /api/admin/settings/telemetry
+// Get GET /api/admin/settings/telemetry - PANEL settings.read (RequireCap at the route).
 func (h *TelemetrySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	en, _ := h.state.Store.GetSetting("telemetry_enabled")
 	ep, _ := h.state.Store.GetSetting("telemetry_endpoint")
 	if ep == "" {
@@ -43,12 +39,8 @@ func (h *TelemetrySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Set PUT /api/admin/settings/telemetry
+// Set PUT /api/admin/settings/telemetry - PANEL settings.write (RequireCap at the route).
 func (h *TelemetrySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req telemetrySettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

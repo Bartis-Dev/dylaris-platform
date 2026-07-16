@@ -21,15 +21,10 @@ func NewXDPHandler(state *AppState) *XDPHandler {
 	return &XDPHandler{state: state}
 }
 
-// GetConfig — GET /api/admin/xdp/config
+// GetConfig - GET /api/admin/xdp/config - PANEL settings.read (RequireCap at the route).
 // Returns the current Redis-backed config or the package defaults when the key
 // is empty (so the Panel can pre-fill the form on first open).
 func (h *XDPHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
@@ -46,15 +41,10 @@ func (h *XDPHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UpdateConfig — PUT /api/admin/xdp/config
+// UpdateConfig - PUT /api/admin/xdp/config - PANEL settings.write (RequireCap at the route).
 // Validates the payload and writes it to Redis. Edge replicas pick it up
 // within ~30s and reconcile their sidecar.
 func (h *XDPHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var cfg sharedxdp.Config
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		sendJSONError(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)

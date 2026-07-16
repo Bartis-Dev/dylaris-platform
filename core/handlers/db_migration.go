@@ -47,12 +47,9 @@ func (req dbTargetRequest) toParams() services.DBConnParams {
 	}
 }
 
-// GetMigration GET /api/admin/db/migration — shared job status (all admins).
+// GetMigration GET /api/admin/db/migration - shared job status. PANEL
+// settings.read (RequireCap at the route).
 func (h *DBMigrationHandler) GetMigration(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	if h.state.DBMigration == nil {
 		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
@@ -69,12 +66,9 @@ func (h *DBMigrationHandler) GetMigration(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(resp)
 }
 
-// StartMigration POST /api/admin/db/migration — start a migration to the target.
+// StartMigration POST /api/admin/db/migration - start a migration to the
+// target. PANEL settings.write (RequireCap at the route).
 func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	if h.state.DBMigration == nil {
 		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
@@ -114,11 +108,8 @@ func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Reque
 
 // TestConnection POST /api/admin/db/migration/test-connection — open the target
 // and return its server version, so admins confirm they hit the right database.
+// PANEL settings.write (RequireCap at the route).
 func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req dbTargetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -157,10 +148,6 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 // sides: checks every table exists on both and that row counts match, returning a
 // per-table report plus a human-readable log.
 func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	if h.state.DBMigration == nil {
 		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
@@ -193,10 +180,6 @@ const timescaleRecommendRows = 5_000_000
 // already a hypertable, whether an in-place conversion is possible, and whether
 // we recommend switching to TimescaleDB for performance.
 func (h *DBMigrationHandler) HypertableStatus(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -229,10 +212,6 @@ func (h *DBMigrationHandler) HypertableStatus(w http.ResponseWriter, r *http.Req
 // For the case where the operator swapped a plain-Postgres image for a TimescaleDB
 // one on the same volume.
 func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	// migrate_data rewrites the table; on a large server_stats this can take a while.
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()

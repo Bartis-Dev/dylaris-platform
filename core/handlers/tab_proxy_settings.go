@@ -23,12 +23,8 @@ type tabProxySettings struct {
 	MaxShareLinksPerUser int  `json:"maxShareLinksPerUser"`
 }
 
-// Get GET /api/admin/settings/tab-proxy
+// Get GET /api/admin/settings/tab-proxy - PANEL settings.read (RequireCap at the route).
 func (h *TabProxySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	ctx := r.Context()
 	out := tabProxySettings{
 		Enabled:              h.state.FeatureFlags.IsTabProxyEnabled(ctx),
@@ -39,12 +35,8 @@ func (h *TabProxySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "settings": out})
 }
 
-// Set PUT /api/admin/settings/tab-proxy
+// Set PUT /api/admin/settings/tab-proxy - PANEL settings.write (RequireCap at the route).
 func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req tabProxySettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

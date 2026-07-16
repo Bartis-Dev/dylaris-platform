@@ -145,12 +145,9 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// GetAdminPool GET /api/admin/settings/security-questions-pool — admin only.
+// GetAdminPool GET /api/admin/settings/security-questions-pool - PANEL settings.read
+// (RequireCap at the route).
 func (h *SecurityQuestionsHandler) GetAdminPool(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"pool":    LoadSecurityQuestionPool(h.state),
@@ -166,11 +163,6 @@ type setAdminPoolRequest struct {
 // — they keep their original wording in the JSON column. Only new picks are
 // constrained to the updated pool.
 func (h *SecurityQuestionsHandler) SetAdminPool(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req setAdminPoolRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

@@ -101,12 +101,8 @@ func (h *MaintenanceHandler) GetState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SaveState PUT /api/admin/maintenance
+// SaveState PUT /api/admin/maintenance - PANEL settings.write (RequireCap at the route).
 func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req MaintenanceState
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

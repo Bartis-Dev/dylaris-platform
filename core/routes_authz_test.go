@@ -989,3 +989,86 @@ func TestCap_PlansBillingPanel(t *testing.T) {
 		t.Error("EXEMPT-authed /me/usage must not 403 an authed user")
 	}
 }
+
+// TestCap_PlatformSettingsPanel proves the admin platform-settings surface
+// (Phase 4 Task 17 - here auth policy + SMTP) is gated by PANEL settings.read/
+// write at the chokepoint, the former IsAdmin gate in the handler is gone
+// (settings.read alone, no admin flag, must pass), and the public maintenance-
+// banner state stays reachable.
+func TestCap_PlatformSettingsPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "st-id", "st", "settings.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/settings/auth", testIdentity{UserID: "st-id", Username: "st"}); c == 403 {
+		t.Error("settings.read holder must read admin auth settings")
+	}
+	if c := doAs(t, srv, "PUT", "/api/admin/settings/auth", testIdentity{UserID: "st-id", Username: "st"}); c != 403 {
+		t.Errorf("settings.read-only holder must be 403 on settings write (needs settings.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/settings/auth", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin settings, got %d", c)
+	}
+	// public maintenance banner must stay reachable
+	if c := doAs(t, srv, "GET", "/api/maintenance", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+		t.Error("public /api/maintenance must not be 403")
+	}
+}
+
+// TestCap_PlatformSettingsWriteSurfacePanel spot-checks the settings.write side
+// of Task 17 across three DIFFERENT handler families (db migration, XDP config,
+// demo-server flag) to prove the uniform read/write mapping actually reaches
+// every cluster in this batch, not just the auth/SMTP pair above. RequireCap
+// runs before the handler body, so a settings.read-only holder must be denied
+// even though the handler itself (nil DBMigration/Redis in this fake harness)
+// would otherwise 404/500 - only a 403 means the chokepoint itself denied.
+func TestCap_PlatformSettingsWriteSurfacePanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "rw-id", "rw", "settings.read", "settings.write")
+	panelHolder(fs, "ro-id", "ro", "settings.read")
+	srv := newAuthzTestServer(t, fs)
+
+	if c := doAs(t, srv, "GET", "/api/admin/db/migration", testIdentity{UserID: "ro-id", Username: "ro"}); c == 403 {
+		t.Error("settings.read holder must read db migration status")
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/db/migration", testIdentity{UserID: "ro-id", Username: "ro"}); c != 403 {
+		t.Errorf("settings.read-only holder must be 403 starting a db migration, got %d", c)
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/db/migration", testIdentity{UserID: "rw-id", Username: "rw"}); c == 403 {
+		t.Error("settings.write holder must not be 403 starting a db migration")
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/xdp/config", testIdentity{UserID: "ro-id", Username: "ro"}); c == 403 {
+		t.Error("settings.read holder must read XDP config")
+	}
+	if c := doAs(t, srv, "PUT", "/api/admin/xdp/config", testIdentity{UserID: "ro-id", Username: "ro"}); c != 403 {
+		t.Errorf("settings.read-only holder must be 403 saving XDP config, got %d", c)
+	}
+	if c := doAs(t, srv, "PATCH", "/api/admin/servers/1/demo", testIdentity{UserID: "ro-id", Username: "ro"}); c != 403 {
+		t.Errorf("settings.read-only holder must be 403 flagging a demo server, got %d", c)
+	}
+}
+
+// TestCap_SettingsExemptAuthedGETsNotBlocked proves the settings reads meant
+// for EVERY authenticated user (not just settings.read holders) stay reachable
+// at the chokepoint: GET /settings/features, GET /settings/beam and GET
+// /settings/routing-mode each share their path template with an admin-only
+// settings.write POST/save (see the routes.go comments - same split-template
+// pattern as GET /nodes), plus the two long-standing EXEMPT helper GETs
+// (/gateway/route-options, /settings/filemanager/limits).
+func TestCap_SettingsExemptAuthedGETsNotBlocked(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	id := testIdentity{UserID: "plain-id", Username: "plain"}
+	for _, path := range []string{
+		"/api/settings/features",
+		"/api/settings/beam",
+		"/api/settings/routing-mode",
+		"/api/gateway/route-options",
+		"/api/settings/filemanager/limits",
+	} {
+		if c := doAs(t, srv, "GET", path, id); c == 403 {
+			t.Errorf("EXEMPT-authed GET %s must not 403 an ordinary authed user", path)
+		}
+	}
+}

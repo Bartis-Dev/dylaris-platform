@@ -78,15 +78,13 @@ func (s *AppState) IsDemoServerID(serverID int) bool {
 	return isDemoServer(s, srv.UUID)
 }
 
-// SetServerDemo PATCH /api/admin/servers/{id}/demo — admin only.
-// Adds or removes the server from the demo list. Multiple servers may be demos.
+// SetServerDemo PATCH /api/admin/servers/{id}/demo - PANEL settings.write
+// (RequireCap at the route). Adds or removes the server from the demo list.
+// Multiple servers may be demos. The StoreEnabled check below is feature
+// availability (hosted-build-only), not authorization, and stays.
 func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 	if !h.state.StoreEnabled {
 		sendJSONError(w, "Demo feature not available", http.StatusNotFound)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
@@ -133,15 +131,13 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "enabled": req.Enabled})
 }
 
-// GetDemoAccount GET /api/admin/settings/demo-account — admin only.
-// Returns the username of the designated demo account ("" when unset).
+// GetDemoAccount GET /api/admin/settings/demo-account - PANEL settings.read
+// (RequireCap at the route). Returns the username of the designated demo
+// account ("" when unset). The StoreEnabled check below is feature
+// availability (hosted-build-only), not authorization, and stays.
 func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	if !h.state.StoreEnabled {
 		sendJSONError(w, "Demo feature not available", http.StatusNotFound)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	username := ""
@@ -153,16 +149,14 @@ func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": username})
 }
 
-// SetDemoAccount PUT /api/admin/settings/demo-account — admin only.
-// Designates (by username) the read-only demo account, or clears it when the
-// username is empty. An admin can never be the demo account.
+// SetDemoAccount PUT /api/admin/settings/demo-account - PANEL settings.write
+// (RequireCap at the route). Designates (by username) the read-only demo
+// account, or clears it when the username is empty. An admin can never be the
+// demo account. The StoreEnabled check below is feature availability
+// (hosted-build-only), not authorization, and stays.
 func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	if !h.state.StoreEnabled {
 		sendJSONError(w, "Demo feature not available", http.StatusNotFound)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	var req struct {

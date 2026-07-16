@@ -36,24 +36,16 @@ func NewAuditSettingsHandler(state *AppState) *AuditSettingsHandler {
 	return &AuditSettingsHandler{state: state}
 }
 
-// GetPolicy GET /api/admin/settings/audit
+// GetPolicy GET /api/admin/settings/audit - PANEL settings.read (RequireCap at the route).
 func (h *AuditSettingsHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"policy":  LoadAuditPolicy(h.state),
 	})
 }
 
-// SavePolicy PUT /api/admin/settings/audit
+// SavePolicy PUT /api/admin/settings/audit - PANEL settings.write (RequireCap at the route).
 func (h *AuditSettingsHandler) SavePolicy(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var p AuditPolicy
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
