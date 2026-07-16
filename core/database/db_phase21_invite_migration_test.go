@@ -10,12 +10,18 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 // TestMapLegacyInviteCaps_PerBool asserts the EXACT granular cap list each of
 // the eight capability bits maps to, plus that inherit maps to nothing (it is
 // the invite.inherit column) and that no bit ever yields a backups.* cap (there
-// was no legacy backups bit; migrated friends get no backups caps).
+// was no legacy backups bit; migrated friends get no backups caps). The
+// mapping itself lives in store.MapLegacyInviteCaps (moved there so the live
+// member write path in store/postgres.go can reuse it); this catalog-validity
+// assertion stays in the database package because it is the one place that
+// already imports both store and authz without a cycle (authz imports store,
+// so store itself cannot import authz).
 func TestMapLegacyInviteCaps_PerBool(t *testing.T) {
 	cases := []struct {
 		name string
@@ -35,7 +41,7 @@ func TestMapLegacyInviteCaps_PerBool(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mapLegacyInviteCaps(tc.perm)
+			got := store.MapLegacyInviteCaps(tc.perm)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("mapLegacyInviteCaps = %v, want %v", got, tc.want)
 			}
@@ -62,7 +68,7 @@ func TestMapLegacyInviteCaps_FullBlob(t *testing.T) {
 		Console: true, Files: true, Config: true, Setup: true, Overview: true,
 		Power: true, Members: true, Network: true, Inherit: true,
 	}
-	got := mapLegacyInviteCaps(full)
+	got := store.MapLegacyInviteCaps(full)
 	want := []string{
 		"console.read", "console.send",
 		"files.read", "files.write", "files.delete",

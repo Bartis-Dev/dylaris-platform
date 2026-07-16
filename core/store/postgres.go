@@ -813,13 +813,28 @@ func (s *PostgresStore) CountServersByOwner(ownerID string) (int, error) {
 // SERVER INVITES
 // ==========================================
 
+// CreateInvite inserts a legacy-shaped member invite. cap_overrides, inherit
+// and owner_user_id are derived from the SAME permissions blob via
+// MapLegacyInviteCaps so the resolver (which reads cap_overrides, not
+// permissions) sees the invite's caps immediately - without this, a new
+// invite would have zero caps until the next boot's migration pass. The
+// derived shape is identical to what migrateLegacyServerInvites writes, so an
+// inline-written row and a migrated row are indistinguishable to that guard.
 func (s *PostgresStore) CreateInvite(serverID int, userID, invitedBy string, permissions map[string]bool) error {
 	permsJSON, err := json.Marshal(permissions)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO server_invites (server_id, user_id, invited_by, permissions) VALUES ($1, $2, $3, $4::jsonb)`,
-		serverID, userID, invitedBy, string(permsJSON))
+	var tp models.TabPermissions
+	_ = json.Unmarshal(permsJSON, &tp)
+	ovJSON, err := json.Marshal(CapOverrides{Grant: MapLegacyInviteCaps(tp)})
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO server_invites (server_id, user_id, invited_by, permissions, cap_overrides, inherit, owner_user_id)
+		 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, (SELECT owner_id FROM servers WHERE id = $1))`,
+		serverID, userID, invitedBy, string(permsJSON), string(ovJSON), tp.Inherit)
 	return err
 }
 
@@ -828,13 +843,30 @@ func (s *PostgresStore) DeleteInvite(serverID int, userID string) error {
 	return err
 }
 
+// UpdateInvitePermissions edits a legacy-shaped invite's permissions and
+// recomputes cap_overrides + inherit + owner_user_id from the new blob (see
+// CreateInvite). Without this, editing or revoking permissions would update
+// only the legacy blob: cap_overrides would keep the OLD caps forever (the
+// boot migration guard skips already-migrated rows), so a revoke would
+// silently fail to reach the resolver. server_role_id is left untouched - a
+// member holding a server-role via /grants keeps it; this path only manages
+// the override set.
 func (s *PostgresStore) UpdateInvitePermissions(serverID int, userID string, permissions map[string]bool) error {
 	permsJSON, err := json.Marshal(permissions)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec("UPDATE server_invites SET permissions = $1::jsonb WHERE server_id = $2 AND user_id = $3",
-		string(permsJSON), serverID, userID)
+	var tp models.TabPermissions
+	_ = json.Unmarshal(permsJSON, &tp)
+	ovJSON, err := json.Marshal(CapOverrides{Grant: MapLegacyInviteCaps(tp)})
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`UPDATE server_invites SET permissions = $1::jsonb, cap_overrides = $2::jsonb, inherit = $3,
+		   owner_user_id = (SELECT owner_id FROM servers WHERE id = $4)
+		 WHERE server_id = $4 AND user_id = $5`,
+		string(permsJSON), string(ovJSON), tp.Inherit, serverID, userID)
 	return err
 }
 
