@@ -304,7 +304,6 @@ var requiredCaps = map[string]string{
 	"/api/gateway/routes/suffixes":          "topology.read",
 	"/api/gateway/routes/bulk-delete":       "topology.write",
 	"/api/gateway/routes/{domain:.+}":       "topology.write",
-	"/api/gateway/check-domain":             "topology.read",
 	"/api/gateway/logs":                     "topology.read",
 	"/api/gateway/stats":                    "topology.read",
 	"/api/gateway/sync":                     "topology.write",
@@ -972,7 +971,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetRouteSuffixes))).Methods("GET")
 	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.BulkDeleteRoutesBySuffix))).Methods("POST")
 	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.AdminDeleteRoute))).Methods("DELETE")
-	api.HandleFunc("/gateway/check-domain", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.CheckDomainAvailability))).Methods("GET")
+	// check-domain is an owner-facing route-creation helper (RouteDomainPicker in
+	// the new-server + routes UI): any authed user needs the domain-availability
+	// hint for their OWN route. Read-only, non-sensitive -> authed-exempt (T22).
+	api.HandleFunc("/gateway/check-domain", authHandler.AuthMiddleware(gatewayHandler.CheckDomainAvailability)).Methods("GET")
 	api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLogs))).Methods("GET")
 	api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetStats))).Methods("GET")
 	api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.TriggerSync))).Methods("POST")
