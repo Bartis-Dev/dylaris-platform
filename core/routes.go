@@ -315,6 +315,23 @@ var requiredCaps = map[string]string{
 	"/api/warp/leaders":                     "topology.write",
 	"/api/warp/leaders/{leaderId}":          "topology.write",
 	"/api/admin/warp/keys":                  "topology.write",
+
+	// Phase 4 Task 19: module mutations (PANEL settings.write - there is no
+	// dedicated modules.* cap). GET /api/modules is EXEMPT-authed (navbar
+	// render for every authenticated user, filtered in-handler by role) and
+	// shares its bare "/api/modules" template with POST /api/modules; like the
+	// "/api/nodes" (Task 13) and Task 17 settings/features|beam|routing-mode
+	// precedent, a shared exempt-GET/gated-write template can't record two
+	// different per-method caps in this map, so "/api/modules" is deliberately
+	// NOT listed here and is deferred to the Task 22/23 per-method ExemptRoutes
+	// reconciliation. Its mutation siblings each have their own {id}-suffixed
+	// template and ARE listed. /versions, /versions/software, /system/features,
+	// /authz/catalog, /system/events, /sse-ticket, and /me/security-questions
+	// stay authed-exempt on purpose and are deliberately NOT listed here.
+	"/api/modules/{id:[0-9]+}":          "settings.write",
+	"/api/modules/{id:[0-9]+}/toggle":   "settings.write",
+	"/api/modules/{id:[0-9]+}/position": "settings.write",
+	"/api/modules/{id:[0-9]+}/role":     "settings.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -877,12 +894,18 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(userHandler.GetUserRouteLimit))).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.SetUserRouteLimit))).Methods("PUT")
 
+	// Phase 4 Task 19: GET /modules stays authed-exempt - it renders the navbar
+	// for every authenticated user and filters admin-only modules in-handler by
+	// role (GetModulesHandler), which is the boundary for that read. The
+	// mutations (create/delete/toggle/position/role) are admin-only and there
+	// is no dedicated modules.* PANEL cap, so they RequireCap("settings.write")
+	// (the faithful mapping per the Phase 4 controller decision).
 	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.GetModulesHandler)).Methods("GET")
-	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.CreateModuleHandler)).Methods("POST")
-	api.HandleFunc("/modules/{id:[0-9]+}", authHandler.AuthMiddleware(moduleHandler.DeleteModuleHandler)).Methods("DELETE")
-	api.HandleFunc("/modules/{id:[0-9]+}/toggle", authHandler.AuthMiddleware(moduleHandler.ToggleModuleHandler)).Methods("PATCH")
-	api.HandleFunc("/modules/{id:[0-9]+}/position", authHandler.AuthMiddleware(moduleHandler.UpdateModulePositionHandler)).Methods("PATCH")
-	api.HandleFunc("/modules/{id:[0-9]+}/role", authHandler.AuthMiddleware(moduleHandler.SetModuleAccessRoleHandler)).Methods("PATCH")
+	api.HandleFunc("/modules", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(moduleHandler.CreateModuleHandler))).Methods("POST")
+	api.HandleFunc("/modules/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(moduleHandler.DeleteModuleHandler))).Methods("DELETE")
+	api.HandleFunc("/modules/{id:[0-9]+}/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(moduleHandler.ToggleModuleHandler))).Methods("PATCH")
+	api.HandleFunc("/modules/{id:[0-9]+}/position", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(moduleHandler.UpdateModulePositionHandler))).Methods("PATCH")
+	api.HandleFunc("/modules/{id:[0-9]+}/role", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(moduleHandler.SetModuleAccessRoleHandler))).Methods("PATCH")
 
 	// Phase 4 Task 13: GET /nodes stays authed-exempt. Its admin-vs-owner filter
 	// (nodes.go GetNodes: admin sees all, a BYON tenant sees only nodes they own)

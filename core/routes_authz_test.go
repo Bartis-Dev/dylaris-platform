@@ -1135,3 +1135,31 @@ func TestCap_WarpLinkKitsExemptAuthed(t *testing.T) {
 		t.Error("EXEMPT-authed /warp/link-kits must not 403 an authed user (in-handler owner filter is the boundary)")
 	}
 }
+
+// TestCap_ModuleMutationsPanel proves module create/toggle/position/role
+// RequireCap("settings.write") (there is no dedicated modules.* cap), while
+// GET /modules stays EXEMPT-authed for every authenticated user (Phase 4
+// Task 19).
+func TestCap_ModuleMutationsPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "mod-id", "mod", "settings.write")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	// GET /modules is EXEMPT-authed: a plain user must not be 403 at a chokepoint
+	if c := doAs(t, srv, "GET", "/api/modules", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+		t.Error("EXEMPT-authed GET /modules must not 403 an authed user")
+	}
+	// admin must not be 403 toggling a module
+	if c := doAs(t, srv, "PATCH", "/api/modules/1/toggle", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must not be 403 on module toggle")
+	}
+	// a settings.write holder can
+	if c := doAs(t, srv, "PATCH", "/api/modules/1/toggle", testIdentity{UserID: "mod-id", Username: "mod"}); c == 403 {
+		t.Error("settings.write holder must reach module toggle")
+	}
+	// a plain user cannot mutate modules
+	if c := doAs(t, srv, "PATCH", "/api/modules/1/toggle", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on module toggle (needs settings.write), got %d", c)
+	}
+}

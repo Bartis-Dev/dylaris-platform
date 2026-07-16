@@ -85,15 +85,12 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// SetModuleAccessRoleHandler PATCH /modules/{id}/role — admin only.
-// Body: {"role": "all" | "admin"}.  Servers stays "all" regardless.
+// SetModuleAccessRoleHandler PATCH /modules/{id}/role - RequireCap("settings.write")
+// at the route (Phase 4 Task 19). Body: {"role": "all" | "admin"}. Servers stays
+// "all" regardless.
 func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 	vars := mux.Vars(r)
@@ -131,13 +128,11 @@ func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *htt
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// CreateModuleHandler POST /modules - RequireCap("settings.write") at the route
+// (Phase 4 Task 19).
 func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -176,13 +171,11 @@ var builtInModules = map[string]bool{
 	"Library":        true,
 }
 
+// DeleteModuleHandler DELETE /modules/{id} - RequireCap("settings.write") at the
+// route (Phase 4 Task 19).
 func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -207,14 +200,11 @@ func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// UpdateModulePositionHandler PATCH /modules/{id}/position
+// UpdateModulePositionHandler PATCH /modules/{id}/position - RequireCap(
+// "settings.write") at the route (Phase 4 Task 19).
 func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -237,14 +227,11 @@ func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *ht
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// ToggleModuleHandler for enabling/disabling modules
+// ToggleModuleHandler for enabling/disabling modules - RequireCap("settings.write")
+// at the route (Phase 4 Task 19).
 func (h *ModuleHandler) ToggleModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
