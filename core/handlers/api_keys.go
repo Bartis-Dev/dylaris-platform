@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -220,14 +221,25 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 				sendJSONError(w, "Key expired", http.StatusUnauthorized)
 				return
 			}
-			if requiredPerm != "" && !key.Scope.HasPermission(requiredPerm) {
-				sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
-				return
-			}
-			// Server-UUID scope check: only when the path carries one.
-			if uuidVar := mux.Vars(r)["uuid"]; uuidVar != "" && !key.Scope.AllowsServer(uuidVar) {
+			// Server-UUID scope: when the path carries a {uuid} the key must be scoped
+			// to it. serverAllowed then gates whether the key's SERVER caps count for
+			// this request when it is turned into a Resolution below.
+			uuidVar := mux.Vars(r)["uuid"]
+			serverAllowed := uuidVar == "" || key.Scope.AllowsServer(uuidVar)
+			if uuidVar != "" && !serverAllowed {
 				sendJSONError(w, "Key not scoped to this server", http.StatusForbidden)
 				return
+			}
+			// Authorization through the SAME chokepoint as session auth: the key's caps
+			// become a Resolution and the required cap is checked via HasCap. A key
+			// holds exactly its minted caps - no admin/owner short-circuit, no panel
+			// caps - so this generalizes enforcement to any SERVER/OWNER cap, not just
+			// rcon.exec, while denying anything the key does not carry.
+			if requiredPerm != "" {
+				if !authz.ResolveAPIKey(key.Scope.Permissions, serverAllowed).HasCap(requiredPerm) {
+					sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
+					return
+				}
 			}
 			if !h.rateLimiter.allow(key.ID, key.RatePerMin) {
 				w.Header().Set("Retry-After", "60")

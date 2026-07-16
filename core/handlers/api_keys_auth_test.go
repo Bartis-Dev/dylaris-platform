@@ -205,6 +205,41 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 			requiredPerm:  "rcon.exec",
 			wantInnerCalled: true,
 		},
+		{
+			name:          "non-rcon server cap honored",
+			setAuthHeader: true,
+			authHeader:    "Bearer powerstarttoken",
+			key:           &models.APIKey{ID: 9, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"power.start"}}},
+			requiredPerm:  "power.start",
+			wantInnerCalled: true,
+		},
+		{
+			name:          "server cap honored within scope",
+			setAuthHeader: true,
+			authHeader:    "Bearer filesreadtoken",
+			key:           &models.APIKey{ID: 10, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"files.read"}, Servers: []string{"target-server-uuid"}}},
+			requiredPerm:  "files.read",
+			uuidVar:       "target-server-uuid",
+			wantInnerCalled: true,
+		},
+		{
+			name:          "panel cap on a key is never honored",
+			setAuthHeader: true,
+			authHeader:    "Bearer usersreadtoken",
+			key:           &models.APIKey{ID: 11, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"users.read"}}},
+			requiredPerm:  "users.read",
+			wantStatus:    http.StatusForbidden,
+			wantBodySub:   "Key lacks required permission",
+		},
+		{
+			name:          "key carrying rcon.exec denied a different required cap",
+			setAuthHeader: true,
+			authHeader:    "Bearer rconexectoken",
+			key:           &models.APIKey{ID: 12, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
+			requiredPerm:  "files.read",
+			wantStatus:    http.StatusForbidden,
+			wantBodySub:   "Key lacks required permission",
+		},
 	}
 
 	for _, c := range cases {
