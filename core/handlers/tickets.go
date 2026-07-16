@@ -232,15 +232,14 @@ func (h *TicketsHandler) ListMyTickets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListInboxTickets GET /api/tickets/inbox — support inbox view.
-// Honors cross-team-visibility. Refinable via status/priority/category/assigned querystring.
+// ListInboxTickets GET /api/tickets/inbox - support inbox view, gated by
+// RequireCap("tickets.read") at the route (Phase 4 Task 15; the former
+// in-handler "support or admin" pure gate was removed since the route now
+// supersedes it). Honors cross-team-visibility. Refinable via
+// status/priority/category/assigned querystring.
 func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
-	if !perms.IsAdmin && !perms.IsSupport {
-		sendJSONError(w, "Support or admin role required", http.StatusForbidden)
-		return
-	}
 	settings := LoadTicketSettings(h.state)
 	q := r.URL.Query()
 

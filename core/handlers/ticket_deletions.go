@@ -32,6 +32,11 @@ func NewTicketDeletionsHandler(state *AppState) *TicketDeletionsHandler {
 // DeleteTicket DELETE /api/tickets/{id} — admin only, gated by
 // tickets.deletion_enabled. Builds the audit snapshot BEFORE issuing the
 // cascade so the audit row survives the source rows.
+//
+// Phase 4 Task 15: this route shares its path template with the user-facing
+// GET /tickets/{id} (tickets.go), which stays authed-exempt. This IsAdmin
+// gate is therefore intentionally KEPT (not RequireCap'd, not removed) - it
+// is the actual boundary for the DELETE method on this shared template.
 func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Request) {
 	if !IsAdmin(r) {
 		sendJSONError(w, "Admin only", http.StatusForbidden)
@@ -145,12 +150,8 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// ListDeletions GET /api/admin/tickets/deletion-log — paginated audit log.
+// ListDeletions GET /api/admin/tickets/deletion-log - RequireCap("tickets.read") at the route.
 func (h *TicketDeletionsHandler) ListDeletions(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {

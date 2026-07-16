@@ -204,9 +204,37 @@ var requiredCaps = map[string]string{
 	// Phase 4 Task 14: region admin (PANEL regions.*). "/api/regions" and
 	// "/api/me/regions" stay authed-exempt (enabled-region picker / own
 	// assignment) and are deliberately NOT listed here.
-	"/api/admin/regions":                           "regions.read",
-	"/api/admin/regions/{id}":                      "regions.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/regions":   "regions.read",
+	"/api/admin/regions":                          "regions.read",
+	"/api/admin/regions/{id}":                     "regions.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/regions": "regions.read",
+
+	// Phase 4 Task 15: ticket admin management (PANEL tickets.*). The
+	// tickets subsystem MIXES two authz models: this batch only lists the
+	// ADMIN-management routes below. User-facing ticket routes (/tickets,
+	// /tickets/{id} incl. its DELETE, messages, status/priority/assignment/
+	// watchers, attachments, the public /ticket-categories and
+	// /ticket-canned-responses GETs, /notifications*, /me/servers/via-tickets)
+	// stay authed-exempt on purpose and are deliberately NOT listed here -
+	// they keep authorizing in-handler via the owner/watcher/support ACL in
+	// tickets.go (or, for DELETE /tickets/{id}, the admin-only in-handler
+	// gate in ticket_deletions.go), which is the real boundary for them.
+	"/api/admin/ticket-categories":                   "tickets.read",
+	"/api/admin/ticket-categories/{id:[0-9]+}":       "tickets.write",
+	"/api/tickets/inbox":                             "tickets.read",
+	"/api/admin/settings/tickets":                    "tickets.read",
+	"/api/admin/ticket-canned-responses":             "tickets.read",
+	"/api/admin/ticket-canned-responses/{id:[0-9]+}": "tickets.write",
+	"/api/admin/tickets/migration/status":            "tickets.read",
+	"/api/admin/tickets/migration/test-connection":   "tickets.write",
+	"/api/admin/tickets/migration/dry-run":           "tickets.write",
+	"/api/admin/tickets/migration/execute":           "tickets.write",
+	"/api/admin/tickets/backup":                      "tickets.write",
+	"/api/admin/tickets/backups":                     "tickets.read",
+	"/api/admin/tickets/backups/{name}/download":     "tickets.read",
+	"/api/admin/tickets/backups/{name}":              "tickets.write",
+	"/api/admin/tickets/restore/init":                "tickets.write",
+	"/api/admin/tickets/restore/execute":             "tickets.write",
+	"/api/admin/tickets/deletion-log":                "tickets.read",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -659,17 +687,34 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Every ticket-related endpoint is wrapped in RequireTicketsEnabled so the
 	// platform-wide tickets toggle flips the entire subsystem (UI + API +
 	// notifications fan-out) without a per-handler check.
+	//
+	// Phase 4 Task 15: this subsystem MIXES two authz models and they are not
+	// collapsed. Admin ticket MANAGEMENT (categories, canned responses,
+	// settings, migration/backup/restore, inbox, deletion-log) is RequireCap
+	// gated here with PANEL tickets.* - the former IsAdmin gate is removed
+	// from those handlers. User-facing ticket routes (create/list/get/reply/
+	// attachments/status/priority/assignment/watchers, plus the public
+	// category/canned-response GETs, notifications, and via-tickets) stay
+	// authed-exempt: they keep authorizing in-handler via canSeeTicket/
+	// canReply/canMutate (owner/watcher/support matrix) or an equivalent
+	// support-or-admin check specific to that route - that check IS the
+	// boundary and is not superseded by a route-level cap.
 	// Categories: public list (enabled only) for create form, admin CRUD for management.
 	api.HandleFunc("/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.ListCategories))).Methods("GET")
-	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.AdminListCategories))).Methods("GET")
-	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.CreateCategory))).Methods("POST")
-	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.UpdateCategory))).Methods("PATCH")
-	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.DeleteCategory))).Methods("DELETE")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketCategoriesHandler.AdminListCategories)))).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketCategoriesHandler.CreateCategory)))).Methods("POST")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketCategoriesHandler.UpdateCategory)))).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(appState.RequireTicketsEnabled(ticketCategoriesHandler.DeleteCategory)))).Methods("DELETE")
 
-	// Tickets: user CRUD + support inbox.
+	// Tickets: user CRUD + support inbox. GET/POST /tickets and GET/DELETE
+	// /tickets/{id} stay authed-exempt (the owner/watcher/support ACL in
+	// tickets.go, or - for DELETE - the admin-only gate in ticket_deletions.go,
+	// is the boundary). GET /tickets/inbox IS admin/support management (the
+	// support triage view), so it is RequireCap("tickets.read")-gated here and
+	// its in-handler "support or admin" pure gate was removed.
 	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyTickets))).Methods("GET")
 	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.CreateTicket))).Methods("POST")
-	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListInboxTickets))).Methods("GET")
+	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketsHandler.ListInboxTickets)))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.GetTicket))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.DeleteTicket))).Methods("DELETE")
 	api.HandleFunc("/tickets/{id:[0-9]+}/messages", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.AddReply))).Methods("POST")
@@ -682,9 +727,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Sidebar source for support's "Via tickets" tab.
 	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyServersViaTickets))).Methods("GET")
 
-	// Settings.
-	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketSettingsHandler.GetSettings))).Methods("GET")
-	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings))).Methods("PUT")
+	// Settings (admin management -> PANEL tickets.*).
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketSettingsHandler.GetSettings)))).Methods("GET")
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings)))).Methods("PUT")
 
 	// --- Tickets: attachments, canned responses, notifications ---
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.UploadAttachment))).Methods("POST")
@@ -692,12 +737,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DownloadAttachment))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DeleteAttachment))).Methods("DELETE")
 
-	// Canned responses: support sees the read list, admin manages.
+	// Canned responses: support sees the read list (authed-exempt - its own
+	// in-handler support-or-admin check is the boundary and is unchanged),
+	// admin manages (RequireCap-gated, IsAdmin gate removed).
 	api.HandleFunc("/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.ListForSupport))).Methods("GET")
-	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.AdminList))).Methods("GET")
-	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.Create))).Methods("POST")
-	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.Update))).Methods("PATCH")
-	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(cannedResponsesHandler.AdminList)))).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(cannedResponsesHandler.Create)))).Methods("POST")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(cannedResponsesHandler.Update)))).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(appState.RequireTicketsEnabled(cannedResponsesHandler.Delete)))).Methods("DELETE")
 
 	// Notifications: in-app inbox. Currently ticket-driven; gated with the
 	// rest of the ticket subsystem.
@@ -718,21 +765,28 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.GetPolicy)).Methods("GET")
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(auditSettingsHandler.SavePolicy)).Methods("PUT")
 
-	// --- Ticket DB migration + backups (admin-only) ---
-	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.GetStatus))).Methods("GET")
-	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.TestExternalConnection))).Methods("POST")
-	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration))).Methods("POST")
-	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration))).Methods("POST")
+	// --- Ticket DB migration + backups (admin management -> PANEL tickets.*) ---
+	// GET reads map to tickets.read; every mutation (including the backup
+	// delete and the restore Danger Zone, which keep their own 2FA/cooldown/
+	// typed-phrase checks in-handler) maps to tickets.write.
+	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.GetStatus)))).Methods("GET")
+	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.TestExternalConnection)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration)))).Methods("POST")
 	// Backups: create, list, download, delete.
-	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.CreateBackup))).Methods("POST")
-	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ListBackups))).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DownloadBackup))).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.DeleteBackup))).Methods("DELETE")
+	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.CreateBackup)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.ListBackups)))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.DownloadBackup)))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DeleteBackup)))).Methods("DELETE")
 	// Restore: two-step Danger Zone (init + execute) — 2FA + 15s timer + typed phrase.
-	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.InitRestore))).Methods("POST")
-	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore))).Methods("POST")
-	// Deletion audit log (admin-only).
-	api.HandleFunc("/admin/tickets/deletion-log", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.ListDeletions))).Methods("GET")
+	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.InitRestore)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore)))).Methods("POST")
+	// Deletion audit log (admin management -> PANEL tickets.read). Note: the
+	// DELETE /tickets/{id} handler itself (ticket_deletions.go) stays
+	// authed-exempt with its in-handler IsAdmin gate untouched - that route
+	// is shared with the user-facing GET /tickets/{id} template and is
+	// listed as authed-exempt in the batch brief, so it is NOT RequireCap'd.
+	api.HandleFunc("/admin/tickets/deletion-log", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketDeletionsHandler.ListDeletions)))).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(userHandler.GetUserRouteLimit))).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.SetUserRouteLimit))).Methods("PUT")
 

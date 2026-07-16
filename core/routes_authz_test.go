@@ -931,3 +931,38 @@ func TestCap_RegionsPanel(t *testing.T) {
 		t.Errorf("ordinary user must be 403 on admin regions, got %d", c)
 	}
 }
+
+// TestCap_TicketAdminPanel proves admin ticket-category management is gated
+// PANEL tickets.read (list) vs tickets.write (mutate) vs tickets.delete
+// (delete): a tickets.read/write holder reaches the admin category list, an
+// ordinary user is 403, and a tickets.read-only holder cannot delete a
+// category (that needs tickets.delete).
+func TestCap_TicketAdminPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "sup-id", "sup", "tickets.read", "tickets.write")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/ticket-categories", testIdentity{UserID: "sup-id", Username: "sup"}); c == 403 {
+		t.Error("tickets.read/write holder must reach admin ticket-categories")
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/ticket-categories", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin ticket-categories, got %d", c)
+	}
+	// tickets.read-only holder cannot delete a category (needs tickets.delete)
+	panelHolder(fs, "tr-id", "tr", "tickets.read")
+	if c := doAs(t, srv, "DELETE", "/api/admin/ticket-categories/1", testIdentity{UserID: "tr-id", Username: "tr"}); c != 403 {
+		t.Errorf("tickets.read-only holder must be 403 on category delete (needs tickets.delete), got %d", c)
+	}
+}
+
+// TestCap_TicketsUserRouteExemptAuthed proves the user-facing /tickets route
+// is authed-exempt (in-handler owner/watcher/support ACL is the boundary,
+// untouched by this batch): an authed user must not be 403 at the chokepoint.
+func TestCap_TicketsUserRouteExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("u-id", "u", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/tickets", testIdentity{UserID: "u-id", Username: "u"}); c == 403 {
+		t.Error("EXEMPT-authed GET /tickets must not 403 an authed user (in-handler ACL is the boundary)")
+	}
+}

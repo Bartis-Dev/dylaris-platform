@@ -48,12 +48,8 @@ func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.R
 	})
 }
 
-// AdminList GET /api/admin/ticket-canned-responses — admin only, full list.
+// AdminList GET /api/admin/ticket-canned-responses - RequireCap("tickets.read") at the route, full list.
 func (h *CannedResponsesHandler) AdminList(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	list, _ := h.state.Store.ListCannedResponses(nil)
 	if list == nil {
 		list = []models.CannedResponse{}
@@ -86,12 +82,8 @@ func (req *cannedRequest) validate() (*models.CannedResponse, error) {
 	}, nil
 }
 
-// Create POST /api/admin/ticket-canned-responses
+// Create POST /api/admin/ticket-canned-responses - RequireCap("tickets.write") at the route.
 func (h *CannedResponsesHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req cannedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -121,12 +113,8 @@ func (h *CannedResponsesHandler) Create(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// Update PATCH /api/admin/ticket-canned-responses/{id}
+// Update PATCH /api/admin/ticket-canned-responses/{id} - RequireCap("tickets.write") at the route.
 func (h *CannedResponsesHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)
@@ -158,12 +146,8 @@ func (h *CannedResponsesHandler) Update(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// Delete DELETE /api/admin/ticket-canned-responses/{id}
+// Delete DELETE /api/admin/ticket-canned-responses/{id} - RequireCap("tickets.delete") at the route.
 func (h *CannedResponsesHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)

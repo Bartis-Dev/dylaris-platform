@@ -71,10 +71,6 @@ func NewTicketMigrationHandler(state *AppState) *TicketMigrationHandler {
 // Returns the current row counts per ticket table + whether the external
 // DB env var is configured. The frontend uses this as the dashboard hub.
 func (h *TicketMigrationHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	counts := map[string]int{}
 	for _, t := range store.TicketTablesInOrder() {
 		n, err := h.state.Store.CountTicketRows(t)
@@ -99,10 +95,6 @@ type testConnectionRequest struct {
 // Takes a Postgres DSN, opens it, runs a SELECT 1, returns the version string
 // so admins can confirm they hit the right server.
 func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req testConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -143,10 +135,6 @@ type migrationRequest struct {
 // Counts source rows + (best-effort) target rows so admins see the gap
 // before they pull the trigger.
 func (h *TicketMigrationHandler) DryRunMigration(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req migrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -184,10 +172,6 @@ func (h *TicketMigrationHandler) DryRunMigration(w http.ResponseWriter, r *http.
 // Long-running for big datasets; the handler streams progress as a single
 // JSON response at the end. A future polish phase can convert this to SSE.
 func (h *TicketMigrationHandler) ExecuteMigration(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req migrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -246,10 +230,6 @@ type backupSummary struct {
 // Dumps every ticket table to one JSON file under dylaris_data/ticket-backups.
 // File name is timestamp-based for natural sort and chronological browsing.
 func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	tables := store.TicketTablesInOrder()
 	counts := map[string]int{}
 	dump := map[string]interface{}{}
@@ -305,10 +285,6 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 
 // ListBackups GET /api/admin/tickets/backups
 func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	entries, err := os.ReadDir(h.rootDir)
 	if err != nil {
 		sendJSONError(w, "Failed to read backup dir", http.StatusInternalServerError)
@@ -339,10 +315,6 @@ func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Requ
 
 // DownloadBackup GET /api/admin/tickets/backups/{name}/download
 func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	name := safeBackupName(mux.Vars(r)["name"])
 	if name == "" {
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
@@ -366,10 +338,6 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 
 // DeleteBackup DELETE /api/admin/tickets/backups/{name}
 func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	name := safeBackupName(mux.Vars(r)["name"])
 	if name == "" {
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
@@ -393,10 +361,6 @@ type restoreInitRequest struct {
 // /execute alongside the admin's TOTP + the typed confirmation phrase.
 // Token can't be consumed before MinExecuteAfter (15s cooldown).
 func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID, _ := r.Context().Value("userID").(string)
 	user, err := h.state.Store.GetUserByID(userID)
 	if err != nil || user == nil {
@@ -467,10 +431,6 @@ type restoreExecuteRequest struct {
 // confirmation phrase is the strongest signal we have that the admin
 // intended this; we still log everything.
 func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID, _ := r.Context().Value("userID").(string)
 
 	var req restoreExecuteRequest

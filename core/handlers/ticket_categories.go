@@ -43,13 +43,9 @@ func (h *TicketCategoriesHandler) ListCategories(w http.ResponseWriter, r *http.
 	})
 }
 
-// AdminListCategories GET /api/admin/ticket-categories — admin only.
+// AdminListCategories GET /api/admin/ticket-categories - RequireCap("tickets.read") at the route.
 // Includes disabled categories — used by the admin management UI.
 func (h *TicketCategoriesHandler) AdminListCategories(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	out, err := h.state.Store.ListTicketCategories(true)
 	if err != nil {
 		sendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
@@ -111,12 +107,8 @@ func (req *categoryRequest) toModel(existing *models.TicketCategory) (*models.Ti
 	return &c, nil
 }
 
-// CreateCategory POST /api/admin/ticket-categories
+// CreateCategory POST /api/admin/ticket-categories - RequireCap("tickets.write") at the route.
 func (h *TicketCategoriesHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req categoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -139,12 +131,8 @@ func (h *TicketCategoriesHandler) CreateCategory(w http.ResponseWriter, r *http.
 	})
 }
 
-// UpdateCategory PATCH /api/admin/ticket-categories/{id}
+// UpdateCategory PATCH /api/admin/ticket-categories/{id} - RequireCap("tickets.write") at the route.
 func (h *TicketCategoriesHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)
@@ -175,14 +163,10 @@ func (h *TicketCategoriesHandler) UpdateCategory(w http.ResponseWriter, r *http.
 	})
 }
 
-// DeleteCategory DELETE /api/admin/ticket-categories/{id}
+// DeleteCategory DELETE /api/admin/ticket-categories/{id} - RequireCap("tickets.delete") at the route.
 // Refuses when the category has tickets attached (FK is ON DELETE RESTRICT).
 // Caller should soft-disable (enabled=FALSE) for categories with history.
 func (h *TicketCategoriesHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)

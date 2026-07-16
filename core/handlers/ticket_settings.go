@@ -106,24 +106,16 @@ func NewTicketSettingsHandler(state *AppState) *TicketSettingsHandler {
 	return &TicketSettingsHandler{state: state}
 }
 
-// GetSettings GET /api/admin/settings/tickets
+// GetSettings GET /api/admin/settings/tickets - RequireCap("tickets.read") at the route.
 func (h *TicketSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": LoadTicketSettings(h.state),
 	})
 }
 
-// SaveSettings PUT /api/admin/settings/tickets
+// SaveSettings PUT /api/admin/settings/tickets - RequireCap("tickets.write") at the route.
 func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var s TicketSettings
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
