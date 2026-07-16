@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -29,10 +31,18 @@ type apiKeysAuthFakeStore struct {
 	servers      map[string]*models.Server // by UUID, for Create's non-admin scoping check
 	getServerErr error
 
+	// grants lets a test hand a caller an explicit per-server grant for the
+	// resolver-based delegation subset check in Create. Key: grantKey(serverID, userID).
+	grants map[string]*store.ServerGrant
+
 	createCalls []*models.APIKey
 	createErr   error
 	nextID      int
 }
+
+// grantKey lets a test hand a friend an explicit per-server grant.
+// Absent = no grant (deny).
+func grantKey(serverID int, userID string) string { return fmt.Sprintf("%d:%s", serverID, userID) }
 
 func (f *apiKeysAuthFakeStore) GetAPIKeyByHash(hash string) (*models.APIKey, error) {
 	k, ok := f.keysByHash[hash]
@@ -62,6 +72,34 @@ func (f *apiKeysAuthFakeStore) GetInvite(serverID int, userID string) (*models.S
 	return nil, errors.New("no invite")
 }
 
+// The methods below satisfy authz.Store so h.state.Authz.Resolve does not
+// panic on the embedded nil store.Store. Deny-by-default except GetServerByID
+// (backed by the same `servers` map keyed by UUID, looked up by ID here) and
+// GetServerGrant (backed by the configurable `grants` map).
+func (f *apiKeysAuthFakeStore) GetUserPanelAuthz(userID string) (*int, store.CapOverrides, error) {
+	return nil, store.CapOverrides{}, nil
+}
+
+func (f *apiKeysAuthFakeStore) GetServerByID(id int) (*models.Server, error) {
+	for _, s := range f.servers {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return nil, errors.New("server not found")
+}
+
+func (f *apiKeysAuthFakeStore) GetServerGrant(serverID int, userID string) (*store.ServerGrant, error) {
+	if g, ok := f.grants[grantKey(serverID, userID)]; ok {
+		return g, nil
+	}
+	return nil, nil
+}
+
+func (f *apiKeysAuthFakeStore) GetAccountGrant(ownerUserID, userID string) (*store.ServerGrant, error) {
+	return nil, nil
+}
+
 func (f *apiKeysAuthFakeStore) CreateAPIKey(k *models.APIKey) (int, error) {
 	if f.createErr != nil {
 		return 0, f.createErr
@@ -72,7 +110,7 @@ func (f *apiKeysAuthFakeStore) CreateAPIKey(k *models.APIKey) (int, error) {
 }
 
 func newAPIKeysAuthHandler(fs *apiKeysAuthFakeStore) *APIKeysHandler {
-	return NewAPIKeysHandler(&AppState{Store: fs})
+	return NewAPIKeysHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)})
 }
 
 // sentinelStatus/sentinelBody mark that the wrapped inner handler (the real
@@ -455,7 +493,7 @@ func TestAPIKeysCreate_NonAdminServerNotFound(t *testing.T) {
 
 func TestAPIKeysCreate_NonAdminWithoutPowerAccessForbidden(t *testing.T) {
 	fs := &apiKeysAuthFakeStore{servers: map[string]*models.Server{
-		"srv-1": {ID: 1, UUID: "srv-1", OwnerName: "someone-else"},
+		"srv-1": {ID: 1, UUID: "srv-1", OwnerID: "owner-else"},
 	}}
 	h := newAPIKeysAuthHandler(fs)
 	rec := httptest.NewRecorder()
@@ -467,8 +505,8 @@ func TestAPIKeysCreate_NonAdminWithoutPowerAccessForbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "No power access to server: srv-1") {
-		t.Fatalf("body = %s, want 'No power access to server: srv-1'", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "No rcon.exec access to server: srv-1") {
+		t.Fatalf("body = %s, want 'No rcon.exec access to server: srv-1'", rec.Body.String())
 	}
 	if len(fs.createCalls) != 0 {
 		t.Fatalf("expected no CreateAPIKey call, got %+v", fs.createCalls)
@@ -477,7 +515,7 @@ func TestAPIKeysCreate_NonAdminWithoutPowerAccessForbidden(t *testing.T) {
 
 func TestAPIKeysCreate_NonAdminOwnServerSucceeds(t *testing.T) {
 	fs := &apiKeysAuthFakeStore{servers: map[string]*models.Server{
-		"srv-1": {ID: 1, UUID: "srv-1", OwnerName: "alice"},
+		"srv-1": {ID: 1, UUID: "srv-1", OwnerID: "u1"},
 	}}
 	h := newAPIKeysAuthHandler(fs)
 	rec := httptest.NewRecorder()
@@ -492,6 +530,107 @@ func TestAPIKeysCreate_NonAdminOwnServerSucceeds(t *testing.T) {
 	if len(fs.createCalls) != 1 {
 		t.Fatalf("expected 1 CreateAPIKey call, got %d", len(fs.createCalls))
 	}
+}
+
+// TestAPIKeysCreate_PanelCapRejected pins that a PANEL-scope capability can
+// never be minted onto a key, even for an admin caller: PANEL caps belong to
+// staff principals, not owner-scoped automation credentials.
+func TestAPIKeysCreate_PanelCapRejected(t *testing.T) {
+	fs := &apiKeysAuthFakeStore{}
+	h := newAPIKeysAuthHandler(fs)
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
+		"name": "k", "permissions": []string{"users.read"},
+	}))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Unknown permission: users.read") {
+		t.Fatalf("body = %s, want 'Unknown permission: users.read'", rec.Body.String())
+	}
+	if len(fs.createCalls) != 0 {
+		t.Fatalf("expected no CreateAPIKey call, got %+v", fs.createCalls)
+	}
+}
+
+// TestAPIKeysCreate_NonAdminOwnServerBroaderCap proves the subset check
+// generalizes beyond rcon.exec: the server owner holds every SERVER cap via
+// the resolver's owner short-circuit, so a broader cap like files.delete is
+// also allowed on their own server.
+func TestAPIKeysCreate_NonAdminOwnServerBroaderCap(t *testing.T) {
+	fs := &apiKeysAuthFakeStore{servers: map[string]*models.Server{
+		"srv-1": {ID: 1, UUID: "srv-1", OwnerID: "u1"},
+	}}
+	h := newAPIKeysAuthHandler(fs)
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
+		"name": "k", "permissions": []string{"files.delete"}, "servers": []string{"srv-1"},
+	}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.createCalls) != 1 {
+		t.Fatalf("expected 1 CreateAPIKey call, got %d", len(fs.createCalls))
+	}
+}
+
+// TestAPIKeysCreate_FriendPartialGrantSubset is the crown-jewel per-cap
+// subset test: a friend holding an explicit grant of ONLY console.read on
+// someone else's server may mint a key carrying console.read, but MUST NOT be
+// able to also mint files.delete on that key even though it targets the same
+// server - the anti-escalation boundary is per capability, not per server.
+func TestAPIKeysCreate_FriendPartialGrantSubset(t *testing.T) {
+	newFakeStoreWithGrant := func() *apiKeysAuthFakeStore {
+		return &apiKeysAuthFakeStore{
+			servers: map[string]*models.Server{
+				"srv-1": {ID: 1, UUID: "srv-1", OwnerID: "owner-else"},
+			},
+			grants: map[string]*store.ServerGrant{
+				grantKey(1, "u1"): {CapOverrides: store.CapOverrides{Grant: []string{"console.read"}}},
+			},
+		}
+	}
+
+	t.Run("holds console.read: succeeds", func(t *testing.T) {
+		fs := newFakeStoreWithGrant()
+		h := newAPIKeysAuthHandler(fs)
+		rec := httptest.NewRecorder()
+
+		h.Create(rec, createAPIKeyReq("u1", "friend", false, map[string]interface{}{
+			"name": "k", "permissions": []string{"console.read"}, "servers": []string{"srv-1"},
+		}))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.createCalls) != 1 {
+			t.Fatalf("expected 1 CreateAPIKey call, got %d", len(fs.createCalls))
+		}
+	})
+
+	t.Run("does not hold files.delete: rejected", func(t *testing.T) {
+		fs := newFakeStoreWithGrant()
+		h := newAPIKeysAuthHandler(fs)
+		rec := httptest.NewRecorder()
+
+		h.Create(rec, createAPIKeyReq("u1", "friend", false, map[string]interface{}{
+			"name": "k", "permissions": []string{"console.read", "files.delete"}, "servers": []string{"srv-1"},
+		}))
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "No files.delete access to server: srv-1") {
+			t.Fatalf("body = %s, want 'No files.delete access to server: srv-1'", rec.Body.String())
+		}
+		if len(fs.createCalls) != 0 {
+			t.Fatalf("expected no CreateAPIKey call, got %+v", fs.createCalls)
+		}
+	})
 }
 
 // TestAPIKeysCreate_AdminBypassesScopingAndDefaultsRate pins that an admin

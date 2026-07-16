@@ -50,12 +50,6 @@ type createAPIKeyResponse struct {
 	Message   string        `json:"message"`
 }
 
-// validPermissions pins the capability vocabulary; later phases extend this
-// (modpack.publish, server.power.start, ...).
-var validPermissions = map[string]bool{
-	"rcon.exec": true,
-}
-
 func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -77,24 +71,43 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, p := range req.Permissions {
-		if !validPermissions[p] {
+		if !authz.ValidKeyCap(p) {
 			sendJSONError(w, "Unknown permission: "+p, http.StatusBadRequest)
 			return
 		}
 	}
-	// Non-admin callers can only scope keys to servers they themselves can power-access.
+	// Delegation subset check: a non-admin may only mint a key carrying SERVER
+	// caps they themselves hold on each targeted server (owner short-circuit or an
+	// explicit grant), so a key can never exceed its creator. OWNER caps act on the
+	// creator's own realm (always held) and PANEL caps are already rejected above,
+	// so only SERVER caps need a per-server check. Admin holds everything, so admin
+	// keys stay unrestricted.
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	if !isAdmin {
+		username := r.Context().Value("username").(string)
+		identity := authz.Identity{UserID: userID, Username: username, IsAdmin: false}
+		var serverCaps []string
+		for _, p := range req.Permissions {
+			if c, ok := authz.Get(p); ok && c.Scope == authz.ScopeServer {
+				serverCaps = append(serverCaps, p)
+			}
+		}
 		for _, serverUUID := range req.Servers {
 			srv, err := h.state.Store.GetServerByUUID(serverUUID)
 			if err != nil {
 				sendJSONError(w, "Server not found: "+serverUUID, http.StatusBadRequest)
 				return
 			}
-			username := r.Context().Value("username").(string)
-			if !checkServerAccess(h.state.Store, srv, username, false, userID, "power") {
-				sendJSONError(w, "No power access to server: "+serverUUID, http.StatusForbidden)
+			res, rerr := h.state.Authz.Resolve(identity, srv.ID)
+			if rerr != nil {
+				sendJSONError(w, "No access to server: "+serverUUID, http.StatusForbidden)
 				return
+			}
+			for _, capID := range serverCaps {
+				if !res.HasCap(capID) {
+					sendJSONError(w, "No "+capID+" access to server: "+serverUUID, http.StatusForbidden)
+					return
+				}
 			}
 		}
 	}
