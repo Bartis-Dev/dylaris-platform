@@ -10,13 +10,14 @@ import {
 import { listGrants, assignGrant, revokeGrant, type Grant } from '@/lib/api/grants';
 import { SkeletonList } from '@/components/Skeleton';
 import AccessServerRoles from '@/components/access/AccessServerRoles';
+import AccessAdvancedGrants from '@/components/access/AccessAdvancedGrants';
 
 // Owner-facing delegation UI. Behavior branches on the account's
 // permissions_mode:
 //   off      - delegation is disabled platform-wide; informational only.
-//   simple   - assign-only preset grants (this task).
-//   advanced - per-server custom roles + per-capability grants (tasks 9-10;
-//              stubbed here so the mode switch compiles end-to-end today).
+//   simple   - assign-only preset grants.
+//   advanced - per-server custom roles (AccessServerRoles) plus per-friend
+//              grant/deny assignment (AccessAdvancedGrants).
 // The grants list + revoke is shared across simple and advanced.
 
 export default function AccessPage() {
@@ -183,16 +184,12 @@ export default function AccessPage() {
                 <>
                     <AccessServerRoles catalog={catalog} showToast={showToast} />
 
-                    {/* TODO(task 10): mount <AccessAdvancedGrants/> here - the
-                        advanced grant/deny editor with per-capability
-                        overrides via CapabilityPicker, on top of the shared
-                        list below. */}
-                    <section className="card p-6 mb-4">
-                        <h2 className="text-sm font-medium text-(--base-09) mb-2">Advanced grants</h2>
-                        <p className="text-xs text-(--base-06)">
-                            Per-capability grant and deny editing is not built yet (task 10).
-                        </p>
-                    </section>
+                    <AccessAdvancedGrants
+                        catalog={catalog}
+                        ownedServers={ownedServers}
+                        showToast={showToast}
+                        onAssigned={refreshGrants}
+                    />
                 </>
             )}
 
