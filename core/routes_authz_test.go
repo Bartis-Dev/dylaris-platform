@@ -912,3 +912,22 @@ func TestCap_EnrollTokenAndPlacementHelpers_ExemptAuthed(t *testing.T) {
 		}
 	}
 }
+
+// TestCap_RegionsPanel proves /admin/regions is gated PANEL regions.read
+// (list) vs regions.write (create): a regions.read holder can list but not
+// create, and an ordinary user is 403.
+func TestCap_RegionsPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "rr-id", "rr", "regions.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/regions", testIdentity{UserID: "rr-id", Username: "rr"}); c == 403 {
+		t.Error("regions.read holder must list regions")
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/regions", testIdentity{UserID: "rr-id", Username: "rr"}); c != 403 {
+		t.Errorf("regions.read-only holder must be 403 on POST (needs regions.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/regions", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin regions, got %d", c)
+	}
+}

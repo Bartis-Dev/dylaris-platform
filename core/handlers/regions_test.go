@@ -87,22 +87,10 @@ func regionsReq(method, path string, isAdmin bool, urlVars map[string]string, bo
 
 // --- CreateRegion ---
 
-func TestCreateRegion_NonAdminForbidden(t *testing.T) {
-	fs := &regionsFakeStore{}
-	h := NewRegionsHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.CreateRegion(rec, regionsReq("POST", "/api/admin/regions", false, nil, map[string]interface{}{
-		"id": "eu", "displayName": "Europe",
-	}))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.createCalls) != 0 {
-		t.Fatalf("expected no CreateRegion call, got %+v", fs.createCalls)
-	}
-}
+// Phase 4 Task 14: regions.write is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_RegionsPanel), which runs through the real resolver.
 
 // TestCreateRegion_IDValidation pins regionIDRegex
 // (^[a-z][a-z0-9\-]{0,30}[a-z0-9]$, regions.go:17). IMPORTANT real-behavior
@@ -261,17 +249,10 @@ func TestCreateRegion_StoreErrorIsConflict(t *testing.T) {
 
 // --- DeleteRegion ---
 
-func TestDeleteRegion_NonAdminForbidden(t *testing.T) {
-	fs := &regionsFakeStore{}
-	h := NewRegionsHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.DeleteRegion(rec, regionsReq("DELETE", "/api/admin/regions/eu", false, map[string]string{"id": "eu"}, nil))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-}
+// Phase 4 Task 14: regions.delete is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_RegionsPanel), which runs through the real resolver.
 
 func TestDeleteRegion_DefaultRegionRefused(t *testing.T) {
 	fs := &regionsFakeStore{countServers: map[string]int{"default": 0}, countNodes: map[string]int{"default": 0}}

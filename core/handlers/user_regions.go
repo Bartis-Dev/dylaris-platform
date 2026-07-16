@@ -18,12 +18,8 @@ type userRegionsResponse struct {
 	Regions    []string `json:"regions"`
 }
 
-// GetUserRegions GET /api/admin/users/{id}/regions
+// GetUserRegions GET /api/admin/users/{id}/regions — RequireCap("regions.read") at the route.
 func (h *UserRegionsHandler) GetUserRegions(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID, ok := parseUserID(w, r)
 	if !ok {
 		return
@@ -51,14 +47,10 @@ type setUserRegionsRequest struct {
 	Regions    []string `json:"regions"`
 }
 
-// SetUserRegions PUT /api/admin/users/{id}/regions
+// SetUserRegions PUT /api/admin/users/{id}/regions — RequireCap("regions.write") at the route.
 // Replaces the user's region assignment in one transaction. When allRegions
 // is true the explicit list is wiped and the user gets blanket access.
 func (h *UserRegionsHandler) SetUserRegions(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID, ok := parseUserID(w, r)
 	if !ok {
 		return

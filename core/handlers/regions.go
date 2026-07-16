@@ -41,12 +41,9 @@ func (h *RegionsHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AdminListRegions GET /api/admin/regions — admin-only; includes disabled regions.
+// AdminListRegions GET /api/admin/regions — RequireCap("regions.read") at the
+// route; includes disabled regions.
 func (h *RegionsHandler) AdminListRegions(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	regions, err := h.state.Store.ListRegions(true)
 	if err != nil {
 		sendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
@@ -68,12 +65,8 @@ type regionRequest struct {
 	Color       string `json:"color"`
 }
 
-// CreateRegion POST /api/admin/regions
+// CreateRegion POST /api/admin/regions — RequireCap("regions.write") at the route.
 func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req regionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -126,12 +119,8 @@ func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UpdateRegion PATCH /api/admin/regions/{id}
+// UpdateRegion PATCH /api/admin/regions/{id} — RequireCap("regions.write") at the route.
 func (h *RegionsHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id := mux.Vars(r)["id"]
 	existing, err := h.state.Store.GetRegion(id)
 	if err != nil {
@@ -173,14 +162,10 @@ func (h *RegionsHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DeleteRegion DELETE /api/admin/regions/{id}
-// Refuses if servers or nodes still reference the region — operator must
-// reassign or delete those first.
+// DeleteRegion DELETE /api/admin/regions/{id} — RequireCap("regions.delete")
+// at the route. Refuses if servers or nodes still reference the region —
+// operator must reassign or delete those first.
 func (h *RegionsHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id := mux.Vars(r)["id"]
 	if id == "default" {
 		sendJSONError(w, "Cannot delete the default region", http.StatusBadRequest)

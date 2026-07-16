@@ -200,6 +200,13 @@ var requiredCaps = map[string]string{
 	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/content": "nodes.read",
 	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect": "nodes.read",
 	"/api/disk/orphans/assign":                         "nodes.write",
+
+	// Phase 4 Task 14: region admin (PANEL regions.*). "/api/regions" and
+	// "/api/me/regions" stay authed-exempt (enabled-region picker / own
+	// assignment) and are deliberately NOT listed here.
+	"/api/admin/regions":                           "regions.read",
+	"/api/admin/regions/{id}":                      "regions.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/regions":   "regions.read",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -943,13 +950,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/regions", authHandler.AuthMiddleware(regionsHandler.ListRegions)).Methods("GET")
 	api.HandleFunc("/me/regions", authHandler.AuthMiddleware(userRegionsHandler.GetMyRegions)).Methods("GET")
 	// Admin: full CRUD incl. disabled regions.
-	api.HandleFunc("/admin/regions", authHandler.AuthMiddleware(regionsHandler.AdminListRegions)).Methods("GET")
-	api.HandleFunc("/admin/regions", authHandler.AuthMiddleware(regionsHandler.CreateRegion)).Methods("POST")
-	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(regionsHandler.UpdateRegion)).Methods("PATCH")
-	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(regionsHandler.DeleteRegion)).Methods("DELETE")
+	api.HandleFunc("/admin/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.read")(regionsHandler.AdminListRegions))).Methods("GET")
+	api.HandleFunc("/admin/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.write")(regionsHandler.CreateRegion))).Methods("POST")
+	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.write")(regionsHandler.UpdateRegion))).Methods("PATCH")
+	api.HandleFunc("/admin/regions/{id}", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.delete")(regionsHandler.DeleteRegion))).Methods("DELETE")
 	// Admin: per-user region assignment.
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(userRegionsHandler.GetUserRegions)).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(userRegionsHandler.SetUserRegions)).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.read")(userRegionsHandler.GetUserRegions))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("regions.write")(userRegionsHandler.SetUserRegions))).Methods("PUT")
 
 	// --- Registration + Email Verify ---
 	// Public — login page polls registration-status to decide whether to show the register link.
