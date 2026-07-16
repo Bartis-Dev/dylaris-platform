@@ -285,17 +285,12 @@ func TestMintProxyAuth_FeatureDisabled(t *testing.T) {
 	}
 }
 
-func TestMintProxyAuth_Forbidden_NoAccess(t *testing.T) {
-	h, _ := newTabProxyTestHandler(t, true, "")
-	req := withVars(withIdentity(httptest.NewRequest("GET", "/api/servers/1/tabs/2/proxy-auth", nil), "stranger", false, "stranger-id"), "1", "2")
-	rec := httptest.NewRecorder()
-
-	h.MintProxyAuth(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d (no server access): %s", rec.Code, http.StatusForbidden, rec.Body.String())
-	}
-}
+// Phase 4 Task 6: overview.read is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old
+// no-server-access forbidden case (a "stranger" with no grant on the server)
+// moved to routes_authz_test.go where it runs through the real resolver. What
+// remains here is the handler's own, still-live "unknown server" existence
+// check below (independent of authz).
 
 func TestMintProxyAuth_Forbidden_UnknownServer(t *testing.T) {
 	h, _ := newTabProxyTestHandler(t, true, "")

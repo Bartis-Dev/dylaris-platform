@@ -44,15 +44,13 @@ var modrinthAllowedHosts = map[string]bool{
 	"cdn.modrinth.com": true,
 }
 
-func (h *ServerModsHandler) canAccess(r *http.Request, serverID int) (*models.Server, bool) {
+// getServer fetches the server the route's RequireCap already gated access
+// to. The pure authorization check used to live here (checkServerAccess); the
+// router's mods.read/mods.write/mods.delete RequireCap now enforces it before
+// this handler ever runs.
+func (h *ServerModsHandler) getServer(serverID int) (*models.Server, bool) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		return nil, false
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "config") {
 		return nil, false
 	}
 	return srv, true
@@ -60,9 +58,9 @@ func (h *ServerModsHandler) canAccess(r *http.Request, serverID int) (*models.Se
 
 func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, ok := h.canAccess(r, serverID)
+	srv, ok := h.getServer(serverID)
 	if !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
@@ -78,13 +76,13 @@ func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // ModpackContents returns the modpack snapshot for the active sub-server: the
 // Modrinth-identified members of the pack this server was installed from. Empty
-// when the server is not a modpack server. Same "config" access gate as the mods
+// when the server is not a modpack server. Same mods.read gate as the mods
 // endpoints. Backs the panel's advisory cross-check + modpack banner.
 func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, ok := h.canAccess(r, serverID)
+	srv, ok := h.getServer(serverID)
 	if !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	contents, err := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer)
@@ -100,9 +98,9 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 
 func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, ok := h.canAccess(r, serverID)
+	srv, ok := h.getServer(serverID)
 	if !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req installModRequest
@@ -201,9 +199,9 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 
 func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, ok := h.canAccess(r, serverID)
+	srv, ok := h.getServer(serverID)
 	if !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])

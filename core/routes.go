@@ -68,6 +68,18 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/console/command": "console.send",
 	"/api/servers/{id:[0-9]+}/rcon":            "rcon.exec",
 	"/api/servers/{id:[0-9]+}/rcon/config":     "config.read",
+
+	// Phase 4 Task 6: mods + custom tabs. GET+POST /mods share one template ->
+	// mods.read is the representative; the fine POST->mods.write lives at the
+	// RequireCap call. GET+POST /tabs share -> tabs.read representative;
+	// PATCH+DELETE /tabs/{tabId} share -> tabs.write.
+	"/api/servers/{id:[0-9]+}/mods":                           "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}":            "mods.delete",
+	"/api/servers/{id:[0-9]+}/modpack-contents":               "mods.read",
+	"/api/servers/{id:[0-9]+}/tabs":                           "tabs.read",
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":            "tabs.write",
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link": "tabs.write",
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth": "overview.read",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -300,11 +312,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/modrinth/project/{slug}/versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.ProjectVersions))).Methods("GET")
 	api.HandleFunc("/modrinth/version/{id}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Version))).Methods("GET")
 	// Per-server installed mods + install/uninstall dispatch.
-	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.List)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(serverModsHandler.Install)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(serverModsHandler.Uninstall)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.List))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Install))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.delete")(serverModsHandler.Uninstall))).Methods("DELETE")
 	// Read-only modpack snapshot backing the Content-tab cross-check.
-	api.HandleFunc("/servers/{id:[0-9]+}/modpack-contents", authHandler.AuthMiddleware(serverModsHandler.ModpackContents)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/modpack-contents", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ModpackContents))).Methods("GET")
 
 	// --- Spark profiles ---
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(sparkHandler.List)).Methods("GET")
@@ -312,17 +324,17 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}", authHandler.AuthMiddleware(sparkHandler.Delete)).Methods("DELETE")
 
 	// --- Custom Tabs ---
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(serverTabsHandler.List)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(serverTabsHandler.Create)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Update)).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(serverTabsHandler.Delete)).Methods("DELETE")
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(serverTabsHandler.RotateShareLink)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(serverTabsHandler.RevokeShareLink)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.read")(serverTabsHandler.List))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.Create))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.Update))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.RotateShareLink))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.RevokeShareLink))).Methods("DELETE")
 	// Mints the dyl_tabproxy cookie the root-router proxy below trusts.
 	// Registered on the normal /api subrouter (unlike the proxy itself) so it
 	// runs through AuthMiddleware and inherits 2FA-setup-lock + demo
 	// read-only gating instead of re-implementing them (WS5 Task 8 fast-follow).
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(proxyHandler.MintProxyAuth)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(proxyHandler.MintProxyAuth))).Methods("GET")
 	// Mints the same dyl_tabproxy cookie, but Path-scoped to a share token's
 	// proxy prefix (/api/tabproxy/{token}/) for the standalone Public path
 	// (Task 9) instead of the in-dashboard one. Registered here (not on the

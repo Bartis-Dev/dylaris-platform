@@ -55,8 +55,8 @@ func (h *ServerTabsHandler) countUserShareLinks(db *sql.DB, userID string) (int,
 // the unguessable slug for a proxied page tab.
 func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID, true) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+	if !h.serverExists(serverID) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
@@ -97,8 +97,8 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 // slug so the standalone page 404s. The tab itself stays.
 func (h *ServerTabsHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID, true) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+	if !h.serverExists(serverID) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])

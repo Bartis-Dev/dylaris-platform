@@ -147,19 +147,18 @@ func proxyBasePath(serverID, tabID int) string {
 }
 
 // MintProxyAuth: GET /api/servers/{id}/tabs/{tabId}/proxy-auth, registered on
-// the NORMAL /api subrouter behind AuthMiddleware - this inherits the full
-// session gating (2FA-setup-lock, demo read-only, signature/expiry) for free
-// instead of re-implementing it here. After re-checking overview access +
-// the feature gate, it mints a short-lived tab-proxy-scoped ticket and
-// stamps it as an HttpOnly cookie scoped to exactly this server/tab's proxy
-// prefix, so InDashboard never needs the 24h session JWT in a URL.
+// the NORMAL /api subrouter behind AuthMiddleware and the router's
+// overview.read RequireCap - this inherits the full session gating
+// (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access
+// enforcement for free instead of re-implementing it here. After the feature
+// gate, it mints a short-lived tab-proxy-scoped ticket and stamps it as an
+// HttpOnly cookie scoped to exactly this server/tab's proxy prefix, so
+// InDashboard never needs the 24h session JWT in a URL.
 //
 // This does NOT re-check the tab's own state (enabled/mode/surface) - that
 // stays the DB-backed getTabByID gate InDashboard runs on every actual proxy
 // request regardless of the ticket, so a ticket minted here for a bad tabId
-// simply 404s the moment it is used. Keeping this endpoint to the
-// server-level access check only is what lets it run without a raw-SQL
-// dependency of its own.
+// simply 404s the moment it is used.
 func (h *ProxyHandler) MintProxyAuth(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	serverID, _ := strconv.Atoi(vars["id"])
@@ -174,13 +173,11 @@ func (h *ProxyHandler) MintProxyAuth(w http.ResponseWriter, r *http.Request) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 
-	srv, serr := h.state.Store.GetServerByID(serverID)
-	if serr != nil || srv == nil {
+	// Existence check only: the route's overview.read RequireCap already
+	// enforced access before this handler ran (formerly a checkServerAccess
+	// call here).
+	if _, serr := h.state.Store.GetServerByID(serverID); serr != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-	if !checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview") {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -222,7 +219,7 @@ func (h *ProxyHandler) MintProxyAuth(w http.ResponseWriter, r *http.Request) {
 // design, this handler does NOT re-derive identity from a bearer/query
 // session token - the ticket's claims are trusted as-is because they were
 // only ever minted by MintProxyAuth, which already ran the full
-// AuthMiddleware + checkServerAccess("overview") + feature-gate chain.
+// AuthMiddleware + overview.read RequireCap + feature-gate chain.
 func (h *ProxyHandler) resolveProxyTicket(r *http.Request, serverID, tabID int) (username string, isAdmin, readOnly, ok bool) {
 	c, err := r.Cookie(proxyCookieName)
 	if err != nil || c.Value == "" {

@@ -58,21 +58,13 @@ type serverTabRequest struct {
 	Visibility  string `json:"visibility"`
 }
 
-func (h *ServerTabsHandler) canAccess(r *http.Request, serverID int, mutating bool) bool {
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
-		return false
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-	if mutating {
-		// CRUD is owner/admin only (treated as config-class, same as
-		// server.properties + Scheduled Tasks).
-		return checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "config")
-	}
-	// Reading the tab list is anyone who can see the server.
-	return checkServerAccess(h.state.Store, srv, username, isAdmin, userID, "overview")
+// serverExists is a pure data-existence check: the route's RequireCap
+// (tabs.read for List, tabs.write for the mutating handlers) already enforces
+// access before any of these handlers run, so this no longer branches on
+// config-vs-overview like the old checkServerAccess-based canAccess did.
+func (h *ServerTabsHandler) serverExists(serverID int) bool {
+	_, err := h.state.Store.GetServerByID(serverID)
+	return err == nil
 }
 
 func (h *ServerTabsHandler) db() *sql.DB {
@@ -88,8 +80,8 @@ func (h *ServerTabsHandler) db() *sql.DB {
 
 func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID, false) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+	if !h.serverExists(serverID) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	db := h.db()
@@ -127,8 +119,8 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID, true) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+	if !h.serverExists(serverID) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req serverTabRequest
@@ -263,8 +255,8 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID, true) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+	if !h.serverExists(serverID) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
@@ -379,8 +371,8 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 func (h *ServerTabsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if !h.canAccess(r, serverID, true) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+	if !h.serverExists(serverID) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])

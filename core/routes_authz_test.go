@@ -327,6 +327,61 @@ func TestFiles_InHandlerAuthz(t *testing.T) {
 	}
 }
 
+// --- Phase 4 Task 6: mods + custom tabs ---
+
+func TestCap_ModsReadWriteDelete(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("modder-id", "modder", false)
+	fs.servers = map[int]*models.Server{8: {ID: 8, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{20: {ID: 20, Capabilities: []string{"mods.read", "mods.write"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(8, "modder-id"): {UserID: "modder-id", ServerRoleID: intPtr(20)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/8/mods", testIdentity{UserID: "modder-id", Username: "modder"}); c == 403 {
+		t.Error("mods.read holder must list mods")
+	}
+	if c := doAs(t, srv, "POST", "/api/servers/8/mods", testIdentity{UserID: "modder-id", Username: "modder"}); c == 403 {
+		t.Error("mods.write holder must add mods")
+	}
+	// modder holds read+write but NOT delete -> DELETE must be 403
+	if c := doAs(t, srv, "DELETE", "/api/servers/8/mods/1", testIdentity{UserID: "modder-id", Username: "modder"}); c != 403 {
+		t.Errorf("mods.write-only holder must be 403 on mods delete (needs mods.delete), got %d", c)
+	}
+}
+
+func TestCap_TabsReadVsWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("tabreader-id", "tabreader", false)
+	fs.servers = map[int]*models.Server{8: {ID: 8, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{21: {ID: 21, Capabilities: []string{"tabs.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(8, "tabreader-id"): {UserID: "tabreader-id", ServerRoleID: intPtr(21)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/8/tabs", testIdentity{UserID: "tabreader-id", Username: "tabreader"}); c == 403 {
+		t.Error("tabs.read holder must list tabs")
+	}
+	if c := doAs(t, srv, "POST", "/api/servers/8/tabs", testIdentity{UserID: "tabreader-id", Username: "tabreader"}); c != 403 {
+		t.Errorf("tabs.read holder must NOT create tabs (needs tabs.write), got %d", c)
+	}
+}
+
+func TestCap_ProxyAuthNeedsOverviewRead(t *testing.T) {
+	fs := &authzFakeStore{settings: map[string]string{"feature_tab_proxy_enabled": "true"}}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("viewer-id", "viewer", false)
+	fs.addUser("stranger-id", "stranger", false)
+	fs.servers = map[int]*models.Server{8: {ID: 8, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{22: {ID: 22, Capabilities: []string{"overview.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(8, "viewer-id"): {UserID: "viewer-id", ServerRoleID: intPtr(22)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/8/tabs/1/proxy-auth", testIdentity{UserID: "viewer-id", Username: "viewer"}); c == 403 {
+		t.Error("overview.read holder must reach proxy-auth")
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/8/tabs/1/proxy-auth", testIdentity{UserID: "stranger-id", Username: "stranger"}); c != 403 {
+		t.Errorf("ungranted user must be 403 on proxy-auth (needs overview.read), got %d", c)
+	}
+}
+
 func TestFiles_DeleteNeedsDeleteCap(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("owner-id", "owner", false)
