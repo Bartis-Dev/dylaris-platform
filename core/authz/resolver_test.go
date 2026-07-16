@@ -242,6 +242,13 @@ func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
 			t.Errorf("demo server must NOT grant non-read cap %q", id)
 		}
 	}
+	// Topology + roster disclosure stays denied on a public demo even though these
+	// are read caps (network.read = routing/endpoint, members.read = access list).
+	for _, id := range []string{"network.read", "members.read"} {
+		if res.HasCap(id) {
+			t.Errorf("demo server must NOT grant sensitive read cap %q to a stranger", id)
+		}
+	}
 }
 
 func TestResolve_DemoReadOffByDefault(t *testing.T) {

@@ -58,6 +58,16 @@ type Resolution struct {
 	ownerCaps  map[string]bool // OWNER caps from an account grant on this realm
 }
 
+// demoReadDeny lists SERVER read caps that a public demo showcase must NOT grant
+// to arbitrary authenticated viewers even though they are reads: network.read
+// discloses routing/endpoint info (topology, relevant to node-IP obfuscation) and
+// members.read discloses the access roster. Any future sensitive server read cap
+// must be added here so it is not auto-exposed on public demo servers.
+var demoReadDeny = map[string]bool{
+	"network.read": true,
+	"members.read": true,
+}
+
 // HasCap reports whether the resolution grants capID. An unknown capability is
 // always denied. Admin grants everything. Otherwise the cap's catalog scope
 // selects which resolved set (plus the owner short-circuit) is consulted.
@@ -74,9 +84,11 @@ func (res *Resolution) HasCap(capID string) bool {
 	if res.admin {
 		return true
 	}
-	// Demo showcase: any authenticated viewer may READ a demo server (console
-	// view, stats view, overview, file list/read). Writes stay denied.
-	if res.demoRead && c.Scope == ScopeServer && c.Verb == VerbRead {
+	// Demo showcase: any authenticated viewer may READ a demo server's operational
+	// state (overview, console, stats, files, config, mods, tabs, schedule, ...).
+	// network.read and members.read stay denied (see demoReadDeny) so a public demo
+	// never discloses topology or the access roster. Writes/actions stay denied.
+	if res.demoRead && c.Scope == ScopeServer && c.Verb == VerbRead && !demoReadDeny[capID] {
 		return true
 	}
 	switch c.Scope {
