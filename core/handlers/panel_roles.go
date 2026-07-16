@@ -13,8 +13,9 @@ import (
 )
 
 // PanelRolesHandler serves the level-1 (staff) panel-role admin surface. Every
-// endpoint is gated by the inline IsAdmin(r) check for now; phase 4 replaces
-// that with RequireCap("panelroles.read"/"panelroles.write"/"panelroles.delete").
+// endpoint is gated at the route with
+// RequireCap("panelroles.read"/"panelroles.write"/"panelroles.delete");
+// admin short-circuits every PANEL cap.
 type PanelRolesHandler struct {
 	state *AppState
 }
@@ -78,10 +79,6 @@ func (h *PanelRolesHandler) ListPanelRoles(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Database not connected", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	roles, err := h.state.Store.ListPanelRoles()
 	if err != nil {
 		sendJSONError(w, "Failed to list panel roles", 500)
@@ -98,10 +95,6 @@ func (h *PanelRolesHandler) ListPanelRoles(w http.ResponseWriter, r *http.Reques
 func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 	var req panelRoleRequest
@@ -139,10 +132,6 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 	id, ok := parsePanelRoleID(w, r)
@@ -185,10 +174,6 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 	id, ok := parsePanelRoleID(w, r)

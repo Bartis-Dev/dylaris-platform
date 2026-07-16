@@ -22,10 +22,6 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Database not connected", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	id, ok := parseUserID(w, r)
 	if !ok {
 		return
@@ -98,10 +94,6 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Database not connected", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	id, ok := parseUserID(w, r)
 	if !ok {
 		return
@@ -140,17 +132,13 @@ type setPanelRoleRequest struct {
 
 // SetUserPanelRoleHandler PUT /api/admin/users/{id}/panel-role
 // Assigns (panelRoleId) or clears (panelRoleId=null) the user's level-1 panel
-// role and their per-user panel cap grant/deny overrides. Admin-gated inline
-// for now (phase 4 -> RequireCap("users.write")). Every override cap must be a
-// real PANEL-scope capability, and a non-null panelRoleId must reference an
-// existing role. The legacy role/is_admin path is untouched (removed later).
+// role and their per-user panel cap grant/deny overrides. Gated at the route
+// with RequireCap("panelroles.write"); admin short-circuits. Every override
+// cap must be a real PANEL-scope capability, and a non-null panelRoleId must
+// reference an existing role. The legacy role/is_admin path is untouched.
 func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 	id, ok := parseUserID(w, r)

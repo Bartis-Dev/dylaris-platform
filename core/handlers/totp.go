@@ -307,10 +307,6 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, ok := parseUserID(w, r)
 	if !ok {
 		return

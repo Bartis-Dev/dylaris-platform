@@ -167,6 +167,27 @@ func (f *authzFakeStore) addUser(id, username string, admin bool) *models.User {
 	return u
 }
 
+// panelHolder registers a non-admin user carrying exactly the given PANEL
+// caps via a synthetic panel role (no seed 'admin'/'support' collision: role
+// ids start at 1000). Reused by every PANEL batch's tests from here on.
+func panelHolder(fs *authzFakeStore, userID, username string, caps ...string) {
+	fs.addUser(userID, username, false)
+	roleID := 1000 + len(fs.panelRoles)
+	if fs.panelRoles == nil {
+		fs.panelRoles = map[int]*store.PanelRole{}
+		fs.panelAuthz = map[string]struct {
+			roleID    *int
+			overrides store.CapOverrides
+		}{}
+	}
+	fs.panelRoles[roleID] = &store.PanelRole{ID: roleID, Capabilities: caps}
+	rid := roleID
+	fs.panelAuthz[userID] = struct {
+		roleID    *int
+		overrides store.CapOverrides
+	}{roleID: &rid}
+}
+
 func TestAuthzHarness_Smoke_Auth(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("u1", "alice", false)
@@ -615,5 +636,129 @@ func TestCap_LinkRoutesExemptAuthed(t *testing.T) {
 	srv := newAuthzTestServer(t, fs)
 	if c := doAs(t, srv, "GET", "/api/gateway/link-routes", testIdentity{UserID: "someuser-id", Username: "someuser"}); c == 403 {
 		t.Error("EXEMPT-authed /gateway/link-routes must not 403 at a chokepoint (handler owner-filters)")
+	}
+}
+
+// --- Phase 4 Task 12: users + roles + panel-roles + admin 2FA reset ---
+
+// TestCap_UsersPanelReadVsWrite proves /users is gated with PANEL
+// users.read/write: admin passes via the short-circuit, a panel-role holder
+// of users.read only can list but not create, and an ordinary authenticated
+// user without any panel cap is 403.
+func TestCap_UsersPanelReadVsWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "sup-id", "sup", "users.read") // support-like: read only
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/users", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must list users")
+	}
+	if c := doAs(t, srv, "GET", "/api/users", testIdentity{UserID: "sup-id", Username: "sup"}); c == 403 {
+		t.Error("users.read panel-role holder must list users")
+	}
+	if c := doAs(t, srv, "POST", "/api/users", testIdentity{UserID: "sup-id", Username: "sup"}); c != 403 {
+		t.Errorf("users.read-only holder must be 403 on POST /users (needs users.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/users", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on PANEL users list, got %d", c)
+	}
+}
+
+// TestCap_UserDeleteNeedsUsersDelete proves DELETE /users/{id} needs the
+// finer users.delete cap: a users.write-only holder (e.g. can reset
+// passwords/roles) must NOT be able to delete a user.
+func TestCap_UserDeleteNeedsUsersDelete(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "writer-id", "writer", "users.write")
+	fs.addUser("target-id", "target", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "DELETE", "/api/users/11111111-2222-3333-4444-555555555555", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must not be 403 on user delete")
+	}
+	if c := doAs(t, srv, "DELETE", "/api/users/11111111-2222-3333-4444-555555555555", testIdentity{UserID: "writer-id", Username: "writer"}); c != 403 {
+		t.Errorf("users.write-only holder must be 403 on user delete (needs users.delete), got %d", c)
+	}
+}
+
+// TestCap_PanelRolesReadVsWriteVsDelete proves /admin/panel-roles is gated
+// with PANEL panelroles.read/write/delete: admin passes, a panelroles.read
+// holder can list but not create/delete, and an ordinary user is 403. This is
+// also where the KNOWN, ACCEPTED escalation lives: panel-role CRUD has no
+// delegation/subset check, so a panelroles.write holder (not exercised here,
+// since it is out of scope to "fix") could grant itself every panel cap. Safe
+// by default because only admin holds panelroles.write in the seed roles.
+func TestCap_PanelRolesReadVsWriteVsDelete(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "reader-id", "reader", "panelroles.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/panel-roles", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must list panel roles")
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/panel-roles", testIdentity{UserID: "reader-id", Username: "reader"}); c == 403 {
+		t.Error("panelroles.read holder must list panel roles")
+	}
+	if c := doJSON(t, srv, "POST", "/api/admin/panel-roles", `{"name":"x","capabilities":[]}`, testIdentity{UserID: "reader-id", Username: "reader"}); c != 403 {
+		t.Errorf("panelroles.read-only holder must be 403 on create (needs panelroles.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/panel-roles", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on PANEL panel-roles list, got %d", c)
+	}
+}
+
+// TestCap_SetUserPanelRoleNeedsPanelRolesWrite proves PUT
+// /admin/users/{id}/panel-role (the per-user panel-role assignment route) is
+// gated with PANEL panelroles.write, not users.write: admin passes; a
+// users.write holder (can edit users generally) is NOT enough and must be
+// 403; a panelroles.write holder passes. This is the exact route the
+// escalation note above is about (a panelroles.write holder could assign
+// itself/another user an admin-equivalent panel role) - accepted as safe-by-
+// default since only admin holds panelroles.write in the seed roles.
+func TestCap_SetUserPanelRoleNeedsPanelRolesWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "userwriter-id", "userwriter", "users.write")
+	panelHolder(fs, "rolewriter-id", "rolewriter", "panelroles.write")
+	srv := newAuthzTestServer(t, fs)
+	body := `{"panelRoleId":null}`
+	if c := doJSON(t, srv, "PUT", "/api/admin/users/11111111-2222-3333-4444-555555555555/panel-role", body, testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must not be 403 assigning a panel role")
+	}
+	if c := doJSON(t, srv, "PUT", "/api/admin/users/11111111-2222-3333-4444-555555555555/panel-role", body, testIdentity{UserID: "userwriter-id", Username: "userwriter"}); c != 403 {
+		t.Errorf("users.write-only holder must be 403 on panel-role assignment (needs panelroles.write), got %d", c)
+	}
+	if c := doJSON(t, srv, "PUT", "/api/admin/users/11111111-2222-3333-4444-555555555555/panel-role", body, testIdentity{UserID: "rolewriter-id", Username: "rolewriter"}); c == 403 {
+		t.Error("panelroles.write holder must not be 403 on panel-role assignment")
+	}
+}
+
+// TestCap_AdminResetTOTPNeedsUsersWrite proves DELETE /users/{id}/2fa is
+// gated with PANEL users.write: admin passes, an ordinary authenticated user
+// is 403.
+func TestCap_AdminResetTOTPNeedsUsersWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "DELETE", "/api/users/11111111-2222-3333-4444-555555555555/2fa", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must not be 403 resetting a user's 2FA")
+	}
+	if c := doAs(t, srv, "DELETE", "/api/users/11111111-2222-3333-4444-555555555555/2fa", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin 2FA reset (needs users.write), got %d", c)
+	}
+}
+
+// TestMeUsernameHistory_ExemptAuthed proves /me/username-history stays
+// EXEMPT-authed (own history, not RequireCap'd): any authenticated user
+// passes the chokepoint.
+func TestMeUsernameHistory_ExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/me/username-history", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+		t.Error("EXEMPT-authed /me/username-history must not 403 for any authed user")
 	}
 }

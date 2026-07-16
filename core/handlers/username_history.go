@@ -30,11 +30,8 @@ func (h *UsernameHistoryHandler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 // Admin GET /api/admin/users/{id}/username-history
+// Gated at the route with RequireCap("users.read"); admin short-circuits.
 func (h *UsernameHistoryHandler) Admin(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	targetID, ok := parseUserID(w, r)
 	if !ok {
 		return
@@ -49,11 +46,8 @@ func (h *UsernameHistoryHandler) Admin(w http.ResponseWriter, r *http.Request) {
 
 // AdminRename PATCH /api/admin/users/{id}/username
 // Body: {"username": "newname"} — bypasses cooldown + platform toggle.
+// Gated at the route with RequireCap("users.write"); admin short-circuits.
 func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	adminID, _ := r.Context().Value("userID").(string)
 	if adminID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)

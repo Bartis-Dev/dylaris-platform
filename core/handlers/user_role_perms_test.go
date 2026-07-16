@@ -161,20 +161,12 @@ func TestSetUserRoleHandler_SelfDemotionGuard(t *testing.T) {
 	}
 }
 
-func TestSetUserRoleHandler_Forbidden(t *testing.T) {
-	fs := &userRoleFakeStore{}
-	h := NewUserHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.SetUserRoleHandler(rec, setRoleReq(testTargetID, "", false, map[string]interface{}{"role": "admin"}))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.setRoleCalls) != 0 {
-		t.Fatalf("expected no SetUserRole call, got %+v", fs.setRoleCalls)
-	}
-}
+// Phase 4 Task 12: users.write is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_UsersPanelReadVsWrite) where it runs through the real resolver.
+// What remains here is the handler's own, still-live business logic (the
+// self-demotion guard, validation, not-found).
 
 func TestSetUserRoleHandler_InvalidRole(t *testing.T) {
 	fs := &userRoleFakeStore{targetUser: &models.User{ID: testTargetID}}
@@ -210,20 +202,9 @@ func setPermsReq(targetID string, isAdmin bool, body map[string]interface{}) *ht
 	return r.WithContext(context.WithValue(r.Context(), "isAdmin", isAdmin))
 }
 
-func TestSetUserPermissionsHandler_Forbidden(t *testing.T) {
-	fs := &userRoleFakeStore{}
-	h := NewUserHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.SetUserPermissionsHandler(rec, setPermsReq(testTargetID, false, map[string]interface{}{"canDeleteServers": true}))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.setPermsCalls) != 0 {
-		t.Fatalf("expected no store mutation, got %+v", fs.setPermsCalls)
-	}
-}
+// The old pure non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_UsersPanelReadVsWrite): users.write is enforced at the route
+// chokepoint now, not in-handler (Phase 4 Task 12).
 
 // TestSetUserPermissionsHandler_Success is a thin passthrough (no branching
 // beyond the admin gate); this pins the argument order/mapping so a future
@@ -259,20 +240,9 @@ func setPanelRoleReq(targetID, actorID string, isAdmin bool, body map[string]int
 	return r.WithContext(ctx)
 }
 
-func TestSetUserPanelRoleHandler_Forbidden(t *testing.T) {
-	fs := &userRoleFakeStore{}
-	h := NewUserHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, "", false, map[string]interface{}{"panelRoleId": 1}))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.setPanelRoleCalls) != 0 {
-		t.Fatalf("expected no store mutation, got %+v", fs.setPanelRoleCalls)
-	}
-}
+// The old pure non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_SetUserPanelRoleNeedsPanelRolesWrite): panelroles.write is
+// enforced at the route chokepoint now, not in-handler (Phase 4 Task 12).
 
 func TestSetUserPanelRoleHandler_RejectsNonPanelOverride(t *testing.T) {
 	// files.read is a SERVER-scope cap; a panel override must reject it.

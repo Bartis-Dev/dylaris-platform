@@ -24,10 +24,6 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Database not connected", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Access denied", 403)
-		return
-	}
 
 	users, err := h.state.Store.ListUsers()
 	if err != nil {
@@ -66,10 +62,6 @@ type createUserRequest struct {
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -129,10 +121,6 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Database not connected", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	id, ok := parseUserID(w, r)
 	if !ok {
 		return
@@ -149,10 +137,6 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -179,11 +163,6 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 // ResetUserPassword PUT /api/users/{id}/password
 func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	id, ok := parseUserID(w, r)
 	if !ok {
 		return
@@ -213,11 +192,6 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 
 // GetUserRouteLimit GET /api/users/{id}/route-limit
 func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	id := vars["id"]
 	scope := fmt.Sprintf("user:%s", id)
@@ -247,11 +221,6 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 
 // SetUserRouteLimit PUT /api/users/{id}/route-limit
 func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	id := vars["id"]
 	scope := fmt.Sprintf("user:%s", id)

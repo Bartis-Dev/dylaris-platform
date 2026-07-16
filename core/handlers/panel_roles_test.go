@@ -59,19 +59,12 @@ func panelRoleReq(method, target string, vars map[string]string, isAdmin bool, b
 	return r.WithContext(ctx)
 }
 
-func TestPanelRoles_CreateForbiddenForNonAdmin(t *testing.T) {
-	fs := &panelRolesFakeStore{}
-	h := NewPanelRolesHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-	h.CreatePanelRole(rec, panelRoleReq("POST", "/api/admin/panel-roles", nil, false,
-		map[string]interface{}{"name": "x", "capabilities": []string{"users.read"}}))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if fs.createCalls != 0 {
-		t.Fatalf("expected no CreatePanelRole call, got %d", fs.createCalls)
-	}
-}
+// Phase 4 Task 12: panelroles.write is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_PanelRolesReadVsWriteVsDelete) where it runs through the real
+// resolver. What remains here is the handler's own, still-live validation
+// (unknown/non-panel cap rejection, system-role protection).
 
 func TestPanelRoles_CreateRejectsUnknownCap(t *testing.T) {
 	fs := &panelRolesFakeStore{}

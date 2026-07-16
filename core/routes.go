@@ -150,6 +150,27 @@ var requiredCaps = map[string]string{
 	// decision #2) - deliberately NOT listed here.
 	"/api/servers/{id:[0-9]+}/routes":             "network.read",
 	"/api/servers/{id:[0-9]+}/routes/{domain:.+}": "network.write",
+
+	// Phase 4 Task 12: users + roles + panel-roles + admin 2FA reset (PANEL
+	// users.*/panelroles.*). GET+POST /users share one template -> users.read
+	// representative; the fine POST->users.write lives at the RequireCap call.
+	// /me/username-history is EXEMPT-authed (own history) - deliberately NOT
+	// listed here. See the panel-role escalation note at the route registration
+	// above: panelroles.write has no delegation check, accepted as safe-by-
+	// default for this cut-over.
+	"/api/users":                                           "users.read",
+	"/api/users/{id:[0-9a-f-]{36}}":                        "users.delete",
+	"/api/users/{id:[0-9a-f-]{36}}/password":               "users.write",
+	"/api/users/{id:[0-9a-f-]{36}}/2fa":                    "users.write",
+	"/api/users/{id:[0-9a-f-]{36}}/route-limit":            "users.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion":  "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/role":             "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/permissions":      "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/username-history": "users.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/username":         "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":       "panelroles.write",
+	"/api/admin/panel-roles":                               "panelroles.read",
+	"/api/admin/panel-roles/{id:[0-9]+}":                   "panelroles.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -478,9 +499,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/plan", authHandler.AuthMiddleware(plansHandler.SetUserPlan)).Methods("PATCH")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(plansHandler.SetUserLimitOverrides)).Methods("PATCH")
 
+	// /me/username-history is the caller's OWN history: EXEMPT-authed, no
+	// RequireCap (not in requiredCaps). The admin two below are PANEL users.*.
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Admin)).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(usernameHistoryHandler.AdminRename)).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(usernameHistoryHandler.Admin))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(usernameHistoryHandler.AdminRename))).Methods("PATCH")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(accountPolicyHandler.Set)).Methods("PUT")
 	// --- Modpack settings + system feature flags ---
@@ -545,24 +568,32 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/2fa/disable", authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)).Methods("POST")
 	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)).Methods("POST")
 	api.HandleFunc("/auth/2fa/status", authHandler.AuthMiddleware(authHandler.Get2FAStatusHandler)).Methods("GET")
-	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/2fa", authHandler.AuthMiddleware(authHandler.AdminResetTOTPHandler)).Methods("DELETE")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/2fa", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(authHandler.AdminResetTOTPHandler))).Methods("DELETE")
 
-	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.GetAllUsers)).Methods("GET")
-	api.HandleFunc("/users", authHandler.AuthMiddleware(userHandler.CreateUser)).Methods("POST")
-	api.HandleFunc("/users/{id:[0-9a-f-]{36}}", authHandler.AuthMiddleware(userHandler.DeleteUser)).Methods("DELETE")
-	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/password", authHandler.AuthMiddleware(userHandler.ResetUserPassword)).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion", authHandler.AuthMiddleware(userHandler.CancelUserDeletion)).Methods("POST")
+	api.HandleFunc("/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(userHandler.GetAllUsers))).Methods("GET")
+	api.HandleFunc("/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.CreateUser))).Methods("POST")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.delete")(userHandler.DeleteUser))).Methods("DELETE")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/password", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.ResetUserPassword))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.CancelUserDeletion))).Methods("POST")
 
-	// --- Roles + capability flags ---
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/role", authHandler.AuthMiddleware(userHandler.SetUserRoleHandler)).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/permissions", authHandler.AuthMiddleware(userHandler.SetUserPermissionsHandler)).Methods("PUT")
+	// --- Roles + capability flags (PANEL users.write) ---
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/role", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.SetUserRoleHandler))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.SetUserPermissionsHandler))).Methods("PUT")
 
-	// --- Panel roles (level-1 staff roles; admin-gated inline for now) ---
-	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(panelRolesHandler.ListPanelRoles)).Methods("GET")
-	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(panelRolesHandler.CreatePanelRole)).Methods("POST")
-	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.UpdatePanelRole)).Methods("PATCH")
-	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(panelRolesHandler.DeletePanelRole)).Methods("DELETE")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/panel-role", authHandler.AuthMiddleware(userHandler.SetUserPanelRoleHandler)).Methods("PUT")
+	// --- Panel roles (level-1 staff roles; PANEL panelroles.*) ---
+	// KNOWN ESCALATION (Phase 4 Task 12, accepted for the cut-over): panel-role
+	// CRUD/assignment has no delegation/subset check (unlike owner server-roles),
+	// so a non-admin holding panelroles.write could create a role carrying every
+	// panel cap (or assign an admin-equivalent role to a user) and self-escalate.
+	// This is safe-by-default: the seed roles are admin (holds panelroles.*) and
+	// support (does not), so behavior is unchanged unless an admin deliberately
+	// grants panelroles.write to a custom role. No delegation check is added here
+	// (out of scope); flagged for a future delegation-check phase.
+	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.read")(panelRolesHandler.ListPanelRoles))).Methods("GET")
+	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(panelRolesHandler.CreatePanelRole))).Methods("POST")
+	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(panelRolesHandler.UpdatePanelRole))).Methods("PATCH")
+	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.delete")(panelRolesHandler.DeletePanelRole))).Methods("DELETE")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/panel-role", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(userHandler.SetUserPanelRoleHandler))).Methods("PUT")
 
 	// --- Server roles (level-2 owner realm) ---
 	// OWNER-scope caps (roles.*): neither route has a path {id}/{uuid}, so
@@ -666,8 +697,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore))).Methods("POST")
 	// Deletion audit log (admin-only).
 	api.HandleFunc("/admin/tickets/deletion-log", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.ListDeletions))).Methods("GET")
-	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(userHandler.GetUserRouteLimit)).Methods("GET")
-	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(userHandler.SetUserRouteLimit)).Methods("PUT")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(userHandler.GetUserRouteLimit))).Methods("GET")
+	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.SetUserRouteLimit))).Methods("PUT")
 
 	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.GetModulesHandler)).Methods("GET")
 	api.HandleFunc("/modules", authHandler.AuthMiddleware(moduleHandler.CreateModuleHandler)).Methods("POST")
