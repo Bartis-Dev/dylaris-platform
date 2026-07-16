@@ -35,10 +35,6 @@ type admissionPayload struct {
 
 // GetAdmission GET /api/admin/settings/node-admission — current modes + CIDRs.
 func (h *NodeAdmissionHandler) GetAdmission(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	joinMode, err := h.state.Store.GetSetting("node_join_mode")
 	if err != nil || joinMode == "" {
 		joinMode = "open"
@@ -65,10 +61,6 @@ func (h *NodeAdmissionHandler) GetAdmission(w http.ResponseWriter, r *http.Reque
 
 // SetAdmission PUT /api/admin/settings/node-admission — write join + IP mode.
 func (h *NodeAdmissionHandler) SetAdmission(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req admissionPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -104,10 +96,6 @@ func (h *NodeAdmissionHandler) SetAdmission(w http.ResponseWriter, r *http.Reque
 
 // AddCIDR POST /api/admin/settings/node-admission/cidrs — add one allowlist CIDR.
 func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		CIDR  string `json:"cidr"`
 		Label string `json:"label"`
@@ -130,10 +118,6 @@ func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
 
 // DeleteCIDR DELETE /api/admin/settings/node-admission/cidrs/{id}.
 func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id := mux.Vars(r)["id"]
 	if err := h.state.Store.DeleteAdmissionCIDR(id); err != nil {
 		sendJSONError(w, "Failed to delete CIDR", http.StatusInternalServerError)
@@ -147,10 +131,6 @@ func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request
 // recovery token bound to its identity. The node row / owner / servers / backups
 // are untouched; recovery re-provisions the ACL under a fresh secret on re-pair.
 func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {

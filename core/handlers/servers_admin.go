@@ -12,11 +12,6 @@ import (
 
 // GetAdminServers GET /api/admin/servers — returns all DB servers with optional search filter
 func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	servers, err := h.state.Store.ListServersForUser("", true)
 	if err != nil {
 		sendJSONError(w, "Database error", 500)
@@ -57,10 +52,6 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 
 // AdminUpdateServerOwner PATCH /api/admin/servers/{id}/owner — reassigns a server to a different user
 func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	vars := mux.Vars(r)
 	serverID, _ := strconv.Atoi(vars["id"])
 

@@ -75,16 +75,12 @@ type PickNodeResponse struct {
 	Reason     string          `json:"reason"`
 }
 
-// PickNode POST /api/placement/pick — admin-only.
+// PickNode POST /api/placement/pick — any authed user (helper).
 // Used by the deploy wizard to preview which node would be chosen and
 // internally by CreateServer when the request specifies a tag instead
-// of an explicit nodeId.
+// of an explicit nodeId. It only returns candidate scoring, never mutates
+// anything; the actual server-creation privilege is enforced separately.
 func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	var req PickNodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -303,13 +299,10 @@ type SetNodePlacementRequest struct {
 	RAMOvercommitRatio float64 `json:"ramOvercommitRatio"`
 }
 
-// SetNodePlacement PUT /api/nodes/{id}/placement — admin-only.
-// Lets admins override the global defaults for a single node.
+// SetNodePlacement PUT /api/nodes/{id}/placement — PANEL nodes.write.
+// Lets admins (or a nodes.write cap holder) override the global defaults for a
+// single node.
 func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	id := mustAtoi(extractIDFromPath(r, "/api/nodes/", "/placement"))
 	if id <= 0 {
 		sendJSONError(w, "Invalid node id", http.StatusBadRequest)

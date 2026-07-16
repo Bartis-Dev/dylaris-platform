@@ -1046,10 +1046,11 @@ func (h *ServerHandler) SetServerAutoMove(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// MoveServer (admin) queues a manual node-to-node migration of a server to a
-// target node. Async: it only enqueues; the leader-elected Core runs the
-// migration step machine and the panel polls the orchestration status key.
-// The route is gateway-gated (migration is gateway-only) via RequireGatewayEnabled.
+// MoveServer (admin oversight, PANEL servers.write) queues a manual node-to-node
+// migration of a server to a target node. Async: it only enqueues; the
+// leader-elected Core runs the migration step machine and the panel polls the
+// orchestration status key. The route is gateway-gated (migration is
+// gateway-only) via RequireGatewayEnabled.
 func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Migration == nil {
 		sendJSONError(w, "Migration orchestrator not available", 503)
@@ -1059,11 +1060,6 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
 		sendJSONError(w, "Invalid server ID", 400)
-		return
-	}
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	if !isAdmin {
-		sendJSONError(w, "Admin only", 403)
 		return
 	}
 	srv, err := h.state.Store.GetServerByID(serverID)

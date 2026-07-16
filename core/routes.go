@@ -171,6 +171,35 @@ var requiredCaps = map[string]string{
 	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":       "panelroles.write",
 	"/api/admin/panel-roles":                               "panelroles.read",
 	"/api/admin/panel-roles/{id:[0-9]+}":                   "panelroles.write",
+
+	// Phase 4 Task 13: nodes / admission / disk-orphans / admin servers (PANEL
+	// nodes.*/servers.*). "/api/nodes" (GET list + POST create share one
+	// template) is deliberately NOT listed: GET is authed-exempt (owner-inclusive
+	// filter) while POST is RequireCap("nodes.write")-gated at the route: since
+	// this map has no per-method granularity, recording either cap here would
+	// misrepresent the other method, so the shared-template reconciliation for
+	// "/api/nodes" is deferred to the Task 22/23 ExemptRoutes pass. The 4
+	// INSPECT node reads (servers/storage/deploy-bundle/cpu - each carries its
+	// own canManageNode admin-vs-BYON-owner data filter), /nodes/enroll-token*,
+	// and /placement/* likewise stay authed-exempt and are NOT listed here (see
+	// the route registration comments).
+	"/api/admin/settings/node-admission":               "nodes.read",
+	"/api/admin/settings/node-admission/cidrs":         "nodes.write",
+	"/api/admin/settings/node-admission/cidrs/{id}":    "nodes.delete",
+	"/api/nodes/{id:[0-9]+}":                           "nodes.write",
+	"/api/nodes/{id:[0-9]+}/config":                    "nodes.write",
+	"/api/nodes/{id:[0-9]+}/force":                     "nodes.delete",
+	"/api/nodes/{id:[0-9]+}/placement":                 "nodes.write",
+	"/api/admin/servers":                               "servers.read",
+	"/api/admin/servers/{id:[0-9]+}/owner":             "servers.write",
+	"/api/admin/servers/{id:[0-9]+}/move":              "servers.write",
+	"/api/admin/nodes/{id:[0-9]+}/disk-analysis":       "nodes.read",
+	"/api/admin/nodes/{id:[0-9]+}/orphan":              "nodes.delete",
+	"/api/admin/nodes/{id:[0-9]+}/reset-pairing":       "nodes.write",
+	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/files":   "nodes.read",
+	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/content": "nodes.read",
+	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect": "nodes.read",
+	"/api/disk/orphans/assign":                         "nodes.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -518,11 +547,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/features", authHandler.AuthMiddleware(featureSettingsHandler.Set)).Methods("PUT")
 	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(tabProxySettingsHandler.Get)).Methods("GET")
 	api.HandleFunc("/admin/settings/tab-proxy", authHandler.AuthMiddleware(tabProxySettingsHandler.Set)).Methods("PUT")
-	// P0b-5 node admission (admin-gated inside the handler; read directly per enroll).
-	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(nodeAdmissionHandler.GetAdmission)).Methods("GET")
-	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(nodeAdmissionHandler.SetAdmission)).Methods("PUT")
-	api.HandleFunc("/admin/settings/node-admission/cidrs", authHandler.AuthMiddleware(nodeAdmissionHandler.AddCIDR)).Methods("POST")
-	api.HandleFunc("/admin/settings/node-admission/cidrs/{id}", authHandler.AuthMiddleware(nodeAdmissionHandler.DeleteCIDR)).Methods("DELETE")
+	// P0b-5 node admission (PANEL nodes.read/write/delete; Phase 4 Task 13).
+	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeAdmissionHandler.GetAdmission))).Methods("GET")
+	api.HandleFunc("/admin/settings/node-admission", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.SetAdmission))).Methods("PUT")
+	api.HandleFunc("/admin/settings/node-admission/cidrs", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.AddCIDR))).Methods("POST")
+	api.HandleFunc("/admin/settings/node-admission/cidrs/{id}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeAdmissionHandler.DeleteCIDR))).Methods("DELETE")
 	// --- Platform status / health (admin Status page) ---
 	api.HandleFunc("/admin/health", authHandler.AuthMiddleware(healthHandler.GetStatus)).Methods("GET")
 
@@ -707,14 +736,23 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/modules/{id:[0-9]+}/position", authHandler.AuthMiddleware(moduleHandler.UpdateModulePositionHandler)).Methods("PATCH")
 	api.HandleFunc("/modules/{id:[0-9]+}/role", authHandler.AuthMiddleware(moduleHandler.SetModuleAccessRoleHandler)).Methods("PATCH")
 
+	// Phase 4 Task 13: GET /nodes stays authed-exempt. Its admin-vs-owner filter
+	// (nodes.go GetNodes: admin sees all, a BYON tenant sees only nodes they own)
+	// is the boundary; gating it PANEL nodes.read would regress BYON owners out
+	// of their own node list, so it deliberately keeps bare AuthMiddleware.
 	api.HandleFunc("/nodes", authHandler.AuthMiddleware(nodeHandler.GetNodes)).Methods("GET")
-	api.HandleFunc("/nodes", authHandler.AuthMiddleware(nodeHandler.CreateNode)).Methods("POST")
-	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(nodeHandler.UpdateNode)).Methods("PUT")
+	api.HandleFunc("/nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.CreateNode))).Methods("POST")
+	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.UpdateNode))).Methods("PUT")
 	// Adopt an auto-discovered node: admin sets name/region/tags (DB precedence).
-	api.HandleFunc("/nodes/{id:[0-9]+}/config", authHandler.AuthMiddleware(nodeHandler.ConfigureNode)).Methods("PATCH")
-	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(nodeHandler.DeleteNode)).Methods("DELETE")
+	api.HandleFunc("/nodes/{id:[0-9]+}/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.ConfigureNode))).Methods("PATCH")
+	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.DeleteNode))).Methods("DELETE")
+	// These 4 reads carry their own admin-vs-BYON-owner data filter (canManageNode,
+	// tenancy.go) rather than a pure IsAdmin gate, so like GET /nodes they stay
+	// authed-exempt (Phase 4 Task 13 INSPECT ruling) - gating PANEL nodes.read here
+	// would regress BYON owner access to their own node's servers/storage/deploy
+	// bundle/cpu topology.
 	api.HandleFunc("/nodes/{id:[0-9]+}/servers", authHandler.AuthMiddleware(nodeHandler.GetNodeServers)).Methods("GET")
-	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(nodeHandler.ForceDeleteNode)).Methods("DELETE")
+	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.ForceDeleteNode))).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/deploy-bundle", authHandler.AuthMiddleware(nodeHandler.GetDeployBundle)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/cpu", authHandler.AuthMiddleware(cpuPinningHandler.GetNodeCPU)).Methods("GET")
@@ -724,17 +762,17 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/nodes/enroll-token/{id}", authHandler.AuthMiddleware(nodeEnrollHandler.RevokeToken)).Methods("DELETE")
 
 	// Admin endpoints
-	api.HandleFunc("/admin/servers", authHandler.AuthMiddleware(serverHandler.GetAdminServers)).Methods("GET")
-	api.HandleFunc("/admin/servers/{id:[0-9]+}/owner", authHandler.AuthMiddleware(serverHandler.AdminUpdateServerOwner)).Methods("PATCH")
-	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(nodeHandler.GetDiskAnalysis)).Methods("GET")
-	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(nodeHandler.DeleteOrphanedFolder)).Methods("DELETE")
-	api.HandleFunc("/admin/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(nodeAdmissionHandler.ResetPairing)).Methods("POST")
+	api.HandleFunc("/admin/servers", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.read")(serverHandler.GetAdminServers))).Methods("GET")
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/owner", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(serverHandler.AdminUpdateServerOwner))).Methods("PATCH")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.GetDiskAnalysis))).Methods("GET")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.DeleteOrphanedFolder))).Methods("DELETE")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.ResetPairing))).Methods("POST")
 
-	// Orphan file browser (admin-only, read-only — no DB servers row required)
-	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/files", authHandler.AuthMiddleware(nodeHandler.ListOrphanFiles)).Methods("GET")
-	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/content", authHandler.AuthMiddleware(nodeHandler.GetOrphanFileContent)).Methods("GET")
-	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect", authHandler.AuthMiddleware(nodeHandler.InspectOrphan)).Methods("GET")
-	api.HandleFunc("/disk/orphans/assign", authHandler.AuthMiddleware(nodeHandler.AssignOrphan)).Methods("POST")
+	// Orphan file browser (PANEL nodes.read/write; read-only browse, write on assign — no DB servers row required)
+	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/files", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.ListOrphanFiles))).Methods("GET")
+	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.GetOrphanFileContent))).Methods("GET")
+	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.InspectOrphan))).Methods("GET")
+	api.HandleFunc("/disk/orphans/assign", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.AssignOrphan))).Methods("POST")
 
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
@@ -854,18 +892,20 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(hubRedisAdminHandler.Provision)).Methods("POST")
 	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(hubRedisAdminHandler.Roll)).Methods("POST")
 
-	// Placement / Scheduling
+	// Placement / Scheduling. /placement/pick + /tags + /regions stay authed-exempt
+	// (Phase 4 Task 13): they are node-picking helper reads/preview any authed user
+	// may call (no server {id}, not privilege-sensitive on their own).
 	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(settingsHandler.GetPlacementSettings)).Methods("GET")
 	api.HandleFunc("/settings/placement", authHandler.AuthMiddleware(settingsHandler.SavePlacementSettings)).Methods("POST")
 	api.HandleFunc("/placement/pick", authHandler.AuthMiddleware(placementHandler.PickNode)).Methods("POST")
 	api.HandleFunc("/placement/tags", authHandler.AuthMiddleware(placementHandler.AvailableTagsHandler)).Methods("GET")
 	api.HandleFunc("/placement/regions", authHandler.AuthMiddleware(placementHandler.AvailableRegionsHandler)).Methods("GET")
-	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(placementHandler.SetNodePlacement)).Methods("PUT")
+	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(placementHandler.SetNodePlacement))).Methods("PUT")
 
 	// Server auto-move toggle — gated on the feature flag AND active gateway.
 	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove)))).Methods("PATCH")
-	// Manual node-to-node move (admin) — gateway-only; enqueues onto the orchestrator.
-	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(serverHandler.MoveServer))).Methods("POST")
+	// Manual node-to-node move (admin oversight) — gateway-only; enqueues onto the orchestrator.
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.MoveServer)))).Methods("POST")
 	// Tenant-facing transfer (BYON) — gateway-only; owner-or-admin + placement authz inside.
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
 	// Demo flag (admin) — mark a normal server as a public read-only showcase.

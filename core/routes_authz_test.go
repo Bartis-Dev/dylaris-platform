@@ -762,3 +762,153 @@ func TestMeUsernameHistory_ExemptAuthed(t *testing.T) {
 		t.Error("EXEMPT-authed /me/username-history must not 403 for any authed user")
 	}
 }
+
+// --- Phase 4 Task 13: nodes / admission / enroll / placement / admin servers ---
+
+// TestCap_NodesMutationsPanel proves POST /nodes is gated PANEL nodes.write:
+// admin passes via the short-circuit, a nodes.write panel-role holder passes,
+// an ordinary authenticated user is 403.
+func TestCap_NodesMutationsPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	panelHolder(fs, "nodeop-id", "nodeop", "nodes.read", "nodes.write")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "POST", "/api/nodes", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must create nodes")
+	}
+	if c := doAs(t, srv, "POST", "/api/nodes", testIdentity{UserID: "nodeop-id", Username: "nodeop"}); c == 403 {
+		t.Error("nodes.write panel-role holder must create nodes")
+	}
+	if c := doAs(t, srv, "POST", "/api/nodes", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on POST /nodes, got %d", c)
+	}
+}
+
+// TestCap_AdminServersPanel proves GET /admin/servers is gated PANEL
+// servers.read: a servers.read panel-role holder passes, an ordinary
+// authenticated user is 403.
+func TestCap_AdminServersPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "sv-id", "sv", "servers.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/servers", testIdentity{UserID: "sv-id", Username: "sv"}); c == 403 {
+		t.Error("servers.read holder must reach admin servers oversight")
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/servers", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin servers, got %d", c)
+	}
+}
+
+// TestCap_NodesListExemptAuthed proves GET /nodes is EXEMPT-authed (owner-
+// inclusive filter): an authed user must NOT be 403 at a chokepoint - the
+// admin-vs-BYON-owner filter inside GetNodes is the boundary, gating this
+// PANEL nodes.read would regress a BYON owner out of their own node list.
+func TestCap_NodesListExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	// GetNodes stays admin-only outside BYON mode (pre-existing business rule,
+	// not the chokepoint under test); enable BYON so the owner-inclusive filter
+	// is actually reachable for a non-admin caller.
+	fs.settings = map[string]string{"feature_byon_enabled": "true"}
+	fs.addUser("byon-id", "byon", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/nodes", testIdentity{UserID: "byon-id", Username: "byon"}); c == 403 {
+		t.Error("EXEMPT-authed GET /nodes must not 403 an authed user (in-handler owner filter is the boundary)")
+	}
+}
+
+// TestCap_NodeInspectReadsExemptAuthed proves the 4 INSPECT node reads
+// (servers/storage/deploy-bundle/cpu) stay authed-exempt at the chokepoint:
+// each already carries its own canManageNode admin-vs-BYON-owner data filter
+// (cpu additionally allows a CanChangeResources grant), so none is un-gated.
+func TestCap_NodeInspectReadsExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("byon-id", "byon", false)
+	srv := newAuthzTestServer(t, fs)
+	for _, path := range []string{
+		"/api/nodes/1/servers",
+		"/api/nodes/1/storage",
+		"/api/nodes/1/deploy-bundle",
+		"/api/nodes/1/cpu",
+	} {
+		if c := doAs(t, srv, "GET", path, testIdentity{UserID: "byon-id", Username: "byon"}); c == 403 {
+			t.Errorf("EXEMPT-authed %s must not 403 an authed user at the chokepoint (canManageNode is the boundary), got 403", path)
+		}
+	}
+}
+
+// TestCap_NodeAdmissionPanel proves /admin/settings/node-admission is gated
+// PANEL nodes.read/nodes.write: a nodes.read-only holder can read the
+// admission config but not write it.
+func TestCap_NodeAdmissionPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "reader-id", "reader", "nodes.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/admin/settings/node-admission", testIdentity{UserID: "reader-id", Username: "reader"}); c == 403 {
+		t.Error("nodes.read holder must read node admission config")
+	}
+	if c := doAs(t, srv, "PUT", "/api/admin/settings/node-admission", testIdentity{UserID: "reader-id", Username: "reader"}); c != 403 {
+		t.Errorf("nodes.read-only holder must NOT write admission config (needs nodes.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/admin/settings/node-admission", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin node-admission read, got %d", c)
+	}
+}
+
+// TestCap_NodeAdmissionCIDRsPanel proves POST /admin/settings/node-admission/cidrs
+// needs nodes.write: a nodes.read-only holder is 403, a nodes.write holder passes.
+func TestCap_NodeAdmissionCIDRsPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "reader-id", "reader", "nodes.read")
+	panelHolder(fs, "writer-id", "writer", "nodes.read", "nodes.write")
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "POST", "/api/admin/settings/node-admission/cidrs", testIdentity{UserID: "reader-id", Username: "reader"}); c != 403 {
+		t.Errorf("nodes.read-only holder must NOT add a CIDR (needs nodes.write), got %d", c)
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/settings/node-admission/cidrs", testIdentity{UserID: "writer-id", Username: "writer"}); c == 403 {
+		t.Error("nodes.write holder must add a CIDR")
+	}
+}
+
+// TestCap_DiskOrphansPanel proves the disk-orphans browse routes are gated
+// PANEL nodes.read (browse) vs nodes.write (assign).
+func TestCap_DiskOrphansPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "reader-id", "reader", "nodes.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/disk/orphans/1/some-uuid/files", testIdentity{UserID: "reader-id", Username: "reader"}); c == 403 {
+		t.Error("nodes.read holder must browse orphan files")
+	}
+	if c := doAs(t, srv, "POST", "/api/disk/orphans/assign", testIdentity{UserID: "reader-id", Username: "reader"}); c != 403 {
+		t.Errorf("nodes.read-only holder must NOT assign an orphan (needs nodes.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/disk/orphans/1/some-uuid/files", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on orphan browse, got %d", c)
+	}
+}
+
+// TestCap_EnrollTokenAndPlacementHelpers_ExemptAuthed proves the BYON
+// enroll-token self-service routes and the placement helper routes stay
+// authed-exempt: any authenticated user reaches them (feature-gating/BYON
+// scoping happens in-handler, not at the chokepoint). BYON is enabled so the
+// enroll-token routes' own in-handler feature-gate (byonActive) does not mask
+// the chokepoint assertion under test.
+func TestCap_EnrollTokenAndPlacementHelpers_ExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.settings = map[string]string{"feature_byon_enabled": "true"}
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/api/nodes/enroll-token"},
+		{"POST", "/api/placement/pick"},
+		{"GET", "/api/placement/tags"},
+		{"GET", "/api/placement/regions"},
+	} {
+		if c := doAs(t, srv, tc.method, tc.path, testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
+			t.Errorf("EXEMPT-authed %s %s must not 403 an authed user, got 403", tc.method, tc.path)
+		}
+	}
+}

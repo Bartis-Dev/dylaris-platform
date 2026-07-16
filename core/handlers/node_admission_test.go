@@ -60,22 +60,10 @@ func nodeAdmissionReq(method, path string, isAdmin bool, body map[string]interfa
 
 // --- SetAdmission ---
 
-func TestSetAdmission_NonAdminForbidden(t *testing.T) {
-	fs := &nodeAdmissionFakeStore{}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.SetAdmission(rec, nodeAdmissionReq("PUT", "/api/admin/settings/node-admission", false, map[string]interface{}{
-		"joinMode": "open", "ipMode": "allow",
-	}))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.setSettingCalls) != 0 {
-		t.Fatalf("expected no SetSetting calls, got %+v", fs.setSettingCalls)
-	}
-}
+// Phase 4 Task 13: nodes.write is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_NodeAdmissionPanel), which runs through the real resolver.
 
 // TestSetAdmission_ValidationAndPersistence pins the validJoin x validIP
 // enum guard (node_admission.go:77-78) and the exact two SetSetting calls a
@@ -149,22 +137,10 @@ func TestSetAdmission_InvalidJSON(t *testing.T) {
 
 // --- AddCIDR ---
 
-func TestAddCIDR_NonAdminForbidden(t *testing.T) {
-	fs := &nodeAdmissionFakeStore{}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
-	rec := httptest.NewRecorder()
-
-	h.AddCIDR(rec, nodeAdmissionReq("POST", "/api/admin/settings/node-admission/cidrs", false, map[string]interface{}{
-		"cidr": "10.0.0.0/24",
-	}))
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	if len(fs.addCIDRCalls) != 0 {
-		t.Fatalf("expected no AddAdmissionCIDR calls, got %+v", fs.addCIDRCalls)
-	}
-}
+// Phase 4 Task 13: nodes.write is now enforced at the route chokepoint
+// (RequireCap wrapping in routes.go), not in-handler, so the old pure
+// non-admin-forbidden case moved to routes_authz_test.go
+// (TestCap_NodeAdmissionCIDRsPanel), which runs through the real resolver.
 
 func TestAddCIDR_MalformedRejected(t *testing.T) {
 	fs := &nodeAdmissionFakeStore{}

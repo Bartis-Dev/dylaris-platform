@@ -101,10 +101,6 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "DB error", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 
 	var req models.Node
 	json.NewDecoder(r.Body).Decode(&req)
@@ -129,10 +125,6 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -163,10 +155,6 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 func (h *NodeHandler) ConfigureNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
-		return
-	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -246,10 +234,6 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "DB error", 503)
 		return
 	}
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
@@ -292,10 +276,6 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 
 // ForceDeleteNode deletes an offline node and all its servers
 func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
@@ -428,10 +408,6 @@ type storageHeartbeatEntry struct {
 // GetDiskAnalysis cross-references disk folders on a node with DB servers.
 // GET /api/admin/nodes/{id}/disk-analysis
 func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
@@ -519,10 +495,6 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 // DeleteOrphanedFolder deletes an orphaned UUID folder from a node via gRPC.
 // DELETE /api/admin/nodes/{id}/orphan?uuid=
 func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	vars := mux.Vars(r)
 	nodeID, _ := strconv.Atoi(vars["id"])
 
@@ -576,11 +548,6 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 // GET /api/disk/orphans/{nodeId}/{uuid}/files?path=...
 // Admin-only, read-only. No DB servers row required.
 func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	nodeID, _ := strconv.Atoi(vars["nodeId"])
 	orphanUUID := vars["uuid"]
@@ -646,11 +613,6 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 // GET /api/disk/orphans/{nodeId}/{uuid}/content?path=...
 // Admin-only, read-only. No DB servers row required.
 func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	nodeID, _ := strconv.Atoi(vars["nodeId"])
 	orphanUUID := vars["uuid"]
@@ -764,11 +726,6 @@ func (h *NodeHandler) inspectOrphanOnNode(nodeID int, orphanUUID string) (*pb.In
 // InspectOrphan returns metadata about an orphaned folder without assigning it.
 // GET /api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect  (admin-only)
 func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
-
 	vars := mux.Vars(r)
 	nodeID, _ := strconv.Atoi(vars["nodeId"])
 	orphanUUID := vars["uuid"]
@@ -828,10 +785,6 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 //     persist installer_type, minecraft_version, active_sub_server.
 //  6. Returns the created server as JSON.
 func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Forbidden", 403)
-		return
-	}
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
 		return
