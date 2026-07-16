@@ -34,6 +34,10 @@ type userRoleFakeStore struct {
 	panelRoleErr      error
 	setPanelRoleCalls []setPanelRoleCall
 	setOverridesCalls []store.CapOverrides
+
+	panelAuthzRoleID *int
+	panelAuthzOv     store.CapOverrides
+	panelAuthzErr    error
 }
 
 type setPanelRoleCall struct {
@@ -76,6 +80,9 @@ func (f *userRoleFakeStore) SetUserPanelRole(userID string, roleID *int) error {
 func (f *userRoleFakeStore) SetUserPanelCapOverrides(userID string, ov store.CapOverrides) error {
 	f.setOverridesCalls = append(f.setOverridesCalls, ov)
 	return nil
+}
+func (f *userRoleFakeStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
+	return f.panelAuthzRoleID, f.panelAuthzOv, f.panelAuthzErr
 }
 
 const testTargetID = "11111111-1111-1111-1111-111111111111"
@@ -306,5 +313,36 @@ func TestSetUserPanelRoleHandler_Success(t *testing.T) {
 	ov := fs.setOverridesCalls[0]
 	if len(ov.Grant) != 1 || ov.Grant[0] != "nodes.read" || len(ov.Deny) != 1 || ov.Deny[0] != "users.delete" {
 		t.Fatalf("overrides = %+v, want grant=[nodes.read] deny=[users.delete]", ov)
+	}
+}
+
+func TestGetUserPanelRoleHandler_Success(t *testing.T) {
+	rid := 3
+	fs := &userRoleFakeStore{
+		panelAuthzRoleID: &rid,
+		panelAuthzOv:     store.CapOverrides{Grant: []string{"nodes.read"}, Deny: []string{"users.delete"}},
+	}
+	h := NewUserHandler(&AppState{Store: fs})
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/admin/users/"+testTargetID+"/panel-role", nil)
+	r = mux.SetURLVars(r, map[string]string{"id": testTargetID})
+	h.GetUserPanelRoleHandler(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success     bool     `json:"success"`
+		PanelRoleID *int     `json:"panelRoleId"`
+		GrantCaps   []string `json:"grantCaps"`
+		DenyCaps    []string `json:"denyCaps"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Success || resp.PanelRoleID == nil || *resp.PanelRoleID != 3 {
+		t.Fatalf("panelRoleId = %+v, want 3", resp.PanelRoleID)
+	}
+	if len(resp.GrantCaps) != 1 || resp.GrantCaps[0] != "nodes.read" || len(resp.DenyCaps) != 1 || resp.DenyCaps[0] != "users.delete" {
+		t.Fatalf("overrides = grant %v deny %v", resp.GrantCaps, resp.DenyCaps)
 	}
 }

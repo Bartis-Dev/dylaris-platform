@@ -863,6 +863,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(panelRolesHandler.UpdatePanelRole))).Methods("PATCH")
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.delete")(panelRolesHandler.DeletePanelRole))).Methods("DELETE")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/panel-role", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(userHandler.SetUserPanelRoleHandler))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/panel-role", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.read")(userHandler.GetUserPanelRoleHandler))).Methods("GET")
 
 	// --- Server roles (level-2 owner realm) ---
 	// OWNER-scope caps (roles.*): neither route has a path {id}/{uuid}, so

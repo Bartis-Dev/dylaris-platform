@@ -186,3 +186,29 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
+
+// GetUserPanelRoleHandler GET /api/admin/users/{id}/panel-role
+// Reads the user's level-1 panel role id + per-user override caps, symmetric
+// with the PUT. Gated at the route with RequireCap("panelroles.read"); admin
+// short-circuits. Lets the RolesTab pre-fill the assignment editor.
+func (h *UserHandler) GetUserPanelRoleHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	id, ok := parseUserID(w, r)
+	if !ok {
+		return
+	}
+	roleID, ov, err := h.state.Store.GetUserPanelAuthz(id)
+	if err != nil {
+		sendJSONError(w, "User not found", 404)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"panelRoleId": roleID,
+		"grantCaps":   normalizeCaps(ov.Grant),
+		"denyCaps":    normalizeCaps(ov.Deny),
+	})
+}
