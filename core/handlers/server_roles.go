@@ -91,6 +91,11 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Database not connected", 503)
 		return
 	}
+	idn := authz.IdentityFromContext(r.Context())
+	if !idn.IsAdmin && PermissionsMode(h.state.Store) != authz.ModeAdvanced {
+		sendJSONError(w, "Custom roles require advanced permissions mode", 403)
+		return
+	}
 	owner := actingUserID(r)
 	if owner == "" {
 		sendJSONError(w, "Forbidden", 403)
@@ -124,6 +129,11 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	idn := authz.IdentityFromContext(r.Context())
+	if !idn.IsAdmin && PermissionsMode(h.state.Store) != authz.ModeAdvanced {
+		sendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
 	owner := actingUserID(r)
@@ -163,6 +173,11 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	idn := authz.IdentityFromContext(r.Context())
+	if !idn.IsAdmin && PermissionsMode(h.state.Store) != authz.ModeAdvanced {
+		sendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
 	owner := actingUserID(r)

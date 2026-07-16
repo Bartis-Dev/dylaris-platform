@@ -68,6 +68,10 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
+	if !idn.IsAdmin && PermissionsMode(h.state.Store) == authz.ModeOff {
+		sendJSONError(w, "Delegation is disabled", 403)
+		return
+	}
 
 	target, err := h.state.Store.GetUserByUsername(req.Username)
 	if err != nil || target == nil {

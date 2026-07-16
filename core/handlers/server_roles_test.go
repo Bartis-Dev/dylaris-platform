@@ -27,6 +27,11 @@ type serverRolesFakeStore struct {
 	updateOwner string
 	deleteCalls int
 	deleteOwner string
+	mode        string
+}
+
+func (f *serverRolesFakeStore) GetSetting(string) (string, error) {
+	return f.mode, nil
 }
 
 func (f *serverRolesFakeStore) ListServerRolesByOwner(string) ([]store.ServerRole, error) {
@@ -67,7 +72,8 @@ func serverRoleReq(method, target string, vars map[string]string, body interface
 
 func TestServerRoles_CreateRejectsPanelCap(t *testing.T) {
 	// users.read is a PANEL-scope cap; a server-role must reject it.
-	fs := &serverRolesFakeStore{}
+	// mode: advanced so the request reaches cap validation, not the mode gate.
+	fs := &serverRolesFakeStore{mode: "advanced"}
 	h := NewServerRolesHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
 	h.CreateServerRole(rec, serverRoleReq("POST", "/api/server-roles", nil,
@@ -81,7 +87,8 @@ func TestServerRoles_CreateRejectsPanelCap(t *testing.T) {
 }
 
 func TestServerRoles_CreateRejectsUnknownCap(t *testing.T) {
-	fs := &serverRolesFakeStore{}
+	// mode: advanced so the request reaches cap validation, not the mode gate.
+	fs := &serverRolesFakeStore{mode: "advanced"}
 	h := NewServerRolesHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
 	h.CreateServerRole(rec, serverRoleReq("POST", "/api/server-roles", nil,
@@ -95,7 +102,7 @@ func TestServerRoles_CreateRejectsUnknownCap(t *testing.T) {
 }
 
 func TestServerRoles_CreateAcceptsServerAndOwnerCaps(t *testing.T) {
-	fs := &serverRolesFakeStore{createID: 12}
+	fs := &serverRolesFakeStore{createID: 12, mode: "advanced"}
 	h := NewServerRolesHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
 	h.CreateServerRole(rec, serverRoleReq("POST", "/api/server-roles", nil,
@@ -125,7 +132,7 @@ func TestServerRoles_CreateAcceptsServerAndOwnerCaps(t *testing.T) {
 }
 
 func TestServerRoles_UpdateScopesToActingOwner(t *testing.T) {
-	fs := &serverRolesFakeStore{}
+	fs := &serverRolesFakeStore{mode: "advanced"}
 	h := NewServerRolesHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
 	h.UpdateServerRole(rec, serverRoleReq("PATCH", "/api/server-roles/2", map[string]string{"id": "2"},
@@ -139,7 +146,7 @@ func TestServerRoles_UpdateScopesToActingOwner(t *testing.T) {
 }
 
 func TestServerRoles_DeleteScopesToActingOwner(t *testing.T) {
-	fs := &serverRolesFakeStore{}
+	fs := &serverRolesFakeStore{mode: "advanced"}
 	h := NewServerRolesHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
 	h.DeleteServerRole(rec, serverRoleReq("DELETE", "/api/server-roles/3", map[string]string{"id": "3"}, nil))
@@ -172,5 +179,41 @@ func TestServerRoles_ListReturnsOwnRoles(t *testing.T) {
 	}
 	if !resp.Success || len(resp.Roles) != 1 || resp.Roles[0].Name != "Builders" {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func serverRoleReqAdmin(method, target string, vars map[string]string, isAdmin bool, body interface{}) *http.Request {
+	r := serverRoleReq(method, target, vars, body)
+	return r.WithContext(context.WithValue(r.Context(), "isAdmin", isAdmin))
+}
+
+func TestServerRoles_CreateModeGate(t *testing.T) {
+	cases := []struct {
+		name     string
+		mode     string
+		isAdmin  bool
+		wantCode int
+		wantCall bool
+	}{
+		{"advanced non-admin allowed", "advanced", false, http.StatusOK, true},
+		{"simple non-admin blocked", "simple", false, http.StatusForbidden, false},
+		{"off non-admin blocked", "off", false, http.StatusForbidden, false},
+		{"simple admin bypass", "simple", true, http.StatusOK, true},
+		{"off admin bypass", "off", true, http.StatusOK, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &serverRolesFakeStore{createID: 5, mode: tc.mode}
+			h := NewServerRolesHandler(&AppState{Store: fs})
+			rec := httptest.NewRecorder()
+			h.CreateServerRole(rec, serverRoleReqAdmin("POST", "/api/server-roles", nil, tc.isAdmin,
+				map[string]interface{}{"name": "R", "capabilities": []string{"files.read"}}))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if (fs.createCalls == 1) != tc.wantCall {
+				t.Fatalf("createCalls = %d, wantCall %v", fs.createCalls, tc.wantCall)
+			}
+		})
 	}
 }

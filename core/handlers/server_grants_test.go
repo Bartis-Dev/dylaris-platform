@@ -28,6 +28,11 @@ type grantFakeStore struct {
 	deleteCalls int
 	deleteErr   error
 	grants      []store.OwnerGrant
+	mode        string
+}
+
+func (f *grantFakeStore) GetSetting(string) (string, error) {
+	return f.mode, nil
 }
 
 type upsertCall struct {
@@ -312,5 +317,36 @@ func TestListGrants_ReturnsOwnerRealmGrants(t *testing.T) {
 	}
 	if !resp.Grants[1].AccountWide {
 		t.Fatalf("grant[1] should be account-wide: %+v", resp.Grants[1])
+	}
+}
+
+func TestAssignGrant_ModeGate(t *testing.T) {
+	cases := []struct {
+		name       string
+		mode       string
+		isAdmin    bool
+		wantCode   int
+		wantUpsert bool
+	}{
+		{"advanced allowed", "advanced", false, http.StatusOK, true},
+		{"simple allowed", "simple", false, http.StatusOK, true},
+		{"off blocked", "off", false, http.StatusForbidden, false},
+		{"off admin bypass", "off", true, http.StatusOK, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &grantFakeStore{target: &models.User{ID: friendC, Username: "friend"}, mode: tc.mode}
+			h := NewServerRolesHandler(grantState(fs))
+			rec := httptest.NewRecorder()
+			h.AssignGrant(rec, grantReq("POST", ownerA, tc.isAdmin, map[string]interface{}{
+				"username": "friend", "grantCaps": []string{"modpack.read"},
+			}))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if (len(fs.upserts) == 1) != tc.wantUpsert {
+				t.Fatalf("upserts = %d, wantUpsert %v", len(fs.upserts), tc.wantUpsert)
+			}
+		})
 	}
 }
