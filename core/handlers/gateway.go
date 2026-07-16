@@ -536,7 +536,6 @@ func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	domain := mux.Vars(r)["domain"]
-	userID := r.Context().Value("userID").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	if domain == "" {
@@ -544,20 +543,8 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Ownership check: verify server belongs to this user (or admin)
-	if !isAdmin {
-		server, err := h.state.Store.GetServerByID(serverID)
-		if err != nil {
-			http.Error(w, "Server not found", http.StatusNotFound)
-			return
-		}
-		if server.OwnerID != userID {
-			http.Error(w, "Not authorized", http.StatusForbidden)
-			return
-		}
-	}
-
-	// Ensure the route belongs to this server (optional but safe)
+	// Ownership is enforced at the route via RequireCap(network.write) (Phase 4
+	// Task 11); this only validates the route belongs to this server.
 	if !isAdmin {
 		server, _ := h.state.Store.GetServerByID(serverID)
 		all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)

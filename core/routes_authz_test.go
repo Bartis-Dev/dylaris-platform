@@ -576,3 +576,44 @@ func TestCap_BackupJobsServerScoped(t *testing.T) {
 		t.Errorf("backups.read holder must NOT create backup jobs (needs backups.create), got %d", c)
 	}
 }
+
+// --- Phase 4 Task 11: per-server network routes + link-routes (EXEMPT) ---
+
+// TestCap_ServerRoutesNetworkVerbs proves /servers/{id}/routes is gated with
+// the fine per-method cap: a network.read-only grant can list routes but not
+// create one (needs network.write).
+func TestCap_ServerRoutesNetworkVerbs(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("net-id", "net", false)
+	fs.addUser("stranger-id", "stranger", false)
+	fs.servers = map[int]*models.Server{16: {ID: 16, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{70: {ID: 70, Capabilities: []string{"network.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(16, "net-id"): {UserID: "net-id", ServerRoleID: intPtr(70)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/16/routes", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must not be 403 on server routes")
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/16/routes", testIdentity{UserID: "net-id", Username: "net"}); c == 403 {
+		t.Error("network.read holder must list server routes")
+	}
+	if c := doAs(t, srv, "POST", "/api/servers/16/routes", testIdentity{UserID: "net-id", Username: "net"}); c != 403 {
+		t.Errorf("network.read holder must NOT create routes (needs network.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/16/routes", testIdentity{UserID: "stranger-id", Username: "stranger"}); c != 403 {
+		t.Errorf("unprivileged user must be 403 on server routes, got %d", c)
+	}
+}
+
+// TestCap_LinkRoutesExemptAuthed proves /gateway/link-routes is EXEMPT-authed:
+// any authed user passes the chokepoint (no RequireCap); the in-handler owner
+// filter is the boundary, not tested here.
+func TestCap_LinkRoutesExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("someuser-id", "someuser", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/gateway/link-routes", testIdentity{UserID: "someuser-id", Username: "someuser"}); c == 403 {
+		t.Error("EXEMPT-authed /gateway/link-routes must not 403 at a chokepoint (handler owner-filters)")
+	}
+}

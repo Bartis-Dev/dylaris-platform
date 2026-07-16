@@ -142,6 +142,14 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/backup-jobs":     "backups.read",
 	"/api/servers/{id:[0-9]+}/backup-restores": "backups.read",
 	"/api/servers/{id:[0-9]+}/backup-usage":    "backups.read",
+
+	// Phase 4 Task 11: per-server network (gateway) routes. GET+POST /routes
+	// share one template -> network.read representative; the fine
+	// POST->network.write lives at the RequireCap call. /gateway/link-routes/*
+	// (tenant self-service, no server {id}) is EXEMPT-authed (controller
+	// decision #2) - deliberately NOT listed here.
+	"/api/servers/{id:[0-9]+}/routes":             "network.read",
+	"/api/servers/{id:[0-9]+}/routes/{domain:.+}": "network.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -753,12 +761,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(gatewayHandler.GetErrors)).Methods("GET")
 
 	// User endpoints (per-server routes, identified by domain)
-	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(gatewayHandler.GetServerRoutes)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute))).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteServerRoute)).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerRoutes))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute)))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
 
 	// Route-only (external origin): a protected address pointed at a server the
 	// user already runs, no managed node. Owner-scoped; create is gateway-gated.
+	// Tenant self-service with NO server {id} and no matching OWNER cap - stays
+	// authed-exempt (Phase 4 controller decision #2); the in-handler owner
+	// filter (resolveOwnedLinkToken / ListLinkRoutes / DeleteLinkRoute ownership
+	// scan) is the boundary. A future links.* owner cap is a deferred follow-up.
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
