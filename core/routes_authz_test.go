@@ -1072,3 +1072,66 @@ func TestCap_SettingsExemptAuthedGETsNotBlocked(t *testing.T) {
 		}
 	}
 }
+
+// --- Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight ---
+
+// TestCap_GatewayTopologyPanel proves the global gateway oversight surface
+// (links/edges/routes/logs/stats/errors/dns-check/sync) is gated with PANEL
+// topology.read/topology.write: a topology.read holder can view but not
+// sync, and an ordinary authenticated user is denied outright.
+func TestCap_GatewayTopologyPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "tp-id", "tp", "topology.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/gateway/links", testIdentity{UserID: "tp-id", Username: "tp"}); c == 403 {
+		t.Error("topology.read holder must view gateway links")
+	}
+	if c := doAs(t, srv, "POST", "/api/gateway/sync", testIdentity{UserID: "tp-id", Username: "tp"}); c != 403 {
+		t.Errorf("topology.read-only holder must be 403 on gateway sync (needs topology.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/gateway/links", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on gateway topology, got %d", c)
+	}
+}
+
+// TestCap_WarpRegionsTopologyPanel proves the warp regions/leaders/key-mint
+// admin registry shares the same topology.read/topology.write split as the
+// gateway surface above.
+func TestCap_WarpRegionsTopologyPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "tp-id", "tp", "topology.read")
+	panelHolder(fs, "tw-id", "tw", "topology.read", "topology.write")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/warp/regions", testIdentity{UserID: "tp-id", Username: "tp"}); c == 403 {
+		t.Error("topology.read holder must list warp regions")
+	}
+	if c := doAs(t, srv, "POST", "/api/warp/regions", testIdentity{UserID: "tp-id", Username: "tp"}); c != 403 {
+		t.Errorf("topology.read-only holder must be 403 upserting a warp region (needs topology.write), got %d", c)
+	}
+	if c := doAs(t, srv, "POST", "/api/warp/regions", testIdentity{UserID: "tw-id", Username: "tw"}); c == 403 {
+		t.Error("topology.write holder must not be 403 upserting a warp region")
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/warp/keys", testIdentity{UserID: "tw-id", Username: "tw"}); c == 403 {
+		t.Error("topology.write holder must not be 403 minting a warp key")
+	}
+	if c := doAs(t, srv, "GET", "/api/warp/regions", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on warp regions, got %d", c)
+	}
+}
+
+// TestCap_WarpLinkKitsExemptAuthed proves /warp/link-kits is EXEMPT-authed
+// (tenant self-service): the in-handler owner filter + BYON gate is the
+// boundary, not RequireCap - any authed user must pass the chokepoint.
+func TestCap_WarpLinkKitsExemptAuthed(t *testing.T) {
+	fs := &authzFakeStore{}
+	// ListLinkKits has its own in-handler BYON gate (byonActive); enable BYON so
+	// that gate doesn't mask the chokepoint result under test.
+	fs.settings = map[string]string{"feature_byon_enabled": "true"}
+	fs.addUser("byon-id", "byon", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/warp/link-kits", testIdentity{UserID: "byon-id", Username: "byon"}); c == 403 {
+		t.Error("EXEMPT-authed /warp/link-kits must not 403 an authed user (in-handler owner filter is the boundary)")
+	}
+}

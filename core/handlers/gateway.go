@@ -59,10 +59,6 @@ func (h *GatewayHandler) ctx() context.Context {
 // ==========================================
 
 func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
 	if links == nil {
 		links = []services.GatewayLinkStatus{}
@@ -75,10 +71,6 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
 	if edges == nil {
 		edges = []services.GatewayEdgeInfo{}
@@ -91,10 +83,6 @@ func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	if routes == nil {
 		routes = []services.GatewayRoute{}
@@ -103,10 +91,6 @@ func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	domain := mux.Vars(r)["domain"]
 	if domain == "" {
 		http.Error(w, "domain required", http.StatusBadRequest)
@@ -125,10 +109,6 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 // operates purely on what's currently in the routes table / Redis cache.
 // POST /api/gateway/routes/bulk-delete  body: {"suffix": "mc.example.com"}
 func (h *GatewayHandler) BulkDeleteRoutesBySuffix(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		Suffix string `json:"suffix"`
 	}
@@ -167,10 +147,6 @@ func (h *GatewayHandler) BulkDeleteRoutesBySuffix(w http.ResponseWriter, r *http
 // across every route currently registered. Powers the bulk-delete picker.
 // GET /api/gateway/routes/suffixes
 func (h *GatewayHandler) GetRouteSuffixes(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	seen := map[string]int{} // suffix → match count
 	for _, rt := range routes {
@@ -220,20 +196,12 @@ func (h *GatewayHandler) GetRouteSuffixes(w http.ResponseWriter, r *http.Request
 // ==========================================
 
 func (h *GatewayHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	// Hub logs are not in Redis; return service error logs instead
 	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 100)
 	json.NewEncoder(w).Encode(errors)
 }
 
 func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
 	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
 	routeCount := services.CountRoutesFromRedis(h.ctx(), h.state.Redis)
@@ -261,10 +229,6 @@ func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	// Sync is managed by Hub autonomously; no-op from Core side
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Sync is managed by Hub"})
@@ -275,10 +239,6 @@ func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	service := r.URL.Query().Get("service")
 	if service != "" {
 		errors := services.GetServiceErrorsFromRedis(h.state.Redis, service, 50)

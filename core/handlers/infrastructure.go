@@ -27,11 +27,6 @@ type nodeHeartbeatStats struct {
 
 // GetOverview GET /api/infrastructure/overview
 func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	ctx := context.Background()
 
 	// Edges with full stats (auto-discovered from Redis)
@@ -101,10 +96,6 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 
 // GetRoutingMigrationStatus GET /api/infrastructure/routing-migration
 func (h *InfrastructureHandler) GetRoutingMigrationStatus(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	if h.state.RoutingMigration == nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "running": false})
 		return

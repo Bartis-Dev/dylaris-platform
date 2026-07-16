@@ -12,7 +12,8 @@ import (
 )
 
 // DNSHandler serves the on-demand DNS / reachability check. It sits with the
-// other /api/gateway/* admin endpoints (see GatewayHandler) and is admin-only.
+// other /api/gateway/* admin endpoints (see GatewayHandler) and is gated on
+// PANEL topology.read (Phase 4 Task 18).
 type DNSHandler struct {
 	state *AppState
 }
@@ -23,17 +24,12 @@ func NewDNSHandler(state *AppState) *DNSHandler {
 
 // CheckDNS computes the required DNS records from the operator's OWN config
 // (FRONTEND_URL + gateway settings + registered edges) and verifies them
-// against the public DNS view plus a TCP reachability probe. Admin-only; the
-// check is strictly bound to operator-configured domains and edge IPs, so it
-// exposes no arbitrary-lookup / SSRF surface.
+// against the public DNS view plus a TCP reachability probe. Gated on
+// topology.read at the route; the check is strictly bound to operator-configured
+// domains and edge IPs, so it exposes no arbitrary-lookup / SSRF surface.
 //
 // GET /api/gateway/dns-check
 func (h *DNSHandler) CheckDNS(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
-
 	cfg := h.buildDNSCheckConfig()
 	result := services.RunDNSCheck(context.Background(), h.state.Redis, cfg)
 

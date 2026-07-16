@@ -105,10 +105,6 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 
 // MintAPIKey (admin) creates a warp enrollment key and returns the plaintext ONCE.
 func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		Name      string `json:"name"`
 		Policy    string `json:"policy"`
@@ -411,10 +407,6 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 // ListRegions returns the full warp registry (regions + leaders + liveness +
 // peer counts) for the admin panel.
 func (h *WarpHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	regions, err := h.svc.RegionsOverview(r.Context())
 	if err != nil {
 		sendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
@@ -426,10 +418,6 @@ func (h *WarpHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
 
 // UpsertRegion (admin) creates or updates a region's subnet + enabled flag.
 func (h *WarpHandler) UpsertRegion(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		Region  string `json:"region"`
 		Subnet  string `json:"subnet"`
@@ -452,10 +440,6 @@ func (h *WarpHandler) UpsertRegion(w http.ResponseWriter, r *http.Request) {
 
 // DeleteRegion (admin) removes a region (cascades its leaders).
 func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	region := mux.Vars(r)["region"]
 	if err := h.state.Store.DeleteWarpRegion(region); err != nil {
 		sendJSONError(w, "Failed to delete region", http.StatusInternalServerError)
@@ -466,10 +450,6 @@ func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 
 // UpsertLeader (admin) creates or updates a leader endpoint within a region.
 func (h *WarpHandler) UpsertLeader(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	var req struct {
 		LeaderID string `json:"leaderId"`
 		Region   string `json:"region"`
@@ -489,10 +469,6 @@ func (h *WarpHandler) UpsertLeader(w http.ResponseWriter, r *http.Request) {
 
 // DeleteLeader (admin) removes a leader endpoint.
 func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	leaderID := mux.Vars(r)["leaderId"]
 	if err := h.state.Store.DeleteWarpLeader(leaderID); err != nil {
 		sendJSONError(w, "Failed to delete leader", http.StatusInternalServerError)

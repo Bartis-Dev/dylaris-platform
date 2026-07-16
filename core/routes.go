@@ -291,6 +291,31 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/auth":                         "settings.read",
 	"/api/admin/settings/smtp":                         "settings.read",
 	"/api/admin/settings/smtp/test":                    "settings.write",
+
+	// Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight
+	// (PANEL topology.*). /api/warp/enroll, /api/warp/link-boot (warp API-key
+	// auth, not a session) and /api/warp/link-kits/* (tenant self-service,
+	// BYON-gated + owner-filtered in-handler) are deliberately NOT listed here -
+	// they stay EXEMPT-authed (Phase 4 controller decision #2).
+	"/api/gateway/links":                    "topology.read",
+	"/api/gateway/edges":                    "topology.read",
+	"/api/gateway/routes":                   "topology.read",
+	"/api/gateway/dns-check":                "topology.read",
+	"/api/gateway/routes/suffixes":          "topology.read",
+	"/api/gateway/routes/bulk-delete":       "topology.write",
+	"/api/gateway/routes/{domain:.+}":       "topology.write",
+	"/api/gateway/check-domain":             "topology.read",
+	"/api/gateway/logs":                     "topology.read",
+	"/api/gateway/stats":                    "topology.read",
+	"/api/gateway/sync":                     "topology.write",
+	"/api/gateway/errors":                   "topology.read",
+	"/api/infrastructure/overview":          "topology.read",
+	"/api/infrastructure/routing-migration": "topology.read",
+	"/api/warp/regions":                     "topology.read",
+	"/api/warp/regions/{region}":            "topology.write",
+	"/api/warp/leaders":                     "topology.write",
+	"/api/warp/leaders/{leaderId}":          "topology.write",
+	"/api/admin/warp/keys":                  "topology.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -667,13 +692,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")
-	// Warp admin registry: regions + leaders (user session; admin enforced inside handler)
-	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(warpHandler.ListRegions)).Methods("GET")
-	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(warpHandler.UpsertRegion)).Methods("POST")
-	api.HandleFunc("/warp/regions/{region}", authHandler.AuthMiddleware(warpHandler.DeleteRegion)).Methods("DELETE")
-	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(warpHandler.UpsertLeader)).Methods("POST")
-	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(warpHandler.DeleteLeader)).Methods("DELETE")
-	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(warpHandler.MintAPIKey)).Methods("POST")
+	// Warp admin registry: regions + leaders (PANEL topology.*; Phase 4 Task 18)
+	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(warpHandler.ListRegions))).Methods("GET")
+	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.UpsertRegion))).Methods("POST")
+	api.HandleFunc("/warp/regions/{region}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.DeleteRegion))).Methods("DELETE")
+	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.UpsertLeader))).Methods("POST")
+	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.DeleteLeader))).Methods("DELETE")
+	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.MintAPIKey))).Methods("POST")
 	// Route-only link kits (tenant self-service; BYON-gated inside the handler)
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.ListLinkKits)).Methods("GET")
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")
@@ -939,19 +964,19 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	dnsHandler := handlers.NewDNSHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 
-	// Admin endpoints
-	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(gatewayHandler.GetLinks)).Methods("GET")
-	api.HandleFunc("/gateway/edges", authHandler.AuthMiddleware(gatewayHandler.GetEdges)).Methods("GET")
-	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(gatewayHandler.GetAllRoutes)).Methods("GET")
-	api.HandleFunc("/gateway/dns-check", authHandler.AuthMiddleware(dnsHandler.CheckDNS)).Methods("GET")
-	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(gatewayHandler.GetRouteSuffixes)).Methods("GET")
-	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(gatewayHandler.BulkDeleteRoutesBySuffix)).Methods("POST")
-	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.AdminDeleteRoute)).Methods("DELETE")
-	api.HandleFunc("/gateway/check-domain", authHandler.AuthMiddleware(gatewayHandler.CheckDomainAvailability)).Methods("GET")
-	api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(gatewayHandler.GetLogs)).Methods("GET")
-	api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(gatewayHandler.GetStats)).Methods("GET")
-	api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(gatewayHandler.TriggerSync)).Methods("POST")
-	api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(gatewayHandler.GetErrors)).Methods("GET")
+	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
+	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLinks))).Methods("GET")
+	api.HandleFunc("/gateway/edges", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetEdges))).Methods("GET")
+	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetAllRoutes))).Methods("GET")
+	api.HandleFunc("/gateway/dns-check", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(dnsHandler.CheckDNS))).Methods("GET")
+	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetRouteSuffixes))).Methods("GET")
+	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.BulkDeleteRoutesBySuffix))).Methods("POST")
+	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.AdminDeleteRoute))).Methods("DELETE")
+	api.HandleFunc("/gateway/check-domain", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.CheckDomainAvailability))).Methods("GET")
+	api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLogs))).Methods("GET")
+	api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetStats))).Methods("GET")
+	api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.TriggerSync))).Methods("POST")
+	api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetErrors))).Methods("GET")
 
 	// User endpoints (per-server routes, identified by domain)
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerRoutes))).Methods("GET")
@@ -968,9 +993,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
 
-	// Infrastructure overview + migration status
-	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(infrastructureHandler.GetOverview)).Methods("GET")
-	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(infrastructureHandler.GetRoutingMigrationStatus)).Methods("GET")
+	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)
+	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetOverview))).Methods("GET")
+	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetRoutingMigrationStatus))).Methods("GET")
 
 	// XDP / eBPF DDoS Protection (deployment-wide config managed by Panel,
 	// consumed by every Edge replica via Redis poll)
