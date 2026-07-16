@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	backupstorage "dylaris-core/storage/backup"
@@ -27,14 +28,13 @@ func NewBackupHandler(state *AppState) *BackupHandler {
 	return &BackupHandler{state: state}
 }
 
-// ───────────── Storages (admin) ─────────────
+// ───────────── Storages (PANEL settings.read/write) ─────────────
+// Platform-shared storage-provider configs; gated at the route via RequireCap
+// (routes.go), not in-handler. Admin still passes via the resolver's admin
+// short-circuit; a panel-role holder of settings.* also passes.
 
 // ListStorages GET /api/backup-storages
 func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", 403)
-		return
-	}
 	storages, err := h.state.Store.ListBackupStorages()
 	if err != nil {
 		sendJSONError(w, "Database error", 500)
@@ -48,10 +48,6 @@ func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
 
 // CreateStorage POST /api/backup-storages
 func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", 403)
-		return
-	}
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
@@ -71,10 +67,6 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 
 // UpdateStorage PATCH /api/backup-storages/{id}
 func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", 403)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		sendJSONError(w, "Invalid ID", 400)
@@ -95,10 +87,6 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 
 // DeleteStorage DELETE /api/backup-storages/{id}
 func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", 403)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		sendJSONError(w, "Invalid ID", 400)
@@ -114,10 +102,6 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 // TestStorage POST /api/backup-storages/{id}/test — round-trip put/get/delete
 // a tiny object to confirm credentials and bucket access.
 func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", 403)
-		return
-	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		sendJSONError(w, "Invalid ID", 400)
@@ -146,7 +130,7 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 
 // ListJobs GET /api/servers/{id}/backup-jobs
 func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
-	serverID, srv, ok := h.resolveServerWithAccess(w, r, "backups")
+	serverID, srv, ok := h.resolveServer(w, r)
 	if !ok {
 		return
 	}
@@ -164,7 +148,7 @@ func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 // CreateJob POST /api/servers/{id}/backup-jobs
 func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
-	serverID, _, ok := h.resolveServerWithAccess(w, r, "backups")
+	serverID, _, ok := h.resolveServer(w, r)
 	if !ok {
 		return
 	}
@@ -191,7 +175,7 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 
 // UpdateJob PATCH /api/backup-jobs/{jobId}
 func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
-	jobID, job, ok := h.resolveJobWithAccess(w, r)
+	jobID, job, ok := h.resolveJobWithAccess(w, r, "backups.create")
 	if !ok {
 		return
 	}
@@ -218,7 +202,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 
 // DeleteJob DELETE /api/backup-jobs/{jobId}
 func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
-	jobID, _, ok := h.resolveJobWithAccess(w, r)
+	jobID, _, ok := h.resolveJobWithAccess(w, r, "backups.delete")
 	if !ok {
 		return
 	}
@@ -231,7 +215,7 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 
 // TriggerJob POST /api/backup-jobs/{jobId}/trigger
 func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
-	_, job, ok := h.resolveJobWithAccess(w, r)
+	_, job, ok := h.resolveJobWithAccess(w, r, "backups.create")
 	if !ok {
 		return
 	}
@@ -247,7 +231,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 
 // ListRuns GET /api/backup-jobs/{jobId}/runs
 func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
-	jobID, _, ok := h.resolveJobWithAccess(w, r)
+	jobID, _, ok := h.resolveJobWithAccess(w, r, "backups.read")
 	if !ok {
 		return
 	}
@@ -281,7 +265,7 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Job not found", 404)
 		return
 	}
-	if !h.hasServerAccess(r, job.ServerID, "backups") {
+	if !h.hasServerAccess(r, job.ServerID, "backups.read") {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -344,7 +328,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Job not found", 404)
 		return
 	}
-	if !h.hasServerAccess(r, job.ServerID, "backups") {
+	if !h.hasServerAccess(r, job.ServerID, "backups.restore") {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -423,7 +407,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 // ListRestores GET /api/servers/{id}/backup-restores
 // Recent restore history for a server, newest first.
 func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
-	serverID, _, ok := h.resolveServerWithAccess(w, r, "backups")
+	serverID, _, ok := h.resolveServer(w, r)
 	if !ok {
 		return
 	}
@@ -455,7 +439,7 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Job not found", 404)
 		return
 	}
-	if !h.hasServerAccess(r, job.ServerID, "backups") {
+	if !h.hasServerAccess(r, job.ServerID, "backups.delete") {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -482,7 +466,7 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 // mode — for s3/shared the numbers come back zero, which the Overview
 // tab uses to decide whether to render the split storage display.
 func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
-	serverID, srv, ok := h.resolveServerWithAccess(w, r, "overview")
+	serverID, srv, ok := h.resolveServer(w, r)
 	if !ok {
 		return
 	}
@@ -546,10 +530,10 @@ func (h *BackupHandler) backupDeps() backupstorage.Deps {
 	}
 }
 
-// resolveServerWithAccess validates that the caller can manage backups for
-// the server in the URL. Returns (serverID, server, ok); when ok is false a
-// response has already been written.
-func (h *BackupHandler) resolveServerWithAccess(w http.ResponseWriter, r *http.Request, perm string) (int, *models.Server, bool) {
+// resolveServer parses the server ID from the URL and loads the row. Access
+// is enforced at the route via RequireCap (routes.go) for every caller of
+// this helper, so it only extracts data the handler needs, not authz.
+func (h *BackupHandler) resolveServer(w http.ResponseWriter, r *http.Request) (int, *models.Server, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		sendJSONError(w, "Invalid server ID", 400)
@@ -560,15 +544,14 @@ func (h *BackupHandler) resolveServerWithAccess(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Server not found", 404)
 		return 0, nil, false
 	}
-	if !h.hasServerAccess(r, id, perm) {
-		_ = srv
-		sendJSONError(w, "Forbidden", 403)
-		return 0, nil, false
-	}
 	return id, srv, true
 }
 
-func (h *BackupHandler) resolveJobWithAccess(w http.ResponseWriter, r *http.Request) (int, *models.BackupJob, bool) {
+// resolveJobWithAccess loads the job and checks capID against the job's
+// server. The /backup-jobs/{jobId} family resolves its server from the job
+// row rather than a path {id}/{uuid}, so RequireCap cannot gate it at the
+// route (Rule R5) - this stays in-handler, routed through the same resolver.
+func (h *BackupHandler) resolveJobWithAccess(w http.ResponseWriter, r *http.Request, capID string) (int, *models.BackupJob, bool) {
 	jobID, err := strconv.Atoi(mux.Vars(r)["jobId"])
 	if err != nil {
 		sendJSONError(w, "Invalid job ID", 400)
@@ -579,26 +562,22 @@ func (h *BackupHandler) resolveJobWithAccess(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Job not found", 404)
 		return 0, nil, false
 	}
-	if !h.hasServerAccess(r, job.ServerID, "backups") {
+	if !h.hasServerAccess(r, job.ServerID, capID) {
 		sendJSONError(w, "Forbidden", 403)
 		return 0, nil, false
 	}
 	return jobID, job, true
 }
 
-func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, perm string) bool {
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
-		return false
-	}
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	user, _ := h.state.Store.GetUserByUsername(username)
-	userID := ""
-	if user != nil {
-		userID = user.ID
-	}
-	return checkServerAccess(h.state.Store, srv, username, isAdmin, userID, perm)
+// hasServerAccess routes through the same capability resolver every
+// route-gated handler uses: owner short-circuit, or a direct/proxy/account
+// grant holding capID.
+func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, capID string) bool {
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+	res, err := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	return err == nil && res.HasCap(capID)
 }
 
 // startBackupRun creates a backup_run row, dispatches a node command, and

@@ -129,6 +129,19 @@ var requiredCaps = map[string]string{
 	"/api/server-roles":                                       "roles.read",
 	"/api/server-roles/{id:[0-9]+}":                           "roles.write",
 	"/api/grants":                                             "roles.write",
+
+	// Phase 4 Task 10: backups. backup-storages are platform-shared storage-
+	// provider configs -> PANEL settings.read/write (controller decision #4).
+	// The /backup-jobs/{jobId} and /backup-runs/{runId} families resolve their
+	// server from the job/run row, not a path {id}/{uuid} -> in-handler only
+	// (Rule R5), deliberately NOT listed here (they go into
+	// authz.InHandlerAuthzRoutes in Task 22).
+	"/api/backup-storages":                     "settings.read",
+	"/api/backup-storages/{id:[0-9]+}":         "settings.write",
+	"/api/backup-storages/{id:[0-9]+}/test":    "settings.write",
+	"/api/servers/{id:[0-9]+}/backup-jobs":     "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-restores": "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-usage":    "backups.read",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -893,21 +906,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/beam/download", beamHandler.GetBeamDownload).Methods("GET")
 
 	// --- Backup Endpoints ---
-	api.HandleFunc("/backup-storages", authHandler.AuthMiddleware(backupHandler.ListStorages)).Methods("GET")
-	api.HandleFunc("/backup-storages", authHandler.AuthMiddleware(backupHandler.CreateStorage)).Methods("POST")
-	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateStorage)).Methods("PATCH")
-	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteStorage)).Methods("DELETE")
-	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(backupHandler.TestStorage)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(backupHandler.ListJobs)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(backupHandler.CreateJob)).Methods("POST")
+	// backup-storages are platform-shared storage-provider configs -> PANEL
+	// settings.read/write (Phase 4 Task 10 controller decision #4), not admin-only
+	// in-handler anymore. /backup-jobs/{jobId} and /backup-runs/{runId} resolve
+	// their server from the job/run row (not a path {id}/{uuid}), so RequireCap
+	// cannot gate them at the route (Rule R5); they stay in-handler via the same
+	// resolver (backup.go hasServerAccess).
+	api.HandleFunc("/backup-storages", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(backupHandler.ListStorages))).Methods("GET")
+	api.HandleFunc("/backup-storages", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.CreateStorage))).Methods("POST")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.UpdateStorage))).Methods("PATCH")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteStorage))).Methods("DELETE")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.TestStorage))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListJobs))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.create")(backupHandler.CreateJob))).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateJob)).Methods("PATCH")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteJob)).Methods("DELETE")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/trigger", authHandler.AuthMiddleware(backupHandler.TriggerJob)).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/runs", authHandler.AuthMiddleware(backupHandler.ListRuns)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/download", authHandler.AuthMiddleware(backupHandler.DownloadRun)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/restore", authHandler.AuthMiddleware(backupHandler.RestoreRun)).Methods("POST")
-	api.HandleFunc("/servers/{id:[0-9]+}/backup-restores", authHandler.AuthMiddleware(backupHandler.ListRestores)).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/backup-usage", authHandler.AuthMiddleware(backupHandler.BackupUsage)).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-restores", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListRestores))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/backup-usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.BackupUsage))).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteRun)).Methods("DELETE")
 	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
 		// The Beam desktop app is now served by gateway/beam-relay's

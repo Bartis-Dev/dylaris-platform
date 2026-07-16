@@ -538,3 +538,41 @@ func TestCap_AuditForceNeedsSettingsWrite(t *testing.T) {
 		t.Errorf("overview.read-only holder must be 403 on audit/force (needs server.settings.write), got %d", c)
 	}
 }
+
+// --- Phase 4 Task 10: backups ---
+
+// TestCap_BackupStoragesPanel proves backup-storages is now a PANEL
+// settings.read/write route (not the old in-handler admin-only gate):
+// admin passes via the resolver's admin short-circuit; an ordinary
+// authenticated user holding no panel role/cap is 403.
+func TestCap_BackupStoragesPanel(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	fs.addUser("user-id", "user", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/backup-storages", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("admin must reach backup-storages")
+	}
+	if c := doAs(t, srv, "GET", "/api/backup-storages", testIdentity{UserID: "user-id", Username: "user"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on PANEL backup-storages, got %d", c)
+	}
+}
+
+// TestCap_BackupJobsServerScoped proves /servers/{id}/backup-jobs is gated
+// with the fine per-method cap: a backups.read-only grant can list jobs but
+// not create one (needs backups.create).
+func TestCap_BackupJobsServerScoped(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("bk-id", "bk", false)
+	fs.servers = map[int]*models.Server{14: {ID: 14, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{60: {ID: 60, Capabilities: []string{"backups.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(14, "bk-id"): {UserID: "bk-id", ServerRoleID: intPtr(60)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/14/backup-jobs", testIdentity{UserID: "bk-id", Username: "bk"}); c == 403 {
+		t.Error("backups.read holder must list backup jobs")
+	}
+	if c := doAs(t, srv, "POST", "/api/servers/14/backup-jobs", testIdentity{UserID: "bk-id", Username: "bk"}); c != 403 {
+		t.Errorf("backups.read holder must NOT create backup jobs (needs backups.create), got %d", c)
+	}
+}
