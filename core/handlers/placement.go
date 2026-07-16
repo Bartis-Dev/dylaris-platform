@@ -87,6 +87,16 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// BYON: a non-admin tenant may only preview placement on THEIR OWN nodes.
+	// Without scoping, a tenant could POST an empty body and enumerate the whole
+	// fleet's capacity/topology/load. Off-BYON (all authed users are trusted staff)
+	// leaves OwnerScope nil so the deploy wizard still sees every node.
+	if !IsAdmin(r) && byonActive(h.state, r) {
+		if uid, ok := r.Context().Value("userID").(string); ok && uid != "" {
+			req.OwnerScope = &uid
+		}
+	}
+
 	resp := h.pickNode(r.Context(), req)
 	json.NewEncoder(w).Encode(resp)
 }
