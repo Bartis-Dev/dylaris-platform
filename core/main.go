@@ -161,6 +161,10 @@ func main() {
 		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
 	}
 
+	// Demo showcase read access flows through the resolver so the RequireCap
+	// chokepoint covers console/stats/overview reads on demo servers.
+	appState.Authz.SetDemoRead(appState.IsDemoServerID)
+
 	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it
 	// to BYON operators without re-deriving. Non-secret; safe to expose.
 	if fp, ferr := beamauth.ClusterGRPCCertFingerprint(cfg.ClusterSecret); ferr == nil {

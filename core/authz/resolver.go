@@ -34,12 +34,17 @@ func IdentityFromContext(ctx context.Context) Identity {
 // authorization chokepoint that subsumes the legacy checkServerAccess / inline
 // IsAdmin / EffectivePermissions paths (wired into routes in phase 2).
 type Resolver struct {
-	store Store
+	store    Store
+	demoRead func(serverID int) bool // optional; StoreEnabled-gated by the caller
 }
 
 func NewResolver(st Store) *Resolver {
 	return &Resolver{store: st}
 }
+
+// SetDemoRead installs an optional predicate that reports whether a server is an
+// admin-flagged public read-only showcase. nil-safe: unset means no demo access.
+func (r *Resolver) SetDemoRead(fn func(serverID int) bool) { r.demoRead = fn }
 
 // Resolution is the materialized decision context for one (identity, scope).
 // It is deny-by-default: a capability is granted only when a short-circuit or
@@ -47,6 +52,7 @@ func NewResolver(st Store) *Resolver {
 type Resolution struct {
 	admin      bool            // panel admin: holds every capability
 	ownerSelf  bool            // owns the realm in scope (own server, or serverID==0 self-realm)
+	demoRead   bool            // server is an admin-flagged demo showcase: grant SERVER read caps to any authed principal
 	panelCaps  map[string]bool // PANEL caps from panel role + per-user overrides
 	serverCaps map[string]bool // SERVER caps from direct/proxy/account grant
 	ownerCaps  map[string]bool // OWNER caps from an account grant on this realm
@@ -66,6 +72,11 @@ func (res *Resolution) HasCap(capID string) bool {
 		return false
 	}
 	if res.admin {
+		return true
+	}
+	// Demo showcase: any authenticated viewer may READ a demo server (console
+	// view, stats view, overview, file list/read). Writes stay denied.
+	if res.demoRead && c.Scope == ScopeServer && c.Verb == VerbRead {
 		return true
 	}
 	switch c.Scope {
@@ -119,6 +130,9 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	if serr != nil || srv == nil {
 		return res, nil // unknown server: SERVER/OWNER stay empty (deny)
 	}
+	if r.demoRead != nil && r.demoRead(serverID) {
+		res.demoRead = true
+	}
 	// Owner short-circuit keyed ONLY on the immutable owner UUID. The username is
 	// mutable and reusable (a rename frees the old name), so it must never be an
 	// authorization key - the UUID is always populated (the owner JOIN drops rows
@@ -133,8 +147,13 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	if gerr != nil || grant == nil {
 		grant = nil
 		if srv.ProxyID != nil {
-			if pg, perr := r.store.GetServerGrant(*srv.ProxyID, id.UserID); perr == nil && pg != nil && pg.Inherit {
-				grant = pg
+			// Never inherit across owners: the proxy must belong to the SAME owner
+			// as the child, else a friend invited on someone else's proxy could
+			// reach this owner's server.
+			if psrv, perr := r.store.GetServerByID(*srv.ProxyID); perr == nil && psrv != nil && psrv.OwnerID == srv.OwnerID {
+				if pg, perr2 := r.store.GetServerGrant(*srv.ProxyID, id.UserID); perr2 == nil && pg != nil && pg.Inherit {
+					grant = pg
+				}
 			}
 		}
 	}

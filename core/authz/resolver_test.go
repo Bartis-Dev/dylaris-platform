@@ -208,6 +208,51 @@ func TestIdentityFromContext(t *testing.T) {
 	}
 }
 
+func TestResolve_ProxyInheritRejectsCrossOwner(t *testing.T) {
+	proxyID := 9
+	fs := &resolverFakeStore{
+		servers: map[int]*models.Server{
+			5: {ID: 5, OwnerID: "ownerA", OwnerName: "ownerA", ProxyID: &proxyID},
+			9: {ID: 9, OwnerID: "ownerB", OwnerName: "ownerB"}, // proxy owned by a DIFFERENT owner
+		},
+		serverRoles: map[int]*store.ServerRole{3: {ID: 3, Capabilities: []string{"console.read"}}},
+		serverGrants: map[string]*store.ServerGrant{
+			gkey(9, "friend"): {UserID: "friend", ServerRoleID: intp(3), Inherit: true},
+		},
+	}
+	r := NewResolver(fs)
+	res, _ := r.Resolve(Identity{UserID: "friend"}, 5)
+	if res.HasCap("console.read") {
+		t.Error("proxy-inherit must NOT cross owners: child ownerA, proxy ownerB")
+	}
+}
+
+func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
+	fs := &resolverFakeStore{servers: map[int]*models.Server{5: {ID: 5, OwnerID: "owner", OwnerName: "owner"}}}
+	r := NewResolver(fs)
+	r.SetDemoRead(func(serverID int) bool { return serverID == 5 })
+	res, _ := r.Resolve(Identity{UserID: "stranger"}, 5)
+	for _, id := range []string{"overview.read", "console.read", "stats.read", "files.read"} {
+		if !res.HasCap(id) {
+			t.Errorf("demo server should grant read cap %q to any authed user", id)
+		}
+	}
+	for _, id := range []string{"console.send", "files.write", "files.delete", "power.start", "backups.create"} {
+		if res.HasCap(id) {
+			t.Errorf("demo server must NOT grant non-read cap %q", id)
+		}
+	}
+}
+
+func TestResolve_DemoReadOffByDefault(t *testing.T) {
+	fs := &resolverFakeStore{servers: map[int]*models.Server{5: {ID: 5, OwnerID: "owner", OwnerName: "owner"}}}
+	r := NewResolver(fs) // no SetDemoRead
+	res, _ := r.Resolve(Identity{UserID: "stranger"}, 5)
+	if res.HasCap("overview.read") {
+		t.Error("without a demo predicate a stranger holds no server caps")
+	}
+}
+
 func TestCapSubset_Delegation(t *testing.T) {
 	// A non-owner assigner can only grant caps they themselves hold.
 	fs := &resolverFakeStore{

@@ -63,6 +63,21 @@ func isDemoServer(s *AppState, uuid string) bool {
 	return false
 }
 
+// IsDemoServerID reports whether the numeric server id maps to an admin-flagged
+// demo showcase server. Exported so main can hand the authz resolver a demo-read
+// predicate without the resolver importing handlers. Always false when the
+// store integration is off (open-core/self-host build).
+func (s *AppState) IsDemoServerID(serverID int) bool {
+	if s == nil || !s.StoreEnabled || s.Store == nil {
+		return false
+	}
+	srv, err := s.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return false
+	}
+	return isDemoServer(s, srv.UUID)
+}
+
 // SetServerDemo PATCH /api/admin/servers/{id}/demo — admin only.
 // Adds or removes the server from the demo list. Multiple servers may be demos.
 func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
