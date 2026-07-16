@@ -19,18 +19,22 @@ func NewMemberHandler(state *AppState) *MemberHandler {
 // capPermissions ensures the given permissions don't exceed the inviter's own permissions.
 // Owner/admin skip capping. Returns capped permissions map.
 func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[string]bool) map[string]bool {
-	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		return perms
 	}
-	if isAdmin || srv.OwnerName == username {
+	// Owner short-circuit keyed on the immutable owner UUID, never the mutable
+	// username (a rename frees the old name, which a squatter could reclaim),
+	// matching the resolver's rule (see authz/resolver.go). The route itself is
+	// already gated by RequireCap("members.write"); this only caps HOW MUCH an
+	// invited non-owner may delegate onward.
+	if isAdmin || srv.OwnerID == userID {
 		return perms // no cap for owner/admin
 	}
 
-	userID, _ := r.Context().Value("userID").(string)
 	invite, err := h.state.Store.GetInvite(serverID, userID)
 	if err != nil {
 		return perms
