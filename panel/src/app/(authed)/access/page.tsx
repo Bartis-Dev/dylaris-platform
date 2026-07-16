@@ -9,6 +9,7 @@ import {
 } from '@/lib/api/authzCatalog';
 import { listGrants, assignGrant, revokeGrant, type Grant } from '@/lib/api/grants';
 import { SkeletonList } from '@/components/Skeleton';
+import AccessServerRoles from '@/components/access/AccessServerRoles';
 
 // Owner-facing delegation UI. Behavior branches on the account's
 // permissions_mode:
@@ -180,16 +181,7 @@ export default function AccessPage() {
 
             {mode === 'advanced' && (
                 <>
-                    {/* TODO(task 9): mount <AccessServerRoles/> here - the
-                        custom per-server role manager (create/edit/delete
-                        roles built from the capability catalog). */}
-                    <section className="card p-6 mb-4">
-                        <h2 className="text-sm font-medium text-(--base-09) mb-2">Server roles</h2>
-                        <p className="text-xs text-(--base-06)">
-                            Custom server role management is not built yet (task 9).
-                            {catalog.length > 0 && ` ${catalog.length} capability scope(s) available once wired up.`}
-                        </p>
-                    </section>
+                    <AccessServerRoles catalog={catalog} showToast={showToast} />
 
                     {/* TODO(task 10): mount <AccessAdvancedGrants/> here - the
                         advanced grant/deny editor with per-capability
