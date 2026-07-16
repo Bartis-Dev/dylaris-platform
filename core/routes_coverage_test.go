@@ -77,6 +77,44 @@ func TestEveryRouteIsClassified(t *testing.T) {
 	}
 }
 
+// TestBucketsAreDisjoint guards the "EXACTLY one bucket" half of the coverage
+// invariant: no route template may appear in more than one of requiredCaps /
+// ExemptRoutes / InHandlerAuthzRoutes. Without this, a template landing in both
+// requiredCaps and ExemptRoutes would be silently treated as exempt (ExemptRoutes
+// short-circuits first in RouteCoverageViolations), quietly un-gating a route that
+// is supposed to carry a capability. Together with TestEveryRouteIsClassified
+// (at least one bucket) this pins exactly-one.
+func TestBucketsAreDisjoint(t *testing.T) {
+	for tpl := range requiredCaps {
+		if authz.ExemptRoutes[tpl] {
+			t.Errorf("template %q is in BOTH requiredCaps and ExemptRoutes", tpl)
+		}
+		if authz.InHandlerAuthzRoutes[tpl] {
+			t.Errorf("template %q is in BOTH requiredCaps and InHandlerAuthzRoutes", tpl)
+		}
+	}
+	for tpl := range authz.ExemptRoutes {
+		if authz.InHandlerAuthzRoutes[tpl] {
+			t.Errorf("template %q is in BOTH ExemptRoutes and InHandlerAuthzRoutes", tpl)
+		}
+	}
+}
+
+// TestRouteCoverage_StrictRealRouter is the standing "nothing is un-gateable"
+// guarantee (Phase 4 Task 23): every non-exempt, non-in-handler route must declare
+// a capability in requiredCaps, or the build fails. This is the enforcement
+// cut-over's completion - from here, adding a new /api route without a cap (or an
+// explicit exempt/in-handler classification) breaks the test suite.
+func TestRouteCoverage_StrictRealRouter(t *testing.T) {
+	violations, err := authz.RouteCoverageViolations(stubRouter(t), requiredCaps, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("STRICT coverage: %d un-gated route(s): %v", len(violations), violations)
+	}
+}
+
 // TestPrintRouteTemplates: `go test -run TestPrintRouteTemplates -v` prints every
 // template + methods so later batches copy exact requiredCaps keys.
 func TestPrintRouteTemplates(t *testing.T) {
