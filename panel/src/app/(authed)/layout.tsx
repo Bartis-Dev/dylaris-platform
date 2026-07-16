@@ -15,11 +15,11 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe, ShieldCheck } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, featureFlags, gatewayEnabled } = useAppData();
+    const { user, ready, featureFlags, gatewayEnabled, servers } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -59,6 +59,11 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     }
 
     const settingsActive = pathname.startsWith('/settings');
+    const accessActive = pathname.startsWith('/access');
+    // Owner-gating signal: there is no admin-level "owner" flag on the user
+    // itself, so we derive it from server ownership (each owned server
+    // carries role: 'owner') in addition to platform admins.
+    const canAccess = user.isAdmin || servers.some(s => s.role === 'owner');
 
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
@@ -74,6 +79,20 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
                         regular users see only their inbox. */}
+                    {canAccess && (
+                        <GuardedLink
+                            href="/access"
+                            className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
+                                accessActive
+                                    ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
+                                    : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent'
+                            }`}
+                        >
+                            <ShieldCheck size={20} />
+                            <span className="text-sm hidden md:block">Access</span>
+                        </GuardedLink>
+                    )}
+
                     {user.isAdmin && (
                         <GuardedLink
                             href="/settings"
