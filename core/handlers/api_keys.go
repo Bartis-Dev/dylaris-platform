@@ -92,6 +92,15 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 				serverCaps = append(serverCaps, p)
 			}
 		}
+		// A key carrying SERVER caps but scoped to no servers can never use them
+		// (the middleware's per-request server-scope gate denies it), which would
+		// also mean the per-server subset loop below applies no gate at all. Reject
+		// it at creation rather than mint a key whose only safeguard is the use-time
+		// middleware (defense in depth).
+		if len(serverCaps) > 0 && len(req.Servers) == 0 {
+			sendJSONError(w, "Server capabilities require at least one server in scope", http.StatusBadRequest)
+			return
+		}
 		for _, serverUUID := range req.Servers {
 			srv, err := h.state.Store.GetServerByUUID(serverUUID)
 			if err != nil {

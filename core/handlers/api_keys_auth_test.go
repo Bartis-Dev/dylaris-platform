@@ -533,22 +533,50 @@ func TestAPIKeysCreate_NonAdminOwnServerSucceeds(t *testing.T) {
 }
 
 // TestAPIKeysCreate_PanelCapRejected pins that a PANEL-scope capability can
-// never be minted onto a key, even for an admin caller: PANEL caps belong to
-// staff principals, not owner-scoped automation credentials.
+// never be minted onto a key, for BOTH an admin and a non-admin caller: PANEL
+// caps belong to staff principals, not owner-scoped automation credentials.
+// ValidKeyCap runs before the isAdmin branch, so neither caller can carry one.
 func TestAPIKeysCreate_PanelCapRejected(t *testing.T) {
+	for _, isAdmin := range []bool{false, true} {
+		fs := &apiKeysAuthFakeStore{}
+		h := newAPIKeysAuthHandler(fs)
+		rec := httptest.NewRecorder()
+
+		h.Create(rec, createAPIKeyReq("u1", "alice", isAdmin, map[string]interface{}{
+			"name": "k", "permissions": []string{"users.read"},
+		}))
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("isAdmin=%v: status = %d, want 400: %s", isAdmin, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "Unknown permission: users.read") {
+			t.Fatalf("isAdmin=%v: body = %s, want 'Unknown permission: users.read'", isAdmin, rec.Body.String())
+		}
+		if len(fs.createCalls) != 0 {
+			t.Fatalf("isAdmin=%v: expected no CreateAPIKey call, got %+v", isAdmin, fs.createCalls)
+		}
+	}
+}
+
+// TestAPIKeysCreate_ServerCapWithoutServersRejected pins the empty-server-scope
+// guard: a non-admin key carrying a SERVER cap but listing no servers is
+// rejected at creation, so the per-server subset check is never silently
+// skipped (the use-time middleware would also deny such a key, but the creation
+// check should not depend on that).
+func TestAPIKeysCreate_ServerCapWithoutServersRejected(t *testing.T) {
 	fs := &apiKeysAuthFakeStore{}
 	h := newAPIKeysAuthHandler(fs)
 	rec := httptest.NewRecorder()
 
 	h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
-		"name": "k", "permissions": []string{"users.read"},
+		"name": "k", "permissions": []string{"rcon.exec"},
 	}))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Unknown permission: users.read") {
-		t.Fatalf("body = %s, want 'Unknown permission: users.read'", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "require at least one server") {
+		t.Fatalf("body = %s, want 'require at least one server'", rec.Body.String())
 	}
 	if len(fs.createCalls) != 0 {
 		t.Fatalf("expected no CreateAPIKey call, got %+v", fs.createCalls)

@@ -1238,8 +1238,9 @@ func TestCap_LibraryContentPanel(t *testing.T) {
 // path carries no server {id}), with the handler's own per-user scoping (a
 // user only ever lists/creates/revokes their own keys) and the key-creation
 // delegation subset-check (a minted key can only carry servers+permissions
-// the creating user already holds - see api_keys.go's checkServerAccess call)
-// as the real boundaries, same pattern as Task 20's modpack.*/library.*.
+// the creating user already holds - Phase 5 routes this through the resolver in
+// api_keys.go Create) as the real boundaries, same pattern as Task 20's
+// modpack.*/library.*.
 func TestCap_ApiKeysOwner(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("owner-id", "owner", false)
