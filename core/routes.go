@@ -398,6 +398,16 @@ var requiredCaps = map[string]string{
 	// above); DELETE gets its own delete-cap entry.
 	"/api/me/api-keys":             "apikeys.read",
 	"/api/me/api-keys/{id:[0-9]+}": "apikeys.delete",
+
+	// Phase 4 Task 22: split-template entries. Each of these templates is
+	// shared by an authed-exempt GET (in ExemptRoutes, see coverage.go) and a
+	// RequireCap-gated write method; the write cap is the representative here
+	// so the coverage presence-check passes without misrepresenting the GET.
+	"/api/nodes":                 "nodes.write",    // GET list exempt (owner filter), POST create nodes.write
+	"/api/settings/features":     "settings.write", // GET exempt (feature state), POST settings.write
+	"/api/settings/beam":         "settings.write", // GET exempt, POST settings.write
+	"/api/settings/routing-mode": "settings.write", // GET exempt, POST settings.write
+	"/api/modules":               "settings.write", // GET exempt (navbar), POST settings.write
 }
 
 // buildAPIRouter constructs every request handler + the warp service and

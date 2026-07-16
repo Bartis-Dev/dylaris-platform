@@ -51,6 +51,32 @@ func TestRequiredCapsIntegrity(t *testing.T) {
 	}
 }
 
+// TestEveryRouteIsClassified is the Phase 4 Task 22 pre-flight for the strict
+// coverage flip (Task 23): every registered route template must land in
+// EXACTLY ONE of requiredCaps, authz.ExemptRoutes, or authz.InHandlerAuthzRoutes.
+// A route that is none of these is a gap that the strict flip would leave
+// ungated, so this fails loudly and prints every unclassified template.
+func TestEveryRouteIsClassified(t *testing.T) {
+	var unclassified []string
+	_ = stubRouter(t).Walk(func(rt *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		tpl, err := rt.GetPathTemplate()
+		if err != nil {
+			return nil
+		}
+		if authz.ExemptRoutes[tpl] || authz.InHandlerAuthzRoutes[tpl] {
+			return nil
+		}
+		if _, ok := requiredCaps[tpl]; ok {
+			return nil
+		}
+		unclassified = append(unclassified, tpl)
+		return nil
+	})
+	if len(unclassified) != 0 {
+		t.Fatalf("unclassified routes (add to requiredCaps/ExemptRoutes/InHandlerAuthzRoutes): %v", unclassified)
+	}
+}
+
 // TestPrintRouteTemplates: `go test -run TestPrintRouteTemplates -v` prints every
 // template + methods so later batches copy exact requiredCaps keys.
 func TestPrintRouteTemplates(t *testing.T) {

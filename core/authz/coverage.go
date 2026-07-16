@@ -7,31 +7,228 @@ import (
 )
 
 // ExemptRoutes is the allowlist of routes that legitimately carry NO capability
-// because they are auth-exempt or public: health checks, login, the setup
-// wizard, tokenized share/tab-proxy links, and external webhooks. Keyed by the
-// mux path template (route.GetPathTemplate()). Phase 2 fills the companion
-// route->capability map and flips strict mode on; anything not exempt and not
-// mapped then fails the build, guaranteeing "nothing is un-gateable".
+// because they are auth-exempt or public. Keyed by the mux path template
+// (route.GetPathTemplate()). Reconciled in Phase 4 Task 22 against the real
+// router (see TestEveryRouteIsClassified) so every route is either here, in
+// requiredCaps, or in InHandlerAuthzRoutes before the strict coverage flip
+// (Task 23).
 //
-// This is the phase-1 seed; phase 2 reconciles it against the real router.
+// Two sub-blocks:
+//   - PUBLIC: no session auth at all (unauthenticated, or a non-session
+//     credential like an API key / shared secret / warp key / share token).
+//   - AUTHED-EXEMPT: sits behind AuthMiddleware (a valid session is required)
+//     but is intentionally NOT capability-gated because it is the caller's
+//     own data/self-service action, a non-privileged helper read, or the
+//     in-handler filter/ACL (owner scoping, ticket visibility matrix, BYON
+//     ownership, canManageNode, ...) is the real authorization boundary.
 var ExemptRoutes = map[string]bool{
-	"/healthz":                        true,
-	"/api/auth/login":                 true,
-	"/api/status":                     true,
-	"/api/setup/status":               true,
-	"/api/setup/admin":                true,
-	"/api/auth/demo-login":            true,
-	"/api/system/capabilities":        true,
-	"/api/system/core-info":           true,
-	"/api/share/{token}":              true,
-	"/api/tabproxy/{token}":           true,
-	"/api/tabproxy/{token}/{rest:.*}": true,
-	"/api/external/rcon/{uuid}/exec":  true, // API-key auth path, not session authz
+	// --- PUBLIC (no session auth) ---
+	"/healthz":                 true,
+	"/api":                     true, // /api subrouter mount point, not a handler
+	"/api/auth/login":          true,
+	"/api/status":              true,
+	"/api/setup/status":        true,
+	"/api/setup/admin":         true,
+	"/api/auth/demo-login":     true,
+	"/api/system/capabilities": true,
+	"/api/system/core-info":    true,
+	"/api/share/{token}":       true,
+
+	"/api/auth/registration-status":     true,
+	"/api/auth/register":                true,
+	"/api/auth/verify-email":            true,
+	"/api/auth/resend-verification":     true,
+	"/api/auth/forgot-password":         true,
+	"/api/auth/validate-reset-token":    true,
+	"/api/auth/reset-password":          true,
+	"/api/auth/security-questions/pool": true,
+
+	"/api/maintenance":       true, // public banner state, never blocked by maintenance
+	"/api/versions/software": true,
+	"/api/tools/beam":        true, // redirect to the beam-relay download, no session
+
+	"/api/beam/download": true, // beam-relay download redirect, no session
+
+	// Node bootstrap connect: not a user session, the node's own identity
+	// proof (enroll token / secret) is the credential.
+	"/api/node/connect": true,
+
+	// Warp API-key auth (not a user session): the key IS the credential.
+	"/api/warp/enroll":    true,
+	"/api/warp/link-boot": true,
+
+	// Store service-to-service calls (shared X-Store-Key header, NOT a panel
+	// session): requireStoreKey is the boundary, same category as warp's API key.
+	"/api/store/link/verify": true,
+	"/api/store/verify-user": true,
+	"/api/store/usage":       true,
+	"/api/store/provision":   true,
+
+	// External RCON: Authorization: Bearer dyl_<key>, not session authz.
+	"/api/external/rcon/{uuid}/exec": true,
+
+	// Tab-proxy root routes on the ROOT router (bypass /api's setup-lock +
+	// maintenance + AuthMiddleware on purpose): auth is cookie-only
+	// (dyl_tabproxy ticket) or, for the standalone share-token twin, the
+	// share token itself decides public-vs-private visibility in-handler.
+	"/api/tabproxy/{token}":                                        true,
+	"/api/tabproxy/{token}/{rest:.*}":                              true,
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy":           true,
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}": true,
+
+	// Public Solder API (Technic Launcher) - registered on the ROOT router
+	// with no setup-lock/maintenance/auth middleware, including its own
+	// subrouter mount point.
+	"/solder":                            true,
+	"/solder/api/":                       true,
+	"/solder/api/modpack":                true,
+	"/solder/api/modpack/{slug}":         true,
+	"/solder/api/modpack/{slug}/{build}": true,
+	"/solder/api/verify/{key}":           true,
+	"/solder/mirror/{rest:.*}":           true,
+
+	// --- AUTHED-EXEMPT (AuthMiddleware only; in-handler filter / self / helper) ---
+
+	// Self-service 2FA + profile: the caller manages their OWN account.
+	"/api/auth/profile":                     true, // authed; own profile
+	"/api/auth/2fa/setup":                   true, // authed; own 2FA
+	"/api/auth/2fa/verify":                  true, // authed; own 2FA
+	"/api/auth/2fa/disable":                 true, // authed; own 2FA
+	"/api/auth/2fa/regenerate-backup-codes": true, // authed; own 2FA
+	"/api/auth/2fa/status":                  true, // authed; own 2FA
+
+	// Read-only capability catalog: any authed user, not yet consulted elsewhere.
+	"/api/authz/catalog": true, // authed; read-only reference data
+
+	// Caller's own metered usage / billing / history / regions.
+	"/api/me/usage":               true, // authed; own usage
+	"/api/me/billing":             true, // authed; own billing
+	"/api/me/username-history":    true, // authed; own history
+	"/api/me/regions":             true, // authed; own region assignment
+	"/api/me/security-questions":  true, // authed; own security questions
+	"/api/me/servers/via-tickets": true, // authed; own tickets sidebar
+
+	// Sessions helpers: SSE ticket mint, SSE stream, platform-wide feature flags.
+	"/api/sse-ticket":      true, // authed; mints own disposable SSE ticket
+	"/api/system/events":   true, // authed; SSE stream, ticket-authed per-connection
+	"/api/system/features": true, // authed; read for every authenticated user
+
+	// BYON node enrollment tokens: per-user, own tokens only (byonCallerID scoping).
+	"/api/nodes/enroll-token":      true, // authed; in-handler owner filter
+	"/api/nodes/enroll-token/{id}": true, // authed; in-handler owner filter
+
+	// Node INSPECT reads: canManageNode admin-vs-BYON-owner data filter is the boundary.
+	"/api/nodes/{id:[0-9]+}/servers":       true, // authed; in-handler canManageNode filter
+	"/api/nodes/{id:[0-9]+}/storage":       true, // authed; in-handler canManageNode filter
+	"/api/nodes/{id:[0-9]+}/deploy-bundle": true, // authed; in-handler canManageNode filter
+	"/api/nodes/{id:[0-9]+}/cpu":           true, // authed; in-handler canManageNode filter
+
+	// Placement helpers: node-picking reads/preview, not privilege-sensitive alone.
+	"/api/placement/pick":    true, // authed; helper
+	"/api/placement/tags":    true, // authed; helper
+	"/api/placement/regions": true, // authed; helper
+
+	// User-facing servers list/create and enabled-region picker.
+	"/api/servers": true, // authed; own servers (list/create), plan-limited in-handler
+	"/api/regions": true, // authed; enabled-region picker
+
+	// Cron preview: pure transform, no server scoping needed.
+	"/api/scheduled-tasks/validate": true, // authed; pure preview
+
+	// Modrinth external proxy: read-only, cached, rate-limited, all authed.
+	"/api/modrinth/search":                  true, // authed; external proxy
+	"/api/modrinth/project/{slug}":          true, // authed; external proxy
+	"/api/modrinth/project/{slug}/versions": true, // authed; external proxy
+	"/api/modrinth/version/{id}":            true, // authed; external proxy
+
+	// Library browse/download: platform-shared catalog, no gate beyond auth
+	// (Phase 4 Task 20 INSPECT result; mutations ARE RequireCap-gated).
+	"/api/library":          true, // authed; platform-shared catalog read
+	"/api/library/download": true, // authed; platform-shared catalog read
+
+	// Gateway tenant self-service helpers: in-handler owner filter is the boundary.
+	"/api/gateway/check-domain":            true, // authed; owner-facing availability hint
+	"/api/gateway/route-options":           true, // authed; user-facing route form config
+	"/api/gateway/link-routes":             true, // authed; in-handler owner filter
+	"/api/gateway/link-routes/{domain:.+}": true, // authed; in-handler owner filter
+
+	// Warp route-only link kits: tenant self-service, BYON-gated + owner-filtered in-handler.
+	"/api/warp/link-kits":          true, // authed; in-handler owner filter
+	"/api/warp/link-kits/{linkID}": true, // authed; in-handler owner filter
+
+	// Beam: caller's own servers/ticket/config.
+	"/api/beam/servers": true, // authed; own beam-eligible servers
+	"/api/beam/ticket":  true, // authed; own beam ticket
+	"/api/beam/config":  true, // authed; needed by every user for the Files tab
+
+	// Standalone tab-proxy auth mint: shares the boundary of proxy-auth above,
+	// scoped to a share token instead of a dashboard session.
+	"/api/tabproxy/{token}/auth": true, // authed; mints per-share-token proxy cookie
+
+	// User-facing filemanager limits: every authed user needs their own limits.
+	"/api/settings/filemanager/limits": true, // authed; own upload/download limits
+
+	// Store panel-session calls (distinct from the service-to-service PUBLIC ones above).
+	"/api/store/link/start": true, // authed; panel-user session
+	"/api/store/status":     true, // authed; panel-user session
+
+	// Versions: read for any authed user (software list itself is PUBLIC above).
+	"/api/versions": true, // authed; version info
+
+	// Tickets: user-facing subsystem (Phase 4 Task 15) - the owner/watcher/support
+	// ACL matrix in tickets.go (canSeeTicket/canReply/canMutate) or, for DELETE,
+	// the admin-only in-handler gate in ticket_deletions.go, is the boundary.
+	"/api/ticket-categories":                                     true, // authed; enabled-only list for create form
+	"/api/ticket-canned-responses":                               true, // authed; in-handler support-or-admin check
+	"/api/tickets":                                               true, // authed; own tickets list/create
+	"/api/tickets/{id:[0-9]+}":                                   true, // authed; GET canSeeTicket / DELETE admin-in-handler
+	"/api/tickets/{id:[0-9]+}/messages":                          true, // authed; in-handler canReply
+	"/api/tickets/{id:[0-9]+}/status":                            true, // authed; in-handler canMutate
+	"/api/tickets/{id:[0-9]+}/priority":                          true, // authed; in-handler canMutate
+	"/api/tickets/{id:[0-9]+}/assignment":                        true, // authed; in-handler canMutate
+	"/api/tickets/{id:[0-9]+}/watchers":                          true, // authed; in-handler support-or-admin check
+	"/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}":   true, // authed; in-handler ACL
+	"/api/tickets/{id:[0-9]+}/attachments":                       true, // authed; in-handler ACL
+	"/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}":          true, // authed; in-handler ACL
+	"/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download": true, // authed; in-handler ACL
+
+	// Notifications: in-app inbox, scoped to the caller's own userID in-handler.
+	"/api/notifications":                  true, // authed; own inbox
+	"/api/notifications/unread-count":     true, // authed; own inbox
+	"/api/notifications/{id:[0-9]+}/read": true, // authed; own inbox
+	"/api/notifications/read-all":         true, // authed; own inbox
+}
+
+// InHandlerAuthzRoutes are routes whose scope object is NOT a path {id}/{uuid}
+// (file browser via ?server_uuid=, backup jobs/runs via the job/run row, power
+// dispatched per body action). RequireCap cannot resolve them at the route, so
+// authorization runs in-handler through the SAME resolver. Listed here so
+// strict coverage treats them as covered while documenting they are NOT public.
+var InHandlerAuthzRoutes = map[string]bool{
+	"/api/servers/{id:[0-9]+}/power":           true, // per-action power.* in-handler
+	"/api/files":                               true,
+	"/api/files/content":                       true,
+	"/api/files/save":                          true,
+	"/api/files/create":                        true,
+	"/api/files/rename":                        true,
+	"/api/files/copy":                          true,
+	"/api/files/delete":                        true,
+	"/api/files/download":                      true,
+	"/api/files/download/selective":            true,
+	"/api/files/upload":                        true,
+	"/api/backup-jobs/{jobId:[0-9]+}":          true,
+	"/api/backup-jobs/{jobId:[0-9]+}/trigger":  true,
+	"/api/backup-jobs/{jobId:[0-9]+}/runs":     true,
+	"/api/backup-runs/{runId:[0-9]+}/download": true,
+	"/api/backup-runs/{runId:[0-9]+}/restore":  true,
+	"/api/backup-runs/{runId:[0-9]+}":          true,
 }
 
 // RouteCoverageViolations walks router and returns a human-readable list of
 // routes that lack a declared capability. required maps a route path template
-// to its capability id; ExemptRoutes are always allowed to be uncovered.
+// to its capability id; ExemptRoutes and InHandlerAuthzRoutes are always
+// allowed to be uncovered (the latter enforces via the resolver in-handler
+// instead of at the route).
 //
 // Phase 1 runs in PERMISSIVE mode (strict=false): it returns nil so the test is
 // green before any route is annotated. Phase 2 populates required for every
@@ -50,7 +247,7 @@ func RouteCoverageViolations(router *mux.Router, required map[string]string, str
 			// carry nothing to gate; skip them.
 			return nil
 		}
-		if ExemptRoutes[tmpl] {
+		if ExemptRoutes[tmpl] || InHandlerAuthzRoutes[tmpl] {
 			return nil
 		}
 		if _, ok := required[tmpl]; !ok {
