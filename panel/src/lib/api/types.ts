@@ -480,16 +480,6 @@ export const getProxyEndpoint = (serverId: number): Promise<{ success: boolean; 
     fetchAPI(`/servers/${serverId}/proxy-endpoint`);
 
 
-// --- MEMBERS (Invites) ---
-export const getServerMembers = (serverId: number) => fetchAPI(`/servers/${serverId}/members`);
-export const getInheritedMembers = (serverId: number) => fetchAPI(`/servers/${serverId}/members/inherited`);
-export const inviteServerMember = (serverId: number, username: string, permissions?: Partial<TabPermissions>) =>
-    fetchAPI(`/servers/${serverId}/members`, { method: 'POST', body: JSON.stringify({ username, permissions }) });
-export const updateMemberPermissions = (serverId: number, userId: string, permissions: TabPermissions) =>
-    fetchAPI(`/servers/${serverId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ permissions }) });
-export const removeServerMember = (serverId: number, userId: string) =>
-    fetchAPI(`/servers/${serverId}/members/${userId}`, { method: 'DELETE' });
-
 // --- LIBRARY ---
 export const getLibraryFiles = (path?: string) => fetchAPI(`/library${path ? `?path=${encodeURIComponent(path)}` : ''}`);
 export const deleteLibraryPath = (path: string) => fetchAPI('/library/delete', { method: 'POST', body: JSON.stringify({ path }) });

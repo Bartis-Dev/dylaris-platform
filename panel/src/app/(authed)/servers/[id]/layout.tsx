@@ -465,7 +465,6 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         // Power-class permission since every action mutates server state.
         { slug: 'players', icon: 'users-round',     label: 'Players',       disabled: isPendingSetup || (!isOwner && (!perms || !perms.power)) },
         { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
-        { slug: 'members', icon: 'users',           label: 'Members',       disabled: !isOwner && (!perms || !perms.members) },
         // Audit tab. Owner + admin only; non-owners (even with
         // permission bundles) can't see who changed what on someone else's
         // server. The view itself self-hides empty audit gracefully.
