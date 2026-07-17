@@ -4,6 +4,9 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+  # Callable as a reusable gate: test-and-build-all.yml runs this first and only
+  # builds images if every job here passes.
+  workflow_call:
 
 permissions:
   contents: read

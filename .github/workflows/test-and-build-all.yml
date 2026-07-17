@@ -1,9 +1,12 @@
-name: CI — Build All (Manual)
+name: Test and Build All (manual)
 
-# Manual-only workflow that builds every service unconditionally.
-# Use when you want to rebuild everything regardless of which paths changed
-# (e.g. after dependency bumps, base-image updates, or to repush a clean set
-# of images). For normal pushes, ci.yml handles change-detection.
+# Manual-only. Runs the FULL test suite first (test.yml), then - only if every
+# test job is green - builds and pushes every service image unconditionally,
+# with no change detection. Use after dependency bumps, base-image rotations,
+# or to repush a verified-clean set of images.
+#
+# To run: GitHub Actions UI -> "Test and Build All (manual)" -> Run workflow.
+# For normal pushes, test.yml runs the tests and ci.yml builds changed images.
 
 on:
   workflow_dispatch:
@@ -17,10 +20,17 @@ env:
   IMAGE_NAME: bartis-dev/dylaris-platform
 
 jobs:
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
+  # Gate: full test suite must pass before any build
+  # ----------------------------------------------
+  test:
+    uses: ./.github/workflows/test.yml
+
+  # ----------------------------------------------
   # Core
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   build-core:
+    needs: test
     runs-on: self-hosted
     permissions:
       contents: read
@@ -63,10 +73,11 @@ jobs:
             SERVICE=core
             RUN_AS=dylaris
 
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   # Node, Panel
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   build-node:
+    needs: test
     uses: ./.github/workflows/build-service.yml
     with:
       component: node
@@ -75,6 +86,7 @@ jobs:
     secrets: inherit
 
   build-panel:
+    needs: test
     uses: ./.github/workflows/build-service.yml
     with:
       component: panel
@@ -85,10 +97,11 @@ jobs:
       extra_build_args: "NEXT_PUBLIC_API_URL=https://api.dylaris.com/api"
     secrets: inherit
 
-  # ──────────────────────────────────────────────
-  # Log-Shipper (MC server image)
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
+  # Log-Shipper (MC server images)
+  # ----------------------------------------------
   build-log-shipper:
+    needs: test
     runs-on: self-hosted
     permissions:
       contents: read

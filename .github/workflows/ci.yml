@@ -1,14 +1,12 @@
-name: CI — Build & Push
+name: CI - Build & Push
+
+# On push, build and push only the service images whose paths changed. For a
+# full, unconditional rebuild of every image, use the test-and-build-all.yml
+# workflow (it runs the test suite first, then builds everything).
 
 on:
   push:
     branches: [main, dev]
-  workflow_dispatch:
-    inputs:
-      build_all:
-        description: 'Build all services (ignore change detection)'
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -46,12 +44,12 @@ jobs:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
 
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   # Core
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   build-core:
     needs: detect-changes
-    if: needs.detect-changes.outputs.core == 'true' || inputs.build_all == true
+    if: needs.detect-changes.outputs.core == 'true'
     runs-on: self-hosted
     permissions:
       contents: read
@@ -94,12 +92,12 @@ jobs:
             SERVICE=core
             RUN_AS=dylaris
 
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   # Node, Panel, Log-Shipper
-  # ──────────────────────────────────────────────
+  # ----------------------------------------------
   build-node:
     needs: detect-changes
-    if: needs.detect-changes.outputs.node == 'true' || inputs.build_all == true
+    if: needs.detect-changes.outputs.node == 'true'
     uses: ./.github/workflows/build-service.yml
     with:
       component: node
@@ -109,7 +107,7 @@ jobs:
 
   build-panel:
     needs: detect-changes
-    if: needs.detect-changes.outputs.panel == 'true' || inputs.build_all == true
+    if: needs.detect-changes.outputs.panel == 'true'
     uses: ./.github/workflows/build-service.yml
     with:
       component: panel
@@ -122,7 +120,7 @@ jobs:
 
   build-log-shipper:
     needs: detect-changes
-    if: needs.detect-changes.outputs.log-shipper == 'true' || inputs.build_all == true
+    if: needs.detect-changes.outputs.log-shipper == 'true'
     runs-on: self-hosted
     permissions:
       contents: read
