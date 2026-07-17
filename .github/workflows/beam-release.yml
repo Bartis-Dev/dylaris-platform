@@ -105,6 +105,10 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: Beam ${{ steps.ver.outputs.VERSION }}
+          # A beam-v*-dev tag publishes as a GitHub prerelease so it stays OUT of
+          # the releases/latest pointer (the stable channel). Only full x.y.z
+          # tags become "latest"; the dev channel reads prereleases separately.
+          prerelease: ${{ contains(github.ref_name, '-dev') }}
           files: |
             beam/app/dist-release/DylarisBeam-linux-amd64
             beam/app/dist-release/DylarisBeam-linux-amd64.sig
