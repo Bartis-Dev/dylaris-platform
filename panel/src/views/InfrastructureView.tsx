@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Server, Globe, Network, RefreshCw, Trash2, AlertTriangle, X,
   Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield, Activity,
-  Users, Link2, HardDrive
+  Users, Link2, HardDrive, Layers, ArrowUpCircle
 } from 'lucide-react';
 import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import RoutesPanel from './infrastructure/RoutesPanel';
@@ -275,6 +275,12 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
   const rxBytes = (stats as any)?.rx_bytes as number | undefined;
   const txBytes = (stats as any)?.tx_bytes as number | undefined;
   const hasTotal = (rxBytes ?? 0) > 0 || (txBytes ?? 0) > 0;
+  const running = edge.splice_version || '';
+  const latest = edge.splice_version_latest || '';
+  // A pinned splice is "behind" whenever the latest available version is known and
+  // this edge's running version differs (an empty running version = pre-versioning
+  // splice, also treated as behind so the operator schedules a bump).
+  const spliceBehind = !!latest && running !== latest;
 
   return (
     <div className="card p-4 flex flex-col gap-3">
@@ -290,6 +296,21 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
           {edge.status}
         </span>
       </div>
+
+      {(running || latest) && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 mono-label text-(--base-06)">
+            <Layers size={10} /> Splice
+          </span>
+          {spliceBehind ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
+              <ArrowUpCircle size={9} /> {running ? `v${running}` : 'unknown'} &rarr; v{latest}
+            </span>
+          ) : (
+            <span className="text-[10px] font-mono text-(--base-07) tabular-nums">v{running || latest}</span>
+          )}
+        </div>
+      )}
 
       {isOnline && stats ? (
         <div className="flex flex-col gap-2.5 pt-1 border-t border-(--base-03)">
@@ -360,6 +381,62 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
           <p className="text-[10px] font-mono text-(--base-05) italic">No stats available</p>
         </div>
       )}
+    </div>
+  );
+}
+
+// SpliceVersionSummary groups online edges by region and reports the running
+// splice version(s) vs the latest available one, flagging a pending bump. The
+// splice sidecar is version-pinned per regional stack (SPLICE_IMAGE), so a region
+// can lag the latest edge image until the owner deliberately moves the pin.
+function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
+  const online = edges.filter(e => e.status === 'online');
+
+  const byRegion = new Map<string, { region: string; running: Set<string>; latest: string; behind: number }>();
+  for (const e of online) {
+    const region = e.region || 'default';
+    let info = byRegion.get(region);
+    if (!info) { info = { region, running: new Set(), latest: '', behind: 0 }; byRegion.set(region, info); }
+    if (e.splice_version_latest && !info.latest) info.latest = e.splice_version_latest;
+    if (e.splice_version) info.running.add(e.splice_version);
+    if (e.splice_version_latest && e.splice_version !== e.splice_version_latest) info.behind++;
+  }
+
+  const rows = [...byRegion.values()]
+    .filter(r => r.latest || r.running.size > 0)
+    .sort((a, b) => a.region.localeCompare(b.region));
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card p-4 flex flex-col gap-3 mb-3">
+      <div className="flex items-center gap-2">
+        <Layers size={14} className="text-(--accent-light)" />
+        <h3 className="text-sm font-semibold text-(--base-09)">Splice versions</h3>
+      </div>
+      <div className="flex flex-col divide-y divide-(--base-03)">
+        {rows.map(r => {
+          const runningList = [...r.running].sort();
+          const pending = r.behind > 0;
+          return (
+            <div key={r.region} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="mono-label text-(--base-06) shrink-0">{r.region}</span>
+                <span className="text-[11px] font-mono text-(--base-07) truncate">
+                  running {runningList.length ? runningList.map(v => `v${v}`).join(', ') : 'unknown'}
+                  {r.latest && <span className="text-(--base-05)"> &middot; latest v{r.latest}</span>}
+                </span>
+              </div>
+              {pending ? (
+                <span className="inline-flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
+                  <ArrowUpCircle size={9} /> update available
+                </span>
+              ) : (
+                <span className="mono-label shrink-0 text-(--success-light)">up to date</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -571,11 +648,14 @@ export default function InfrastructureView({
             No edges registered — edges auto-discover via Redis
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {edges.map(edge => (
-              <EdgeCard key={edge.edge_id} edge={edge} />
-            ))}
-          </div>
+          <>
+            <SpliceVersionSummary edges={edges} />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {edges.map(edge => (
+                <EdgeCard key={edge.edge_id} edge={edge} />
+              ))}
+            </div>
+          </>
         )
       )}
 

@@ -590,6 +590,13 @@ export interface GatewayEdge {
     service_port: string;
     splice_port: string;
     status: string;
+    region?: string;
+    // splice_version = the RUNNING splice sidecar on this edge; splice_version_latest
+    // = the LATEST available splice (baked into the edge's rolling :latest image).
+    // Compared per region to flag a pending, deliberately-scheduled splice bump.
+    // Empty when a pre-versioning edge/splice is deployed.
+    splice_version?: string;
+    splice_version_latest?: string;
     stats?: EdgeStats;
 }
 

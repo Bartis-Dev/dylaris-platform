@@ -385,6 +385,39 @@ func TestGetEdgesFromRedis_MergesLatestStats(t *testing.T) {
 	}
 }
 
+func TestGetEdgesFromRedis_CarriesSpliceVersionFields(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	// Seed a raw edge:registry payload exactly as the edge heartbeat marshals it,
+	// including the running/latest splice version keys. GetEdgesFromRedis must
+	// surface them so the panel can flag a pending bump (running behind latest).
+	raw := `{"edge_id":"edge-eu-1","name":"eu-1","region":"eu","splice_version":"1.0","splice_version_latest":"1.1"}`
+	if err := rdb.Set(ctx, "edge:registry:edge-eu-1", raw, 0).Err(); err != nil {
+		t.Fatalf("seed edge: %v", err)
+	}
+
+	edges := GetEdgesFromRedis(ctx, rdb)
+	if len(edges) != 1 {
+		t.Fatalf("got %d edges, want 1", len(edges))
+	}
+	got := edges[0]
+	if got.Region != "eu" {
+		t.Errorf("Region = %q, want eu", got.Region)
+	}
+	if got.SpliceVersion != "1.0" {
+		t.Errorf("SpliceVersion = %q, want 1.0 (running)", got.SpliceVersion)
+	}
+	if got.SpliceVersionLatest != "1.1" {
+		t.Errorf("SpliceVersionLatest = %q, want 1.1 (latest available)", got.SpliceVersionLatest)
+	}
+}
+
 func TestGetEdgesFromRedis_NoStatsStream_StatsNil(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {

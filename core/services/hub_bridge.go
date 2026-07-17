@@ -38,6 +38,13 @@ type GatewayEdgeInfo struct {
 	Region   string         `json:"region,omitempty"`
 	Wildcard string         `json:"wildcard,omitempty"`
 	Stats    *EdgeLiveStats `json:"stats,omitempty"`
+	// SpliceVersion is the RUNNING splice sidecar's version on this edge;
+	// SpliceVersionLatest is the LATEST available version (baked into the edge's
+	// own rolling :latest image). Both come straight from the edge heartbeat. The
+	// panel compares them per region to surface a pending splice bump. Empty when a
+	// pre-versioning splice/edge is deployed.
+	SpliceVersion       string `json:"splice_version,omitempty"`
+	SpliceVersionLatest string `json:"splice_version_latest,omitempty"`
 }
 
 // EdgeLiveStats mirrors the EdgeMetrics payload published by the Edge service
