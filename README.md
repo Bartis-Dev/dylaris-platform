@@ -306,9 +306,9 @@ secrets:
 | `NODE_RECOVERY_TOKEN` | *(empty)* | For recovery | Single-use, admin-minted token (Settings → Nodes → Reset pairing) to re-pair a node under its EXISTING identity after its secret was reset. Not needed on a normal boot. |
 | `SIDECAR_REDIS_ADDR` | *(falls back to `REDIS_ADDR`)* | No | Redis address handed to MC containers, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. |
 | `SIDECAR_REDIS_DB` | *(falls back to `REDIS_DB`)* | No | Redis DB index for MC containers. |
-| `PORT_RANGE` | *(unset)* | No | Host port range as `START-END` (e.g. `25600-30000`). Takes precedence over the split vars below. |
+| `PORT_RANGE` | *(unset)* | No | Host port range as `START-END` (e.g. `25600-25699`). Takes precedence over the split vars below. |
 | `PORT_RANGE_START` | `25600` | No | Start of host port range for MC servers (`ip_port`/`both`). Ignored if `PORT_RANGE` is set. |
-| `PORT_RANGE_END` | `30000` | No | End of host port range for MC servers. Ignored if `PORT_RANGE` is set. |
+| `PORT_RANGE_END` | `25699` | No | End of host port range for MC servers. Ignored if `PORT_RANGE` is set. |
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
@@ -360,7 +360,7 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25521` | node | Beam gRPC (`BEAM_GRPC_PORT`; overlay-only, JWT-gated) |
 | `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
 | `25523` | node | Beam LAN fast-path (`BEAM_LAN_PORT`; pinned-TLS, direct client<->node). Publish on the node's LAN (self-host/BYON) to enable the fast path even when a gateway is present; unpublished simply falls back to relay/public. |
-| `25600–30000` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
+| `25600-25699` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft) and the Warp leader (`25599/udp`); it no longer serves HTTP(S) (`80`/`443`) - see the `dylaris-gateway` repo.
 

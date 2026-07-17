@@ -470,7 +470,7 @@ func parseConfig() {
 	// match. Allocation strategy + container port move to admin settings
 	// (published to Redis by Core) and are loaded later in loadModesFromRedis.
 	portRangeStart = 25600
-	portRangeEnd = 30000
+	portRangeEnd = 25699
 	if v := os.Getenv("PORT_RANGE"); v != "" {
 		parts := strings.SplitN(v, "-", 2)
 		if len(parts) == 2 {
