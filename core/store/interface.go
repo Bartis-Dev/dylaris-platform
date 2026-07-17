@@ -488,6 +488,14 @@ type Store interface {
 	GetServerRconConfig(serverID int) (enabled bool, port int, password string, err error)
 	SetServerRconConfig(serverID int, enabled bool, port int, password string) error
 
+	// --- Edge transitional MOTD (per-server) ---
+	// Lazy accessors (same rationale as RCON): the two columns stay off the
+	// giant server-list scans. ListServerEdgeMotd is a single bulk query used
+	// by the periodic Redis republish loop (one query, not one per server).
+	GetServerEdgeMotd(serverID int) (mode, text string, err error)
+	SetServerEdgeMotd(serverID int, mode, text string) error
+	ListServerEdgeMotd() ([]ServerEdgeMotd, error)
+
 	// --- API Keys ---
 	// Public RCON surface backing. Plaintext key is shown to the user once
 	// on creation; the DB only ever sees sha256 hash. Scope JSON shape:

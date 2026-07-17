@@ -265,6 +265,9 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 	defer o.redis.Del(context.Background(), lockKey)
+	// Always clear any admin cancel flag when the migration ends, so a too-late
+	// cancel (arrived post-cutover and ignored) never lingers into a future move.
+	defer o.redis.Del(context.Background(), migrationCancelKey(srv.UUID))
 
 	// --- (c) Starting ---
 	writeStatus("starting", "")
@@ -366,6 +369,15 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 
+	// Final pre-cutover cancel check: if an admin requested cancellation while the
+	// last transfer wait was completing, roll back now (still pre-cutover, the
+	// source is authoritative) instead of cutting over.
+	if o.cancelRequested(ctx, srv.UUID) {
+		log.Printf("migration %s: cancelled by admin before cutover", srv.UUID)
+		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "cancelled before cutover")
+		return
+	}
+
 	// --- (h) CUTOVER: flip node_id + re-point route. Target now authoritative. ---
 	if err := o.store.UpdateServerNode(srv.ID, targetNode.ID); err != nil {
 		log.Printf("migration %s: UpdateServerNode failed: %v", srv.UUID, err)
@@ -396,7 +408,10 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	if wasRunning {
 		o.store.UpdateServerStatus(srv.ID, "starting")
 		o.store.UpdateServerDesiredState(srv.ID, "online")
-		writeStatus("starting", "")
+		// Orchestration phase "finalizing" (not "starting") marks POST-cutover: it
+		// disambiguates from the pre-cutover "starting" phase so the cancel endpoint
+		// only offers cancellation while still pre-cutover.
+		writeStatus("finalizing", "")
 		var startErr error
 		if pinned {
 			// Recreate with the corrected cpuset (and current resources) so the
@@ -458,6 +473,12 @@ func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *mod
 	} else {
 		o.store.UpdateServerStatus(srv.ID, preStatus)
 	}
+	// If this rollback was triggered by an admin cancel, record it as the terminal
+	// "cancelled" phase the panel recognises rather than a generic failure.
+	if o.cancelRequested(ctx, srv.UUID) {
+		writeStatus("cancelled", "migration cancelled by admin")
+		return
+	}
 	writeStatus("failed", reason)
 }
 
@@ -469,6 +490,23 @@ func (o *MigrationOrchestrator) gatewayEnabled() bool {
 		mode = "ip_port"
 	}
 	return mode == "gateway" || mode == "both"
+}
+
+// migrationCancelKey is the admin cancel flag for an in-flight migration. The
+// cancel endpoint SETs it; the pre-cutover poll loops and the pre-cutover guard
+// check it and roll the migration back to the (still authoritative) source. It
+// has no effect once node_id has flipped at cutover.
+func migrationCancelKey(serverUUID string) string {
+	return fmt.Sprintf("dylaris:server:%s:migration:cancel", serverUUID)
+}
+
+// cancelRequested reports whether an admin has requested cancellation of this
+// server's in-flight migration. Best-effort: a Redis error reads as "not
+// cancelled" so a transient blip (or a cancelled ctx on leadership loss) never
+// aborts a healthy migration by itself.
+func (o *MigrationOrchestrator) cancelRequested(ctx context.Context, serverUUID string) bool {
+	n, err := o.redis.Exists(ctx, migrationCancelKey(serverUUID)).Result()
+	return err == nil && n > 0
 }
 
 // stopServer sends a stop and sets desired_state=stopped so the node reconciler
@@ -502,6 +540,11 @@ func (o *MigrationOrchestrator) pollDBStatus(ctx context.Context, serverID int, 
 		srv, err := o.store.GetServerByID(serverID)
 		if err == nil && done(srv.Status) {
 			return true
+		}
+		// Admin cancel: return "not done" so the caller rolls back (pre-cutover
+		// callers) or ends its best-effort wait (post-cutover waitForOnline).
+		if err == nil && o.cancelRequested(ctx, srv.UUID) {
+			return false
 		}
 		if time.Now().After(deadline) {
 			return false
@@ -542,6 +585,9 @@ func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, serverUUID
 				}
 			}
 		}
+		if o.cancelRequested(ctx, serverUUID) {
+			return lastPhase, "cancelled by admin"
+		}
 		if time.Now().After(deadline) {
 			return lastPhase, "timed out"
 		}
@@ -581,6 +627,9 @@ func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, serverU
 					return st.Phase, st.Error
 				}
 			}
+		}
+		if o.cancelRequested(ctx, serverUUID) {
+			return lastPhase, "cancelled by admin"
 		}
 		if time.Now().After(deadline) {
 			return lastPhase, "timed out"

@@ -59,6 +59,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/migration-status":            "overview.read",
 	"/api/servers/{id:[0-9]+}/automove":                    "server.settings.write",
 	"/api/servers/{id:[0-9]+}/transfer":                    "server.settings.write",
+	"/api/servers/{id:[0-9]+}/edge-motd":                   "server.settings.write",
 
 	// Phase 4 Task 4: console + RCON. /rcon/config serves both GET (config.read)
 	// and PUT (config.write) on the same template; config.read is the
@@ -193,6 +194,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/servers":                               "servers.read",
 	"/api/admin/servers/{id:[0-9]+}/owner":             "servers.write",
 	"/api/admin/servers/{id:[0-9]+}/move":              "servers.write",
+	"/api/admin/servers/{id:[0-9]+}/migration/cancel":  "servers.write",
 	"/api/admin/nodes/{id:[0-9]+}/disk-analysis":       "nodes.read",
 	"/api/admin/nodes/{id:[0-9]+}/orphan":              "nodes.delete",
 	"/api/admin/nodes/{id:[0-9]+}/reset-pairing":       "nodes.write",
@@ -1207,6 +1209,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.MoveServer)))).Methods("POST")
 	// Tenant-facing transfer (BYON) - gateway-only; owner-or-admin + placement authz inside.
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
+	// Per-server edge transitional-MOTD: GET current config, PATCH mode/text.
+	// PATCH publishes to Redis for the gateway edge (auto/custom/off).
+	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetServerEdgeMotd))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SetServerEdgeMotd))).Methods("PATCH")
+	// Admin cancel of an in-flight migration (pre-cutover rollback to the source node) - gateway-only.
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/migration/cancel", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.CancelMigration)))).Methods("POST")
 	// Demo flag (admin, PANEL settings.write) - mark a normal server as a public
 	// read-only showcase. The StoreEnabled guard inside SetServerDemo stays: it is
 	// feature availability (hosted-build-only), not authorization.

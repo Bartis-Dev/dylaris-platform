@@ -2,9 +2,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CircleCheck, CircleAlert, Image as ImageIcon, Upload, Trash2, MessageSquare, RotateCcw } from 'lucide-react';
+import { CircleCheck, CircleAlert, Image as ImageIcon, Upload, Trash2, MessageSquare, RotateCcw, Globe } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { getFileContent, saveFile } from '@/lib/api';
+import { getFileContent, saveFile, getEdgeMotd, setEdgeMotd, type EdgeMotdMode } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
@@ -115,6 +115,50 @@ export default function ServerConfigDisplayPage() {
 
     const motdDirty = motd !== motdInitial;
     const previewLines = useMemo(() => renderMotdPreview(motd || 'A Minecraft Server'), [motd]);
+
+    // Edge transitional MOTD (auto/custom/off) - what the gateway edge shows while
+    // the server is down/starting/migrating. Server-level (not sub-server), loaded
+    // via a dedicated endpoint and published to Redis for the edge on save.
+    const [edgeMotdMode, setEdgeMotdMode] = useState<EdgeMotdMode>('auto');
+    const [edgeMotdText, setEdgeMotdText] = useState('');
+    const [edgeMotdInitial, setEdgeMotdInitial] = useState<{ mode: EdgeMotdMode; text: string }>({ mode: 'auto', text: '' });
+    const [edgeMotdLoaded, setEdgeMotdLoaded] = useState(false);
+    const [savingEdgeMotd, setSavingEdgeMotd] = useState(false);
+
+    useEffect(() => {
+        if (!serverId) return;
+        let cancelled = false;
+        (async () => {
+            const res = await getEdgeMotd(serverId);
+            if (cancelled) return;
+            if (res.success) {
+                const mode = (res.mode || 'auto') as EdgeMotdMode;
+                const text = res.customText || '';
+                setEdgeMotdMode(mode);
+                setEdgeMotdText(text);
+                setEdgeMotdInitial({ mode, text });
+            }
+            setEdgeMotdLoaded(true);
+        })();
+        return () => { cancelled = true; };
+    }, [serverId]);
+
+    const edgeMotdDirty = edgeMotdMode !== edgeMotdInitial.mode || edgeMotdText !== edgeMotdInitial.text;
+
+    const handleSaveEdgeMotd = useCallback(async () => {
+        setSavingEdgeMotd(true);
+        // Only persist custom text in custom mode; auto/off ignore it.
+        const text = edgeMotdMode === 'custom' ? edgeMotdText : '';
+        const res: any = await setEdgeMotd(serverId, edgeMotdMode, text);
+        if (res && res.success !== false && !res.error) {
+            setEdgeMotdInitial({ mode: edgeMotdMode, text });
+            setEdgeMotdText(text);
+            showToast('Edge MOTD saved.', true);
+        } else {
+            showToast(res?.error || res?.message || 'Failed to save edge MOTD', false);
+        }
+        setSavingEdgeMotd(false);
+    }, [serverId, edgeMotdMode, edgeMotdText, showToast]);
 
     const handleSaveMotd = useCallback(async () => {
         if (!propertiesPath || !serverUuid) return;
@@ -331,6 +375,76 @@ export default function ServerConfigDisplayPage() {
                             Remove
                         </button>
                     </div>
+                </div>
+            </section>
+
+            {/* Edge MOTD (transitional) */}
+            <section className="card p-5 space-y-4">
+                <header className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
+                        <Globe size={16} className="text-(--accent-light)" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                        <h2 className="text-base font-display font-semibold text-(--base-09)">Edge MOTD (transitional)</h2>
+                        <p className="text-xs text-(--base-06) mt-0.5">
+                            What players see via the gateway edge while the server is down, starting, or migrating.
+                            Applies when gateway routing is enabled. Takes effect within a few seconds, no restart needed.
+                        </p>
+                    </div>
+                </header>
+
+                <div className="flex flex-col gap-[5px] max-w-xs">
+                    <label className="mono-label">Mode</label>
+                    <select
+                        value={edgeMotdMode}
+                        onChange={e => setEdgeMotdMode(e.target.value as EdgeMotdMode)}
+                        disabled={!edgeMotdLoaded}
+                        className="input-field text-sm"
+                    >
+                        <option value="auto">Auto (built-in status notice)</option>
+                        <option value="custom">Custom (your own message)</option>
+                        <option value="off">Off (no message, vanilla)</option>
+                    </select>
+                </div>
+
+                {edgeMotdMode === 'custom' && (
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="mono-label">Custom message</label>
+                        <input
+                            type="text"
+                            value={edgeMotdText}
+                            onChange={e => setEdgeMotdText(e.target.value)}
+                            placeholder="Be right back, the server is moving to a new home."
+                            maxLength={256}
+                            disabled={!edgeMotdLoaded}
+                            className="input-field font-mono text-sm w-full"
+                        />
+                        <p className="text-xs text-(--base-06)">
+                            Shown while the server is down or migrating. Supports Minecraft colour codes (<code className="font-mono">&amp;a</code>, <code className="font-mono">&amp;l</code>).
+                        </p>
+                    </div>
+                )}
+
+                <div className="flex items-center gap-2 justify-end">
+                    {edgeMotdDirty && (
+                        <button
+                            type="button"
+                            onClick={() => { setEdgeMotdMode(edgeMotdInitial.mode); setEdgeMotdText(edgeMotdInitial.text); }}
+                            className="btn btn-secondary btn-sm"
+                            disabled={savingEdgeMotd}
+                        >
+                            <RotateCcw size={13} />
+                            Revert
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={handleSaveEdgeMotd}
+                        className="btn btn-primary btn-sm"
+                        disabled={!edgeMotdDirty || savingEdgeMotd}
+                    >
+                        {savingEdgeMotd ? 'Saving...' : 'Save Edge MOTD'}
+                    </button>
                 </div>
             </section>
 

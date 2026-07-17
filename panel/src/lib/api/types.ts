@@ -749,9 +749,26 @@ export interface MigrationStatus {
     reason?: string;
     startedAt?: number;
     updatedAt?: number;
+    // True only while the migration is still pre-cutover and in-flight, so an
+    // admin cancel would actually take effect (the panel hides the cancel button
+    // otherwise). Computed server-side in GetMigrationStatus.
+    cancellable?: boolean;
 }
 export const getMigrationStatus = (serverId: number): Promise<{ success: boolean; status?: MigrationStatus; message?: string }> =>
     fetchAPI(`/servers/${serverId}/migration-status`);
+
+// Cancel an in-flight migration (admin). Rolls the server back to its current
+// node - only honored pre-cutover; returns 409 once the move has cut over.
+export const cancelMigration = (serverId: number) =>
+    fetchAPI(`/admin/servers/${serverId}/migration/cancel`, { method: 'POST' });
+
+// Per-server edge transitional-MOTD config (what players see via the gateway
+// edge while the server is down/starting/migrating).
+export type EdgeMotdMode = 'auto' | 'custom' | 'off';
+export const getEdgeMotd = (serverId: number): Promise<{ success: boolean; mode?: EdgeMotdMode; customText?: string; message?: string }> =>
+    fetchAPI(`/servers/${serverId}/edge-motd`);
+export const setEdgeMotd = (serverId: number, mode: EdgeMotdMode, customText: string) =>
+    fetchAPI(`/servers/${serverId}/edge-motd`, { method: 'PATCH', body: JSON.stringify({ mode, customText }) });
 
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');

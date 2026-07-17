@@ -5,13 +5,13 @@ import { useParams, usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
     Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull,
-    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock,
+    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
-    getInstallCooldown, moveServer, transferServer, setServerDemo, getMigrationStatus, type MigrationStatus, type Node,
+    getInstallCooldown, moveServer, transferServer, setServerDemo, getMigrationStatus, cancelMigration, type MigrationStatus, type Node,
     GatewayRoute, StoragePathInfo, TabPermissions,
 } from '@/lib/api';
 import { getNodes } from '@/lib/api/resources';
@@ -58,6 +58,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [moveBusy, setMoveBusy] = useState(false);
     const [moveMsg, setMoveMsg] = useState('');
     const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
+    const [cancellingMigration, setCancellingMigration] = useState(false);
     // Dedicated transfer dialog for BYON owners (admins use the Resources popup).
     const [showTransferPopup, setShowTransferPopup] = useState(false);
 
@@ -132,7 +133,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     // even on page-reload mid-move. A manual Move kicks it off optimistically
     // by seeding migrationStatus with phase 'starting'. Polling stops on any
     // terminal phase so we don't spin forever on a finished/failed move.
-    const TERMINAL_PHASES = ['done', 'failed', 'failed_post_cutover', 'aborted_players', 'none'];
+    const TERMINAL_PHASES = ['done', 'failed', 'failed_post_cutover', 'aborted_players', 'cancelled', 'none'];
     useEffect(() => {
         const active = selectedServer?.status === 'migrating' ||
             (migrationStatus !== null && !TERMINAL_PHASES.includes(migrationStatus.phase));
@@ -214,6 +215,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const isDiskFull = selectedServer.status === 'disk_full';
     const isServerOffline = ['stopped', 'offline', 'pending_setup', 'disk_full'].includes(selectedServer.status);
     const powerWaiting = waitingForStatus !== null || powerLoading !== null;
+    // While the server is migrating to another node, ALL power actions are locked
+    // (including for admins) so a user can't fight the move. Admins additionally
+    // get a cancel/rollback button (see the header) that aborts a pre-cutover move.
+    const isMigrating = selectedServer.status === 'migrating';
 
     // Safety lock: while one or more uploads are streaming bytes into this
     // server's directory, the only mutating actions allowed are the ones
@@ -417,6 +422,20 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
     };
 
+    // Admin-only: abort an in-flight migration. The backend rolls the server back
+    // to its current node (safe pre-cutover; a no-op 409 once cut over). The
+    // migration poll picks up the 'cancelled' terminal phase and refreshes state.
+    const handleCancelMigration = async () => {
+        setCancellingMigration(true);
+        try {
+            const res: any = await cancelMigration(selectedServer.id);
+            if (res && (res.success === false || res.error)) {
+                setPowerError(res.error || res.message || 'Could not cancel the migration');
+            }
+        } catch { /* network error — the move continues; admin can retry */ }
+        setCancellingMigration(false);
+    };
+
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'online': return 'bg-(--success-light)';
@@ -553,9 +572,18 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                     Settling {cooldownSecondsLeft}s
                                 </span>
                             )}
+                            {(isMigrating || selectedServer.status === 'starting') && (
+                                <span
+                                    className="mono-label font-medium px-2.5 py-1 rounded-sm border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)"
+                                    title={isMigrating ? 'Server is migrating to another node — power actions are locked until it finishes.' : 'Server is starting.'}
+                                >
+                                    <div className="w-[5px] h-[5px] rounded-full bg-(--warning) animate-pulse"></div>
+                                    {selectedServer.status}
+                                </span>
+                            )}
                             <button
                                 onClick={() => handlePower('start')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline || uploadLocked || powerCooldownActive}
+                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed border ${
                                     isServerOffline && !isPendingSetup && !isDiskFull && canPower
                                         ? 'bg-(--success) text-white border-(--success) hover:bg-(--success-light)'
@@ -568,7 +596,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </button>
                             <button
                                 onClick={() => handlePower('restart')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive}
+                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--warning-ghost) hover:bg-(--warning)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--warning)/15"
                                 title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Speicher voll' : canPower ? 'Restart server' : 'No permission'}
                             >
@@ -577,7 +605,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </button>
                             <button
                                 onClick={() => handlePower('stop')}
-                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive}
+                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
                                 title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Stop server' : 'No permission'}
                             >
@@ -592,13 +620,24 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                         setShowKillConfirm(true);
                                     }
                                 }}
-                                disabled={!canPower || killCooldown || isServerOffline || uploadLocked || powerCooldownActive}
+                                disabled={!canPower || killCooldown || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
                                 title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Force kill container' : 'No permission'}
                             >
                                 <Skull size={16} className="text-(--error)" />
                                 <span className="text-xs font-semibold text-(--error)">Kill</span>
                             </button>
+                            {isMigrating && user?.isAdmin && (
+                                <button
+                                    onClick={handleCancelMigration}
+                                    disabled={cancellingMigration || migrationStatus?.cancellable === false}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
+                                    title="Cancel this migration and roll the server back to its current node. Only possible before cutover; the old node is kept until the move is verified."
+                                >
+                                    <Undo2 size={16} className="text-(--error)" />
+                                    <span className="text-xs font-semibold text-(--error)">{cancellingMigration ? 'Cancelling...' : 'Cancel Migration'}</span>
+                                </button>
+                            )}
                         </div>
                         {user?.isAdmin && <div className="w-px h-6 bg-(--base-04)" />}
                         {user?.isAdmin && (

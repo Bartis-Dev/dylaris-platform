@@ -183,6 +183,12 @@ func migrateSchema(db *sql.DB) error {
 		// effective core list, e.g. "0-3,8".
 		{"servers", "cpu_pinning_mode", "TEXT NOT NULL DEFAULT 'shared'"},
 		{"servers", "cpuset", "TEXT NOT NULL DEFAULT ''"},
+		// Edge transitional MOTD: what players see (via the gateway edge) while the
+		// server is down/starting/migrating. mode: 'auto' (built-in notice, default),
+		// 'custom' (edge_motd_text), 'off' (vanilla). Published to Redis for the edge
+		// (dylaris:server:<uuid>:edge_motd_mode / :edge_motd_text).
+		{"servers", "edge_motd_mode", "TEXT NOT NULL DEFAULT 'auto'"},
+		{"servers", "edge_motd_text", "TEXT NOT NULL DEFAULT ''"},
 		// Roles + granular capability flags.
 		// role values: 'user' | 'support' | 'admin'. is_admin is kept as a
 		// derived view for backward compat with handlers that read it

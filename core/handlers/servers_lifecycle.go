@@ -1233,6 +1233,17 @@ func (h *ServerHandler) GetMigrationStatus(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Failed to parse migration status", 500)
 		return
 	}
+	// cancellable: a migration can be cancelled only while it is pre-cutover and
+	// still running - the per-server migration lock is held AND the orchestration
+	// phase is a pre-cutover in-flight phase ("starting"/"migrating"). Post-cutover
+	// ("finalizing"/"done") a cancel is a no-op, so the panel hides the button.
+	cancellable := false
+	if phase, _ := status["phase"].(string); phase == "starting" || phase == "migrating" {
+		if n, lerr := h.state.Redis.Exists(context.Background(), fmt.Sprintf("dylaris:server:%s:migration", srv.UUID)).Result(); lerr == nil && n > 0 {
+			cancellable = true
+		}
+	}
+	status["cancellable"] = cancellable
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})
 }
 

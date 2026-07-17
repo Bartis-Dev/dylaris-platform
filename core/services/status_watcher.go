@@ -93,6 +93,9 @@ func (s *StatusWatcherService) scan() {
 	// Publish desired states to Redis so nodes can reconcile
 	s.publishDesiredStates(ctx)
 
+	// Publish per-server edge transitional-MOTD config so the gateway edge sees it.
+	s.publishEdgeMotd(ctx)
+
 	// Sync host ports: Redis → DB (sets dirty=true if anything moved)
 	if s.syncPortsFromRedis(ctx) {
 		dirty = true
@@ -181,5 +184,25 @@ func (s *StatusWatcherService) publishDesiredStates(ctx context.Context) {
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("Failed to publish desired states: %v", err)
+	}
+}
+
+// publishEdgeMotd republishes each server's edge transitional-MOTD config to
+// Redis so the gateway edge (which reads dylaris:server:<uuid>:edge_motd_* on
+// each new player connect) always sees a live value. Same cadence/TTL as
+// desired_state: refreshed every scan tick so a Redis flush self-heals and a
+// deleted server's keys expire on their own.
+func (s *StatusWatcherService) publishEdgeMotd(ctx context.Context) {
+	rows, err := s.store.ListServerEdgeMotd()
+	if err != nil {
+		return
+	}
+	pipe := s.redis.Pipeline()
+	for _, m := range rows {
+		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:edge_motd_mode", m.UUID), m.Mode, 60*time.Second)
+		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:edge_motd_text", m.UUID), m.Text, 60*time.Second)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("Failed to publish edge MOTD config: %v", err)
 	}
 }

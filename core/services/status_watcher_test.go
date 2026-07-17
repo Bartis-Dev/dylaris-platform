@@ -20,6 +20,8 @@ type statusWatcherFakeStore struct {
 	serversByUUID  map[string]models.Server
 	listServers    []models.Server
 	listServersErr error
+	edgeMotd       []store.ServerEdgeMotd
+	edgeMotdErr    error
 
 	statusCalls []schedStatusCall // {id, status}
 	portCalls   []portCall
@@ -49,6 +51,10 @@ func (f *statusWatcherFakeStore) UpdateServerPorts(id, hostPort, containerPort i
 
 func (f *statusWatcherFakeStore) ListServers(filterByUser string) ([]models.Server, error) {
 	return f.listServers, f.listServersErr
+}
+
+func (f *statusWatcherFakeStore) ListServerEdgeMotd() ([]store.ServerEdgeMotd, error) {
+	return f.edgeMotd, f.edgeMotdErr
 }
 
 func newStatusWatcherTest(t *testing.T, fs *statusWatcherFakeStore) *StatusWatcherService {
