@@ -11,4 +11,4 @@ package main
 // length), manifest verification FAILS CLOSED and no update is ever surfaced: the
 // string below is deliberately NOT valid std-base64 (the underscores are outside
 // the alphabet), so DecodeString errors and verifyDetached returns false.
-const updatePublicKeyB64 = "REPLACE_WITH_BASE64_ED25519_PUBLIC_KEY"
+const updatePublicKeyB64 = "5WS1g2Ushib55CKq7duxHJlcJKIwD7L3wYdA6coTiA4="
