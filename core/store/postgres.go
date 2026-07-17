@@ -326,6 +326,33 @@ func (s *PostgresStore) SetUserCanCreateModpacks(userID string, can bool) error 
 	return nil
 }
 
+// GetUserBeamChannel returns the user's Beam update-channel preference
+// ('stable' or 'dev'). A missing/legacy row defaults to 'stable' (COALESCE),
+// so a user created before the column existed is never on the dev channel.
+func (s *PostgresStore) GetUserBeamChannel(userID string) (string, error) {
+	var ch string
+	err := s.db.QueryRow(`SELECT COALESCE(beam_update_channel, 'stable') FROM users WHERE id = $1`, userID).Scan(&ch)
+	if err != nil {
+		return "", err
+	}
+	return ch, nil
+}
+
+// SetUserBeamChannel stores the user's Beam update-channel preference. The
+// caller is responsible for validating the value and enforcing the
+// beam.dev_channel_access policy before allowing 'dev'. Returns "user not
+// found" when no row was touched so the handler can return a clean 404.
+func (s *PostgresStore) SetUserBeamChannel(userID, channel string) error {
+	res, err := s.db.Exec(`UPDATE users SET beam_update_channel = $1 WHERE id = $2`, channel, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
 // ==========================================
 // NODES
 // ==========================================

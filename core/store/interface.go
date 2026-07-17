@@ -598,6 +598,12 @@ type Store interface {
 	// --- Per-user feature flag ---
 	SetUserCanCreateModpacks(userID string, can bool) error
 
+	// Beam update-channel preference ('stable' | 'dev'). GetUserBeamChannel
+	// defaults a missing/legacy row to 'stable'. SetUserBeamChannel does NOT
+	// enforce the dev-channel policy - the handler validates + gates first.
+	GetUserBeamChannel(userID string) (string, error)
+	SetUserBeamChannel(userID, channel string) error
+
 	// --- Setup wizard ---
 	// CountUsers is declared above in the Users block; only CountAdmins is new.
 	CountAdmins() (int, error)

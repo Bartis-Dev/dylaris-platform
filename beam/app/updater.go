@@ -24,11 +24,25 @@ import (
 // updater does an ordered semver compare against the manifest's version.
 var AppVersion = "dev"
 
-// manifestURL is the GitHub Releases manifest the app checks for updates. The
-// "latest/download" path always resolves to the newest release's fixed-name
-// assets. Public once the repo is public (see the Phase 1 plan owner steps). The
-// detached signature lives at manifestURL + ".sig".
+// manifestURL is the STABLE-channel GitHub Releases manifest the app checks for
+// updates. The "latest/download" path always resolves to the newest NON-prerelease
+// release's fixed-name assets. Public once the repo is public (see the Phase 1 plan
+// owner steps). The detached signature lives at manifestURL + ".sig".
 const manifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
+
+// Update channels. Mirrors Core's beam channel values (platform/core/handlers/
+// beam_channel.go); the app receives the effective channel from GetBeamConfig.
+const (
+	beamChannelStable = "stable"
+	beamChannelDev    = "dev"
+)
+
+// devManifestURL is the DEV-channel manifest: a fixed "beam-dev" moving prerelease
+// whose assets CI overwrites on every -dev build (GitHub "latest/download" only
+// resolves non-prereleases, so the dev channel needs its own stable URL). Same
+// signing key + verification as stable, so a dev-channel client is no less
+// protected. Only reached when Core reports update_channel == "dev".
+const devManifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/download/beam-dev/latest.json"
 
 // errUnverifiedManifest is returned (and swallowed to "no update") when the
 // manifest signature does not verify against the embedded public key.
@@ -78,7 +92,7 @@ func platformArtifact(m *manifest) (dlURL, sha256Hex, sigB64 string, err error) 
 // and never blocks. A nag fires only when latest > current by ordered semver.
 func (a *App) GetUpdateInfo() *UpdateInfo {
 	info := &UpdateInfo{Current: AppVersion}
-	m, err := fetchVerifiedManifest()
+	m, err := fetchVerifiedManifest(a.manifestURLForChannel())
 	if err != nil {
 		return info
 	}
@@ -92,10 +106,11 @@ func (a *App) GetUpdateInfo() *UpdateInfo {
 	return info
 }
 
-// fetchVerifiedManifest downloads latest.json + latest.json.sig and verifies the
-// signature over the RAW manifest bytes with the embedded public key BEFORE any
-// field is parsed.
-func fetchVerifiedManifest() (*manifest, error) {
+// fetchVerifiedManifest downloads latest.json + latest.json.sig from the given
+// channel manifest URL and verifies the signature over the RAW manifest bytes
+// with the embedded public key BEFORE any field is parsed. The URL is chosen by
+// channel (manifestURLForChannel); both channels are signed by the same key.
+func fetchVerifiedManifest(manifestURL string) (*manifest, error) {
 	body, err := httpGetBytes(manifestURL)
 	if err != nil {
 		return nil, err

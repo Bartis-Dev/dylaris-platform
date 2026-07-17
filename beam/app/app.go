@@ -75,6 +75,12 @@ type App struct {
 	// twice. CompareAndSwap admits exactly one flow at a time.
 	updateInFlight atomic.Bool
 
+	// updateChannel caches the EFFECTIVE update channel Core reported for the
+	// logged-in user ("stable" | "dev"), set after GetBeamConfig. It selects which
+	// signed release manifest the updater checks and drives the dev badge. Empty
+	// until the first config fetch, which getUpdateChannel treats as "stable".
+	updateChannel atomic.Value
+
 	// shellToken is a per-run capability secret (32 random bytes, hex). It is
 	// minted in NewApp, delivered ONLY to the first-party /__beam/ app-shell
 	// page (spliced into its HTML by the proxy), and never sent to the proxied
@@ -232,6 +238,42 @@ func (a *App) gateFloor() string {
 	return a.gateMin
 }
 
+// setUpdateChannel caches the effective channel Core reported. An empty/unknown
+// value is normalized to "stable" so the updater never checks the dev manifest
+// on a garbage value.
+func (a *App) setUpdateChannel(ch string) {
+	if ch != beamChannelDev {
+		ch = beamChannelStable
+	}
+	a.updateChannel.Store(ch)
+}
+
+// getUpdateChannel returns the cached effective channel, defaulting to "stable"
+// before the first config fetch.
+func (a *App) getUpdateChannel() string {
+	if v, ok := a.updateChannel.Load().(string); ok && v != "" {
+		return v
+	}
+	return beamChannelStable
+}
+
+// GetUpdateChannel is bound to the frontend so App.tsx can render a dev badge
+// when the logged-in user is on the dev channel. Read-only, no secret, so it is
+// deliberately not shell-token gated.
+func (a *App) GetUpdateChannel() string {
+	return a.getUpdateChannel()
+}
+
+// manifestURLForChannel returns the signed manifest URL for the cached channel:
+// the dev (prerelease) manifest on the dev channel, else the stable manifest.
+// Both are signed by the same key and verified identically.
+func (a *App) manifestURLForChannel() string {
+	if a.getUpdateChannel() == beamChannelDev {
+		return devManifestURL
+	}
+	return manifestURL
+}
+
 // triggerMandatoryUpdate flips the gate and pulls the webview off the Panel
 // onto the app-shell mandatory screen (/__beam/, where App.tsx renders it when
 // GetUpdateGate reports blocked). The proxy middleware also redirects Panel
@@ -260,6 +302,9 @@ func (a *App) evaluateUpdateGate() {
 	if err != nil || config == nil {
 		return
 	}
+	// Cache the effective update channel so the updater checks the right manifest
+	// and the frontend can show a dev badge.
+	a.setUpdateChannel(config.UpdateChannel)
 	if belowMinVersion(AppVersion, config.MinVersion) {
 		a.triggerMandatoryUpdate(config.MinVersion)
 	}
@@ -300,7 +345,7 @@ func (a *App) runUpdate() {
 		})
 	}
 
-	m, err := fetchVerifiedManifest()
+	m, err := fetchVerifiedManifest(a.manifestURLForChannel())
 	if err != nil {
 		emitStatus("error", "No verified update is available.")
 		return

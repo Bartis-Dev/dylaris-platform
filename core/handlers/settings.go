@@ -757,6 +757,11 @@ type BeamSettings struct {
 	// Persisted to DB key beam.min_version_mode.
 	MinVersionMode string `json:"minVersionMode"`
 
+	// DevChannelAccess gates who may opt into the dev (prerelease) update
+	// channel: "disabled" (default), "admins-only", or "all-users". Persisted to
+	// DB key beam.dev_channel_access; enforced by SetMyBeamChannel + GetBeamConfig.
+	DevChannelAccess string `json:"devChannelAccess"`
+
 	// Throttle splits (bytes/sec, 0 = unlimited). Stored verbatim. Until
 	// the per-direction limiters land in node + relay these are advisory:
 	// BwLimit (above) is computed by SaveBeamSettings as the lower of
@@ -816,6 +821,18 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Dev-channel access policy: empty normalizes to "disabled" (default);
+	// only the three known values are accepted so an unknown policy can never
+	// silently widen who reaches the prerelease channel.
+	devChannelAccess := strings.TrimSpace(req.DevChannelAccess)
+	if devChannelAccess == "" {
+		devChannelAccess = beamDevAccessDisabled
+	}
+	if devChannelAccess != beamDevAccessDisabled && devChannelAccess != beamDevAccessAdminsOnly && devChannelAccess != beamDevAccessAllUsers {
+		sendJSONError(w, "Invalid dev-channel access: must be 'disabled', 'admins-only', or 'all-users'", http.StatusBadRequest)
+		return
+	}
+
 	enabledStr := "false"
 	if req.Enabled {
 		enabledStr = "true"
@@ -838,6 +855,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.download_link", req.DownloadLink},
 		{"beam.min_version", minVersion},
 		{"beam.min_version_mode", minVersionMode},
+		{"beam.dev_channel_access", devChannelAccess},
 
 		// New per-direction throttle splits (advisory until relay-side
 		// throttle ships). Stored verbatim so the UI round-trips.
@@ -894,14 +912,20 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 		minVersionMode = beamMinVersionModeManual // default + normalize any legacy/blank value
 	}
 
+	devChannelAccess := getSetting("beam.dev_channel_access")
+	if devChannelAccess != beamDevAccessAdminsOnly && devChannelAccess != beamDevAccessAllUsers {
+		devChannelAccess = beamDevAccessDisabled // default + normalize any legacy/blank value
+	}
+
 	settings := BeamSettings{
-		RelayAddress:   effective,
-		ManualOverride: manualOverride,
-		PublicHost:     publicHost,
-		DownloadLink:   getSetting("beam.download_link"),
-		MinVersion:     getSetting("beam.min_version"),
-		MinVersionMode: minVersionMode,
-		Enabled:        true,
+		RelayAddress:     effective,
+		ManualOverride:   manualOverride,
+		PublicHost:       publicHost,
+		DownloadLink:     getSetting("beam.download_link"),
+		MinVersion:       getSetting("beam.min_version"),
+		MinVersionMode:   minVersionMode,
+		DevChannelAccess: devChannelAccess,
+		Enabled:          true,
 	}
 
 	enabledStr := getSetting("beam.enabled")

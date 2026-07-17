@@ -108,6 +108,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/me/username-history":    true, // authed; own history
 	"/api/me/regions":             true, // authed; own region assignment
 	"/api/me/security-questions":  true, // authed; own security questions
+	"/api/me/beam-channel":        true, // authed; own Beam update-channel pref
 	"/api/me/servers/via-tickets": true, // authed; own tickets sidebar
 
 	// Sessions helpers: SSE ticket mint, SSE stream, platform-wide feature flags.

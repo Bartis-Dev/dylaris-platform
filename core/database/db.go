@@ -175,6 +175,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyUnifiedModpackSchema(db); err != nil {
 		return err
 	}
+	if err := applyBeamChannelSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

@@ -98,6 +98,31 @@ jobs:
             linux-amd64=dist-release/DylarisBeam-linux-amd64 \
             windows-amd64=dist-release/DylarisBeam-windows-amd64
 
+      - name: Sign dev-channel manifest (beam-dev)
+        # Only for -dev prereleases. The dev channel reads a FIXED manifest URL,
+        # releases/download/beam-dev/latest.json, so its manifest must point its
+        # binary URLs at the moving beam-dev release (NOT releases/latest/download,
+        # which always resolves to the newest STABLE release). Same binaries, same
+        # signing key - only the base-url differs, so the manifest is re-signed.
+        if: contains(github.ref_name, '-dev')
+        working-directory: beam/app
+        env:
+          BEAM_UPDATE_PRIVKEY: ${{ secrets.BEAM_UPDATE_PRIVKEY }}
+        run: |
+          mkdir -p dist-dev
+          cp dist-release/DylarisBeam-linux-amd64 dist-dev/
+          cp dist-release/DylarisBeam-windows-amd64 dist-dev/
+          cp dist-release/DylarisBeam-windows-amd64.exe dist-dev/
+          if [ -f dist-release/DylarisBeam-windows-amd64-installer.exe ]; then
+            cp dist-release/DylarisBeam-windows-amd64-installer.exe dist-dev/
+          fi
+          go run ./cmd/beam-release sign \
+            -version "${{ steps.ver.outputs.VERSION }}" \
+            -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/download/beam-dev" \
+            -out dist-dev \
+            linux-amd64=dist-dev/DylarisBeam-linux-amd64 \
+            windows-amd64=dist-dev/DylarisBeam-windows-amd64
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         # fail_on_unmatched_files defaults to false, so the installer line is a
@@ -118,3 +143,26 @@ jobs:
             beam/app/dist-release/DylarisBeam-windows-amd64-installer.exe
             beam/app/dist-release/latest.json
             beam/app/dist-release/latest.json.sig
+
+      - name: Publish/refresh dev channel (beam-dev moving prerelease)
+        # -dev builds only: overwrite the assets on the fixed "beam-dev" prerelease
+        # so releases/download/beam-dev/latest.json always serves the newest dev
+        # build. make_latest:false keeps beam-dev out of the "Latest release"
+        # pointer (that must stay the stable release). The tag ref may lag on an
+        # older commit; only the assets matter for the download URL.
+        if: contains(github.ref_name, '-dev')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: beam-dev
+          name: Beam Dev Channel
+          prerelease: true
+          make_latest: false
+          files: |
+            beam/app/dist-dev/DylarisBeam-linux-amd64
+            beam/app/dist-dev/DylarisBeam-linux-amd64.sig
+            beam/app/dist-dev/DylarisBeam-windows-amd64
+            beam/app/dist-dev/DylarisBeam-windows-amd64.exe
+            beam/app/dist-dev/DylarisBeam-windows-amd64.sig
+            beam/app/dist-dev/DylarisBeam-windows-amd64-installer.exe
+            beam/app/dist-dev/latest.json
+            beam/app/dist-dev/latest.json.sig

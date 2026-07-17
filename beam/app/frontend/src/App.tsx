@@ -27,6 +27,7 @@ type WailsBindings = {
   SavePanelURL?: (token: string, url: string) => Promise<void>;
   GetUpdateInfo?: () => Promise<UpdateInfo>;
   GetUpdateGate?: () => Promise<UpdateGate>;
+  GetUpdateChannel?: () => Promise<string>;
   OpenUpdateDownload?: (token: string) => void;
   ApplyUpdate?: (token: string) => Promise<void>;
 };
@@ -75,6 +76,20 @@ export default function App() {
   const [updateState, setUpdateState] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [devChannel, setDevChannel] = useState(false);
+
+  // Reflect the effective update channel (set by Core after login) as a DEV badge.
+  // GetUpdateChannel reads a local cached value, so a light poll cheaply picks up
+  // the channel once the user authenticates without a manual refresh.
+  useEffect(() => {
+    const bindings = getBindings();
+    if (!bindings?.GetUpdateChannel) return;
+    let active = true;
+    const check = () => bindings.GetUpdateChannel!().then(ch => { if (active) setDevChannel(ch === 'dev'); }).catch(() => {});
+    check();
+    const id = setInterval(check, 10000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
 
   // Pull the current + default Panel URL on mount.
   useEffect(() => {
@@ -201,6 +216,7 @@ export default function App() {
       <div className="loader">
         <div className="logo">
           <span className="brand-d">D</span>ylaris <span className="brand-beam">Beam</span>
+          {devChannel && <span className="dev-badge">DEV</span>}
         </div>
         <div className="settings-card" style={{ borderColor: 'var(--accent, #7048C8)' }}>
           <div className="settings-title">Update required</div>
@@ -225,6 +241,7 @@ export default function App() {
     <div className="loader">
       <div className="logo">
         <span className="brand-d">D</span>ylaris <span className="brand-beam">Beam</span>
+        {devChannel && <span className="dev-badge">DEV</span>}
       </div>
 
       {update?.updateAvailable && (

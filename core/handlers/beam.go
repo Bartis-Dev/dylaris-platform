@@ -419,6 +419,17 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	brandLogoURL := getSetting("branding.logo_url")
 
+	// Effective update channel for the calling user: 'dev' only when they picked
+	// it AND the beam.dev_channel_access policy admits them, else 'stable'. The
+	// Beam app checks the matching release manifest and shows a dev badge.
+	updateChannel := beamChannelStable
+	if userID, _ := r.Context().Value("userID").(string); userID != "" {
+		isAdmin, _ := r.Context().Value("isAdmin").(bool)
+		if pref, err := h.state.Store.GetUserBeamChannel(userID); err == nil {
+			updateChannel = resolveBeamChannel(pref, getSetting("beam.dev_channel_access"), isAdmin)
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":       true,
 		"relay_address": relayAddress,
@@ -427,7 +438,8 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 		// The Beam app reads it for its proactive startup gate; the actual
 		// enforcement lives in GetBeamTicket, not here. Resolved through
 		// effectiveMinVersion so it honors manual vs auto (signed-manifest) mode.
-		"min_version": h.effectiveMinVersion(r.Context()),
+		"min_version":    h.effectiveMinVersion(r.Context()),
+		"update_channel": updateChannel,
 		"branding": map[string]string{
 			"name":     brandName,
 			"logo_url": brandLogoURL,

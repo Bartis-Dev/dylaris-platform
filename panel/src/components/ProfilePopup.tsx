@@ -5,6 +5,7 @@ import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, Ref
 import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
+import { getMyBeamChannel, setMyBeamChannel } from '@/lib/api/beamChannel';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 
 interface UserProfile {
@@ -51,6 +52,13 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [backupCodesRemaining, setBackupCodesRemaining] = useState<number | null>(null);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
 
+  // Beam desktop update channel (per-user). The picker is only shown when the
+  // admin policy admits this user (beamDevAllowed); otherwise everyone is on
+  // stable and there is nothing to choose.
+  const [beamChannel, setBeamChannel] = useState<'stable' | 'dev'>('stable');
+  const [beamDevAllowed, setBeamDevAllowed] = useState(false);
+  const [beamChannelBusy, setBeamChannelBusy] = useState(false);
+
   // Reload backup-code count whenever 2FA state changes (enable/disable/regen)
   // OR the user opens the Security tab. Cheap fetch — single GET.
   useEffect(() => {
@@ -64,6 +72,26 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
       }
     });
   }, [twoFactorEnabled, currentView]);
+
+  // Load the user's Beam update-channel preference + whether dev is allowed.
+  useEffect(() => {
+    getMyBeamChannel().then(res => {
+      if (res?.success) {
+        setBeamChannel(res.channel === 'dev' ? 'dev' : 'stable');
+        setBeamDevAllowed(!!res.dev_allowed);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const changeBeamChannel = async (ch: 'stable' | 'dev') => {
+    if (ch === beamChannel || beamChannelBusy) return;
+    setBeamChannelBusy(true);
+    const res = await setMyBeamChannel(ch);
+    if (res?.success) {
+      setBeamChannel(res.channel === 'dev' ? 'dev' : 'stable');
+    }
+    setBeamChannelBusy(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -127,6 +155,30 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                   <label className="input-label">Minecraft Username (For Avatar)</label>
                   <input type="text" value={minecraftUsername} onChange={e => setMinecraftUsername(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                 </div>
+                {beamDevAllowed && (
+                  <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Beam Update Channel</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        { value: 'stable' as const, label: 'Stable', desc: 'Recommended releases' },
+                        { value: 'dev' as const, label: 'Dev', desc: 'Prerelease test builds' },
+                      ]).map(opt => {
+                        const active = beamChannel === opt.value;
+                        return (
+                          <button key={opt.value} type="button" disabled={beamChannelBusy}
+                            onClick={() => changeBeamChannel(opt.value)}
+                            className={`p-3 rounded-md border text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${active ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
+                            <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
+                            <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-(--base-06) mt-0.5">
+                      Which builds the Beam desktop app checks for updates. Dev builds are unstable and change often. Saved immediately.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

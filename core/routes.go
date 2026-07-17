@@ -1308,6 +1308,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("GET", "POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
 	api.HandleFunc("/beam/download", beamHandler.GetBeamDownload).Methods("GET")
+	// Caller's own Beam update-channel preference (own data, authed-exempt).
+	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.GetMyBeamChannel)).Methods("GET")
+	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.SetMyBeamChannel)).Methods("PUT")
 
 	// --- Backup Endpoints ---
 	// backup-storages are platform-shared storage-provider configs -> PANEL

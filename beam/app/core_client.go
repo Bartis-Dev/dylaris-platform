@@ -34,6 +34,11 @@ type BeamConfig struct {
 	// MinVersion is Core's advertised force-update floor (empty = gating off).
 	// The app reads it for the proactive startup gate; enforcement is server-side.
 	MinVersion string `json:"min_version"`
+	// UpdateChannel is the EFFECTIVE update channel for the logged-in user
+	// ("stable" | "dev"), already clamped by Core's dev-channel policy. The app
+	// checks the matching release manifest and shows a dev badge. Empty defaults
+	// to stable.
+	UpdateChannel string `json:"update_channel"`
 }
 
 type BeamBranding struct {
@@ -139,20 +144,22 @@ func (c *CoreClient) GetBeamConfig() (*BeamConfig, error) {
 		return nil, err
 	}
 	var resp struct {
-		Success      bool         `json:"success"`
-		RelayAddress string       `json:"relay_address"`
-		Enabled      bool         `json:"enabled"`
-		MinVersion   string       `json:"min_version"`
-		Branding     BeamBranding `json:"branding"`
+		Success       bool         `json:"success"`
+		RelayAddress  string       `json:"relay_address"`
+		Enabled       bool         `json:"enabled"`
+		MinVersion    string       `json:"min_version"`
+		UpdateChannel string       `json:"update_channel"`
+		Branding      BeamBranding `json:"branding"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, err
 	}
 	return &BeamConfig{
-		RelayAddress: resp.RelayAddress,
-		Enabled:      resp.Enabled,
-		Branding:     resp.Branding,
-		MinVersion:   resp.MinVersion,
+		RelayAddress:  resp.RelayAddress,
+		Enabled:       resp.Enabled,
+		Branding:      resp.Branding,
+		MinVersion:    resp.MinVersion,
+		UpdateChannel: resp.UpdateChannel,
 	}, nil
 }
 
