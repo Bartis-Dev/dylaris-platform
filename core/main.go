@@ -1,5 +1,7 @@
 package main
 
+// ci: full test+build validation run 2026-07-17 (no-op marker, safe to remove)
+
 import (
 	"context"
 	"log"
