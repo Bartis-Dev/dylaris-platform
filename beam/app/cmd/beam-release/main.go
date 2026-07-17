@@ -60,6 +60,10 @@ func runSign(args []string) error {
 	version := fs.String("version", "", "release version, e.g. 1.2.3")
 	baseURL := fs.String("base-url", "", "release asset base URL")
 	outDir := fs.String("out", ".", "output directory for latest.json and .sig files")
+	// minVersion bakes the force-update floor into the SIGNED manifest so Core's
+	// "auto" min-version mode can follow it without a separate unsigned fetch. Empty
+	// omits the field entirely (manifest stays byte-identical to a pre-min release).
+	minVersion := fs.String("min-version", "", "force-update floor to embed in the signed manifest, e.g. 1.2.0 (optional)")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse args: %w", err)
 	}
@@ -100,7 +104,7 @@ func runSign(args []string) error {
 		return fmt.Errorf("no binaries given")
 	}
 
-	m := buildManifest(*version, *baseURL, priv, bins)
+	m := buildManifest(*version, strings.TrimSpace(*minVersion), *baseURL, priv, bins)
 	manifestBytes, err := canonicalManifestBytes(m)
 	if err != nil {
 		return err
@@ -123,8 +127,13 @@ type platformEntry struct {
 }
 
 type manifest struct {
-	Version   string                   `json:"version"`
-	Platforms map[string]platformEntry `json:"platforms"`
+	Version string `json:"version"`
+	// MinVersion is the optional force-update floor. Omitted when empty so a
+	// release without a floor produces a manifest byte-identical to the legacy
+	// (pre-min-version) format. Core's auto min-version mode reads it AFTER
+	// verifying the manifest signature.
+	MinVersion string                   `json:"minVersion,omitempty"`
+	Platforms  map[string]platformEntry `json:"platforms"`
 }
 
 type binInput struct {
@@ -132,8 +141,8 @@ type binInput struct {
 	Data []byte
 }
 
-func buildManifest(version, baseURL string, priv ed25519.PrivateKey, bins []binInput) manifest {
-	m := manifest{Version: version, Platforms: map[string]platformEntry{}}
+func buildManifest(version, minVersion, baseURL string, priv ed25519.PrivateKey, bins []binInput) manifest {
+	m := manifest{Version: version, MinVersion: minVersion, Platforms: map[string]platformEntry{}}
 	for _, b := range bins {
 		m.Platforms[b.Slug] = platformEntry{
 			URL:    baseURL + "/DylarisBeam-" + b.Slug,

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -125,6 +126,14 @@ func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, public
 type BeamHandler struct {
 	state     *AppState
 	jwtSecret string
+
+	// Auto min-version cache: in beam.min_version_mode=auto the force-update
+	// floor is the signed manifest's minVersion, fetched+verified at most once
+	// per beamMinAutoTTL (GetBeamTicket runs on every connect). See
+	// effectiveMinVersion / cachedAutoMinVersion in beam_manifest.go.
+	minCacheMu  sync.Mutex
+	minCacheVal string
+	minCacheAt  time.Time
 }
 
 func NewBeamHandler(state *AppState, jwtSecret string) *BeamHandler {
@@ -212,12 +221,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	// Force-update gate: refuse to mint a ticket for a Beam build below the
-	// admin-set minimum. GetBeamTicket is the single pre-connection choke point
+	// effective minimum. GetBeamTicket is the single pre-connection choke point
 	// (every connect, relay or direct, calls it first), so gating here locks out
-	// old clients without touching the node. Fail-closed: with a floor set, an
+	// old clients without touching the node. The floor is the admin-set
+	// beam.min_version (manual mode, default) or the signed manifest's minVersion
+	// (auto mode); see effectiveMinVersion. Fail-closed: with a floor set, an
 	// absent/unparseable X-Beam-Version is treated as below-min (see
-	// beamClientBelowMin). Empty beam.min_version = gating off.
-	minVer, _ := h.state.Store.GetSetting("beam.min_version")
+	// beamClientBelowMin). An empty effective floor = gating off.
+	minVer := h.effectiveMinVersion(r.Context())
 	if beamClientBelowMin(r.Header.Get("X-Beam-Version"), minVer) {
 		sendBeamUpdateRequired(w, minVer)
 		return
@@ -414,8 +425,9 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 		"enabled":       enabled == "true",
 		// min_version is the advertised force-update floor (empty = gating off).
 		// The Beam app reads it for its proactive startup gate; the actual
-		// enforcement lives in GetBeamTicket, not here.
-		"min_version": getSetting("beam.min_version"),
+		// enforcement lives in GetBeamTicket, not here. Resolved through
+		// effectiveMinVersion so it honors manual vs auto (signed-manifest) mode.
+		"min_version": h.effectiveMinVersion(r.Context()),
 		"branding": map[string]string{
 			"name":     brandName,
 			"logo_url": brandLogoURL,
@@ -585,7 +597,7 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 
 	manifestURL := strings.TrimSpace(getSetting("beam.release_manifest"))
 	if manifestURL == "" {
-		manifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
+		manifestURL = defaultBeamManifestURL
 	}
 	if u, err := manifestPlatformURL(ctx, manifestURL, platform); err == nil && u != "" {
 		return []string{u}

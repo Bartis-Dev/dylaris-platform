@@ -31,6 +31,11 @@ interface BeamSettings {
     // from GetBeamTicket and a blocking update screen. Validated server-side.
     minVersion?: string;
 
+    // How the floor is chosen: 'manual' uses minVersion above; 'auto' follows the
+    // minVersion baked into the SIGNED release manifest (Core verifies it). In
+    // auto mode the manual input is ignored.
+    minVersionMode?: 'manual' | 'auto';
+
     // Per-direction throttle splits (bytes/sec, 0 = unlimited). Stored
     // alongside bwLimit; Core folds the internal pair into bwLimit until
     // the per-direction enforcement ships.
@@ -211,6 +216,7 @@ interface BeamEditableSnapshot {
     relayAddress: string;
     downloadLink: string;
     minVersion: string;
+    minVersionMode: 'manual' | 'auto';
     enabled: boolean;
     bwUpInternal: number;
     bwDownInternal: number;
@@ -227,6 +233,7 @@ function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
         relayAddress: s.relayAddress,
         downloadLink: s.downloadLink,
         minVersion: s.minVersion ?? '',
+        minVersionMode: s.minVersionMode === 'auto' ? 'auto' : 'manual',
         enabled: s.enabled,
         bwUpInternal: s.bwUpInternal ?? 0,
         bwDownInternal: s.bwDownInternal ?? 0,
@@ -251,6 +258,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         enabled: true,
         downloadLink: '',
         minVersion: '',
+        minVersionMode: 'manual',
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -289,6 +297,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             relayAddress: snap.relayAddress,
             downloadLink: snap.downloadLink,
             minVersion: snap.minVersion,
+            minVersionMode: snap.minVersionMode,
             enabled: snap.enabled,
             bwUpInternal: snap.bwUpInternal,
             bwDownInternal: snap.bwDownInternal,
@@ -393,15 +402,34 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 </div>
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Minimum Beam Version</label>
+                    <div className="grid grid-cols-2 gap-2 mb-1">
+                        {([
+                            { value: 'manual' as const, label: 'Manual', desc: 'Use the version set below' },
+                            { value: 'auto' as const, label: 'Auto', desc: 'Follow the signed release manifest' },
+                        ]).map(opt => {
+                            const active = (settings.minVersionMode ?? 'manual') === opt.value;
+                            return (
+                                <button key={opt.value} type="button"
+                                    onClick={() => setSettings(s => ({ ...s, minVersionMode: opt.value }))}
+                                    className={`p-3 rounded-md border text-left transition-colors ${active ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
+                                    <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
+                                    <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
                     <input
                         type="text"
                         value={settings.minVersion ?? ''}
                         onChange={e => setSettings(s => ({ ...s, minVersion: e.target.value.trim() }))}
                         placeholder="e.g. 1.2.3"
-                        className="input-field input-mono"
+                        disabled={(settings.minVersionMode ?? 'manual') === 'auto'}
+                        className="input-field input-mono disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <p className="text-xs text-(--base-06) mt-0.5">
-                        Clients below this version cannot connect and must update. Leave empty to disable.
+                        {(settings.minVersionMode ?? 'manual') === 'auto'
+                            ? 'Core reads the floor from the signed release manifest (minVersion) and verifies it before enforcing. The field above is ignored.'
+                            : 'Clients below this version cannot connect and must update. Leave empty to disable.'}
                     </p>
                 </div>
             </div>

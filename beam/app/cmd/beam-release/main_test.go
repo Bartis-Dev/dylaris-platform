@@ -18,7 +18,7 @@ func TestSignVerifyRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	bins := []binInput{{Slug: "linux-amd64", Data: []byte("fake-binary-bytes")}}
-	m := buildManifest("1.2.3", "https://example.test/dl", priv, bins)
+	m := buildManifest("1.2.3", "", "https://example.test/dl", priv, bins)
 
 	entry, ok := m.Platforms["linux-amd64"]
 	if !ok {
@@ -74,7 +74,7 @@ func TestNoTrailingNewline(t *testing.T) {
 		t.Fatal(err)
 	}
 	bins := []binInput{{Slug: "linux-amd64", Data: []byte("fake-binary-bytes")}}
-	m := buildManifest("1.2.3", "https://example.test/dl", priv, bins)
+	m := buildManifest("1.2.3", "", "https://example.test/dl", priv, bins)
 
 	manifestBytes, err := canonicalManifestBytes(m)
 	if err != nil {
@@ -92,10 +92,60 @@ func TestNoTrailingNewline(t *testing.T) {
 
 func TestCanonicalBytesDeterministic(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	m := buildManifest("2.0.0", "https://x.test", priv, []binInput{{Slug: "linux-amd64", Data: []byte("a")}})
+	m := buildManifest("2.0.0", "", "https://x.test", priv, []binInput{{Slug: "linux-amd64", Data: []byte("a")}})
 	b1, _ := canonicalManifestBytes(m)
 	b2, _ := canonicalManifestBytes(m)
 	if string(b1) != string(b2) {
 		t.Error("canonical bytes are not stable")
+	}
+}
+
+// TestBuildManifestMinVersion pins the force-update floor plumbing: a non-empty
+// min-version is embedded and travels under the manifest signature, while an
+// empty one is OMITTED so a floor-less release stays byte-identical to the
+// legacy manifest format (no "minVersion" key at all).
+func TestBuildManifestMinVersion(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bins := []binInput{{Slug: "linux-amd64", Data: []byte("bin")}}
+
+	// With a floor: the field is present and its value survives a sign/verify
+	// round-trip over the exact manifest bytes.
+	withMin := buildManifest("1.4.0", "1.3.0", "https://x.test", priv, bins)
+	if withMin.MinVersion != "1.3.0" {
+		t.Errorf("MinVersion = %q, want 1.3.0", withMin.MinVersion)
+	}
+	mb, err := canonicalManifestBytes(withMin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mb), `"minVersion": "1.3.0"`) {
+		t.Errorf("manifest bytes missing minVersion field: %s", mb)
+	}
+	sig, err := base64.StdEncoding.DecodeString(signDetached(priv, mb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ed25519.Verify(pub, mb, sig) {
+		t.Error("signed manifest with minVersion did not verify")
+	}
+	var reparsed manifest
+	if err := json.Unmarshal(mb, &reparsed); err != nil {
+		t.Fatal(err)
+	}
+	if reparsed.MinVersion != "1.3.0" {
+		t.Errorf("re-parsed MinVersion = %q, want 1.3.0", reparsed.MinVersion)
+	}
+
+	// Without a floor: omitempty drops the key entirely.
+	noMin := buildManifest("1.4.0", "", "https://x.test", priv, bins)
+	nb, err := canonicalManifestBytes(noMin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(nb), "minVersion") {
+		t.Errorf("empty min-version must omit the field, got: %s", nb)
 	}
 }

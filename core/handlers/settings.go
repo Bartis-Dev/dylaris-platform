@@ -751,6 +751,12 @@ type BeamSettings struct {
 	// GetBeamTicket. Validated empty-or-semver on save.
 	MinVersion string `json:"minVersion"`
 
+	// MinVersionMode selects how the force-update floor is chosen: "manual"
+	// (default) uses MinVersion above; "auto" follows the minVersion baked into
+	// the SIGNED release manifest (verified by Core, see effectiveMinVersion).
+	// Persisted to DB key beam.min_version_mode.
+	MinVersionMode string `json:"minVersionMode"`
+
 	// Throttle splits (bytes/sec, 0 = unlimited). Stored verbatim. Until
 	// the per-direction limiters land in node + relay these are advisory:
 	// BwLimit (above) is computed by SaveBeamSettings as the lower of
@@ -798,6 +804,18 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Min-version mode: empty normalizes to "manual" (the default); only
+	// "manual" or "auto" are accepted so an unknown mode can never silently
+	// change how the floor is resolved.
+	minVersionMode := strings.TrimSpace(req.MinVersionMode)
+	if minVersionMode == "" {
+		minVersionMode = beamMinVersionModeManual
+	}
+	if minVersionMode != beamMinVersionModeManual && minVersionMode != beamMinVersionModeAuto {
+		sendJSONError(w, "Invalid min-version mode: must be 'manual' or 'auto'", http.StatusBadRequest)
+		return
+	}
+
 	enabledStr := "false"
 	if req.Enabled {
 		enabledStr = "true"
@@ -819,6 +837,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.enabled", enabledStr},
 		{"beam.download_link", req.DownloadLink},
 		{"beam.min_version", minVersion},
+		{"beam.min_version_mode", minVersionMode},
 
 		// New per-direction throttle splits (advisory until relay-side
 		// throttle ships). Stored verbatim so the UI round-trips.
@@ -870,12 +889,18 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 	publicHost := getSetting("beam.public_host")
 	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost)
 
+	minVersionMode := getSetting("beam.min_version_mode")
+	if minVersionMode != beamMinVersionModeAuto {
+		minVersionMode = beamMinVersionModeManual // default + normalize any legacy/blank value
+	}
+
 	settings := BeamSettings{
 		RelayAddress:   effective,
 		ManualOverride: manualOverride,
 		PublicHost:     publicHost,
 		DownloadLink:   getSetting("beam.download_link"),
 		MinVersion:     getSetting("beam.min_version"),
+		MinVersionMode: minVersionMode,
 		Enabled:        true,
 	}
 
