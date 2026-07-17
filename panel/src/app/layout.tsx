@@ -1,3 +1,4 @@
+// ci: trigger full pipeline run (no-op, safe to remove)
 import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";

@@ -1,5 +1,7 @@
 package main
 
+// ci: trigger full pipeline run (no-op, safe to remove)
+
 import (
 	"bufio"
 	"context"
