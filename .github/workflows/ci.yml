@@ -1,12 +1,18 @@
-name: CI - Build & Push
+name: CI
 
-# On push, build and push only the service images whose paths changed. For a
-# full, unconditional rebuild of every image, use the test-and-build-all.yml
-# workflow (it runs the test suite first, then builds everything).
+# One workflow, one run per push. Order of operations:
+#   1. Run the FULL test suite first (every Go module + the panel).
+#   2. Only if everything is green, run change detection.
+#   3. Build and push the images whose paths changed.
+# On pull_request only the tests run (no image build/push). A manual
+# workflow_dispatch runs the tests and then builds EVERY image (full rebuild),
+# regardless of what changed.
 
 on:
   push:
     branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,7 +23,95 @@ env:
   IMAGE_NAME: bartis-dev/dylaris-platform
 
 jobs:
+  # ----------------------------------------------
+  # 1. Tests - always run first, for every module.
+  # ----------------------------------------------
+  go-tests:
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [core, node, pkg, log-shipper, beam/app]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      # beam/app embeds frontend/dist (a Wails build artifact that a fresh
+      # checkout does not have, so `go build` fails on the //go:embed). The Go
+      # tests use fakes and never read the real bundle, so a one-file stub is
+      # enough to satisfy the embed and compile. The real frontend is built for
+      # release in beam-release.yml.
+      - name: Stub beam frontend bundle
+        if: matrix.module == 'beam/app'
+        working-directory: ${{ matrix.module }}
+        run: |
+          mkdir -p frontend/dist
+          printf '<!doctype html><title>stub</title>' > frontend/dist/index.html
+
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      # staticcheck correctness gate (pinned). Runs the SA (correctness) checks
+      # only; the ST/S1/U/QF style families are intentionally not enforced.
+      # Three SA checks are excluded as pre-existing, deliberately-deferred
+      # findings so the gate stays green and meaningful for NEW code:
+      #   SA1019 - deprecated APIs still in use (go-redis SetNX, aws uploader,
+      #            tar.TypeRegA); tracked, not a correctness bug.
+      #   SA1029 - built-in string context keys; a codebase-wide pattern set by
+      #            the auth middleware, a broad refactor tracked separately.
+      #   SA9003 - two pre-existing empty branches in handlers/tickets.go.
+      # `go run ...@version` pins the tool and does not modify go.mod/go.sum.
+      - name: staticcheck
+        working-directory: ${{ matrix.module }}
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,-SA1019,-SA1029,-SA9003' ./...
+
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        run: go test -count=1 ./...
+
+  panel-tests:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # This is an npm workspaces monorepo (root package.json declares
+      # "workspaces": ["packages/*", "panel"]) and the lockfile lives at the
+      # repo root, not panel/package-lock.json. `npm ci` is intentionally not
+      # used here: panel/Dockerfile documents that this lockfile was generated
+      # on Windows and misses platform-specific optional native binaries
+      # (lightningcss/swc) for other OS/libc targets, so it does a plain
+      # `npm install --workspaces --include-workspace-root` instead. Mirrored
+      # here for the same reason.
+      - name: Install dependencies
+        run: npm install --workspaces --include-workspace-root
+
+      - name: Run vitest
+        working-directory: panel
+        run: npx vitest run
+
+  # ----------------------------------------------
+  # 2. Change detection - only after every test job is green, and never on PRs.
+  # ----------------------------------------------
   detect-changes:
+    needs: [go-tests, panel-tests]
+    if: github.event_name != 'pull_request'
     runs-on: self-hosted
     outputs:
       core: ${{ steps.filter.outputs.core }}
@@ -45,11 +139,11 @@ jobs:
               - 'docker/mc-server/**'
 
   # ----------------------------------------------
-  # Core
+  # 3. Build + push. Changed images on push; every image on workflow_dispatch.
   # ----------------------------------------------
   build-core:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.core == 'true'
+    needs: [go-tests, panel-tests, detect-changes]
+    if: needs.detect-changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     permissions:
       contents: read
@@ -92,12 +186,9 @@ jobs:
             SERVICE=core
             RUN_AS=dylaris
 
-  # ----------------------------------------------
-  # Node, Panel, Log-Shipper
-  # ----------------------------------------------
   build-node:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.node == 'true'
+    needs: [go-tests, panel-tests, detect-changes]
+    if: needs.detect-changes.outputs.node == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-service.yml
     with:
       component: node
@@ -106,8 +197,8 @@ jobs:
     secrets: inherit
 
   build-panel:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.panel == 'true'
+    needs: [go-tests, panel-tests, detect-changes]
+    if: needs.detect-changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-service.yml
     with:
       component: panel
@@ -119,8 +210,8 @@ jobs:
     secrets: inherit
 
   build-log-shipper:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.log-shipper == 'true'
+    needs: [go-tests, panel-tests, detect-changes]
+    if: needs.detect-changes.outputs.log-shipper == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     permissions:
       contents: read
