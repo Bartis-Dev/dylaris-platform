@@ -126,6 +126,36 @@ DYLARIS is a small set of independently deployable services that coordinate thro
    - `both` — direct ports *and* gateway routes.
 5. **Files** — `sftp` exposes SFTP (`:25520`), `beam` uses an overlay gRPC transport (`:25521`) that never exposes the node IP. (External/Warp nodes force `gateway`+`beam` automatically via `NODE_EXTERNAL`.)
 
+### Main failure sources and operational gotchas
+
+- **Core fails fast at boot on bad secrets.** It refuses to start if `JWT_SECRET`
+  or `CLUSTER_SECRET` is empty or left at its placeholder (`change-this-secret` /
+  `dylaris-cluster-secret`). Set strong random values.
+- **Core cannot run without Postgres and Redis.** Redis is mandatory (coordination
+  bus); Postgres is the source of truth. Core fails at startup if it cannot reach
+  them.
+- **The Redis aclfile is mandatory and not auto-seeded.** The bundled Valkey runs
+  the stock non-root image with `--aclfile`, which refuses to start against a
+  missing file. Create the admin `default` user in `valkey-acl/users.acl` once
+  before the first boot; its password must equal Core's `REDIS_PASSWORD`.
+- **ACLs are recoverable from the DB, so a clean Redis is fine.** Core is the Redis
+  ACL authority: per-node secrets live in Postgres, and on boot Core re-provisions
+  the scoped per-node Redis users with the same derived passwords. You can
+  wipe/rebuild Redis (or seed a fresh aclfile with just the `default` admin) and
+  Core will redistribute the scoped users. Redis is in-memory by design
+  (`--save "" --appendonly no`): losing it loses transient queue/discovery state,
+  not your servers.
+- **`BEAM_JWT_SECRET` must equal Core's `JWT_SECRET`.** Otherwise every beam
+  transfer (including the LAN fast-path) is rejected. The compose files wire it to
+  `${JWT_SECRET}` so the two cannot silently diverge.
+- **`FRONTEND_URL` must be externally reachable.** An internal Docker-only hostname
+  makes every emailed verify/reset link unreachable outside the Docker network.
+- **The Node needs the Docker socket.** Treat any host running a Node as trusted;
+  it drives the host Docker daemon to launch MC containers.
+- **New in-cluster nodes no longer auto-register from a heartbeat.** A fresh node
+  needs a `NODE_ENROLL_TOKEN` on first boot (like a BYON node); already-paired
+  nodes reconnect normally.
+
 ## Quick start (single host)
 
 Everything on one machine (Docker + Docker Compose v2 required).
@@ -360,9 +390,38 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25521` | node | Beam gRPC (`BEAM_GRPC_PORT`; overlay-only, JWT-gated) |
 | `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
 | `25523` | node | Beam LAN fast-path (`BEAM_LAN_PORT`; pinned-TLS, direct client<->node). Publish on the node's LAN (self-host/BYON) to enable the fast path even when a gateway is present; unpublished simply falls back to relay/public. |
+| `25502` | core | Origin-isolated tab-proxy (`TAB_PROXY_PORT`, spec B5; opt-in, same host as panel, different port) |
 | `25600-25699` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
+| `5432` | postgres | Database (internal) |
+| `6379` | redis | Cache + queues (internal) |
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft) and the Warp leader (`25599/udp`); it no longer serves HTTP(S) (`80`/`443`) - see the `dylaris-gateway` repo.
+
+### DNS (minimal single-IP setup)
+
+Everything behind one IP, with a reverse proxy terminating TLS for the web surfaces:
+
+```
+dylaris.com.        A    <ip>     ; landing + web
+panel.dylaris.com.  A    <ip>     ; admin panel (25510)
+api.dylaris.com.    A    <ip>     ; core REST (25500)
+play.dylaris.com.   A    <ip>     ; MC players
+
+; lets players omit ":25565"
+_minecraft._tcp.play.dylaris.com.  SRV  0 5 25565 play.dylaris.com.
+```
+
+Optional, per used features:
+
+```
+sftp.dylaris.com.   A    <ip>     ; node SFTP (25520), when file access = sftp/both
+beam.dylaris.com.   A    <ip>     ; Beam desktop sync (via the Gateway relay)
+warp.dylaris.com.   A    <ip>     ; Warp leader (UDP 25599), external/home nodes
+```
+
+> The `_minecraft._tcp` SRV and `play` record assume the Gateway edge fronts
+> `:25565`. In standalone `ip_port` mode (no Gateway) players connect directly to
+> `node-ip:port` in the `25600-25699` range instead.
 
 ## Reverse proxy and TLS
 
