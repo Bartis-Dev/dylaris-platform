@@ -183,17 +183,52 @@ func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// normalizeCoreStorageCandidate trims whitespace from every free-text field
+// of a submitted candidate, so a clipboard-pasted value (path, or any s3
+// field) with leading/trailing whitespace doesn't silently persist as-is and
+// break the backend or auth later. SaveConfig and TestConnection both route
+// their candidate through this single helper so they cannot drift again.
+func normalizeCoreStorageCandidate(c CoreStorageConfig) CoreStorageConfig {
+	c.Backend = strings.TrimSpace(c.Backend)
+	c.Path = strings.TrimSpace(c.Path)
+	c.S3Endpoint = strings.TrimSpace(c.S3Endpoint)
+	c.S3Bucket = strings.TrimSpace(c.S3Bucket)
+	c.S3AccessKey = strings.TrimSpace(c.S3AccessKey)
+	c.S3SecretKey = strings.TrimSpace(c.S3SecretKey)
+	return c
+}
+
 // mergeCoreStorageCandidate resolves the effective config to act on: an
 // empty request-body backend means "nothing submitted", so the caller falls
-// back to the stored config entirely; otherwise a blank secret in the
-// candidate keeps the stored secret rather than wiping it, so an admin can
-// edit other fields (SaveConfig) or re-test (TestConnection) without
-// re-entering it.
+// back to the stored config entirely.
+//
+// Otherwise, a blank secret in the candidate reuses the stored secret ONLY
+// when the identity-defining fields (S3Endpoint, S3Bucket, S3AccessKey) all
+// match the stored config; the caller is expected to have already run the
+// candidate through normalizeCoreStorageCandidate so this comparison isn't
+// fooled by whitespace. If any identity field differs, the secret is left
+// blank so validateCoreStorageConfig rejects the request and the admin must
+// re-enter the secret. This matters for two reasons:
+//   - Security: settings.write is a delegatable panel capability, not
+//     owner-only, and GET always blanks the stored secret. Without this
+//     check, a holder of settings.write who cannot read the secret could
+//     redirect it to an endpoint/bucket/access-key of their choosing merely
+//     by submitting those fields with a blank secret - a credential-
+//     rebinding gap (SigV4 signs with the secret, it never goes on the
+//     wire, so this is not a plaintext leak, but it lets an attacker's
+//     chosen host receive a validly-signed request).
+//   - Usability: changing just the access key while leaving the secret
+//     blank (because GET hides it) would otherwise silently persist a NEW
+//     access key paired with the OLD secret, producing a broken config with
+//     no error.
 func mergeCoreStorageCandidate(candidate, existing CoreStorageConfig) CoreStorageConfig {
 	if candidate.Backend == "" {
 		return existing
 	}
-	if candidate.S3SecretKey == "" {
+	identityUnchanged := candidate.S3Endpoint == existing.S3Endpoint &&
+		candidate.S3Bucket == existing.S3Bucket &&
+		candidate.S3AccessKey == existing.S3AccessKey
+	if candidate.S3SecretKey == "" && identityUnchanged {
 		candidate.S3SecretKey = existing.S3SecretKey
 	}
 	return candidate
@@ -208,8 +243,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	req.Backend = strings.TrimSpace(req.Backend)
-	req.Path = strings.TrimSpace(req.Path)
+	req = normalizeCoreStorageCandidate(req)
 
 	existing := h.state.LoadCoreStorageConfig()
 	effective := mergeCoreStorageCandidate(req, existing)
@@ -265,8 +299,7 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	candidate.Backend = strings.TrimSpace(candidate.Backend)
-	candidate.Path = strings.TrimSpace(candidate.Path)
+	candidate = normalizeCoreStorageCandidate(candidate)
 	effective := mergeCoreStorageCandidate(candidate, h.state.LoadCoreStorageConfig())
 
 	if err := validateCoreStorageConfig(effective); err != nil {
@@ -279,20 +312,33 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ok, msg := probeStorageProvider(prov)
+	if effective.Backend == "path" || effective.Backend == "local" {
+		// newStorageProviderForConfig(effective, "_probe") MkdirAll'd this
+		// exact directory; probeStorageProvider cleans up the object inside
+		// it on every return path, so it is empty by now. os.Remove (never
+		// RemoveAll) only succeeds on an empty dir, so this can't remove
+		// anything else - best-effort, so a tested-then-rejected/never-saved
+		// path doesn't keep an empty "_probe" dir behind forever.
+		_ = os.Remove(filepath.Join(effective.Path, "_probe"))
+	}
 	respond(ok, msg)
 }
 
 // probeStorageProvider writes, reads back and deletes a uniquely-named probe
 // object to verify the backend is reachable and read/write-consistent. The
-// probe key is deleted on every path, including a read error or a
-// read-back/content mismatch, so a broken candidate config never leaves a
-// stray object behind.
+// probe key is deleted on every path, including a write error, a read error,
+// or a read-back/content mismatch, so a broken candidate config never leaves
+// a stray object behind.
 func probeStorageProvider(prov storage.StorageProvider) (ok bool, message string) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	key := "probe-" + hex.EncodeToString(b) + ".txt"
 
 	if err := prov.WriteFile(key, strings.NewReader(coreStorageProbePayload)); err != nil {
+		// A failed WriteFile can still leave a truncated object behind
+		// (LocalProvider.WriteFile is os.Create + io.Copy, so a mid-copy
+		// failure leaves a partial file), so cleanup here too.
+		_ = prov.DeletePath(key)
 		return false, "Write failed: " + err.Error()
 	}
 	rc, err := prov.GetFile(key)

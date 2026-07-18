@@ -68,9 +68,17 @@ func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 	if !got.Settings.S3SecretSet {
 		t.Errorf("GET S3SecretSet = false, want true")
 	}
+	// Raw-body check, not just the decoded struct: catches a future field
+	// added under some other key that would still surface the secret.
+	if strings.Contains(rw.Body.String(), "sekret") {
+		t.Errorf("GET response body leaked the secret somewhere: %s", rw.Body.String())
+	}
 
-	// Re-save with a blank secret: the stored one must survive, other fields update.
-	body, _ = json.Marshal(CoreStorageConfig{Backend: "s3", S3Bucket: "b2", S3AccessKey: "k", S3SecretKey: ""})
+	// Re-save with a blank secret and the SAME endpoint/bucket/accessKey (Fix
+	// 1 only backfills the secret when the identity fields are unchanged):
+	// the stored secret must survive, and an unrelated field (region) still
+	// updates.
+	body, _ = json.Marshal(CoreStorageConfig{Backend: "s3", S3Bucket: "b", S3AccessKey: "k", S3Region: "eu-central-1", S3SecretKey: ""})
 	rw = httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
 	if rw.Code != http.StatusOK {
@@ -79,8 +87,8 @@ func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 	if fs.kv[keyCoreStorageS3SecretKey] != "sekret" {
 		t.Errorf("blank re-save wiped the secret, got %q", fs.kv[keyCoreStorageS3SecretKey])
 	}
-	if fs.kv[keyCoreStorageS3Bucket] != "b2" {
-		t.Errorf("bucket not updated on re-save, got %q", fs.kv[keyCoreStorageS3Bucket])
+	if fs.kv[keyCoreStorageS3Region] != "eu-central-1" {
+		t.Errorf("region not updated on re-save, got %q", fs.kv[keyCoreStorageS3Region])
 	}
 }
 
@@ -213,7 +221,10 @@ func TestCoreStorage_TestConnection_InvalidCandidateReportsFailure_NotHTTPError(
 // TestConnection's "blank secret keeps the stored one" rule) ---
 
 func TestMergeCoreStorageCandidate(t *testing.T) {
-	existing := CoreStorageConfig{Backend: "s3", S3Bucket: "old", S3AccessKey: "k", S3SecretKey: "stored-secret"}
+	existing := CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k",
+		S3SecretKey: "stored-secret",
+	}
 
 	cases := []struct {
 		name      string
@@ -226,14 +237,57 @@ func TestMergeCoreStorageCandidate(t *testing.T) {
 			want:      existing,
 		},
 		{
-			name:      "candidate with blank secret keeps the stored secret",
-			candidate: CoreStorageConfig{Backend: "s3", S3Bucket: "new", S3AccessKey: "k"},
-			want:      CoreStorageConfig{Backend: "s3", S3Bucket: "new", S3AccessKey: "k", S3SecretKey: "stored-secret"},
+			// Fix 1: identity fields (endpoint/bucket/accessKey) all match the
+			// stored config, so a blank secret is safe to backfill.
+			name: "blank secret + unchanged endpoint/bucket/accessKey reuses the stored secret",
+			candidate: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k",
+			},
+			want: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k",
+				S3SecretKey: "stored-secret",
+			},
 		},
 		{
-			name:      "candidate with its own secret is not overridden",
-			candidate: CoreStorageConfig{Backend: "s3", S3Bucket: "new", S3AccessKey: "k2", S3SecretKey: "new-secret"},
-			want:      CoreStorageConfig{Backend: "s3", S3Bucket: "new", S3AccessKey: "k2", S3SecretKey: "new-secret"},
+			// Fix 1 (IMPORTANT): a changed bucket must NOT be silently paired
+			// with the old secret - that is a credential-rebinding gap, and it
+			// also produces a broken config with no error.
+			name: "blank secret + changed bucket does not backfill",
+			candidate: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "new", S3AccessKey: "k",
+			},
+			want: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "new", S3AccessKey: "k",
+			},
+		},
+		{
+			name: "blank secret + changed access key does not backfill",
+			candidate: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k2",
+			},
+			want: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k2",
+			},
+		},
+		{
+			name: "blank secret + changed endpoint does not backfill",
+			candidate: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "old", S3AccessKey: "k",
+			},
+			want: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "old", S3AccessKey: "k",
+			},
+		},
+		{
+			name: "candidate with its own secret is not overridden",
+			candidate: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "new", S3AccessKey: "k2",
+				S3SecretKey: "new-secret",
+			},
+			want: CoreStorageConfig{
+				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "new", S3AccessKey: "k2",
+				S3SecretKey: "new-secret",
+			},
 		},
 	}
 	for _, c := range cases {
@@ -246,6 +300,240 @@ func TestMergeCoreStorageCandidate(t *testing.T) {
 	}
 }
 
+func TestNormalizeCoreStorageCandidate(t *testing.T) {
+	got := normalizeCoreStorageCandidate(CoreStorageConfig{
+		Backend: " s3 ", Path: " /mnt/x ", S3Endpoint: " https://e ", S3Bucket: " b ",
+		S3AccessKey: " k ", S3SecretKey: " s ",
+	})
+	want := CoreStorageConfig{
+		Backend: "s3", Path: "/mnt/x", S3Endpoint: "https://e", S3Bucket: "b",
+		S3AccessKey: "k", S3SecretKey: "s",
+	}
+	if got != want {
+		t.Errorf("normalizeCoreStorageCandidate() = %+v, want %+v", got, want)
+	}
+}
+
+// --- Fix 1 (credential-rebinding gap): a blank secret must only backfill the
+// stored secret when the identity-defining fields (s3Endpoint/s3Bucket/
+// s3AccessKey) are unchanged from the stored config. Otherwise the request
+// must be rejected instead of silently pairing the real secret with a new
+// identity. Covered for both SaveConfig (persists) and TestConnection
+// (probes) since mergeCoreStorageCandidate backs both. ---
+
+func seedCoreStorageS3(fs *coreStorageHTTPFakeStore) {
+	fs.kv[keyCoreStorageBackend] = "s3"
+	fs.kv[keyCoreStorageS3Endpoint] = "https://s3.example.com"
+	fs.kv[keyCoreStorageS3Bucket] = "bucket1"
+	fs.kv[keyCoreStorageS3AccessKey] = "key1"
+	fs.kv[keyCoreStorageS3SecretKey] = "stored-secret"
+}
+
+func TestCoreStorage_SaveConfig_BlankSecretUnchangedIdentity_ReusesStoredSecret(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	seedCoreStorageS3(fs)
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "bucket1", S3AccessKey: "key1",
+		S3Region: "eu-west-1", // an unrelated field changes, proving the save actually went through
+	})
+	rw := httptest.NewRecorder()
+	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if fs.kv[keyCoreStorageS3SecretKey] != "stored-secret" {
+		t.Errorf("stored secret not reused, got %q", fs.kv[keyCoreStorageS3SecretKey])
+	}
+	if fs.kv[keyCoreStorageS3Region] != "eu-west-1" {
+		t.Errorf("unrelated field did not persist, got %q", fs.kv[keyCoreStorageS3Region])
+	}
+}
+
+func TestCoreStorage_SaveConfig_BlankSecretChangedAccessKey_Rejected(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	seedCoreStorageS3(fs)
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "bucket1", S3AccessKey: "key2",
+	})
+	rw := httptest.NewRecorder()
+	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (changed access key + blank secret must be rejected); body=%s", rw.Code, rw.Body.String())
+	}
+	if fs.kv[keyCoreStorageS3AccessKey] != "key1" {
+		t.Errorf("rejected save persisted the new access key anyway, got %q", fs.kv[keyCoreStorageS3AccessKey])
+	}
+	if fs.kv[keyCoreStorageS3SecretKey] != "stored-secret" {
+		t.Errorf("rejected save touched the stored secret, got %q", fs.kv[keyCoreStorageS3SecretKey])
+	}
+}
+
+func TestCoreStorage_SaveConfig_BlankSecretChangedEndpoint_Rejected(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	seedCoreStorageS3(fs)
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "bucket1", S3AccessKey: "key1",
+	})
+	rw := httptest.NewRecorder()
+	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (changed endpoint + blank secret must be rejected); body=%s", rw.Code, rw.Body.String())
+	}
+	if fs.kv[keyCoreStorageS3Endpoint] != "https://s3.example.com" {
+		t.Errorf("rejected save persisted the new endpoint anyway, got %q", fs.kv[keyCoreStorageS3Endpoint])
+	}
+}
+
+func TestCoreStorage_TestConnection_BlankSecretChangedAccessKey_Rejected(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	seedCoreStorageS3(fs)
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "bucket1", S3AccessKey: "key2",
+	})
+	rw := httptest.NewRecorder()
+	h.TestConnection(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage/test", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (in-band failure); body=%s", rw.Code, rw.Body.String())
+	}
+	if !strings.Contains(rw.Body.String(), "\"ok\":false") {
+		t.Errorf("body = %s, want ok:false (changed access key + blank secret must be rejected, not probed with the real secret)", rw.Body.String())
+	}
+	if !strings.Contains(rw.Body.String(), "access key + secret are required") {
+		t.Errorf("body = %s, want the validation error (proves rejection happened before any probe, not a network failure)", rw.Body.String())
+	}
+}
+
+func TestCoreStorage_TestConnection_BlankSecretChangedEndpoint_Rejected(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	seedCoreStorageS3(fs)
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "bucket1", S3AccessKey: "key1",
+	})
+	rw := httptest.NewRecorder()
+	h.TestConnection(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage/test", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (in-band failure); body=%s", rw.Code, rw.Body.String())
+	}
+	if !strings.Contains(rw.Body.String(), "access key + secret are required") {
+		t.Errorf("body = %s, want the validation error (changed endpoint + blank secret must be rejected before probing, i.e. never dial the attacker endpoint using the real secret)", rw.Body.String())
+	}
+}
+
+// TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidation
+// proves the reused secret actually clears validateCoreStorageConfig (unlike
+// the "changed" cases above): the probe proceeds to an actual write attempt
+// against a loopback port nothing listens on, so it fails fast on a
+// connection error rather than the "access key + secret are required"
+// validation error - that is the observable difference between "merge
+// backfilled the secret" and "merge left it blank".
+func TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidation(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	fs.kv[keyCoreStorageBackend] = "s3"
+	fs.kv[keyCoreStorageS3Endpoint] = "http://127.0.0.1:1"
+	fs.kv[keyCoreStorageS3Bucket] = "bucket1"
+	fs.kv[keyCoreStorageS3AccessKey] = "key1"
+	fs.kv[keyCoreStorageS3SecretKey] = "stored-secret"
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "http://127.0.0.1:1", S3Bucket: "bucket1", S3AccessKey: "key1",
+	})
+	rw := httptest.NewRecorder()
+	h.TestConnection(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage/test", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rw.Code, rw.Body.String())
+	}
+	if strings.Contains(rw.Body.String(), "access key + secret are required") {
+		t.Errorf("body = %s, unchanged identity + blank secret should reuse the stored secret and pass validation, not be rejected", rw.Body.String())
+	}
+}
+
+// TestCoreStorage_TestConnection_FailureBody_NeverLeaksSecret guards the raw
+// wire body, not just the CoreStorageConfig struct: a future change that
+// surfaces the secret under some other key must still be caught.
+func TestCoreStorage_TestConnection_FailureBody_NeverLeaksSecret(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	const theSecret = "unleaked-topsecret-value"
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "http://127.0.0.1:1", S3Bucket: "bucket1", S3AccessKey: "key1",
+		S3SecretKey: theSecret,
+	})
+	rw := httptest.NewRecorder()
+	h.TestConnection(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage/test", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rw.Code, rw.Body.String())
+	}
+	if !strings.Contains(rw.Body.String(), "\"ok\":false") {
+		t.Fatalf("body = %s, want ok:false (loopback port 1 refuses the connection)", rw.Body.String())
+	}
+	if strings.Contains(rw.Body.String(), theSecret) {
+		t.Errorf("TestConnection failure body leaked the secret: %s", rw.Body.String())
+	}
+}
+
+// TestCoreStorage_SaveConfig_TrimsS3FieldWhitespace guards Fix 2: a
+// clipboard-pasted key/secret/endpoint/bucket with surrounding whitespace
+// must be trimmed before persisting, not silently break auth later.
+func TestCoreStorage_SaveConfig_TrimsS3FieldWhitespace(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(CoreStorageConfig{
+		Backend: "s3", S3Endpoint: "  https://s3.example.com  ", S3Bucket: "  bucket1 ",
+		S3AccessKey: " key1 ", S3SecretKey: " sekret ",
+	})
+	rw := httptest.NewRecorder()
+	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if fs.kv[keyCoreStorageS3Endpoint] != "https://s3.example.com" {
+		t.Errorf("s3Endpoint not trimmed, got %q", fs.kv[keyCoreStorageS3Endpoint])
+	}
+	if fs.kv[keyCoreStorageS3Bucket] != "bucket1" {
+		t.Errorf("s3Bucket not trimmed, got %q", fs.kv[keyCoreStorageS3Bucket])
+	}
+	if fs.kv[keyCoreStorageS3AccessKey] != "key1" {
+		t.Errorf("s3AccessKey not trimmed, got %q", fs.kv[keyCoreStorageS3AccessKey])
+	}
+	if fs.kv[keyCoreStorageS3SecretKey] != "sekret" {
+		t.Errorf("s3SecretKey not trimmed, got %q", fs.kv[keyCoreStorageS3SecretKey])
+	}
+}
+
+// TestCoreStorage_TestConnection_PathProbe_CleansUpProbeDir guards Fix 4: a
+// tested (whether saved or not) path backend must not leave an empty
+// "_probe" directory behind forever.
+func TestCoreStorage_TestConnection_PathProbe_CleansUpProbeDir(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	dir := testConnectionProbeDir(t)
+	fs.kv[keyCoreStorageBackend] = "path"
+	fs.kv[keyCoreStoragePath] = dir
+	fs.kv[keyCoreStoragePathConfirm] = "true"
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	rw := httptest.NewRecorder()
+	h.TestConnection(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage/test", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("TestConnection status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "_probe")); !os.IsNotExist(err) {
+		t.Errorf("_probe directory left behind after test-connection, stat err = %v", err)
+	}
+}
+
 // --- probeStorageProvider (write+read+delete probe logic), exercised
 // against a hand-written fake so the mismatch/error cleanup paths are
 // deterministic and do not depend on a real filesystem or network backend. ---
@@ -253,6 +541,7 @@ func TestMergeCoreStorageCandidate(t *testing.T) {
 type fakeProbeProvider struct {
 	readBack     string
 	getErr       error
+	writeErr     error
 	deleteErr    error
 	deleteCalled int
 }
@@ -261,7 +550,7 @@ func (f *fakeProbeProvider) ListFiles(string) ([]storage.FileInfo, error)      {
 func (f *fakeProbeProvider) CreateDir(string) error                           { return nil }
 func (f *fakeProbeProvider) CopyToLocal(string, string) error                 { return nil }
 func (f *fakeProbeProvider) DownloadURL(string, time.Duration) (string, error) { return "", nil }
-func (f *fakeProbeProvider) WriteFile(string, io.Reader) error                { return nil }
+func (f *fakeProbeProvider) WriteFile(string, io.Reader) error                { return f.writeErr }
 
 func (f *fakeProbeProvider) GetFile(string) (io.ReadCloser, error) {
 	if f.getErr != nil {
@@ -283,6 +572,21 @@ func TestProbeStorageProvider_Success(t *testing.T) {
 	}
 	if fp.deleteCalled != 1 {
 		t.Errorf("DeletePath called %d times, want 1", fp.deleteCalled)
+	}
+}
+
+// TestProbeStorageProvider_WriteFailureCleansUpProbe guards Fix 3: a failed
+// WriteFile can leave a truncated probe object behind (LocalProvider.WriteFile
+// is os.Create + io.Copy), so the write-failure path must still attempt
+// cleanup like every other return path.
+func TestProbeStorageProvider_WriteFailureCleansUpProbe(t *testing.T) {
+	fp := &fakeProbeProvider{writeErr: errors.New("disk full")}
+	ok, msg := probeStorageProvider(fp)
+	if ok {
+		t.Fatalf("ok = true, want false on write failure (%s)", msg)
+	}
+	if fp.deleteCalled != 1 {
+		t.Errorf("DeletePath called %d times on write failure, want 1 (a failed write can leave a truncated object behind)", fp.deleteCalled)
 	}
 }
 
