@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -142,6 +143,107 @@ func TestMigrateLocalDirToProvider_SameLocationRefused(t *testing.T) {
 	}
 }
 
+// TestMigrateLocalDirToProvider_NestedDestinationRefused guards Fix 2's
+// second, cheap-but-real refusal: a destination nested INSIDE the source
+// tree (not the exact same directory sameStorageDir already catches) must
+// also be refused outright. Without this, filepath.WalkDir would walk into
+// the destination dir it is concurrently writing under and re-ingest the
+// files this same run just wrote (bounded duplication).
+func TestMigrateLocalDirToProvider_NestedDestinationRefused(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.jar"), []byte("aaa"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(src, "nested-dest") // deliberately INSIDE src, not yet created
+	prov := &storage.LocalProvider{BasePath: dest}
+
+	res, err := migrateLocalDirToProvider(src, prov)
+	if err == nil {
+		t.Fatal("expected an error when the destination is nested inside the source")
+	}
+	if res.Copied != 0 || res.Failed != 1 {
+		t.Fatalf("result = %+v, want Copied=0 Failed=1", res)
+	}
+	got, readErr := os.ReadFile(filepath.Join(src, "a.jar"))
+	if readErr != nil || string(got) != "aaa" {
+		t.Fatalf("a.jar = %q, err=%v, want untouched aaa (nested-dir guard must refuse before writing anything)", got, readErr)
+	}
+	if _, statErr := os.Stat(dest); statErr == nil {
+		t.Errorf("nested destination dir %q was created even though the migration was refused", dest)
+	}
+}
+
+// TestNestedStorageDir unit-tests the nested-path helper directly: source
+// inside destination, destination inside source, unrelated siblings (never
+// nested), equal paths (not "nested" - that's sameStorageDir's job), and a
+// sibling that merely shares a string prefix (must stay separator-bounded,
+// same discipline as isSubPath's doc comment).
+func TestNestedStorageDir(t *testing.T) {
+	base := t.TempDir()
+	a := filepath.Join(base, "a")
+	b := filepath.Join(base, "b")
+	aSub := filepath.Join(a, "sub")
+	aSibling := filepath.Join(base, "a-sibling")
+
+	tests := []struct {
+		name string
+		x, y string
+		want bool
+	}{
+		{"y inside x", a, aSub, true},
+		{"x inside y (argument order does not matter)", aSub, a, true},
+		{"unrelated siblings", a, b, false},
+		{`equal paths are not "nested"`, a, a, false},
+		{"string-prefix sibling is not nested (separator-bounded)", a, aSibling, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nestedStorageDir(tt.x, tt.y); got != tt.want {
+				t.Errorf("nestedStorageDir(%q, %q) = %v, want %v", tt.x, tt.y, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSameStorageDir_DeviceInodeCatchesAliasedPaths pins the os.SameFile
+// (device+inode) half of Fix 2: two DIFFERENT path strings that resolve to
+// the identical underlying file must compare equal, which the pre-fix plain
+// Abs+Clean string comparison could never see (that's exactly what let a
+// symlink or a bind mount pointing at the same directory slip through).
+//
+// A real directory symlink/bind mount could not be created portably in this
+// test environment: os.Symlink on this Windows dev host fails without the
+// elevated SeCreateSymbolicLinkPrivilege (verified separately - "Dem Client
+// fehlt ein erforderliches Recht" / a required privilege is missing), so
+// this is a hard link between two FILE paths instead. os.SameFile compares
+// only device+inode; it has no notion of symlink vs. bind mount vs. hard
+// link vs. junction, so exercising it via a hard link tests the exact same
+// comparison migrateLocalDirToProvider relies on for directories in
+// production. Skips (not fails) if this filesystem can't hard-link either.
+func TestSameStorageDir_DeviceInodeCatchesAliasedPaths(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias.txt")
+	if err := os.Link(target, alias); err != nil {
+		t.Skipf("hard links not supported in this environment: %v", err)
+	}
+
+	if !sameStorageDir(target, alias) {
+		t.Errorf("sameStorageDir(%q, %q) = false, want true (os.SameFile must catch the alias)", target, alias)
+	}
+
+	other := filepath.Join(dir, "other.txt")
+	if err := os.WriteFile(other, []byte("y"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if sameStorageDir(target, other) {
+		t.Errorf("sameStorageDir(%q, %q) = true, want false (distinct files, not aliased)", target, other)
+	}
+}
+
 // migrateFailOnceProvider wraps memProvider (ticket_backup_provider_test.go)
 // so WriteFile can be made to fail for specific keys, simulating a
 // destination that rejects one particular file (e.g. a transient backend
@@ -205,6 +307,103 @@ func TestMigrateLocalDirToProvider_PartialFailureContinuesAndReports(t *testing.
 	}
 }
 
+// migrateGetErrorProvider wraps memProvider so GetFile (the skip-if-exists
+// destination probe) can be made to return an arbitrary error for specific
+// keys, simulating a transient backend failure (S3 503/timeout/throttle/
+// permission) that is NOT a recognised not-found. Distinct from
+// migrateFailOnceProvider above (which forces a WriteFile failure, not a
+// GetFile one).
+type migrateGetErrorProvider struct {
+	*memProvider
+	getErrKeys map[string]error
+}
+
+func (p *migrateGetErrorProvider) GetFile(key string) (io.ReadCloser, error) {
+	if err, ok := p.getErrKeys[key]; ok {
+		return nil, err
+	}
+	return p.memProvider.GetFile(key)
+}
+
+// TestMigrateLocalDirToProvider_DestinationProbe is the Fix 1 regression
+// test: only a RECOGNISED not-found from the destination probe (GetFile) may
+// mean "copy it". A genuine not-found (errors.Is(err, fs.ErrNotExist), what
+// memProvider.GetFile already returns for a missing key) DOES copy, per the
+// pre-existing skip-if-exists contract. Any OTHER error - standing in for a
+// transient S3 503/timeout/throttle/permission failure, which looks exactly
+// like "missing" to a caller that does not discriminate - must be recorded
+// as a per-file Failed and must NEVER write, leaving the destination
+// byte-for-byte exactly as it was.
+//
+// Before the fix, migrateLocalDirToProvider treated ANY GetFile error as
+// "not present yet" and always proceeded to WriteFile, so the transient case
+// below silently overwrote the pre-existing (correct, newer) destination
+// content with the stale source copy and reported it as a successful,
+// zero-Failed copy - this test is RED against that code and GREEN against
+// the fix (see the task report for the captured before/after test output).
+func TestMigrateLocalDirToProvider_DestinationProbe(t *testing.T) {
+	tests := []struct {
+		name              string
+		getErr            error
+		preSeedDest       bool
+		wantCopied        int
+		wantFailed        int
+		wantDestUnchanged bool
+	}{
+		{
+			name:       "genuine not-found copies",
+			getErr:     os.ErrNotExist,
+			wantCopied: 1,
+			wantFailed: 0,
+		},
+		{
+			name:              "transient probe error fails without writing, destination left untouched",
+			getErr:            errors.New("simulated transient error: 503 service unavailable"),
+			preSeedDest:       true,
+			wantCopied:        0,
+			wantFailed:        1,
+			wantDestUnchanged: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := t.TempDir()
+			if err := os.WriteFile(filepath.Join(src, "a.jar"), []byte("new-from-source"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			dst := &migrateGetErrorProvider{memProvider: newMemProvider(), getErrKeys: map[string]error{"a.jar": tt.getErr}}
+			if tt.preSeedDest {
+				dst.m["a.jar"] = []byte("existing-dest-content")
+			}
+
+			res, err := migrateLocalDirToProvider(src, dst)
+			if tt.wantFailed > 0 && err == nil {
+				t.Fatal("expected a non-nil error")
+			}
+			if res.Copied != tt.wantCopied || res.Failed != tt.wantFailed {
+				t.Fatalf("result = %+v, want Copied=%d Failed=%d", res, tt.wantCopied, tt.wantFailed)
+			}
+			if tt.wantDestUnchanged {
+				if string(dst.m["a.jar"]) != "existing-dest-content" {
+					t.Errorf("destination a.jar = %q, want untouched %q (a non-not-found probe error must never write)", dst.m["a.jar"], "existing-dest-content")
+				}
+			} else if tt.wantCopied > 0 {
+				if string(dst.m["a.jar"]) != "new-from-source" {
+					t.Errorf("destination a.jar = %q, want %q (genuine not-found must still copy)", dst.m["a.jar"], "new-from-source")
+				}
+			}
+
+			// Original source is always untouched (rule 1), regardless of outcome.
+			gotSrc, readErr := os.ReadFile(filepath.Join(src, "a.jar"))
+			if readErr != nil || string(gotSrc) != "new-from-source" {
+				t.Errorf("original source a.jar = %q, err=%v, want untouched %q", gotSrc, readErr, "new-from-source")
+			}
+		})
+	}
+}
+
 // --- CoreStorageHandler.Migrate (HTTP surface) ---
 
 func TestCoreStorageHandler_Migrate_RefusesWhenUnconfigured(t *testing.T) {
@@ -226,23 +425,6 @@ func TestCoreStorageHandler_Migrate_RefusesWhenUnconfigured(t *testing.T) {
 type migrateHandlerResponse struct {
 	Success bool                     `json:"success"`
 	Results map[string]migrateResult `json:"results"`
-}
-
-// registerLegacyDirCleanup registers t.Cleanup to remove exactly the
-// per-subsystem directories a test freshly creates under the real,
-// cwd-relative legacy dylaris_data tree. It checks firstMissingAncestor PER
-// SUBSYSTEM (library/ticket-attachments/ticket-backups) rather than once for
-// the shared "dylaris_data" parent: if that parent already exists (e.g. a
-// stray leftover from an earlier test run against this same cwd), a single
-// top-level check would see nothing missing and skip registering cleanup
-// entirely, silently leaking every subdirectory this test goes on to create.
-func registerLegacyDirCleanup(t *testing.T, srcRoot string) {
-	t.Helper()
-	for _, sub := range []string{CoreStoragePrefixLibrary, CoreStoragePrefixAttachments, CoreStoragePrefixBackups} {
-		if root := firstMissingAncestor(t, filepath.Join(srcRoot, sub)); root != "" {
-			t.Cleanup(func() { os.RemoveAll(root) })
-		}
-	}
 }
 
 // seedLegacyFile creates a file (with any needed parent dirs) under the
@@ -268,12 +450,16 @@ func seedLegacyFile(t *testing.T, srcRoot, rel, content string) {
 // preserved + originals untouched, then runs it again to prove idempotency
 // (skip-if-exists, no duplication).
 func TestCoreStorageHandler_Migrate_HappyPathThenIdempotent(t *testing.T) {
+	// Migrate derives its source root from os.Getwd(); t.Chdir into a
+	// private temp dir first so this test's seeded legacy files (and the
+	// fallback provider's MkdirAll side effects) land somewhere t.TempDir()
+	// auto-cleans, instead of leaking into this package's own directory.
+	t.Chdir(t.TempDir())
 	baseDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
 	}
 	srcRoot := filepath.Join(baseDir, "dylaris_data")
-	registerLegacyDirCleanup(t, srcRoot)
 
 	seedLegacyFile(t, srcRoot, filepath.Join(CoreStoragePrefixLibrary, "lib.txt"), "L")
 	seedLegacyFile(t, srcRoot, filepath.Join(CoreStoragePrefixAttachments, "att.txt"), "A")
@@ -356,12 +542,15 @@ func TestCoreStorageHandler_Migrate_HappyPathThenIdempotent(t *testing.T) {
 // overall response must honestly report success=false, never silently
 // succeed.
 func TestCoreStorageHandler_Migrate_OneSubsystemFailsOthersStillMigrate(t *testing.T) {
+	// See TestCoreStorageHandler_Migrate_HappyPathThenIdempotent: isolate cwd
+	// so this test's legacy dylaris_data tree lands in an auto-cleaned temp
+	// dir, not this package's own directory.
+	t.Chdir(t.TempDir())
 	baseDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
 	}
 	srcRoot := filepath.Join(baseDir, "dylaris_data")
-	registerLegacyDirCleanup(t, srcRoot)
 
 	for _, sub := range []string{CoreStoragePrefixLibrary, CoreStoragePrefixAttachments} {
 		seedLegacyFile(t, srcRoot, filepath.Join(sub, "f.txt"), sub)

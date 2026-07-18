@@ -3,13 +3,17 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aws/smithy-go"
 
 	"dylaris-core/storage/backup"
 )
@@ -105,8 +109,36 @@ func (p *S3Provider) WriteFile(path string, content io.Reader) error {
 	return p.os.Put(context.Background(), p.key(path), content, 0)
 }
 
+// GetFile returns a reader for path, normalizing a recognised "object does
+// not exist" error to be errors.Is(err, fs.ErrNotExist)-comparable. Callers
+// (notably the storage migration's skip-if-exists probe, core/handlers/
+// core_storage.go) need to tell "genuinely missing" apart from any other
+// backend failure (503/timeout/throttle/permission), which on S3 can fail a
+// GetObject just as easily as a missing key - collapsing both into "missing"
+// would make a transient error look like "safe to overwrite". Any other
+// error is returned unwrapped.
 func (p *S3Provider) GetFile(path string) (io.ReadCloser, error) {
-	return p.os.Get(context.Background(), p.key(path))
+	rc, err := p.os.Get(context.Background(), p.key(path))
+	if err != nil {
+		if isS3NotFound(err) {
+			return nil, fmt.Errorf("s3 GetFile %s: %w", path, fs.ErrNotExist)
+		}
+		return nil, err
+	}
+	return rc, nil
+}
+
+// isS3NotFound reports whether an AWS API error indicates a missing object.
+// GetObject/DeleteObject return "NoSuchKey"; HeadObject returns "NotFound".
+// Mirrors storage/modpack/s3.go's isS3NotFound (same discrimination; not
+// shared across packages to keep this seam self-contained).
+func isS3NotFound(err error) bool {
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		code := ae.ErrorCode()
+		return code == "NoSuchKey" || code == "NotFound"
+	}
+	return false
 }
 
 func (p *S3Provider) DeletePath(path string) error {

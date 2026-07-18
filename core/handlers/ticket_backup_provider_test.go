@@ -43,7 +43,11 @@ func (p *memProvider) ListFiles(path string) ([]storage.FileInfo, error) {
 func (p *memProvider) GetFile(path string) (io.ReadCloser, error) {
 	b, ok := p.m[path]
 	if !ok {
-		return nil, io.EOF
+		// Must be errors.Is(err, fs.ErrNotExist)-comparable: migrateLocalDirToProvider
+		// (core_storage.go) only treats a recognised not-found as "copy it",
+		// and this fake is the destination in the migrate tests that seed a
+		// fresh dst and expect the copy to proceed.
+		return nil, os.ErrNotExist
 	}
 	return io.NopCloser(strings.NewReader(string(b))), nil
 }
@@ -89,6 +93,13 @@ func TestBackupProvider_WriteListReadDelete(t *testing.T) {
 // through the shared storage.StorageProvider abstraction instead of raw
 // os.* calls against h.rootDir (which no longer exists).
 func TestNewTicketMigrationHandler_HasProvider(t *testing.T) {
+	// buildBackupProvider falls back to a cwd-relative dylaris_data/ticket-backups
+	// dir (buildCoreStorageProvider, since AppState{} has no configured
+	// storage) and os.MkdirAll's it as a side effect. t.Chdir into a private
+	// temp dir so that side effect lands somewhere t.TempDir() auto-cleans,
+	// instead of leaking into (and poisoning) this package's own directory.
+	t.Chdir(t.TempDir())
+
 	h := NewTicketMigrationHandler(&AppState{})
 	if h.provider == nil {
 		t.Fatal("TicketMigrationHandler.provider is nil; backups must route through the shared provider")

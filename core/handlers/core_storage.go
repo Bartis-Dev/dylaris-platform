@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -399,13 +401,54 @@ func appendCappedMigrateError(errs []string, msg string) []string {
 // (truncate) on the destination path, so if that path is the same file
 // already open for reading, the "copy" would destroy the very original that
 // rule 1 (never touch the source) requires this migration to leave alone.
+//
+// os.SameFile (device+inode) is tried first so a symlink or a bind mount
+// pointing at the same underlying directory is caught too - a plain string
+// comparison of the two paths cannot see through either, and this rework's
+// entire point is moving to a shared path, so an operator bind-mounting the
+// same volume at a second location is a realistic setup, not a hypothetical.
+// Falls back to the previous Abs+Clean string comparison only when either
+// os.Stat fails (e.g. the destination does not exist yet), since os.SameFile
+// requires both FileInfos to exist.
 func sameStorageDir(a, b string) bool {
+	if infoA, errA := os.Stat(a); errA == nil {
+		if infoB, errB := os.Stat(b); errB == nil {
+			return os.SameFile(infoA, infoB)
+		}
+	}
 	ca, errA := filepath.Abs(a)
 	cb, errB := filepath.Abs(b)
 	if errA != nil || errB != nil {
 		return filepath.Clean(a) == filepath.Clean(b)
 	}
 	return filepath.Clean(ca) == filepath.Clean(cb)
+}
+
+// nestedStorageDir reports whether one of a, b lies inside the other's
+// directory tree (in either direction; a == b is NOT nested, that's
+// sameStorageDir's job). Guards the cheap-but-real case sameStorageDir
+// cannot: a destination that sits inside the source tree (or vice versa)
+// makes filepath.WalkDir ingest files this same run just wrote into the
+// destination, producing bounded duplication in the walk.
+func nestedStorageDir(a, b string) bool {
+	ca, errA := filepath.Abs(a)
+	cb, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		ca, cb = a, b
+	}
+	ca, cb = filepath.Clean(ca), filepath.Clean(cb)
+	return isSubPath(ca, cb) || isSubPath(cb, ca)
+}
+
+// isSubPath reports whether child is strictly inside parent's directory
+// tree. Both arguments must already be Abs+Clean. The separator suffix on
+// parent keeps this a directory-boundary-aware prefix check, so e.g.
+// "/data" does not spuriously match a sibling "/data2".
+func isSubPath(parent, child string) bool {
+	if parent == child {
+		return false
+	}
+	return strings.HasPrefix(child, parent+string(filepath.Separator))
 }
 
 // migrateLocalDirToProvider walks srcRoot and writes every regular file into
@@ -426,11 +469,19 @@ func sameStorageDir(a, b string) bool {
 func migrateLocalDirToProvider(srcRoot string, prov storage.StorageProvider) (migrateResult, error) {
 	var res migrateResult
 
-	if lp, ok := prov.(*storage.LocalProvider); ok && sameStorageDir(srcRoot, lp.BasePath) {
-		err := fmt.Errorf("migrate: destination %q is the same directory as the source %q; refusing to copy onto itself", lp.BasePath, srcRoot)
-		res.Failed = 1
-		res.Errors = []string{err.Error()}
-		return res, err
+	if lp, ok := prov.(*storage.LocalProvider); ok {
+		if sameStorageDir(srcRoot, lp.BasePath) {
+			err := fmt.Errorf("migrate: destination %q is the same directory as the source %q; refusing to copy onto itself", lp.BasePath, srcRoot)
+			res.Failed = 1
+			res.Errors = []string{err.Error()}
+			return res, err
+		}
+		if nestedStorageDir(srcRoot, lp.BasePath) {
+			err := fmt.Errorf("migrate: destination %q is nested inside (or contains) the source %q; refusing to avoid the walk re-ingesting files this run just wrote", lp.BasePath, srcRoot)
+			res.Failed = 1
+			res.Errors = []string{err.Error()}
+			return res, err
+		}
 	}
 
 	info, statErr := os.Stat(srcRoot)
@@ -467,14 +518,30 @@ func migrateLocalDirToProvider(srcRoot string, prov storage.StorageProvider) (mi
 		key := filepath.ToSlash(rel)
 
 		// Skip-if-exists: StorageProvider has no dedicated Exists check, so
-		// GetFile is used as a best-effort probe. Any error (missing key, or
-		// a transient backend hiccup) is treated as "not present yet" and
-		// falls through to the write attempt below, so a genuine destination
-		// problem surfaces as a write failure rather than a silently skipped
-		// file.
-		if rc, getErr := prov.GetFile(key); getErr == nil {
+		// GetFile is used as a best-effort probe. This is the SECOND safety
+		// layer here (after the same-dir/nested-dir guards above) - do not
+		// remove it as "redundant" with those: it is what makes a re-run
+		// idempotent instead of overwriting already-migrated files.
+		//
+		// Only a RECOGNISED not-found may mean "copy it". GetFile can also
+		// fail for reasons that have nothing to do with existence - a
+		// transient S3 503/timeout/throttle/permission error looks exactly
+		// like a missing key to a caller that doesn't distinguish them. If
+		// that transient error were treated as "not present yet", a later
+		// re-run (this endpoint's entire contract is "safe to re-run") could
+		// overwrite a NEWER object at the destination with the STALE legacy
+		// copy and report it as a successful Copy - silent destination data
+		// loss. So any error that is not errors.Is(err, fs.ErrNotExist) is
+		// recorded as a per-file failure and this file is NEVER written.
+		rc, getErr := prov.GetFile(key)
+		if getErr == nil {
 			rc.Close()
 			res.Skipped++
+			return nil
+		}
+		if !errors.Is(getErr, fs.ErrNotExist) {
+			res.Failed++
+			res.Errors = appendCappedMigrateError(res.Errors, key+": destination probe: "+getErr.Error())
 			return nil
 		}
 
@@ -494,6 +561,15 @@ func migrateLocalDirToProvider(srcRoot string, prov storage.StorageProvider) (mi
 		res.Copied++
 		return nil
 	})
+
+	// Errors is capped (maxMigrateErrorsPerSubsystem) so a badly broken
+	// destination can't blow up the response body, but Failed always counts
+	// every failure. When some were dropped, say so explicitly: a caller
+	// reading "failed: 500, errors: [20]" with no further hint could easily
+	// mistake the truncated list for the complete one.
+	if omitted := res.Failed - len(res.Errors); omitted > 0 {
+		res.Errors = append(res.Errors, fmt.Sprintf("... %d more errors omitted", omitted))
+	}
 
 	if res.Failed > 0 {
 		return res, fmt.Errorf("migrate: %d file(s) failed under %q", res.Failed, srcRoot)
@@ -524,7 +600,14 @@ func (h *CoreStorageHandler) Migrate(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Configure Core file storage before migrating.", http.StatusBadRequest)
 		return
 	}
-	baseDir, _ := os.Getwd()
+	// A wrong (or empty, relative) baseDir here means migrating the wrong
+	// tree entirely - this must be a hard failure, never a silent
+	// degrade-to-relative-path.
+	baseDir, err := os.Getwd()
+	if err != nil {
+		sendJSONError(w, "Could not determine the legacy data directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	subs := []string{CoreStoragePrefixLibrary, CoreStoragePrefixAttachments, CoreStoragePrefixBackups}
 	results := map[string]migrateResult{}
 	success := true
