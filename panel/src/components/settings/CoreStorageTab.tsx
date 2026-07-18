@@ -64,7 +64,7 @@ export default function CoreStorageTab() {
     setSaving(true);
     const res = await saveCoreStorage(settings);
     if (res.success) {
-      showToast('Core file storage saved.');
+      showToast('Core file storage saved. Uploads and downloads use the new configuration only after Core is restarted.');
       const saved: CoreStorageConfig = { ...settings, s3SecretKey: '', s3SecretSet: settings.s3SecretSet || settings.s3SecretKey !== '' };
       setSettings(saved);
       snapshotRef.current = saved;
@@ -307,6 +307,15 @@ export default function CoreStorageTab() {
         always safe to re-run after a partial failure.
         {!savedConfigured && ' Save a valid config above to enable this.'}
       </p>
+
+      <div className="flex items-start gap-2 rounded-(--radius-md) border border-(--warning-border) bg-(--warning-ghost) px-3 py-2.5">
+        <AlertTriangle size={16} className="text-(--warning) shrink-0 mt-0.5" />
+        <p className="text-xs text-(--base-08)">
+          Migrating copies files into the backend configured above, but Core keeps serving uploads and downloads
+          through the configuration it loaded at startup until it is restarted. Restart Core after migrating,
+          otherwise the migrated files will look like they disappeared even though nothing was deleted.
+        </p>
+      </div>
 
       {/* Migration result detail */}
       {migrateSummary && (
