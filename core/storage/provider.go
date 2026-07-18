@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // FileInfo represents a file or directory in the storage
@@ -17,7 +18,9 @@ type FileInfo struct {
 	Enabled bool   `json:"enabled"` // false when admin has disabled this path
 }
 
-// StorageProvider is the interface for all library storage backends
+// StorageProvider is the interface for all core-storage backends (library,
+// ticket attachments, ticket backups). Keys are forward-slash-separated and
+// provider-relative.
 type StorageProvider interface {
 	ListFiles(path string) ([]FileInfo, error)
 	GetFile(path string) (io.ReadCloser, error)
@@ -26,15 +29,42 @@ type StorageProvider interface {
 	// CopyToLocal copies a file/dir from storage to a local destination path.
 	// If the source is a .zip, it gets extracted into destPath.
 	CopyToLocal(srcPath, destPath string) error
-	// WriteFile stores an uploaded file into storage at the given path
+	// WriteFile stores an uploaded file into storage at the given path.
 	WriteFile(path string, content io.Reader) error
+	// DownloadURL returns a short-lived pre-signed GET URL when the backend
+	// supports it (S3). LocalProvider returns ("", nil) so the caller streams
+	// the bytes through Core instead of redirecting.
+	DownloadURL(key string, ttl time.Duration) (string, error)
 }
 
-// NewProvider creates a library StorageProvider. Only local storage is
-// implemented; storageType and opts are accepted for call-site stability and
-// future backends but every type currently resolves to LocalProvider.
-func NewProvider(storageType, basePath string, opts map[string]string) StorageProvider {
-	return &LocalProvider{BasePath: basePath}
+// Opt keys accepted by NewProvider for the "s3" backend.
+const (
+	OptS3Endpoint  = "endpoint"
+	OptS3Bucket    = "bucket"
+	OptS3Region    = "region"
+	OptS3AccessKey = "accessKey"
+	OptS3SecretKey = "secretKey"
+	OptS3PathStyle = "pathStyle"
+	OptS3Prefix    = "prefix"
+)
+
+// NewProvider builds a core StorageProvider. "" / "local" / "path" resolve to
+// LocalProvider (canonical name "path"; "local" kept for back-compat with the
+// legacy library_type value). "s3" builds an S3Provider (see s3provider.go).
+func NewProvider(storageType, basePath string, opts map[string]string) (StorageProvider, error) {
+	switch storageType {
+	case "", "local", "path":
+		return &LocalProvider{BasePath: basePath}, nil
+	case "s3":
+		return newS3ProviderFromOpts(opts)
+	default:
+		return nil, fmt.Errorf("storage: unknown provider %q", storageType)
+	}
+}
+
+// newS3ProviderFromOpts is a placeholder until the S3 backend lands (Task 2).
+func newS3ProviderFromOpts(_ map[string]string) (StorageProvider, error) {
+	return nil, fmt.Errorf("storage: s3 backend not available yet")
 }
 
 // ==========================================
@@ -146,6 +176,10 @@ func (p *LocalProvider) CopyToLocal(srcPath, destPath string) error {
 		return copyDir(safeSrc, destPath)
 	}
 	return copyFile(safeSrc, filepath.Join(destPath, info.Name()))
+}
+
+func (p *LocalProvider) DownloadURL(key string, ttl time.Duration) (string, error) {
+	return "", nil
 }
 
 // ==========================================

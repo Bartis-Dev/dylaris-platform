@@ -36,7 +36,11 @@ func buildProvider(state *AppState) storage.StorageProvider {
 	}
 
 	os.MkdirAll(libPath, 0755)
-	return storage.NewProvider(libType, libPath, nil)
+	p, err := storage.NewProvider(libType, libPath, nil)
+	if err != nil {
+		p = &storage.LocalProvider{BasePath: libPath}
+	}
+	return p
 }
 
 // RefreshProvider is called when the library settings are changed

@@ -38,7 +38,11 @@ func buildAttachmentProvider() storage.StorageProvider {
 	baseDir, _ := os.Getwd()
 	root := filepath.Join(baseDir, "dylaris_data", "ticket-attachments")
 	os.MkdirAll(root, 0755)
-	return storage.NewProvider("local", root, nil)
+	p, err := storage.NewProvider("path", root, nil)
+	if err != nil {
+		p = &storage.LocalProvider{BasePath: root}
+	}
+	return p
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
