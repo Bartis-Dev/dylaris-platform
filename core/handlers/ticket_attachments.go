@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -311,6 +312,40 @@ func sanitizeAttachmentFilename(in string) string {
 	return in
 }
 
+// attachmentUploadBody peeks the first 512 bytes of file for content-type
+// sniffing, then rewinds file back to the start so the FULL, untouched file
+// (start to finish) is what streams to storage - the sniff peek must never
+// consume bytes from what actually gets stored.
+//
+// body is file itself, not a wrapper: multipart.File is guaranteed to
+// implement io.Seeker, so rewinding keeps body just as seekable as file was
+// before the peek. Returning anything else here - notably an io.MultiReader
+// stitching head back together with the remainder of file - reintroduces the
+// bug this helper exists to prevent: S3Provider.WriteFile
+// (core/storage/s3provider.go) passes body straight through to the AWS SDK's
+// PutObject with no content length, and the SDK's checksum middleware
+// refuses an unseekable stream outright on a plain-HTTP endpoint - exactly
+// the documented self-hosted MinIO use case (http://minio:9000) - so every
+// attachment upload 500'd on such an install until this rewind-and-reuse fix
+// landed ("compute input header checksum failed, unseekable stream is not
+// supported without TLS and trailing checksum").
+func attachmentUploadBody(file multipart.File) (body io.Reader, head []byte, err error) {
+	buf := make([]byte, 512)
+	n, rerr := io.ReadFull(file, buf)
+	if rerr != nil && rerr != io.EOF && rerr != io.ErrUnexpectedEOF {
+		// A short file (fewer than 512 bytes) legitimately yields EOF or
+		// ErrUnexpectedEOF - that's fine, n still holds however many bytes
+		// were read. Any other error is a genuine read failure; continuing
+		// would sniff an empty/truncated head as text/plain and could let
+		// content through on zero observed bytes.
+		return nil, nil, fmt.Errorf("attachment upload peek read: %w", rerr)
+	}
+	if _, serr := file.Seek(0, io.SeekStart); serr != nil {
+		return nil, nil, fmt.Errorf("attachment upload seek to start: %w", serr)
+	}
+	return file, buf[:n], nil
+}
+
 // ── Endpoints ────────────────────────────────────────────────────────
 
 // UploadAttachment POST /api/tickets/{id}/attachments
@@ -383,43 +418,21 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		}
 	}
 
-	// Peek the first bytes for a content sniff, then rebuild the reader so the
-	// full file still streams to storage - the sniff peek must never consume
-	// bytes from what actually gets stored.
-	head := make([]byte, 512)
-	hn, err := io.ReadFull(file, head)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		// A short file (fewer than 512 bytes) legitimately yields EOF or
-		// ErrUnexpectedEOF - that's fine, hn still holds however many bytes
-		// were read. Any other error is a genuine read failure; continuing
-		// would sniff an empty/truncated head as text/plain and could let
-		// content through on zero observed bytes.
-		log.Printf("ticket-attachments: peek read for ticket %d failed: %v", t.ID, err)
+	// Peek the first bytes for a content sniff, then rewind so the full file
+	// still streams to storage untouched - see attachmentUploadBody's doc
+	// comment for why body must stay a rewound file, never an io.MultiReader
+	// stitched from head + file.
+	body, head, err := attachmentUploadBody(file)
+	if err != nil {
+		log.Printf("ticket-attachments: %v (ticket %d)", err, t.ID)
 		sendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
 		return
 	}
-	head = head[:hn]
 	sniffedMime, err := attachmentAllowed(filename, head)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
-
-	// Rewind instead of stitching head + file back together with
-	// io.MultiReader: multipart.File is guaranteed to implement io.Seeker, so
-	// seeking keeps body just as seekable as file was before the peek.
-	// S3Provider.WriteFile (core/storage/s3provider.go) passes this reader
-	// straight through to the AWS SDK's PutObject with no content length; the
-	// SDK's checksum middleware refuses an unseekable stream outright on a
-	// plain-HTTP endpoint, which is exactly the documented self-hosted MinIO
-	// use case (http://minio:9000) - an io.MultiReader here made every
-	// attachment upload 500 on such an install.
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		log.Printf("ticket-attachments: seek-to-start after peek failed for ticket %d: %v", t.ID, err)
-		sendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
-		return
-	}
-	var body io.Reader = file
 
 	// Optional AV scan: when a scanner is configured, spool to a temp file so
 	// the whole object can be scanned before it lands in storage. Disabled

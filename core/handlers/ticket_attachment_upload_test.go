@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -579,18 +580,130 @@ func TestDownloadAttachment_NoSniffHeader(t *testing.T) {
 	}
 }
 
-// NOTE: TestUploadAttachment_WriteFileReceivesSeekableReader (a regression
-// guard for the MinIO/S3-checksum-middleware 500 fixed alongside this
+// ── attachmentUploadBody: the seekable-reader regression guard ─────────
+//
+// TestUploadAttachment_WriteFileReceivesSeekableReader (a regression guard
+// for the MinIO/S3-checksum-middleware 500 fixed alongside the storage
 // cleanup, HEAD 66ef788) used to live here. It asserted, via a hand-written
 // seekAssertingProvider injected straight into TicketAttachmentsHandler's
 // provider field, that UploadAttachment hands WriteFile a seekable reader
 // (never an io.MultiReader stitched from the sniff-peeked head + the rest of
-// the stream). Change 3 removed that injectable field - the provider is now
-// resolved per-request from real config, which can only construct a real
-// *storage.LocalProvider or *storage.S3Provider, and neither one's observable
-// behavior differs based on the seekability of its input, so this invariant
-// is no longer testable at the handler level without reintroducing a fake
-// seam. The source code this test exercised (UploadAttachment's peek-then-
-// Seek-back logic) is UNCHANGED by this refactor, so the regression risk does
-// not reopen from this change, but the dedicated coverage is gone - see the
-// cleanup report for this trade-off.
+// the stream). A later cleanup (HEAD 2342880) removed that injectable field -
+// the provider is now resolved per-request from real config, which can only
+// construct a real *storage.LocalProvider or *storage.S3Provider, and
+// neither one's observable behavior differs based on the seekability of its
+// input, so the invariant is no longer testable at the handler level without
+// reintroducing a fake seam.
+//
+// The peek-then-Seek-back logic itself was extracted into the standalone
+// attachmentUploadBody helper (ticket_attachments.go) specifically so this
+// guard could come back without reintroducing that seam: the tests below
+// exercise the helper directly with a fake multipart.File, restoring the
+// regression coverage the deleted handler-level test used to provide.
+
+// fakeMultipartFile implements multipart.File (Read/ReadAt/Seek/Close) on top
+// of a bytes.Reader, giving attachmentUploadBody tests a controllable
+// seekable source without going through a real multipart parse. readErr, when
+// set, makes every Read call fail with that error instead of touching the
+// underlying bytes.Reader - used to prove a genuine read error is propagated
+// rather than swallowed. Distinct from every other fake in this package.
+type fakeMultipartFile struct {
+	*bytes.Reader
+	readErr error
+	closed  bool
+}
+
+func newFakeMultipartFile(content []byte) *fakeMultipartFile {
+	return &fakeMultipartFile{Reader: bytes.NewReader(content)}
+}
+
+func (f *fakeMultipartFile) Read(p []byte) (int, error) {
+	if f.readErr != nil {
+		return 0, f.readErr
+	}
+	return f.Reader.Read(p)
+}
+
+func (f *fakeMultipartFile) Close() error {
+	f.closed = true
+	return nil
+}
+
+// TestAttachmentUploadBody is the restored regression guard: it exercises
+// attachmentUploadBody directly (the helper UploadAttachment now delegates
+// to) instead of going through the full handler + a fake provider.
+func TestAttachmentUploadBody(t *testing.T) {
+	t.Run("returned body implements io.Seeker", func(t *testing.T) {
+		f := newFakeMultipartFile(pngBytes(600))
+		body, _, err := attachmentUploadBody(f)
+		if err != nil {
+			t.Fatalf("attachmentUploadBody: %v", err)
+		}
+		// This is the actual regression guard. aws-sdk-go-v2's checksum
+		// middleware refuses an unseekable stream outright on a plain-HTTP
+		// endpoint ("compute input header checksum failed, unseekable stream
+		// is not supported without TLS and trailing checksum") - the exact
+		// bug that made every ticket-attachment upload 500 against a
+		// self-hosted http://minio:9000 S3 backend. If body ever stops
+		// implementing io.Seeker (e.g. someone reintroduces an io.MultiReader
+		// stitched from head + file), that bug is back.
+		if _, ok := body.(io.Seeker); !ok {
+			t.Fatalf("attachmentUploadBody returned a %T that does not implement io.Seeker - this reopens the unseekable-stream-without-TLS S3 upload bug", body)
+		}
+	})
+
+	t.Run("full content round-trips byte for byte beyond the sniff window", func(t *testing.T) {
+		// Deliberately larger than the 512-byte peek so a truncation bug at
+		// either boundary (dropping the first 512 bytes, or the rest of the
+		// file) changes the observed content instead of looking accidentally
+		// correct - same rationale as TestUploadAttachment_ByteIntegrity, but
+		// exercised directly against the helper.
+		content := pngBytes(10_000)
+		f := newFakeMultipartFile(content)
+		body, head, err := attachmentUploadBody(f)
+		if err != nil {
+			t.Fatalf("attachmentUploadBody: %v", err)
+		}
+		if !bytes.Equal(head, content[:512]) {
+			t.Fatalf("head mismatch: got %d bytes, want the first 512 bytes of content", len(head))
+		}
+		got, err := io.ReadAll(body)
+		if err != nil {
+			t.Fatalf("ReadAll(body): %v", err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Fatalf("body content mismatch: got %d bytes, want %d bytes (len equal=%v)", len(got), len(content), len(got) == len(content))
+		}
+	})
+
+	t.Run("short file under the sniff window still works", func(t *testing.T) {
+		content := []byte("short file, well under 512 bytes\n")
+		f := newFakeMultipartFile(content)
+		body, head, err := attachmentUploadBody(f)
+		if err != nil {
+			t.Fatalf("attachmentUploadBody: %v", err)
+		}
+		if !bytes.Equal(head, content) {
+			t.Fatalf("head = %q, want %q", head, content)
+		}
+		got, err := io.ReadAll(body)
+		if err != nil {
+			t.Fatalf("ReadAll(body): %v", err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Fatalf("body = %q, want %q", got, content)
+		}
+	})
+
+	t.Run("genuine read error is propagated, not swallowed", func(t *testing.T) {
+		f := newFakeMultipartFile([]byte("irrelevant content"))
+		f.readErr = errors.New("disk on fire")
+		_, _, err := attachmentUploadBody(f)
+		if err == nil {
+			t.Fatal("attachmentUploadBody err = nil, want the propagated read error")
+		}
+		if !errors.Is(err, f.readErr) {
+			t.Fatalf("attachmentUploadBody err = %v, want it to wrap the underlying read error", err)
+		}
+	})
+}

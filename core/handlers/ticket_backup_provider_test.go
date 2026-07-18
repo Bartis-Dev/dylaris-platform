@@ -349,21 +349,64 @@ func TestListBackups_OrderingIsChronological(t *testing.T) {
 	}
 }
 
-// NOTE: TestListBackups_ProviderErrorSurfaces used to live here, pinning that
-// a provider-level failure (e.g. a broken destination) surfaces as a clear
-// 500 with success:false rather than a silent empty 200. Change 3 removed
-// the injectable provider field this used to fault-inject through; the
-// obvious portable replacement - creating a regular FILE at the exact path a
-// "path" backend would MkdirAll into, so os.ReadDir on it fails - does not
-// work on Windows: os.MkdirAll's error there is discarded (see
-// newStorageProviderForConfig's doc comment either way), but the subsequent
-// os.ReadDir on a file-blocked "directory" fails with ERROR_PATH_NOT_FOUND,
-// which Go's os package maps to the SAME fs.ErrNotExist sentinel as a
-// genuinely missing directory - and LocalProvider.ListFiles deliberately
-// treats fs.ErrNotExist as "empty list, no error" (a legitimate fresh-
-// subsystem case), so the forced failure is silently absorbed instead of
-// propagating. The handler's own error-surfacing code
-// (`if err != nil { sendJSONError(...) }`) is unchanged by this refactor.
+// newTicketBackupS3FailFastHandler builds a TicketMigrationHandler configured
+// against an s3 backend whose endpoint is a loopback port nothing listens on
+// (127.0.0.1:1 refuses the connection instantly - no DNS lookup, no
+// listener), so a provider call fails fast with a REAL network error through
+// the actual per-request resolution path (buildCoreStorageProvider ->
+// newStorageProviderForConfig -> S3Provider), rather than a hand-injected
+// fake. This replaces the "path" backend fault-injection this package used to
+// rely on for TestListBackups_ProviderErrorSurfaces /
+// TestDeleteBackup_ProviderErrorSurfaces: forcing a "path" backend failure by
+// blocking its directory with a regular file does not work on Windows (a
+// file-blocked "directory" fails os.MkdirAll/os.ReadDir with
+// ERROR_PATH_NOT_FOUND, which Go maps to the same fs.ErrNotExist sentinel as
+// a genuinely missing directory - and LocalProvider.ListFiles/DeletePath both
+// deliberately treat fs.ErrNotExist as "nothing there yet", so the forced
+// failure gets silently absorbed instead of propagating). An unreachable s3
+// endpoint has no such ambiguity: List/Delete over HTTP either succeeds or
+// returns a hard error, on every OS.
+//
+// Callers must call disableAWSRetries(t) first so the SDK's default
+// 3-attempt retry-with-backoff doesn't turn a sub-millisecond refused-
+// connection into a several-second test.
+func newTicketBackupS3FailFastHandler(t *testing.T) *TicketMigrationHandler {
+	t.Helper()
+	fs := &ticketBackupFakeStore{settings: map[string]string{
+		keyCoreStorageBackend:     "s3",
+		keyCoreStorageS3Endpoint:  "http://127.0.0.1:1",
+		keyCoreStorageS3Bucket:    "bucket1",
+		keyCoreStorageS3AccessKey: "key1",
+		keyCoreStorageS3SecretKey: "secret1",
+	}}
+	return &TicketMigrationHandler{state: &AppState{Store: fs}, tokens: make(map[string]*restoreToken)}
+}
+
+// TestListBackups_ProviderErrorSurfaces pins that a provider failure comes
+// back as a clear 500 with a non-empty, success:false body - never a silent
+// empty 200 that would make a broken backend look like "no backups exist
+// yet". See newTicketBackupS3FailFastHandler's doc comment for why this
+// drives the real s3 resolution path instead of a fault-injected fake.
+func TestListBackups_ProviderErrorSurfaces(t *testing.T) {
+	disableAWSRetries(t)
+	h := newTicketBackupS3FailFastHandler(t)
+
+	rw := httptest.NewRecorder()
+	h.ListBackups(rw, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
+	if rw.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (%s)", rw.Code, rw.Body.String())
+	}
+	if rw.Body.Len() == 0 {
+		t.Fatal("empty response body on a provider error")
+	}
+	var resp struct {
+		Success bool `json:"success"`
+	}
+	_ = json.Unmarshal(rw.Body.Bytes(), &resp)
+	if resp.Success {
+		t.Fatal("success=true on a provider error")
+	}
+}
 
 // ── DownloadBackup: redirect vs stream, and not-found ──
 
@@ -480,12 +523,28 @@ func TestDeleteBackup_Success(t *testing.T) {
 	}
 }
 
-// NOTE: TestDeleteBackup_ProviderErrorSurfaces used to live here. Same
-// Windows-portability issue as TestListBackups_ProviderErrorSurfaces above
-// (see that note) - additionally, os.RemoveAll (what LocalProvider.DeletePath
-// calls) treats ERROR_PATH_NOT_FOUND as "already gone" and returns nil, so a
-// file-blocked "directory" doesn't even surface as an error internally, let
-// alone reach the handler.
+// TestDeleteBackup_ProviderErrorSurfaces mirrors
+// TestListBackups_ProviderErrorSurfaces for the delete path - see
+// newTicketBackupS3FailFastHandler's doc comment for why an unreachable s3
+// endpoint replaces the original fault-injected provider fake here too (the
+// "path" backend equivalent is even less viable for delete specifically:
+// os.RemoveAll, what LocalProvider.DeletePath calls, treats
+// ERROR_PATH_NOT_FOUND as "already gone" and returns nil, so a file-blocked
+// "directory" would not even surface as an error internally, let alone reach
+// the handler).
+func TestDeleteBackup_ProviderErrorSurfaces(t *testing.T) {
+	disableAWSRetries(t)
+	h := newTicketBackupS3FailFastHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
+	rw := httptest.NewRecorder()
+	h.DeleteBackup(rw, req)
+
+	if rw.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (%s)", rw.Code, rw.Body.String())
+	}
+}
 
 // ── InitRestore: provider-backed existence probe ──
 
