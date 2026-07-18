@@ -35,9 +35,6 @@ type S3Provider struct {
 // newS3ProviderFromOpts builds an S3Provider by marshalling the opt map into a
 // backup.S3Config and reusing the existing backup.S3Storage client.
 func newS3ProviderFromOpts(opts map[string]string) (StorageProvider, error) {
-	if opts == nil {
-		opts = map[string]string{}
-	}
 	cfg := backup.S3Config{
 		Endpoint:        opts[OptS3Endpoint],
 		Region:          opts[OptS3Region],
@@ -81,6 +78,29 @@ func (p *S3Provider) listPrefix(reqPath string) string {
 	return k + "/"
 }
 
+// pathObjects returns exactly the objects that belong to reqPath: the object
+// at that exact key (if any), plus everything nested under it as a directory.
+// It deliberately excludes siblings whose key merely starts with the same
+// string - a bare-prefix List(ctx, p.key(reqPath)) would otherwise also match
+// e.g. "world_nether/level.dat" when reqPath is "world", since S3
+// ListObjectsV2 prefix matching (and the fake) is plain string-prefix
+// matching, not directory-boundary-aware.
+func (p *S3Provider) pathObjects(ctx context.Context, reqPath string) ([]backup.Object, error) {
+	k := p.key(reqPath)
+	dirPfx := p.listPrefix(reqPath)
+	all, err := p.os.List(ctx, k)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]backup.Object, 0, len(all))
+	for _, o := range all {
+		if o.Key == k || strings.HasPrefix(o.Key, dirPfx) {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
 func (p *S3Provider) WriteFile(path string, content io.Reader) error {
 	return p.os.Put(context.Background(), p.key(path), content, 0)
 }
@@ -90,9 +110,10 @@ func (p *S3Provider) GetFile(path string) (io.ReadCloser, error) {
 }
 
 func (p *S3Provider) DeletePath(path string) error {
-	// Delete the object at the key AND every object under it (dir semantics).
+	// Delete the object at the key AND every object under it (dir semantics),
+	// never a sibling whose name merely starts with the same string.
 	ctx := context.Background()
-	objs, err := p.os.List(ctx, p.key(path))
+	objs, err := p.pathObjects(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -165,9 +186,10 @@ func (p *S3Provider) CopyToLocal(srcPath, destPath string) error {
 		tmp.Close()
 		return extractZip(tmp.Name(), destPath)
 	}
-	// Non-zip: copy every object under the source prefix into destPath,
-	// preserving the relative layout.
-	objs, err := p.os.List(ctx, p.key(srcPath))
+	// Non-zip: copy every object at the exact key or nested under it into
+	// destPath, preserving the relative layout, never a sibling whose name
+	// merely starts with the same string.
+	objs, err := p.pathObjects(ctx, srcPath)
 	if err != nil {
 		return err
 	}
@@ -181,7 +203,7 @@ func (p *S3Provider) CopyToLocal(srcPath, destPath string) error {
 	for _, o := range objs {
 		rel := strings.TrimPrefix(strings.TrimPrefix(o.Key, base), "/")
 		if rel == "" {
-			rel = filepath.Base(o.Key)
+			rel = path.Base(o.Key)
 		}
 		dst := filepath.Join(destPath, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {

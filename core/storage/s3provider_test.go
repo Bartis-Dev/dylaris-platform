@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -134,6 +136,107 @@ func TestS3Provider_CreateDirIsNoop(t *testing.T) {
 func TestNewProvider_S3RequiresBucket(t *testing.T) {
 	if _, err := NewProvider("s3", "", map[string]string{OptS3AccessKey: "k", OptS3SecretKey: "s"}); err == nil {
 		t.Fatal("NewProvider s3 without bucket err = nil, want error")
+	}
+}
+
+// TestS3Provider_DeletePath_DoesNotDeleteSiblingsWithSharedPrefix is a
+// regression test for a real S3-confirmed data-loss bug: listing with a bare
+// key prefix (no trailing slash) matches sibling keys too, e.g. prefix
+// "library/world" also matches "library/world_nether/level.dat" - a normal
+// Minecraft layout. DeletePath must delete the exact key and everything
+// nested under it as a directory, and nothing else.
+func TestS3Provider_DeletePath_DoesNotDeleteSiblingsWithSharedPrefix(t *testing.T) {
+	tests := []struct {
+		name       string
+		deletePath string
+		wantGone   []string
+		wantKeep   []string
+	}{
+		{
+			name:       "directory delete does not remove a sibling directory sharing a string prefix",
+			deletePath: "world",
+			wantGone:   []string{"library/world/level.dat"},
+			wantKeep:   []string{"library/world_nether/level.dat", "library/readme.txt"},
+		},
+		{
+			name:       "exact file key delete removes only that key",
+			deletePath: "readme.txt",
+			wantGone:   []string{"library/readme.txt"},
+			wantKeep:   []string{"library/world/level.dat", "library/world_nether/level.dat"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fos := newFakeObjectStore()
+			p := &S3Provider{os: fos, prefix: "library"}
+			if err := p.WriteFile("world/level.dat", strings.NewReader("w")); err != nil {
+				t.Fatalf("seed world/level.dat: %v", err)
+			}
+			if err := p.WriteFile("world_nether/level.dat", strings.NewReader("n")); err != nil {
+				t.Fatalf("seed world_nether/level.dat: %v", err)
+			}
+			if err := p.WriteFile("readme.txt", strings.NewReader("r")); err != nil {
+				t.Fatalf("seed readme.txt: %v", err)
+			}
+
+			if err := p.DeletePath(tt.deletePath); err != nil {
+				t.Fatalf("DeletePath(%q): %v", tt.deletePath, err)
+			}
+
+			for _, k := range tt.wantGone {
+				if _, ok := fos.m[k]; ok {
+					t.Errorf("key %q still present after DeletePath(%q), want deleted", k, tt.deletePath)
+				}
+			}
+			for _, k := range tt.wantKeep {
+				if _, ok := fos.m[k]; !ok {
+					t.Errorf("key %q missing after DeletePath(%q), want kept (sibling must survive)", k, tt.deletePath)
+				}
+			}
+		})
+	}
+}
+
+// TestS3Provider_CopyToLocal_NonZipDirectory_DoesNotCopySiblingPrefix covers
+// the non-zip directory branch of CopyToLocal: it must copy only the objects
+// under the source prefix, never a sibling whose key merely starts with the
+// same string (e.g. "mods" must not also pull in "modsBackup/x.jar").
+func TestS3Provider_CopyToLocal_NonZipDirectory_DoesNotCopySiblingPrefix(t *testing.T) {
+	fos := newFakeObjectStore()
+	p := &S3Provider{os: fos, prefix: "library"}
+	seed := map[string]string{
+		"mods/a.jar":       "a-content",
+		"mods/b.jar":       "b-content",
+		"modsBackup/x.jar": "x-content",
+	}
+	for k, v := range seed {
+		if err := p.WriteFile(k, strings.NewReader(v)); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	dst := t.TempDir()
+	if err := p.CopyToLocal("mods", dst); err != nil {
+		t.Fatalf("CopyToLocal: %v", err)
+	}
+
+	for _, name := range []string{"a.jar", "b.jar"} {
+		got, err := os.ReadFile(filepath.Join(dst, name))
+		if err != nil {
+			t.Fatalf("read copied %s: %v", name, err)
+		}
+		want := seed["mods/"+name]
+		if string(got) != want {
+			t.Errorf("%s content = %q, want %q", name, got, want)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "x.jar")); !os.IsNotExist(err) {
+		t.Errorf("modsBackup/x.jar leaked into CopyToLocal(\"mods\", ...) output, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "modsBackup")); !os.IsNotExist(err) {
+		t.Errorf("modsBackup directory unexpectedly created in CopyToLocal(\"mods\", ...) output")
 	}
 }
 
