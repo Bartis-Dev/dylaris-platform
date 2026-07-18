@@ -109,6 +109,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/me/regions":             true, // authed; own region assignment
 	"/api/me/security-questions":  true, // authed; own security questions
 	"/api/me/beam-channel":        true, // authed; own Beam update-channel pref
+	"/api/me/updates-seen":        true, // authed; own update-feed badge marker
 	"/api/me/servers/via-tickets": true, // authed; own tickets sidebar
 
 	// Sessions helpers: SSE ticket mint, SSE stream, platform-wide feature flags.
@@ -200,6 +201,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/notifications/unread-count":     true, // authed; own inbox
 	"/api/notifications/{id:[0-9]+}/read": true, // authed; own inbox
 	"/api/notifications/read-all":         true, // authed; own inbox
+
+	// In-panel update feed: admin-only, gated in-handler via IsAdmin.
+	"/api/updates": true, // authed; admin-only in-handler (IsAdmin)
 }
 
 // InHandlerAuthzRoutes are routes whose scope object is NOT a path {id}/{uuid}

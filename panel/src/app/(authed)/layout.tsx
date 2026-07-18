@@ -7,6 +7,7 @@ import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import { getSetupStatus } from '@/lib/api/setup';
 import Navbar from '@/components/Navbar';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
+import UpdatesBell from '@/components/UpdatesBell';
 import ProfilePopup from '@/components/ProfilePopup';
 import MaintenanceBanner from '@/components/MaintenanceBanner';
 import BillingBanner from '@/components/BillingBanner';
@@ -76,6 +77,8 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 <Navbar>
                     <CoreRegionChip />
                     <UploadManagerWidget />
+                    {/* UpdatesBell self-gates to admins only (regular users never see it). */}
+                    <UpdatesBell />
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
                         regular users see only their inbox. */}

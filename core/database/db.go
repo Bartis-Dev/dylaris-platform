@@ -178,6 +178,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyBeamChannelSchema(db); err != nil {
 		return err
 	}
+	if err := applyUpdatesSeenSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

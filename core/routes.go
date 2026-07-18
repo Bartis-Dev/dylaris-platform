@@ -450,6 +450,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret)
+	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesFeedURLPlatform, appState.UpdatesFeedURLGateway)
 	backupHandler := handlers.NewBackupHandler(appState)
 	regionsHandler := handlers.NewRegionsHandler(appState)
 	userRegionsHandler := handlers.NewUserRegionsHandler(appState)
@@ -1311,6 +1312,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Caller's own Beam update-channel preference (own data, authed-exempt).
 	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.GetMyBeamChannel)).Methods("GET")
 	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.SetMyBeamChannel)).Methods("PUT")
+
+	// --- In-panel update feed (admin-only "what's new" bell) ---
+	// GET /updates is admin-only, gated in-handler via IsAdmin (authed-exempt).
+	// PUT /me/updates-seen clears the caller's own badge (own data).
+	api.HandleFunc("/updates", authHandler.AuthMiddleware(updatesHandler.GetUpdates)).Methods("GET")
+	api.HandleFunc("/me/updates-seen", authHandler.AuthMiddleware(updatesHandler.MarkUpdatesSeen)).Methods("PUT")
 
 	// --- Backup Endpoints ---
 	// backup-storages are platform-shared storage-provider configs -> PANEL

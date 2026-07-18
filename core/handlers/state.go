@@ -112,6 +112,12 @@ type AppState struct {
 	// refuse unless this is true, because a same-origin public share is the C1
 	// cross-tenant token-theft vector. InDashboard is NOT gated by it.
 	TabProxyIsolationActive bool
+
+	// UpdatesFeedURLPlatform / UpdatesFeedURLGateway mirror config: the public raw
+	// URLs the admin update-feed bell fetches (platform always; gateway only when
+	// gateway routing is enabled). An empty gateway URL keeps the gateway feed off.
+	UpdatesFeedURLPlatform string
+	UpdatesFeedURLGateway  string
 }
 
 // AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.

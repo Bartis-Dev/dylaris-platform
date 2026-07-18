@@ -105,6 +105,15 @@ type Config struct {
 	// FRONTEND_URL. Gates the public-share mint/serve refusal (Core) and drives
 	// the panel's absolute-vs-relative iframe src choice.
 	TabProxyIsolationActive bool
+
+	// UpdatesFeedURLPlatform / UpdatesFeedURLGateway are the PUBLIC raw URLs of
+	// the append-only JSONL update feeds the admin "what's new" bell diffs against
+	// the build-baked baseline. Platform defaults to its own public-repo raw feed;
+	// gateway is empty until the private gateway feed is cross-pushed into the
+	// public platform repo (owner infra). Both fail open when unset or unreachable
+	// (the bell simply shows no updates).
+	UpdatesFeedURLPlatform string
+	UpdatesFeedURLGateway  string
 }
 
 func LoadConfig() (Config, error) {
@@ -191,6 +200,12 @@ func LoadConfig() (Config, error) {
 		TabProxyPort:            tabProxyPort,
 		TabProxyOrigin:          tabProxyOrigin,
 		TabProxyIsolationActive: tabProxyIsolationActive,
+
+		// Platform defaults to its own public repo's raw feed (works once the repo
+		// is public + the feed is populated); gateway stays empty until the feed is
+		// cross-pushed there. Override both via env for a self-hosted mirror.
+		UpdatesFeedURLPlatform: getEnv("UPDATES_FEED_URL_PLATFORM", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/feed.jsonl"),
+		UpdatesFeedURLGateway:  getEnv("UPDATES_FEED_URL_GATEWAY", ""),
 	}
 
 	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET

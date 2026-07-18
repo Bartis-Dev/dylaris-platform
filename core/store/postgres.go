@@ -353,6 +353,37 @@ func (s *PostgresStore) SetUserBeamChannel(userID, channel string) error {
 	return nil
 }
 
+// GetUserUpdatesSeen returns the caller's acknowledged update-feed counts for
+// the platform and gateway feeds (the navbar bell badge marker). Missing/legacy
+// rows default to 0 via COALESCE.
+func (s *PostgresStore) GetUserUpdatesSeen(userID string) (int, int, error) {
+	var platform, gateway int
+	err := s.db.QueryRow(
+		`SELECT COALESCE(updates_seen_platform, 0), COALESCE(updates_seen_gateway, 0) FROM users WHERE id = $1`,
+		userID,
+	).Scan(&platform, &gateway)
+	if err != nil {
+		return 0, 0, err
+	}
+	return platform, gateway, nil
+}
+
+// SetUserUpdatesSeen stores the caller's acknowledged update-feed counts.
+// Returns "user not found" when no row was touched.
+func (s *PostgresStore) SetUserUpdatesSeen(userID string, platform, gateway int) error {
+	res, err := s.db.Exec(
+		`UPDATE users SET updates_seen_platform = $1, updates_seen_gateway = $2 WHERE id = $3`,
+		platform, gateway, userID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
 // ==========================================
 // NODES
 // ==========================================

@@ -160,6 +160,8 @@ func main() {
 		StoreURL:            cfg.StoreURL,
 		StoreSharedKey:      cfg.StoreSharedKey,
 		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
+		UpdatesFeedURLPlatform:  cfg.UpdatesFeedURLPlatform,
+		UpdatesFeedURLGateway:   cfg.UpdatesFeedURLGateway,
 	}
 
 	// Demo showcase read access flows through the resolver so the RequireCap

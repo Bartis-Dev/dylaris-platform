@@ -604,6 +604,11 @@ type Store interface {
 	GetUserBeamChannel(userID string) (string, error)
 	SetUserBeamChannel(userID, channel string) error
 
+	// In-panel update feed: per-user acknowledged feed counts (platform,
+	// gateway) so the navbar bell badge clears. Missing/legacy rows default to 0.
+	GetUserUpdatesSeen(userID string) (platform int, gateway int, err error)
+	SetUserUpdatesSeen(userID string, platform, gateway int) error
+
 	// --- Setup wizard ---
 	// CountUsers is declared above in the Users block; only CountAdmins is new.
 	CountAdmins() (int, error)
