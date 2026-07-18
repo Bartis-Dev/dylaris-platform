@@ -686,7 +686,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 
 	// Block start/restart when disk quota is full
 	if srv.Status == "disk_full" && (req.Action == "start" || req.Action == "restart") {
-		sendJSONError(w, "Server kann nicht gestartet werden — Speicherlimit erreicht. Dateien loeschen oder Limit erhoehen.", 400)
+		sendJSONError(w, "Server cannot start - storage limit reached. Delete files or raise the limit.", 400)
 		return
 	}
 

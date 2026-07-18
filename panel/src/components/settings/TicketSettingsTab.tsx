@@ -150,8 +150,8 @@ export default function TicketSettingsTab() {
                     is stamped in the audit log. */}
                 <div className="pt-4 border-t border-(--base-03) space-y-3">
                     <Toggle
-                        label="Ticket-Löschung erlauben"
-                        description="Wenn aktiviert können Admins Tickets unwiderruflich löschen. Audit-Eintrag bleibt erhalten."
+                        label="Allow ticket deletion"
+                        description="When enabled, admins can permanently delete tickets. The audit entry is preserved."
                         value={s.deletionEnabled}
                         onChange={v => setS({ ...s, deletionEnabled: v })}
                     />

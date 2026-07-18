@@ -164,7 +164,7 @@ export function DiskAnalysisPanel({
                     {data.nodeOnline === false && (
                         <div className="alert alert-warning text-(--warning) text-xs">
                             <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                            <span>Node ist offline / kein Heartbeat — DB-Leichen können nicht zuverlässig erkannt werden.</span>
+                            <span>Node is offline / no heartbeat - DB orphans cannot be reliably detected.</span>
                         </div>
                     )}
 
@@ -186,7 +186,7 @@ export function DiskAnalysisPanel({
                                             className="flex items-center gap-1.5 text-[11px] text-(--error-light) hover:bg-(--error-ghost) px-2 py-1 rounded transition-colors ml-3 shrink-0"
                                         >
                                             {deletingDbId === m.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                                            Aus DB entfernen
+                                            Remove from DB
                                         </button>
                                     </div>
                                 ))}

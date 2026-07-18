@@ -552,9 +552,9 @@ export default function TicketDetailPage() {
                                 <Trash2 size={18} className="text-(--error-light)" />
                             </div>
                             <div className="min-w-0">
-                                <h2 className="text-base font-display font-bold text-(--base-09)">Ticket löschen?</h2>
+                                <h2 className="text-base font-display font-bold text-(--base-09)">Delete ticket?</h2>
                                 <p className="text-sm text-(--base-06) mt-1">
-                                    Ticket <span className="font-mono">#{ticket.id}</span> — <span className="text-(--base-09)">&ldquo;{ticket.title}&rdquo;</span> wird unwiderruflich gelöscht. Diese Aktion wird im Audit-Log festgehalten.
+                                    Ticket <span className="font-mono">#{ticket.id}</span> - <span className="text-(--base-09)">&ldquo;{ticket.title}&rdquo;</span> will be permanently deleted. This action is recorded in the audit log.
                                 </p>
                             </div>
                         </div>
@@ -565,7 +565,7 @@ export default function TicketDetailPage() {
                                 disabled={deleting}
                                 className="btn btn-secondary btn-sm"
                             >
-                                Abbrechen
+                                Cancel
                             </button>
                             <button
                                 type="button"
@@ -574,7 +574,7 @@ export default function TicketDetailPage() {
                                 className="btn btn-sm inline-flex items-center gap-1.5 bg-(--error) text-white border border-(--error) hover:bg-(--error)/85 disabled:opacity-50"
                             >
                                 {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                                {deleting ? 'Lösche…' : 'Endgültig löschen'}
+                                {deleting ? 'Deleting...' : 'Delete permanently'}
                             </button>
                         </div>
                     </div>

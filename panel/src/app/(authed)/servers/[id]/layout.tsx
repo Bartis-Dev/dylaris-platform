@@ -560,7 +560,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             {isDiskFull && (
                                 <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) border border-(--error-border) text-(--error-light) text-xs font-semibold">
                                     <HardDrive size={14} />
-                                    Speicher voll
+                                    Storage full
                                 </span>
                             )}
                             {cooldownSecondsLeft > 0 && (
@@ -589,7 +589,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                         ? 'bg-(--success) text-white border-(--success) hover:bg-(--success-light)'
                                         : 'bg-(--success-ghost) text-(--success-light) border-(--success)/15 hover:bg-(--success)/15'
                                 }`}
-                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Speicher voll — Dateien loeschen oder Limit erhoehen' : canPower ? 'Start server' : 'No permission'}
+                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Storage full - delete files or raise the limit' : canPower ? 'Start server' : 'No permission'}
                             >
                                 <Play size={16} />
                                 <span className="text-xs font-semibold">Start</span>
@@ -598,7 +598,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 onClick={() => handlePower('restart')}
                                 disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--warning-ghost) hover:bg-(--warning)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--warning)/15"
-                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Speicher voll' : canPower ? 'Restart server' : 'No permission'}
+                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Storage full' : canPower ? 'Restart server' : 'No permission'}
                             >
                                 <RotateCcw size={16} className="text-(--warning)" />
                                 <span className="text-xs font-semibold text-(--warning)">Restart</span>

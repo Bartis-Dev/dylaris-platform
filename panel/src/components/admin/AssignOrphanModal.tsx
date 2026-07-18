@@ -82,29 +82,29 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
         // Client-side validation
         if (!name.trim()) {
-            setError('Name darf nicht leer sein.');
+            setError('Name must not be empty.');
             return;
         }
         if (ownerMode === 'existing' && selectedUserId === '') {
-            setError('Bitte einen bestehenden User auswählen.');
+            setError('Please select an existing user.');
             return;
         }
         if (ownerMode === 'new') {
             if (!newUsername.trim()) {
-                setError('Benutzername darf nicht leer sein.');
+                setError('Username must not be empty.');
                 return;
             }
             if (!newPassword.trim()) {
-                setError('Passwort darf nicht leer sein.');
+                setError('Password must not be empty.');
                 return;
             }
         }
         if (!memoryMb || memoryMb <= 0) {
-            setError('Memory muss größer als 0 sein.');
+            setError('Memory must be greater than 0.');
             return;
         }
         if (cpuLimit === '' || cpuLimit < 0) {
-            setError('CPU-Limit muss eine gültige Zahl sein.');
+            setError('CPU limit must be a valid number.');
             return;
         }
 
@@ -128,7 +128,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
             onAssigned();
             onClose();
         } else {
-            setError(res.message ?? 'Zuweisung fehlgeschlagen.');
+            setError(res.message ?? 'Assignment failed.');
         }
     };
 
@@ -140,7 +140,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                     <div>
                         <h3 className="modal-title flex items-center gap-2">
                             <UserPlus size={17} className="text-(--accent-light)" />
-                            Orphan zuweisen
+                            Assign orphan
                         </h3>
                         <p className="font-mono text-[11px] text-(--base-05) mt-1 break-all">{uuid}</p>
                     </div>
@@ -164,7 +164,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                     : 'border-transparent text-(--base-06) hover:text-(--base-08)'
                             }`}
                         >
-                            {tab === 'assign' ? 'Zuweisen' : 'Dateien'}
+                            {tab === 'assign' ? 'Assign' : 'Files'}
                         </button>
                     ))}
                 </div>
@@ -191,13 +191,13 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                     className="input-field w-full"
                                     value={name}
                                     onChange={e => setName(e.target.value)}
-                                    placeholder="Server-Name"
+                                    placeholder="Server name"
                                 />
                             </div>
 
                             {/* Owner mode toggle */}
                             <div>
-                                <label className="mono-label mb-1.5 block">Eigentümer</label>
+                                <label className="mono-label mb-1.5 block">Owner</label>
                                 <div className="flex rounded-md border border-(--base-03) overflow-hidden mb-3">
                                     <button
                                         type="button"
@@ -209,7 +209,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         }`}
                                     >
                                         <User size={12} />
-                                        Bestehender User
+                                        Existing user
                                     </button>
                                     <button
                                         type="button"
@@ -221,7 +221,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         }`}
                                     >
                                         <UserPlus size={12} />
-                                        Neuer User
+                                        New user
                                     </button>
                                 </div>
 
@@ -230,7 +230,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         <Skeleton className="h-9 w-full rounded" />
                                     ) : usersError ? (
                                         <div className="alert alert-error text-sm">
-                                            Benutzer konnten nicht geladen werden.
+                                            Failed to load users.
                                         </div>
                                     ) : (
                                         <select
@@ -239,7 +239,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                             onChange={e => setSelectedUserId(e.target.value)}
                                         >
                                             {users.length === 0 && (
-                                                <option value="">— Keine Benutzer gefunden —</option>
+                                                <option value="">- No users found -</option>
                                             )}
                                             {users.map(u => (
                                                 <option key={u.id} value={u.id}>
@@ -253,7 +253,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         <input
                                             type="text"
                                             className="input-field w-full"
-                                            placeholder="Benutzername"
+                                            placeholder="Username"
                                             value={newUsername}
                                             onChange={e => setNewUsername(e.target.value)}
                                             autoComplete="off"
@@ -261,7 +261,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                         <input
                                             type="password"
                                             className="input-field w-full"
-                                            placeholder="Passwort"
+                                            placeholder="Password"
                                             value={newPassword}
                                             onChange={e => setNewPassword(e.target.value)}
                                             autoComplete="new-password"
@@ -285,7 +285,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                     />
                                 </div>
                                 <div>
-                                    <label className="mono-label mb-1.5 block">CPU-Limit</label>
+                                    <label className="mono-label mb-1.5 block">CPU limit</label>
                                     <input
                                         type="number"
                                         className="input-field w-full"
@@ -306,7 +306,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                 className="btn btn-secondary"
                                 disabled={submitting}
                             >
-                                Abbrechen
+                                Cancel
                             </button>
                             <button
                                 type="button"
@@ -315,7 +315,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                 className="btn btn-primary disabled:opacity-40 inline-flex items-center gap-1.5"
                             >
                                 {submitting && <Loader2 size={13} className="animate-spin" />}
-                                Zuweisen
+                                Assign
                             </button>
                         </div>
                     </>

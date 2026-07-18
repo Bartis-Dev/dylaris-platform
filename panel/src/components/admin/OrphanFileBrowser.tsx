@@ -61,7 +61,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
       });
       setEntries(sorted);
     } else {
-      setListError(res.message ?? 'Verzeichnis konnte nicht geladen werden.');
+      setListError(res.message ?? 'Failed to load directory.');
     }
   }, [nodeId, uuid]);
 
@@ -94,7 +94,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
     if (res.success && typeof res.content === 'string') {
       setFileContent(res.content);
     } else {
-      setFileError(res.message ?? 'Datei konnte nicht geladen werden.');
+      setFileError(res.message ?? 'Failed to load file.');
     }
   };
 
@@ -116,7 +116,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
           <button
             onClick={closeFile}
             className="p-1 rounded hover:bg-(--base-03) text-(--base-06) shrink-0"
-            title="Zurück zur Verzeichnisliste"
+            title="Back to directory list"
           >
             <ArrowLeft size={14} />
           </button>
@@ -134,11 +134,11 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
             <div className="alert alert-error text-sm">{fileError}</div>
           ) : looksLikeBinary(fileContent) ? (
             <div className="text-xs text-(--base-05) italic px-1">
-              Binärdatei — Inhalt wird nicht angezeigt.
+              Binary file - content not shown.
             </div>
           ) : (
             <pre className="bg-(--base-01) border border-(--base-03) rounded-(--radius-md) p-3 text-[11px] font-mono text-(--base-07) overflow-auto max-h-72 whitespace-pre-wrap break-words leading-relaxed">
-              {fileContent || <span className="text-(--base-05) italic">(leere Datei)</span>}
+              {fileContent || <span className="text-(--base-05) italic">(empty file)</span>}
             </pre>
           )}
         </div>
@@ -202,7 +202,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
           {/* Entries */}
           {entries.length === 0 && !listError && !listLoading ? (
             <div className="px-3 py-4 text-xs text-(--base-05) italic text-center">
-              Verzeichnis ist leer.
+              Directory is empty.
             </div>
           ) : (
             entries.map((entry, idx) => (

@@ -28,11 +28,10 @@ const defaultBeamManifestURL = "https://github.com/Bartis-Dev/dylaris-platform/r
 // duplicate across the two modules (beam/app is a separate go.work member and
 // cannot be imported here).
 //
-// PLACEHOLDER - OWNER REPLACE (in BOTH files): run
-// `go run ./cmd/beam-release keygen` once from platform/beam/app, keep the printed
-// private seed in the CI secret BEAM_UPDATE_PRIVKEY, and paste the printed public
-// key here AND in beam/app/update_pubkey.go. While this stays the placeholder,
-// no real release signature matches it, so auto min-version resolves to ""
+// This is the REAL signing key; the matching private seed lives only in the CI
+// secret BEAM_UPDATE_PRIVKEY (generated once via `go run ./cmd/beam-release
+// keygen` from platform/beam/app). If this value is emptied or drifts from the
+// app's copy, no release signature matches, so auto min-version resolves to ""
 // (gate off). Fail-OPEN on the floor is deliberate: an unverifiable manifest must
 // never be trusted to raise the floor and lock every client out.
 const beamUpdatePublicKeyB64 = "5WS1g2Ushib55CKq7duxHJlcJKIwD7L3wYdA6coTiA4="

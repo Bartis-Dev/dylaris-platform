@@ -104,7 +104,7 @@ export default function TicketDeletionLogPage() {
                     className="flex items-end gap-3 flex-wrap"
                 >
                     <div className="flex flex-col gap-[5px] min-w-72">
-                        <label className="mono-label">Gelöscht von (Admin-UUID)</label>
+                        <label className="mono-label">Deleted by (admin UUID)</label>
                         <input
                             type="text"
                             value={deletedByFilter}
@@ -120,7 +120,7 @@ export default function TicketDeletionLogPage() {
                             onClick={() => { setDeletedByFilter(''); setCommittedFilter(''); }}
                             className="btn btn-secondary btn-sm"
                         >
-                            Zurücksetzen
+                            Reset
                         </button>
                     )}
                 </form>
@@ -141,7 +141,7 @@ export default function TicketDeletionLogPage() {
                     </div>
                 ) : rows.length === 0 ? (
                     <div className="p-10 text-center text-sm text-(--base-06)">
-                        Keine Löschungen erfasst{committedFilter ? ' (für diesen Filter)' : ''}.
+                        No deletions recorded{committedFilter ? ' (for this filter)' : ''}.
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -152,7 +152,7 @@ export default function TicketDeletionLogPage() {
                                     <th className="text-left px-4 py-2 font-mono">Ticket</th>
                                     <th className="text-left px-4 py-2 font-mono">Subject</th>
                                     <th className="text-left px-4 py-2 font-mono">Owner</th>
-                                    <th className="text-left px-4 py-2 font-mono">Gelöscht von</th>
+                                    <th className="text-left px-4 py-2 font-mono">Deleted by</th>
                                     <th className="text-left px-4 py-2 font-mono">IP</th>
                                 </tr>
                             </thead>

@@ -263,8 +263,8 @@ func TestServerPowerHandler_DiskFull(t *testing.T) {
 		wantStatus int
 		wantMsg    string
 	}{
-		{"start", http.StatusBadRequest, "Server kann nicht gestartet werden — Speicherlimit erreicht. Dateien loeschen oder Limit erhoehen."},
-		{"restart", http.StatusBadRequest, "Server kann nicht gestartet werden — Speicherlimit erreicht. Dateien loeschen oder Limit erhoehen."},
+		{"start", http.StatusBadRequest, "Server cannot start - storage limit reached. Delete files or raise the limit."},
+		{"restart", http.StatusBadRequest, "Server cannot start - storage limit reached. Delete files or raise the limit."},
 		{"stop", http.StatusConflict, "Server is not running"},
 		{"kill", http.StatusConflict, "Server is not running"},
 	}
