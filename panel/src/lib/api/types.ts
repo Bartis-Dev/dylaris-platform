@@ -169,16 +169,6 @@ export interface SftpCredentials {
     path: string;
 }
 
-export interface LibrarySettings {
-    type: string;
-    path: string;
-    s3Endpoint?: string;
-    s3Bucket?: string;
-    s3Region?: string;
-    s3AccessKey?: string;
-    s3SecretKey?: string;
-}
-
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     const token = localStorage.getItem('token');
     const headers = {
@@ -486,9 +476,10 @@ export const deleteLibraryPath = (path: string) => fetchAPI('/library/delete', {
 export const createLibraryDir = (path: string) => fetchAPI('/library/mkdir', { method: 'POST', body: JSON.stringify({ path }) });
 export const toggleLibraryPath = (path: string, enabled: boolean) =>
     fetchAPI('/library/toggle', { method: 'POST', body: JSON.stringify({ path, enabled }) });
-export const getLibrarySettings = () => fetchAPI('/settings/library');
-export const saveLibrarySettings = (data: LibrarySettings) => fetchAPI('/settings/library', { method: 'POST', body: JSON.stringify(data) });
-export const testLibraryConnection = () => fetchAPI('/settings/library/test');
+// Library storage backend (path/s3) config now lives at Settings -> Core
+// Storage (@/lib/api/coreStorage) - the old /settings/library CRUD + test
+// endpoints were dead (Library reads its provider from the shared Core file
+// storage config) and have been removed on both sides.
 
 // --- FILE MANAGER SETTINGS ---
 export interface FileManagerSettings {

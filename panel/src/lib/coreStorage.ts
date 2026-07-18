@@ -1,0 +1,122 @@
+// Pure, framework-free logic for the Core file storage settings form so it can
+// be unit-tested without React. The panel mirrors the backend validator: a path
+// backend needs an absolute, operator-confirmed path; an s3 backend needs a
+// bucket, access key and a secret (fresh input OR one already stored server-side).
+
+export interface CoreStorageConfig {
+  backend: 'path' | 's3';
+  path: string;
+  pathConfirmed: boolean;
+  s3Endpoint: string;
+  s3Bucket: string;
+  s3Region: string;
+  s3AccessKey: string;
+  s3SecretKey?: string;
+  s3PathStyle: boolean;
+  s3Prefix: string;
+  s3SecretSet?: boolean;
+}
+
+// isAbsolutePath accepts POSIX ("/mnt/x") and Windows ("C:\\x") absolute paths,
+// matching what filepath.IsAbs enforces on the server.
+export function isAbsolutePath(p: string): boolean {
+  if (!p) return false;
+  if (p.startsWith('/')) return true;
+  return /^[A-Za-z]:[\\/]/.test(p);
+}
+
+export function canSaveCoreStorage(c: CoreStorageConfig): boolean {
+  if (c.backend === 'path') {
+    return isAbsolutePath(c.path.trim()) && c.pathConfirmed === true;
+  }
+  if (c.backend === 's3') {
+    const hasSecret = (c.s3SecretKey ?? '').length > 0 || c.s3SecretSet === true;
+    return c.s3Bucket.trim().length > 0 && c.s3AccessKey.trim().length > 0 && hasSecret;
+  }
+  return false;
+}
+
+// s3IdentityChanged reports whether the endpoint/bucket/access key differ from
+// the last-saved snapshot. Mirrors the backend's mergeCoreStorageCandidate
+// identity check (core/handlers/core_storage.go): changing any of these while
+// leaving the secret blank makes the backend refuse the save/test, because a
+// blank secret is only ever backfilled when the identity fields are
+// unchanged (anti credential-rebinding). The panel uses this to show a
+// proactive hint instead of only surfacing the rejection after a failed save.
+export function s3IdentityChanged(current: CoreStorageConfig, saved: CoreStorageConfig | null): boolean {
+  if (!saved) return false;
+  return (
+    current.s3Endpoint !== saved.s3Endpoint ||
+    current.s3Bucket !== saved.s3Bucket ||
+    current.s3AccessKey !== saved.s3AccessKey
+  );
+}
+
+// --- Migrate result interpretation (carry-forward B) -----------------------
+//
+// The real /api/settings/core-storage/migrate response is:
+//   { success: bool, results: { "<subsystem>": { copied, skipped, failed,
+//   errors: [...] } }, note: "..." }
+// NOT { migrated: { sub: number } }. Critically, a PARTIAL failure returns
+// HTTP 200 with success:false. A caller that branches on the HTTP status
+// (res.ok) instead of the response BODY's success field would render a
+// failed migration as a success. summarizeMigrateResult is the single place
+// that interprets the body, so the UI (and its tests) never re-derive this
+// logic ad hoc.
+
+export interface MigrateSubsystemResult {
+  copied: number;
+  skipped: number;
+  failed: number;
+  errors?: string[];
+}
+
+export interface MigrateCoreStorageResponse {
+  success: boolean;
+  results?: Record<string, MigrateSubsystemResult>;
+  note?: string;
+  message?: string;
+}
+
+export interface MigrateSubsystemSummary {
+  name: string;
+  copied: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+}
+
+export interface MigrateSummary {
+  // true only when the response body says success AND no subsystem reported
+  // a failure. Never derived from HTTP status - the caller must pass in the
+  // already-parsed body (see coreStorage.test.ts for the HTTP-200-with-
+  // success:false regression case).
+  ok: boolean;
+  totalCopied: number;
+  totalSkipped: number;
+  totalFailed: number;
+  perSubsystem: MigrateSubsystemSummary[];
+  note?: string;
+}
+
+export function summarizeMigrateResult(res: MigrateCoreStorageResponse): MigrateSummary {
+  const results = res.results ?? {};
+  const perSubsystem = Object.entries(results).map(([name, r]) => ({
+    name,
+    copied: r.copied ?? 0,
+    skipped: r.skipped ?? 0,
+    failed: r.failed ?? 0,
+    errors: r.errors ?? [],
+  }));
+  const totalCopied = perSubsystem.reduce((sum, s) => sum + s.copied, 0);
+  const totalSkipped = perSubsystem.reduce((sum, s) => sum + s.skipped, 0);
+  const totalFailed = perSubsystem.reduce((sum, s) => sum + s.failed, 0);
+  return {
+    ok: res.success === true && totalFailed === 0,
+    totalCopied,
+    totalSkipped,
+    totalFailed,
+    perSubsystem,
+    note: res.note,
+  };
+}

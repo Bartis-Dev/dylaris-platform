@@ -278,8 +278,6 @@ var requiredCaps = map[string]string{
 	"/api/admin/maintenance":                           "settings.write",
 	"/api/admin/settings/audit":                        "settings.read",
 	"/api/admin/xdp/config":                            "settings.read",
-	"/api/settings/library":                            "settings.read",
-	"/api/settings/library/test":                       "settings.read",
 	"/api/settings/core-storage":                       "settings.read",
 	"/api/settings/core-storage/test":                  "settings.write",
 	"/api/settings/core-storage/migrate":               "settings.write",
@@ -432,7 +430,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	fileHandler := handlers.NewFileHandler(appState)
 	nodeGRPCHandler := handlers.NewNodeGRPCHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
-	settingsHandler := handlers.NewSettingsHandler(appState, libraryHandler)
+	settingsHandler := handlers.NewSettingsHandler(appState)
 	authzHandler := handlers.NewAuthzHandler()
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
 	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
@@ -1171,9 +1169,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.ToggleLibraryPathHandler))).Methods("POST")
 
 	// Settings endpoints (PANEL settings.*; Phase 4 Task 17)
-	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetLibrarySettings))).Methods("GET")
-	api.HandleFunc("/settings/library", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveLibrarySettings))).Methods("POST")
-	api.HandleFunc("/settings/library/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.TestLibraryConnection))).Methods("GET")
+	// NOTE: /settings/library + /settings/library/test (legacy library storage
+	// CRUD + test-connection) were removed - dead since the Core-stateless-storage
+	// rework; see the removal note above handlers.NewSettingsHandler. Use
+	// /settings/core-storage (coreStorageHandler, registered further below)
+	// instead.
 	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetFileManagerSettings))).Methods("GET")
 	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveFileManagerSettings))).Methods("POST")
 	// /settings/filemanager/limits stays EXEMPT-authed: every authenticated user

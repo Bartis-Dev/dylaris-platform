@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,81 +12,23 @@ import (
 )
 
 type SettingsHandler struct {
-	state          *AppState
-	libraryHandler *LibraryHandler
+	state *AppState
 }
 
-func NewSettingsHandler(state *AppState, lh *LibraryHandler) *SettingsHandler {
-	return &SettingsHandler{state: state, libraryHandler: lh}
+func NewSettingsHandler(state *AppState) *SettingsHandler {
+	return &SettingsHandler{state: state}
 }
 
-type LibrarySettings struct {
-	Type        string `json:"type"` // "local", "s3"
-	Path        string `json:"path"` // for local
-	S3Endpoint  string `json:"s3Endpoint"`
-	S3Bucket    string `json:"s3Bucket"`
-	S3Region    string `json:"s3Region"`
-	S3AccessKey string `json:"s3AccessKey"`
-	S3SecretKey string `json:"s3SecretKey,omitempty"` // omit in GET response
-}
-
-// GetLibrarySettings GET /api/settings/library - PANEL settings.read (RequireCap at the route).
-func (h *SettingsHandler) GetLibrarySettings(w http.ResponseWriter, r *http.Request) {
-	getSetting := func(key string) string {
-		val, _ := h.state.Store.GetSetting(key)
-		return val
-	}
-
-	settings := LibrarySettings{
-		Type:        getSetting("library_type"),
-		Path:        getSetting("library_path"),
-		S3Endpoint:  getSetting("library_s3_endpoint"),
-		S3Bucket:    getSetting("library_s3_bucket"),
-		S3Region:    getSetting("library_s3_region"),
-		S3AccessKey: getSetting("library_s3_access_key"),
-		// S3SecretKey intentionally omitted from response
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"settings": settings,
-	})
-}
-
-// SaveLibrarySettings POST /api/settings/library - PANEL settings.write (RequireCap at the route).
-func (h *SettingsHandler) SaveLibrarySettings(w http.ResponseWriter, r *http.Request) {
-	var req LibrarySettings
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	pairs := []struct{ k, v string }{
-		{"library_type", req.Type},
-		{"library_path", req.Path},
-		{"library_s3_endpoint", req.S3Endpoint},
-		{"library_s3_bucket", req.S3Bucket},
-		{"library_s3_region", req.S3Region},
-		{"library_s3_access_key", req.S3AccessKey},
-	}
-	if req.S3SecretKey != "" {
-		pairs = append(pairs, struct{ k, v string }{"library_s3_secret_key", req.S3SecretKey})
-	}
-
-	for _, p := range pairs {
-		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Rebuild provider with the new settings
-	if h.libraryHandler != nil {
-		h.libraryHandler.RefreshProvider()
-	}
-
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
-}
+// NOTE: the legacy /settings/library CRUD (GetLibrarySettings/SaveLibrarySettings)
+// and its /settings/library/test probe (TestLibraryConnection, further down this
+// file) were removed. Since the Core-stateless-storage rework, Library reads its
+// provider exclusively from the shared Core file storage config
+// (handlers.LibraryHandler.buildProvider -> AppState.buildCoreStorageProvider);
+// the library_type/library_path/library_s3_* settings these handlers read/wrote
+// were dead - SaveLibrarySettings' "success" response changed nothing observable,
+// and TestLibraryConnection's "ok" was unrelated to the real (Core storage)
+// provider. That live UI trap is gone; configure storage at Settings -> Core
+// Storage (CoreStorageHandler, /api/settings/core-storage*) instead.
 
 // --- File Manager Settings ---
 
@@ -691,43 +632,6 @@ func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 	}
 
 	return settings
-}
-
-// TestLibraryConnection GET /api/settings/library/test - PANEL settings.read (RequireCap at the route).
-func (h *SettingsHandler) TestLibraryConnection(w http.ResponseWriter, r *http.Request) {
-	libType, _ := h.state.Store.GetSetting("library_type")
-	libPath, _ := h.state.Store.GetSetting("library_path")
-
-	var ok bool
-	var message string
-
-	switch libType {
-	case "s3":
-		// Placeholder: S3 connection test would go here
-		ok = false
-		message = "S3 connection test not yet implemented. Configure and save to use S3 storage."
-	default:
-		// Local: Is directory reachable?
-		if libPath == "" {
-			ok = true
-			message = "Using default library path (dylaris_data/library)"
-		} else {
-			_, err := h.state.Store.GetSetting("library_path")
-			if err != nil && err != sql.ErrNoRows {
-				ok = false
-				message = "Database error"
-			} else {
-				ok = true
-				message = "Local path configured: " + libPath
-			}
-		}
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"ok":      ok,
-		"message": message,
-	})
 }
 
 // ─── Beam Settings ───────────────────────────────────────────────────

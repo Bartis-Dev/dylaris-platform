@@ -5,6 +5,8 @@ import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/
 import { getTelemetrySettings, setTelemetrySettings } from '@/lib/api/telemetry';
 import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload } from '@/lib/api/featureFlags';
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
+import { getCoreStorage } from '@/lib/api/coreStorage';
+import { canSaveCoreStorage } from '@/lib/coreStorage';
 import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -35,6 +37,12 @@ export default function FeaturesTab() {
     const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
+    // Tickets requires Core file storage (attachments + backups need a durable
+    // off-host home) - the backend 409s ("core_storage_required") on enable
+    // otherwise. Fetched once so the toggle can be disabled with a hint
+    // instead of letting the admin hit a failed save.
+    const [storageConfigured, setStorageConfigured] = useState(true);
+
     // WS5 custom-tab reverse proxy toggles - same save-on-click/blur pattern
     // as the platform flags above, but its own admin settings endpoint.
     const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerServer: 10, maxShareLinksPerUser: 20 });
@@ -63,6 +71,9 @@ export default function FeaturesTab() {
         });
         getSystemFeaturesAdmin().then(res => {
             if (res.success && res.features) setPlatformFlags(res.features);
+        });
+        getCoreStorage().then(res => {
+            setStorageConfigured(!!res.success && !!res.settings && canSaveCoreStorage(res.settings));
         });
         getTabProxySettings().then(res => {
             if (res.success && res.settings) setTabProxy(res.settings);
@@ -250,13 +261,19 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.tickets}
-                        disabled={platformSaving !== null}
+                        disabled={platformSaving !== null || (!platformFlags.tickets && !storageConfigured)}
                         onClick={() => savePlatformFlag('tickets', !platformFlags.tickets)}
-                        className={`toggle-track ${platformFlags.tickets ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        className={`toggle-track ${platformFlags.tickets ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.tickets ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
+                {!platformFlags.tickets && !storageConfigured && (
+                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
+                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                        <span>Requires Core file storage. Configure and save it under Settings -&gt; Core Storage first.</span>
+                    </p>
+                )}
             </div>
 
             <div className="card p-5">

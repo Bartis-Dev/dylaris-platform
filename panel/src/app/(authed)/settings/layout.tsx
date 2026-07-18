@@ -18,7 +18,7 @@ const ALL_TABS = [
     { slug: 'roles', label: 'Roles', always: true },
     { slug: 'regions', label: 'Regions', always: true },
     { slug: 'nodes', label: 'Nodes', always: true },
-    { slug: 'library', label: 'Library', always: true },
+    { slug: 'core-storage', label: 'Core Storage', always: true },
     { slug: 'modpacks', label: 'Modpacks', always: true },
     { slug: 'filemanager', label: 'File Manager', always: true },
     { slug: 'servers', label: 'Servers', always: true },
