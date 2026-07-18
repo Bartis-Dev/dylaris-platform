@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/storage"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -28,7 +25,8 @@ import (
 
 // TicketMigrationHandler bundles three related admin tools:
 //   - Connection test + dry-run/execute migration to an external ticket DB
-//   - JSON backup of all ticket tables to dylaris_data/ticket-backups
+//   - JSON backup of all ticket tables to the configured Core file storage
+//     backend, scoped under CoreStoragePrefixBackups
 //   - Restore from one of those backups, gated by the Danger Zone flow
 //
 // All operations are admin-only. The restore flow additionally requires:
@@ -36,8 +34,7 @@ import (
 //   - A typed confirmation phrase matching the backup name
 //   - A 15-second cooldown between "initiate" and "execute" so a misclick can be cancelled
 type TicketMigrationHandler struct {
-	state    *AppState
-	provider storage.StorageProvider
+	state *AppState
 
 	// Outstanding restore tokens. Cleared when consumed or when expired.
 	tokensMu sync.Mutex
@@ -59,33 +56,9 @@ const (
 
 func NewTicketMigrationHandler(state *AppState) *TicketMigrationHandler {
 	return &TicketMigrationHandler{
-		state:    state,
-		provider: buildBackupProvider(state),
-		tokens:   make(map[string]*restoreToken),
+		state:  state,
+		tokens: make(map[string]*restoreToken),
 	}
-}
-
-// buildBackupProvider builds the ticket-backups-scoped provider from the
-// shared Core file storage config (falls back to the legacy
-// dylaris_data/ticket-backups dir while the config is unset, so existing
-// installs keep listing/downloading/restoring already-created backups).
-// Mirrors buildProvider (library.go) / buildAttachmentProvider
-// (ticket_attachments.go).
-func buildBackupProvider(state *AppState) storage.StorageProvider {
-	p, err := state.buildCoreStorageProvider(CoreStoragePrefixBackups)
-	if err != nil {
-		// A valid-looking config that still fails to build (e.g. backup.NewS3
-		// rejecting bad creds/an unreachable endpoint at construction) must not
-		// fail silently: CoreStorageConfigured() only re-validates FIELDS, so
-		// the write gate stays open while every backup quietly falls back to a
-		// node-local blob - the split-brain path.
-		log.Printf("ticket-backups: core storage provider build failed, falling back to legacy local dir: %v", err)
-		baseDir, _ := os.Getwd()
-		root := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixBackups)
-		os.MkdirAll(root, 0755)
-		return &storage.LocalProvider{BasePath: root}
-	}
-	return p
 }
 
 // ── Status: counts + external-DB config visibility ───────────────────
@@ -250,9 +223,16 @@ type backupSummary struct {
 }
 
 // CreateBackup POST /api/admin/tickets/backup
-// Dumps every ticket table to one JSON file under dylaris_data/ticket-backups.
-// File name is timestamp-based for natural sort and chronological browsing.
+// Dumps every ticket table to one JSON file under the configured Core file
+// storage backend, scoped to CoreStoragePrefixBackups. File name is
+// timestamp-based for natural sort and chronological browsing.
 func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Request) {
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	tables := store.TicketTablesInOrder()
 	counts := map[string]int{}
 	dump := map[string]interface{}{}
@@ -291,7 +271,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	// CreatedAt can never drift apart across a second boundary.
 	now := time.Now().UTC()
 	name := "tickets-" + now.Format("20060102-150405") + ".json"
-	if err := h.provider.WriteFile(name, bytes.NewReader(body)); err != nil {
+	if err := prov.WriteFile(name, bytes.NewReader(body)); err != nil {
 		sendJSONError(w, "Failed to write backup: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -316,7 +296,12 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 // lexicographically in the same order as chronologically — this is a
 // documented, intentional trade-off from the storage-provider rework.
 func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Request) {
-	files, err := h.provider.ListFiles("/")
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+	files, err := prov.ListFiles("/")
 	if err != nil {
 		sendJSONError(w, "Failed to list backups: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -344,17 +329,23 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	// Prefer a short-lived pre-signed URL when the backend supports it (S3):
 	// redirect the browser straight to object storage instead of streaming
 	// every byte through Core. The ("", nil) sentinel (LocalProvider / path
 	// backend) AND any error from DownloadURL both fall through to
 	// streaming — an error must never be conflated with "no URL, stream it".
-	if url, err := h.provider.DownloadURL(name, 5*time.Minute); err == nil && url != "" {
+	if url, err := prov.DownloadURL(name, 5*time.Minute); err == nil && url != "" {
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
 
-	rc, err := h.provider.GetFile(name)
+	rc, err := prov.GetFile(name)
 	if err != nil {
 		sendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
@@ -372,7 +363,12 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	if err := h.provider.DeletePath(name); err != nil {
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+	if err := prov.DeletePath(name); err != nil {
 		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -410,7 +406,12 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	if rc, err := h.provider.GetFile(name); err != nil {
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+	if rc, err := prov.GetFile(name); err != nil {
 		sendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
 	} else {
@@ -507,11 +508,17 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	// Read the backup file BEFORE wiping anything. The restore flow only
 	// ever needs the raw bytes (unmarshalled below), never a real path on
 	// disk, so no temp-file staging is needed here — GetFile + ReadAll is
 	// sufficient regardless of backend.
-	rc, err := h.provider.GetFile(t.BackupName)
+	rc, err := prov.GetFile(t.BackupName)
 	if err != nil {
 		sendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
 		return

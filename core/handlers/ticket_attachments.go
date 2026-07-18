@@ -17,44 +17,20 @@ import (
 	"time"
 
 	"dylaris-core/models"
-	"dylaris-core/storage"
 
 	"github.com/gorilla/mux"
 )
 
 type TicketAttachmentsHandler struct {
-	state    *AppState
-	provider storage.StorageProvider
-	scanner  AttachmentScanner
+	state   *AppState
+	scanner AttachmentScanner
 }
 
 func NewTicketAttachmentsHandler(state *AppState) *TicketAttachmentsHandler {
 	return &TicketAttachmentsHandler{
-		state:    state,
-		provider: buildAttachmentProvider(state),
-		scanner:  newAttachmentScanner(),
+		state:   state,
+		scanner: newAttachmentScanner(),
 	}
-}
-
-// buildAttachmentProvider builds the attachment-scoped provider from the
-// shared Core file storage config (falls back to the legacy
-// dylaris_data/ticket-attachments dir while the config is unset, so existing
-// installs keep serving already-uploaded attachments).
-func buildAttachmentProvider(state *AppState) storage.StorageProvider {
-	p, err := state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
-	if err != nil {
-		// A valid-looking config that still fails to build (e.g. backup.NewS3
-		// rejecting bad creds/an unreachable endpoint at construction) must not
-		// fail silently: CoreStorageConfigured() only re-validates FIELDS, so
-		// the write gate stays open while every attachment upload quietly
-		// falls back to a node-local blob - the split-brain path.
-		log.Printf("ticket-attachments: core storage provider build failed, falling back to legacy local dir: %v", err)
-		baseDir, _ := os.Getwd()
-		root := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixAttachments)
-		os.MkdirAll(root, 0755)
-		return &storage.LocalProvider{BasePath: root}
-	}
-	return p
 }
 
 // allowedAttachmentExts maps an accepted lower-case file extension to the
@@ -488,11 +464,17 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		body = tmp // stream the scanned temp file to storage
 	}
 
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	// Storage key: tickets/<id>/<random>-<filename>. Avoids collisions and
 	// keeps per-ticket pruning trivial when the ticket gets hard-deleted.
 	attachID := randomAttachmentID()
 	storageKey := fmt.Sprintf("tickets/%d/%s-%s", t.ID, attachID, filename)
-	if err := h.provider.WriteFile(storageKey, body); err != nil {
+	if err := prov.WriteFile(storageKey, body); err != nil {
 		sendJSONError(w, "Failed to store file", http.StatusInternalServerError)
 		return
 	}
@@ -518,7 +500,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	insertedID, err := h.state.Store.AddTicketAttachment(a)
 	if err != nil {
 		// Best-effort cleanup if the DB rejected after the file landed.
-		_ = h.provider.DeletePath(storageKey)
+		_ = prov.DeletePath(storageKey)
 		sendJSONError(w, "Failed to persist metadata", http.StatusInternalServerError)
 		return
 	}
@@ -598,13 +580,19 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 		return
 	}
 
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	// Deliberately never tries provider.DownloadURL, unlike the library and
 	// ticket-backups download handlers: a pre-signed S3 redirect would let
 	// the object storage backend serve its own headers, bypassing the
 	// nosniff / exact Content-Length / Content-Disposition enforcement below.
 	// Attachments always stream through Core so those headers are guaranteed,
 	// at the cost of not offloading the transfer to the object store.
-	rc, err := h.provider.GetFile(a.StorageKey)
+	rc, err := prov.GetFile(a.StorageKey)
 	if err != nil {
 		sendJSONError(w, "File missing on storage", http.StatusGone)
 		return
@@ -650,7 +638,15 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 		sendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}
-	_ = h.provider.DeletePath(a.StorageKey)
+	// Best-effort blob cleanup: the DB row is already gone, so storage being
+	// unavailable here must not fail the whole request - it's logged and
+	// skipped, exactly like TicketDeletionsHandler.DeleteTicket's cascade
+	// cleanup (ticket_deletions.go).
+	if prov, perr := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments); perr != nil {
+		log.Printf("ticket-attachments: core storage unavailable, skipping blob cleanup for attachment %d (%s): %v", aid, a.StorageKey, perr)
+	} else {
+		_ = prov.DeletePath(a.StorageKey)
+	}
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
 		EventType:   TicketEventAttachmentRemoved,

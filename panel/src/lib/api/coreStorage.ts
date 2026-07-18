@@ -4,7 +4,7 @@
 // server-side so it can render "(unchanged)" instead of asking the admin to
 // re-enter a secret that's still there.
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
-import type { CoreStorageConfig, MigrateCoreStorageResponse } from '@/lib/coreStorage';
+import type { CoreStorageConfig } from '@/lib/coreStorage';
 
 export interface GetCoreStorageResponse {
   success: boolean;
@@ -60,23 +60,5 @@ export async function testCoreStorage(candidate: CoreStorageConfig): Promise<Tes
     return (await handleResponse(res)) as TestCoreStorageResponse;
   } catch (err) {
     return handleError(err) as TestCoreStorageResponse;
-  }
-}
-
-// migrateCoreStorage copies the legacy dylaris_data/{library,ticket-attachments,
-// ticket-backups} trees into the currently SAVED backend. It only ever
-// copies (skip-if-exists), so it is always safe to re-run. See
-// MigrateCoreStorageResponse + summarizeMigrateResult in '@/lib/coreStorage'
-// for why callers must never branch on HTTP status alone: a partial failure
-// comes back as HTTP 200 with success:false.
-export async function migrateCoreStorage(): Promise<MigrateCoreStorageResponse> {
-  try {
-    const res = await fetch(`${API_URL}/settings/core-storage/migrate`, {
-      method: 'POST',
-      headers: getAuthHeader(),
-    });
-    return (await handleResponse(res)) as MigrateCoreStorageResponse;
-  } catch (err) {
-    return handleError(err) as MigrateCoreStorageResponse;
   }
 }

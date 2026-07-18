@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   canSaveCoreStorage,
   s3IdentityChanged,
-  summarizeMigrateResult,
   type CoreStorageConfig,
 } from './coreStorage';
 
@@ -85,66 +84,5 @@ describe('s3IdentityChanged', () => {
   });
   it('true when the endpoint changes', () => {
     expect(s3IdentityChanged({ ...saved, s3Endpoint: 'https://other.example.com' }, saved)).toBe(true);
-  });
-});
-
-// Carry-forward B: the real migrate response is
-// { success, results: { sub: { copied, skipped, failed, errors } }, note },
-// NOT { migrated: { sub: number } }. A partial failure comes back as HTTP 200
-// with success:false, so the interpretation must key off the body's success
-// field (and per-subsystem failed counts), never off the transport status.
-describe('summarizeMigrateResult', () => {
-  it('reports ok when success is true and nothing failed', () => {
-    const summary = summarizeMigrateResult({
-      success: true,
-      results: {
-        library: { copied: 3, skipped: 1, failed: 0 },
-        'ticket-attachments': { copied: 2, skipped: 0, failed: 0 },
-      },
-      note: 'Original files were left in place.',
-    });
-    expect(summary.ok).toBe(true);
-    expect(summary.totalCopied).toBe(5);
-    expect(summary.totalSkipped).toBe(1);
-    expect(summary.totalFailed).toBe(0);
-    expect(summary.perSubsystem).toHaveLength(2);
-  });
-
-  // This is the exact shape the backend sends on an HTTP 200 whose body says
-  // success:false (core/handlers/core_storage.go Migrate: "success" is only
-  // true when every subsystem completed with zero failures). A consumer that
-  // checked `response.ok` instead of this parsed body would call it a success.
-  it('reports NOT ok on a partial failure even though the transport-level response was 200', () => {
-    const summary = summarizeMigrateResult({
-      success: false,
-      results: {
-        library: { copied: 3, skipped: 1, failed: 0 },
-        'ticket-attachments': { copied: 0, skipped: 0, failed: 2, errors: ['file-a: disk full', 'file-b: disk full'] },
-      },
-      note: 'Original files were left in place.',
-    });
-    expect(summary.ok).toBe(false);
-    expect(summary.totalFailed).toBe(2);
-    expect(summary.perSubsystem.find(s => s.name === 'ticket-attachments')?.errors).toEqual([
-      'file-a: disk full', 'file-b: disk full',
-    ]);
-  });
-
-  it('is never fooled by success:true with a nonzero failed count', () => {
-    // Defensive: the two signals (body.success and per-subsystem failed) are
-    // both honored rather than trusting either alone.
-    const summary = summarizeMigrateResult({
-      success: true,
-      results: { library: { copied: 1, skipped: 0, failed: 1, errors: ['boom'] } },
-    });
-    expect(summary.ok).toBe(false);
-    expect(summary.totalFailed).toBe(1);
-  });
-
-  it('handles a response with no results (e.g. the 400 "not configured" error body)', () => {
-    const summary = summarizeMigrateResult({ success: false, message: 'Configure Core file storage before migrating.' });
-    expect(summary.ok).toBe(false);
-    expect(summary.perSubsystem).toEqual([]);
-    expect(summary.totalCopied).toBe(0);
   });
 });

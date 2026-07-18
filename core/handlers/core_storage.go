@@ -4,10 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -120,26 +119,59 @@ func (s *AppState) CoreStorageConfigured() bool {
 	return validateCoreStorageConfig(s.LoadCoreStorageConfig()) == nil
 }
 
-// buildCoreStorageProvider returns a provider SCOPED to subPrefix. When the
-// config is unset/invalid it falls back to today's node-local dylaris_data/<sub>
-// dir so existing installs keep browsing/downloading; WRITE endpoints are gated
-// separately by RequireCoreStorageConfigured.
+// buildCoreStorageProvider returns a provider SCOPED to subPrefix, built
+// strictly from the persisted Core file storage config. There is no
+// legacy-directory fallback: the owner has confirmed there are no pre-
+// existing DYLARIS installs anywhere, so every install starts with no local
+// data to fall back to - a missing/invalid config is therefore a hard error,
+// and callers must never proceed with a nil provider.
+//
+// A provider that still fails to CONSTRUCT despite a valid-looking config
+// (e.g. a bad S3 endpoint rejected at client-construction time) is logged
+// here, once, so that failure is never silent - callers only ever surface a
+// generic "not configured" style response to the client either way.
 func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StorageProvider, error) {
 	cfg := s.LoadCoreStorageConfig()
-	if validateCoreStorageConfig(cfg) != nil {
-		baseDir, _ := os.Getwd()
-		root := filepath.Join(baseDir, "dylaris_data", subPrefix)
-		_ = os.MkdirAll(root, 0755)
-		return &storage.LocalProvider{BasePath: root}, nil
+	if err := validateCoreStorageConfig(cfg); err != nil {
+		return nil, err
 	}
-	return newStorageProviderForConfig(cfg, subPrefix)
+	prov, err := newStorageProviderForConfig(cfg, subPrefix)
+	if err != nil {
+		log.Printf("core storage: failed to build %s provider: %v", subPrefix, err)
+		return nil, err
+	}
+	return prov, nil
+}
+
+// coreStorageUnavailableResponse writes a 503 telling the caller Core file
+// storage must be configured (or is broken) before this endpoint can work.
+// Every handler that resolves a provider per-request via
+// buildCoreStorageProvider calls this on failure instead of proceeding with
+// a nil provider.
+//
+// Deliberately NOT featureDisabledResponse/FeatureCoreStorage's exact shape
+// (no X-Feature-Disabled header, a different "error" value): that response is
+// reserved for RequireCoreStorageConfigured, the router-level gate wrapping
+// EXACTLY the 4 WRITE routes, which fires before the request body is even
+// parsed. This is the per-request backstop reached from inside a handler
+// body - including READ handlers, which the gate never wraps - so keeping
+// the two responses distinguishable preserves that route-coverage invariant
+// instead of muddying it.
+func coreStorageUnavailableResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"error":   "core_storage_unavailable",
+		"message": "Core file storage is not configured. Configure it under Settings -> Core file storage.",
+	})
 }
 
 // newStorageProviderForConfig builds a StorageProvider strictly from cfg
-// (assumed already validated), scoped to subPrefix. Unlike
-// buildCoreStorageProvider, this never falls back to the legacy local dir:
-// TestConnection needs a hard failure on a broken candidate config, not a
-// silent success against the wrong backend.
+// (assumed already validated), scoped to subPrefix. Used both by
+// buildCoreStorageProvider (which loads the persisted config first) and by
+// TestConnection (which validates a candidate config that may not be saved
+// yet), so provider construction lives in exactly one place either way.
 func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string) (storage.StorageProvider, error) {
 	if cfg.Backend == "s3" {
 		prefix := subPrefix
@@ -368,272 +400,4 @@ func probeStorageProvider(prov storage.StorageProvider) (ok bool, message string
 		return false, "Cleanup failed: " + err.Error()
 	}
 	return true, "Storage reachable: write, read and delete all succeeded."
-}
-
-// --- Admin-triggered migration of existing local data into the configured backend ---
-
-// maxMigrateErrorsPerSubsystem caps how many individual per-file error
-// messages migrateLocalDirToProvider collects for one subsystem, so a badly
-// broken destination (e.g. every write failing) cannot blow up the response
-// body. Failed still counts every failure; only the message list is capped.
-const maxMigrateErrorsPerSubsystem = 20
-
-// migrateResult reports what happened while copying one legacy subsystem
-// directory (dylaris_data/<sub>) into its configured provider.
-//
-// OVERWRITE POLICY: SKIP-IF-EXISTS. A file already present at the
-// destination key is left untouched and counted as Skipped, never
-// overwritten. This is what makes the migration safely re-runnable: a
-// partial or interrupted run can simply be triggered again, and only the
-// files that did not make it across the first time are attempted again,
-// instead of re-transferring everything that already migrated cleanly.
-type migrateResult struct {
-	Copied  int      `json:"copied"`
-	Skipped int      `json:"skipped"`
-	Failed  int      `json:"failed"`
-	Errors  []string `json:"errors,omitempty"`
-}
-
-func appendCappedMigrateError(errs []string, msg string) []string {
-	if len(errs) >= maxMigrateErrorsPerSubsystem {
-		return errs
-	}
-	return append(errs, msg)
-}
-
-// sameStorageDir reports whether a and b resolve to the identical on-disk
-// directory. Used to refuse a migration whose destination is the exact
-// directory it would read from: LocalProvider.WriteFile does os.Create
-// (truncate) on the destination path, so if that path is the same file
-// already open for reading, the "copy" would destroy the very original that
-// rule 1 (never touch the source) requires this migration to leave alone.
-//
-// os.SameFile (device+inode) is tried first so a symlink or a bind mount
-// pointing at the same underlying directory is caught too - a plain string
-// comparison of the two paths cannot see through either, and this rework's
-// entire point is moving to a shared path, so an operator bind-mounting the
-// same volume at a second location is a realistic setup, not a hypothetical.
-// Falls back to the previous Abs+Clean string comparison only when either
-// os.Stat fails (e.g. the destination does not exist yet), since os.SameFile
-// requires both FileInfos to exist.
-func sameStorageDir(a, b string) bool {
-	if infoA, errA := os.Stat(a); errA == nil {
-		if infoB, errB := os.Stat(b); errB == nil {
-			return os.SameFile(infoA, infoB)
-		}
-	}
-	ca, errA := filepath.Abs(a)
-	cb, errB := filepath.Abs(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
-	}
-	return filepath.Clean(ca) == filepath.Clean(cb)
-}
-
-// nestedStorageDir reports whether one of a, b lies inside the other's
-// directory tree (in either direction; a == b is NOT nested, that's
-// sameStorageDir's job). Guards the cheap-but-real case sameStorageDir
-// cannot: a destination that sits inside the source tree (or vice versa)
-// makes filepath.WalkDir ingest files this same run just wrote into the
-// destination, producing bounded duplication in the walk.
-func nestedStorageDir(a, b string) bool {
-	ca, errA := filepath.Abs(a)
-	cb, errB := filepath.Abs(b)
-	if errA != nil || errB != nil {
-		ca, cb = a, b
-	}
-	ca, cb = filepath.Clean(ca), filepath.Clean(cb)
-	return isSubPath(ca, cb) || isSubPath(cb, ca)
-}
-
-// isSubPath reports whether child is strictly inside parent's directory
-// tree. Both arguments must already be Abs+Clean. The separator suffix on
-// parent keeps this a directory-boundary-aware prefix check, so e.g.
-// "/data" does not spuriously match a sibling "/data2".
-func isSubPath(parent, child string) bool {
-	if parent == child {
-		return false
-	}
-	return strings.HasPrefix(child, parent+string(filepath.Separator))
-}
-
-// migrateLocalDirToProvider walks srcRoot and writes every regular file into
-// prov under its srcRoot-relative, forward-slash key, skipping any key that
-// already exists at the destination (see migrateResult's overwrite-policy
-// doc). Missing srcRoot is a no-op (fresh install with nothing to migrate
-// yet). The source is only ever opened for reading; nothing under srcRoot is
-// removed, moved or modified, so a failed or partial run can always be
-// retried, and reverting the storage config rolls back to the untouched
-// originals.
-//
-// A single file's open/write failure is recorded in the result and does NOT
-// abort the walk - the rest of the tree is still attempted. The returned
-// error is non-nil whenever the result carries at least one failure (a
-// per-file failure, or one of the fatal conditions below), so callers can
-// treat "err != nil" as "this subsystem did not fully succeed" while still
-// having the itemized detail in the result.
-func migrateLocalDirToProvider(srcRoot string, prov storage.StorageProvider) (migrateResult, error) {
-	var res migrateResult
-
-	if lp, ok := prov.(*storage.LocalProvider); ok {
-		if sameStorageDir(srcRoot, lp.BasePath) {
-			err := fmt.Errorf("migrate: destination %q is the same directory as the source %q; refusing to copy onto itself", lp.BasePath, srcRoot)
-			res.Failed = 1
-			res.Errors = []string{err.Error()}
-			return res, err
-		}
-		if nestedStorageDir(srcRoot, lp.BasePath) {
-			err := fmt.Errorf("migrate: destination %q is nested inside (or contains) the source %q; refusing to avoid the walk re-ingesting files this run just wrote", lp.BasePath, srcRoot)
-			res.Failed = 1
-			res.Errors = []string{err.Error()}
-			return res, err
-		}
-	}
-
-	info, statErr := os.Stat(srcRoot)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return res, nil
-		}
-		res.Failed = 1
-		res.Errors = []string{statErr.Error()}
-		return res, statErr
-	}
-	if !info.IsDir() {
-		err := fmt.Errorf("migrate: %q is not a directory", srcRoot)
-		res.Failed = 1
-		res.Errors = []string{err.Error()}
-		return res, err
-	}
-
-	_ = filepath.WalkDir(srcRoot, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			res.Failed++
-			res.Errors = appendCappedMigrateError(res.Errors, p+": "+err.Error())
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, relErr := filepath.Rel(srcRoot, p)
-		if relErr != nil {
-			res.Failed++
-			res.Errors = appendCappedMigrateError(res.Errors, p+": "+relErr.Error())
-			return nil
-		}
-		key := filepath.ToSlash(rel)
-
-		// Skip-if-exists: StorageProvider has no dedicated Exists check, so
-		// GetFile is used as a best-effort probe. This is the SECOND safety
-		// layer here (after the same-dir/nested-dir guards above) - do not
-		// remove it as "redundant" with those: it is what makes a re-run
-		// idempotent instead of overwriting already-migrated files.
-		//
-		// Only a RECOGNISED not-found may mean "copy it". GetFile can also
-		// fail for reasons that have nothing to do with existence - a
-		// transient S3 503/timeout/throttle/permission error looks exactly
-		// like a missing key to a caller that doesn't distinguish them. If
-		// that transient error were treated as "not present yet", a later
-		// re-run (this endpoint's entire contract is "safe to re-run") could
-		// overwrite a NEWER object at the destination with the STALE legacy
-		// copy and report it as a successful Copy - silent destination data
-		// loss. So any error that is not errors.Is(err, fs.ErrNotExist) is
-		// recorded as a per-file failure and this file is NEVER written.
-		rc, getErr := prov.GetFile(key)
-		if getErr == nil {
-			rc.Close()
-			res.Skipped++
-			return nil
-		}
-		if !errors.Is(getErr, fs.ErrNotExist) {
-			res.Failed++
-			res.Errors = appendCappedMigrateError(res.Errors, key+": destination probe: "+getErr.Error())
-			return nil
-		}
-
-		f, openErr := os.Open(p)
-		if openErr != nil {
-			res.Failed++
-			res.Errors = appendCappedMigrateError(res.Errors, key+": open source: "+openErr.Error())
-			return nil
-		}
-		writeErr := prov.WriteFile(key, f)
-		f.Close()
-		if writeErr != nil {
-			res.Failed++
-			res.Errors = appendCappedMigrateError(res.Errors, key+": "+writeErr.Error())
-			return nil
-		}
-		res.Copied++
-		return nil
-	})
-
-	// Errors is capped (maxMigrateErrorsPerSubsystem) so a badly broken
-	// destination can't blow up the response body, but Failed always counts
-	// every failure. When some were dropped, say so explicitly: a caller
-	// reading "failed: 500, errors: [20]" with no further hint could easily
-	// mistake the truncated list for the complete one.
-	if omitted := res.Failed - len(res.Errors); omitted > 0 {
-		res.Errors = append(res.Errors, fmt.Sprintf("... %d more errors omitted", omitted))
-	}
-
-	if res.Failed > 0 {
-		return res, fmt.Errorf("migrate: %d file(s) failed under %q", res.Failed, srcRoot)
-	}
-	return res, nil
-}
-
-// Migrate POST /api/settings/core-storage/migrate - PANEL settings.write.
-// Copies the legacy dylaris_data/{library,ticket-attachments,ticket-backups}
-// trees into the currently configured provider, scoped per subsystem exactly
-// like buildCoreStorageProvider. Requires a valid configured destination:
-// migrating into the unconfigured legacy fallback would just copy
-// dylaris_data onto itself, so this refuses outright (400) instead of
-// running a pointless no-op.
-//
-// SAFETY: only ever copies. The source trees are never deleted, moved or
-// modified, so this is safe to re-run after a partial failure (skip-if-
-// exists, see migrateResult) and a bad destination config can always be
-// rolled back by reverting the Core file storage settings.
-//
-// Every subsystem is attempted even if another one fails or refuses (e.g.
-// hitting the same-directory guard), so one bad subsystem never hides
-// whether the other two succeeded. "success" in the response is true only
-// when every subsystem completed with zero failures; a partial result is
-// always reported as such, never as success.
-func (h *CoreStorageHandler) Migrate(w http.ResponseWriter, r *http.Request) {
-	if !h.state.CoreStorageConfigured() {
-		sendJSONError(w, "Configure Core file storage before migrating.", http.StatusBadRequest)
-		return
-	}
-	// A wrong (or empty, relative) baseDir here means migrating the wrong
-	// tree entirely - this must be a hard failure, never a silent
-	// degrade-to-relative-path.
-	baseDir, err := os.Getwd()
-	if err != nil {
-		sendJSONError(w, "Could not determine the legacy data directory: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	subs := []string{CoreStoragePrefixLibrary, CoreStoragePrefixAttachments, CoreStoragePrefixBackups}
-	results := map[string]migrateResult{}
-	success := true
-	for _, sub := range subs {
-		prov, err := h.state.buildCoreStorageProvider(sub)
-		if err != nil {
-			results[sub] = migrateResult{Failed: 1, Errors: []string{"provider: " + err.Error()}}
-			success = false
-			continue
-		}
-		src := filepath.Join(baseDir, "dylaris_data", sub)
-		res, migErr := migrateLocalDirToProvider(src, prov)
-		results[sub] = res
-		if migErr != nil {
-			success = false
-		}
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": success,
-		"results": results,
-		"note":    "Original files were left in place. Restart Core first so new uploads use the new backend, then run Migrate again to pick up anything written to the old location before the restart, verify the new backend, and only then remove the old directories manually.",
-	})
 }

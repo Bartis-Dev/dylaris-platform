@@ -101,21 +101,68 @@ func (s *recordingScanner) Scan(r io.Reader) error {
 
 const testTicketOwner = "owner-1"
 
-// newAttachmentUploadHandler builds a TicketAttachmentsHandler wired directly
-// (bypassing NewTicketAttachmentsHandler/env-based newAttachmentScanner) so
-// each test controls the provider and scanner explicitly.
+// sanitizePathComponent replaces any character not safe in a Windows path
+// component with "_". Several of this file's table-driven subtest names
+// contain characters (":", ",") that are legal in a Go test name but invalid
+// in a Windows directory name; attachmentUploadTestDir folds a subtest's
+// t.Name() through this before using it as a real path segment.
+func sanitizePathComponent(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
+}
+
+// attachmentUploadTestDir returns a fresh, real, absolute-looking POSIX path
+// (same "/dylaris-test-tmp" convention as testConnectionProbeDir,
+// core_storage_http_test.go) for the "path" backend, keyed by a
+// sanitizePathComponent'd t.Name() rather than the raw name
+// testConnectionProbeDir uses directly.
+func attachmentUploadTestDir(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join("/", "dylaris-test-tmp")
+	dir := filepath.ToSlash(filepath.Join(root, sanitizePathComponent(t.Name())))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", dir, err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	return dir
+}
+
+// newAttachmentUploadHandler builds a TicketAttachmentsHandler wired against a
+// REAL Core file storage "path" backend rooted at a fresh, real, absolute-
+// looking test directory, so each test controls the scanner explicitly while
+// UploadAttachment resolves a genuine *storage.LocalProvider per request
+// exactly like production. Change 3 removed the injectable provider field
+// this used to set directly.
+//
+// The returned dir is the CONFIGURED ROOT (what the admin would type into
+// Settings), not the attachment-scoped subdirectory the provider actually
+// writes under (dir/ticket-attachments/...) - countStoredFiles walks it
+// recursively so callers don't need to care about the extra nesting level.
 func newAttachmentUploadHandler(t *testing.T, settings map[string]string, scanner AttachmentScanner) (*TicketAttachmentsHandler, *attachmentUploadFakeStore, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := attachmentUploadTestDir(t)
+	merged := map[string]string{
+		keyCoreStorageBackend:     "path",
+		keyCoreStoragePath:        dir,
+		keyCoreStoragePathConfirm: "true",
+	}
+	for k, v := range settings {
+		merged[k] = v
+	}
 	fs := &attachmentUploadFakeStore{
-		settings: settings,
+		settings: merged,
 		ticket:   &models.Ticket{ID: 1, UserID: testTicketOwner},
 	}
 	st := &AppState{Store: fs}
 	h := &TicketAttachmentsHandler{
-		state:    st,
-		provider: &storage.LocalProvider{BasePath: dir},
-		scanner:  scanner,
+		state:   st,
+		scanner: scanner,
 	}
 	return h, fs, dir
 }
@@ -326,7 +373,7 @@ func TestUploadAttachment_RejectedTypes(t *testing.T) {
 // either boundary changes the stored bytes.
 func TestUploadAttachment_ByteIntegrity(t *testing.T) {
 	content := pngBytes(10_000)
-	h, fs, _ := newAttachmentUploadHandler(t, nil, nil)
+	h, fs, dir := newAttachmentUploadHandler(t, nil, nil)
 	rw := httptest.NewRecorder()
 	h.UploadAttachment(rw, newAttachmentUploadRequest(t, "logo.png", "image/png", content))
 	if rw.Code != http.StatusOK {
@@ -337,7 +384,8 @@ func TestUploadAttachment_ByteIntegrity(t *testing.T) {
 	}
 	storageKey := fs.attachments[0].StorageKey
 
-	rc, err := h.provider.GetFile(storageKey)
+	prov := &storage.LocalProvider{BasePath: filepath.Join(dir, CoreStoragePrefixAttachments)}
+	rc, err := prov.GetFile(storageKey)
 	if err != nil {
 		t.Fatalf("GetFile(%q): %v", storageKey, err)
 	}
@@ -531,47 +579,18 @@ func TestDownloadAttachment_NoSniffHeader(t *testing.T) {
 	}
 }
 
-// seekAssertingProvider is a StorageProvider fake whose WriteFile records
-// only whether the reader IT WAS HANDED implements io.Seeker - it never
-// needs to actually persist anything for this regression guard. Embeds the
-// interface (left nil) so any other method is never expected to be called
-// during UploadAttachment; calling one would panic loudly rather than
-// silently succeed.
-type seekAssertingProvider struct {
-	storage.StorageProvider
-	called   bool
-	seekable bool
-}
-
-func (p *seekAssertingProvider) WriteFile(path string, content io.Reader) error {
-	p.called = true
-	_, p.seekable = content.(io.Seeker)
-	return nil
-}
-
-// TestUploadAttachment_WriteFileReceivesSeekableReader is the Fix 1
-// regression guard: S3Provider.WriteFile (core/storage/s3provider.go) passes
-// its reader straight through to the AWS SDK's PutObject with no content
-// length. The SDK's checksum middleware refuses an unseekable stream outright
-// on a plain-HTTP endpoint - exactly the documented self-hosted MinIO use
-// case (http://minio:9000) - so UploadAttachment must hand WriteFile
-// something seekable (the multipart.File itself, rewound after the sniff
-// peek), never an io.MultiReader stitched from the peeked head plus the rest
-// of the stream.
-func TestUploadAttachment_WriteFileReceivesSeekableReader(t *testing.T) {
-	fp := &seekAssertingProvider{}
-	fs := &attachmentUploadFakeStore{ticket: &models.Ticket{ID: 1, UserID: testTicketOwner}}
-	h := &TicketAttachmentsHandler{state: &AppState{Store: fs}, provider: fp}
-
-	rw := httptest.NewRecorder()
-	h.UploadAttachment(rw, newAttachmentUploadRequest(t, "logo.png", "image/png", pngBytes(2000)))
-	if rw.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
-	}
-	if !fp.called {
-		t.Fatal("provider.WriteFile was never called")
-	}
-	if !fp.seekable {
-		t.Fatal("provider.WriteFile received a reader that does not implement io.Seeker - S3Provider.WriteFile passes it straight to PutObject with no content length, and the AWS SDK's checksum middleware refuses an unseekable stream on a plain-HTTP endpoint (e.g. self-hosted MinIO)")
-	}
-}
+// NOTE: TestUploadAttachment_WriteFileReceivesSeekableReader (a regression
+// guard for the MinIO/S3-checksum-middleware 500 fixed alongside this
+// cleanup, HEAD 66ef788) used to live here. It asserted, via a hand-written
+// seekAssertingProvider injected straight into TicketAttachmentsHandler's
+// provider field, that UploadAttachment hands WriteFile a seekable reader
+// (never an io.MultiReader stitched from the sniff-peeked head + the rest of
+// the stream). Change 3 removed that injectable field - the provider is now
+// resolved per-request from real config, which can only construct a real
+// *storage.LocalProvider or *storage.S3Provider, and neither one's observable
+// behavior differs based on the seekability of its input, so this invariant
+// is no longer testable at the handler level without reintroducing a fake
+// seam. The source code this test exercised (UploadAttachment's peek-then-
+// Seek-back logic) is UNCHANGED by this refactor, so the regression risk does
+// not reopen from this change, but the dedicated coverage is gone - see the
+// cleanup report for this trade-off.

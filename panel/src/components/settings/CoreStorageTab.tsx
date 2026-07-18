@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { getCoreStorage, saveCoreStorage, testCoreStorage, migrateCoreStorage } from '@/lib/api/coreStorage';
-import { canSaveCoreStorage, s3IdentityChanged, summarizeMigrateResult, type CoreStorageConfig, type MigrateSummary } from '@/lib/coreStorage';
-import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, ArrowRightLeft, Loader2 } from 'lucide-react';
+import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/coreStorage';
+import { canSaveCoreStorage, s3IdentityChanged, type CoreStorageConfig } from '@/lib/coreStorage';
+import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2 } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
@@ -23,13 +23,9 @@ export default function CoreStorageTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [migrating, setMigrating] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [migrateSummary, setMigrateSummary] = useState<MigrateSummary | null>(null);
 
-  // Snapshot of the last-saved config, used for dirty detection AND as the
-  // source of truth for "is there already a valid config on the server"
-  // (the Migrate action acts on the SAVED config, not the in-progress form).
+  // Snapshot of the last-saved config, used for dirty detection.
   const snapshotRef = useRef<CoreStorageConfig | null>(null);
 
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 4500); };
@@ -48,7 +44,6 @@ export default function CoreStorageTab() {
   }, []);
 
   const canSave = canSaveCoreStorage(settings, snapshotRef.current);
-  const savedConfigured = snapshotRef.current !== null && canSaveCoreStorage(snapshotRef.current);
   const identityChanged = settings.backend === 's3' && s3IdentityChanged(settings, snapshotRef.current);
 
   const handleSave = async () => {
@@ -64,7 +59,7 @@ export default function CoreStorageTab() {
     setSaving(true);
     const res = await saveCoreStorage(settings);
     if (res.success) {
-      showToast('Core file storage saved. Uploads and downloads use the new configuration only after Core is restarted.');
+      showToast('Core file storage saved.');
       const saved: CoreStorageConfig = { ...settings, s3SecretKey: '', s3SecretSet: settings.s3SecretSet || settings.s3SecretKey !== '' };
       setSettings(saved);
       snapshotRef.current = saved;
@@ -85,30 +80,6 @@ export default function CoreStorageTab() {
     if (res.success && res.ok) showToast(res.message || 'Connection successful: write, read and delete all succeeded.');
     else showToast(res.message || 'Connection test failed.', false);
     setTesting(false);
-  };
-
-  const handleMigrate = async () => {
-    if (!savedConfigured) {
-      showToast('Save a valid Core file storage config before migrating.', false);
-      return;
-    }
-    setMigrating(true);
-    setMigrateSummary(null);
-    const res = await migrateCoreStorage();
-    // IMPORTANT: interpret the BODY (summarizeMigrateResult), never res.ok /
-    // HTTP status alone - a partial failure comes back as HTTP 200 with
-    // success:false (see core/handlers/core_storage.go Migrate).
-    const summary = summarizeMigrateResult(res);
-    setMigrateSummary(summary);
-    if (summary.ok) {
-      showToast(`Migration complete: ${summary.totalCopied} copied, ${summary.totalSkipped} already present.`);
-    } else if (res.message && summary.perSubsystem.length === 0) {
-      // Hard failure before any subsystem ran (e.g. 400 "not configured").
-      showToast(res.message, false);
-    } else {
-      showToast(`Migration finished with ${summary.totalFailed} failure(s). See details below.`, false);
-    }
-    setMigrating(false);
   };
 
   const set = <K extends keyof CoreStorageConfig>(key: K, value: CoreStorageConfig[K]) =>
@@ -292,86 +263,7 @@ export default function CoreStorageTab() {
           {testing ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
           {testing ? 'Testing...' : 'Test Connection'}
         </button>
-        <button
-          type="button"
-          onClick={handleMigrate}
-          disabled={migrating || !savedConfigured}
-          title={!savedConfigured ? 'Save a valid config first' : undefined}
-          className="btn btn-secondary disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-        >
-          {migrating ? <Loader2 size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />}
-          {migrating ? 'Migrating...' : 'Migrate local data'}
-        </button>
       </div>
-      <p className="text-xs text-(--base-06)">
-        Copies the existing on-disk Library, ticket-attachments and ticket-backups files into the backend configured above.
-        Originals are never deleted or modified, and files already present at the destination are skipped - so this is
-        always safe to re-run after a partial failure.
-        {!savedConfigured && ' Save a valid config above to enable this.'}
-      </p>
-
-      <div className="alert alert-warning text-xs">
-        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-        <span>
-          Saving takes effect immediately for new uploads, but this Core process keeps using the backend it loaded
-          at startup until it is restarted - anything uploaded in between still lands in the old location. Restart
-          Core first, then run Migrate again to pick up anything written during that window, verify the new
-          backend, and only then remove the old directories manually.
-        </span>
-      </div>
-
-      {/* Migration result detail */}
-      {migrateSummary && (
-        <div className={`card p-4 space-y-3 border ${migrateSummary.ok ? 'border-(--success-light)/40' : 'border-(--error)/40'}`}>
-          <div className="flex items-center gap-2 text-sm font-medium">
-            {migrateSummary.ok ? (
-              <CircleCheck size={15} className="text-(--success-light)" />
-            ) : (
-              <CircleAlert size={15} className="text-(--error-light)" />
-            )}
-            <span className="text-(--base-09)">
-              {migrateSummary.ok ? 'Migration completed successfully' : 'Migration finished with failures'}
-            </span>
-          </div>
-          {migrateSummary.perSubsystem.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-(--base-06) font-mono uppercase text-[10px] tracking-[0.08em]">
-                    <th className="text-left py-1 pr-3">Subsystem</th>
-                    <th className="text-right py-1 px-3">Copied</th>
-                    <th className="text-right py-1 px-3">Skipped</th>
-                    <th className="text-right py-1 pl-3">Failed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {migrateSummary.perSubsystem.map(s => (
-                    <tr key={s.name} className="border-t border-(--base-03)">
-                      <td className="py-1.5 pr-3 text-(--base-09) font-mono">{s.name}</td>
-                      <td className="py-1.5 px-3 text-right text-(--success-light)">{s.copied}</td>
-                      <td className="py-1.5 px-3 text-right text-(--base-07)">{s.skipped}</td>
-                      <td className={`py-1.5 pl-3 text-right ${s.failed > 0 ? 'text-(--error-light)' : 'text-(--base-07)'}`}>{s.failed}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {migrateSummary.perSubsystem.some(s => s.errors.length > 0) && (
-                <div className="mt-2 space-y-1">
-                  {migrateSummary.perSubsystem.filter(s => s.errors.length > 0).map(s => (
-                    <div key={s.name}>
-                      <div className="text-[11px] font-mono text-(--base-06) uppercase tracking-[0.06em]">{s.name} errors</div>
-                      <ul className="list-disc list-inside text-xs text-(--error-light) space-y-0.5">
-                        {s.errors.map((e, i) => <li key={i}>{e}</li>)}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {migrateSummary.note && <p className="text-xs text-(--base-06)">{migrateSummary.note}</p>}
-        </div>
-      )}
 
       {toast && (
         <div className="toast-container"><div className="toast">

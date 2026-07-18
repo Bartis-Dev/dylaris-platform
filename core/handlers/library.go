@@ -1,44 +1,20 @@
 package handlers
 
 import (
-	"dylaris-core/storage"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
 type LibraryHandler struct {
-	state    *AppState
-	provider storage.StorageProvider
+	state *AppState
 }
 
 func NewLibraryHandler(state *AppState) *LibraryHandler {
-	return &LibraryHandler{state: state, provider: buildProvider(state)}
-}
-
-// buildProvider builds the library-scoped provider from the shared Core file
-// storage config (falls back to the legacy dylaris_data/library dir while the
-// config is unset, so existing installs keep browsing).
-func buildProvider(state *AppState) storage.StorageProvider {
-	p, err := state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
-	if err != nil {
-		// A valid-looking config that still fails to build (e.g. backup.NewS3
-		// rejecting bad creds/an unreachable endpoint at construction) must not
-		// fail silently: CoreStorageConfigured() only re-validates FIELDS, so
-		// the write gate stays open while every library upload quietly falls
-		// back to a node-local blob - the split-brain path.
-		log.Printf("library: core storage provider build failed, falling back to legacy local dir: %v", err)
-		baseDir, _ := os.Getwd()
-		libPath := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixLibrary)
-		os.MkdirAll(libPath, 0755)
-		return &storage.LocalProvider{BasePath: libPath}
-	}
-	return p
+	return &LibraryHandler{state: state}
 }
 
 // GetLibraryHandler GET /api/library?path=
@@ -54,7 +30,13 @@ func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Reques
 		path = "/"
 	}
 
-	files, err := h.provider.ListFiles(path)
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
+	files, err := prov.ListFiles(path)
 	if err != nil {
 		sendJSONError(w, "Could not list library files: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -196,7 +178,12 @@ func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.provider.DeletePath(req.Path); err != nil {
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+	if err := prov.DeletePath(req.Path); err != nil {
 		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -217,7 +204,12 @@ func (h *LibraryHandler) MkdirLibraryHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.provider.CreateDir(req.Path); err != nil {
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+	if err := prov.CreateDir(req.Path); err != nil {
 		sendJSONError(w, "Create dir failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -246,6 +238,12 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	files := r.MultipartForm.File["files"]
 	for _, fh := range files {
 		cleanName := sanitizeFilename(fh.Filename)
@@ -261,7 +259,7 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 		}
 		defer f.Close()
 
-		if err := h.provider.WriteFile(destPath, f); err != nil {
+		if err := prov.WriteFile(destPath, f); err != nil {
 			sendJSONError(w, fmt.Sprintf("Upload failed for %s: %v", cleanName, err), http.StatusInternalServerError)
 			return
 		}
@@ -296,15 +294,21 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
+	if err != nil {
+		coreStorageUnavailableResponse(w)
+		return
+	}
+
 	// Prefer a short-lived pre-signed URL when the backend supports it (S3):
 	// redirect the browser straight to object storage instead of streaming
 	// every byte through Core.
-	if url, err := h.provider.DownloadURL(path, 5*time.Minute); err == nil && url != "" {
+	if url, err := prov.DownloadURL(path, 5*time.Minute); err == nil && url != "" {
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
 
-	rc, err := h.provider.GetFile(path)
+	rc, err := prov.GetFile(path)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return

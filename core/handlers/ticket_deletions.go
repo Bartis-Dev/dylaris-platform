@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	"dylaris-core/models"
-	"dylaris-core/storage"
 
 	"github.com/gorilla/mux"
 )
@@ -18,19 +17,11 @@ import (
 // platform-wide tickets feature toggle (mounted in main.go) and the
 // per-feature tickets.deletion_enabled setting (checked inline).
 type TicketDeletionsHandler struct {
-	state    *AppState
-	provider storage.StorageProvider
+	state *AppState
 }
 
 func NewTicketDeletionsHandler(state *AppState) *TicketDeletionsHandler {
-	return &TicketDeletionsHandler{
-		state: state,
-		// Same shared-storage-scoped provider as TicketAttachmentsHandler so
-		// cascade-delete cleanup targets the same backend attachments were
-		// actually written to (S3-configured installs would otherwise clean
-		// up the legacy local dir while uploads land in S3).
-		provider: buildAttachmentProvider(state),
-	}
+	return &TicketDeletionsHandler{state: state}
 }
 
 // DeleteTicket DELETE /api/tickets/{id} — admin only, gated by
@@ -137,9 +128,18 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 
 	// Best-effort blob cleanup. Failures here are logged but don't bubble —
 	// the ticket is gone from the DB; orphaned blobs are a cosmetic issue.
-	for _, k := range storageKeys {
-		if err := h.provider.DeletePath(k); err != nil {
-			log.Printf("ticket-deletion: failed to remove attachment blob %s: %v", k, err)
+	// Same shared-storage-scoped prefix as TicketAttachmentsHandler so
+	// cascade-delete cleanup targets the same backend attachments were
+	// actually written to. Storage being unconfigured/broken here must not
+	// fail the whole request either - it's logged and skipped, not surfaced
+	// as an HTTP error the ticket-delete response never gets to send anyway.
+	if prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments); err != nil {
+		log.Printf("ticket-deletion: core storage unavailable, skipping attachment blob cleanup for ticket %d: %v", id, err)
+	} else {
+		for _, k := range storageKeys {
+			if err := prov.DeletePath(k); err != nil {
+				log.Printf("ticket-deletion: failed to remove attachment blob %s: %v", k, err)
+			}
 		}
 	}
 

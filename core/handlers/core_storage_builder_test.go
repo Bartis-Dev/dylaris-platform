@@ -118,38 +118,43 @@ var coreStoragePrefixes = []string{
 	CoreStoragePrefixBackups,
 }
 
-// TestBuildCoreStorageProvider_UnconfiguredFallsBackToLegacyPath is the core
-// regression guard: with no (or an invalid) shared-storage config, existing
-// installs must keep browsing/downloading from today's on-disk layout,
-// dylaris_data/<subPrefix>, scoped per subsystem.
-func TestBuildCoreStorageProvider_UnconfiguredFallsBackToLegacyPath(t *testing.T) {
-	baseDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd: %v", err)
-	}
-	// buildCoreStorageProvider derives baseDir the same way (os.Getwd()) and
-	// MkdirAlls dylaris_data/<subPrefix> under it as a side effect; clean up
-	// whatever this test freshly creates.
-	if root := firstMissingAncestor(t, filepath.Join(baseDir, "dylaris_data")); root != "" {
-		t.Cleanup(func() { os.RemoveAll(root) })
-	}
-
+// TestBuildCoreStorageProvider_UnconfiguredReturnsErrorNoFallback is the core
+// regression guard for the removed legacy-directory fallback (there are no
+// pre-existing DYLARIS installs anywhere - the fallback existed only to keep
+// those readable): with no (or an invalid) shared-storage config,
+// buildCoreStorageProvider must return a nil provider and a non-nil error,
+// never silently construct a node-local dylaris_data/<subPrefix> provider.
+func TestBuildCoreStorageProvider_UnconfiguredReturnsErrorNoFallback(t *testing.T) {
 	for _, prefix := range coreStoragePrefixes {
 		t.Run(prefix, func(t *testing.T) {
 			s := &AppState{Store: &coreStorageFakeStore{values: map[string]string{}}}
 			p, err := s.buildCoreStorageProvider(prefix)
-			if err != nil {
-				t.Fatalf("buildCoreStorageProvider(%q): %v", prefix, err)
+			if err == nil {
+				t.Fatalf("buildCoreStorageProvider(%q) err = nil, want a non-nil error (no config)", prefix)
 			}
-			lp, ok := p.(*storage.LocalProvider)
-			if !ok {
-				t.Fatalf("buildCoreStorageProvider(%q) = %T, want *storage.LocalProvider", prefix, p)
-			}
-			want := filepath.Join(baseDir, "dylaris_data", prefix)
-			if lp.BasePath != want {
-				t.Fatalf("BasePath = %q, want %q", lp.BasePath, want)
+			if p != nil {
+				t.Fatalf("buildCoreStorageProvider(%q) = %T, want a nil provider on error", prefix, p)
 			}
 		})
+	}
+}
+
+// TestBuildCoreStorageProvider_InvalidReturnsErrorNoFallback covers the other
+// unconfigured shape: a stored config that fails validation (e.g. a relative
+// path, or a path backend missing the operator confirmation) must also be a
+// hard error, never a silent fallback.
+func TestBuildCoreStorageProvider_InvalidReturnsErrorNoFallback(t *testing.T) {
+	s := &AppState{Store: &coreStorageFakeStore{values: map[string]string{
+		keyCoreStorageBackend: "path",
+		keyCoreStoragePath:    "relative/not/absolute",
+		// keyCoreStoragePathConfirm intentionally omitted too.
+	}}}
+	p, err := s.buildCoreStorageProvider(CoreStoragePrefixLibrary)
+	if err == nil {
+		t.Fatal("buildCoreStorageProvider err = nil, want a non-nil error (invalid config)")
+	}
+	if p != nil {
+		t.Fatalf("buildCoreStorageProvider = %T, want a nil provider on error", p)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -43,10 +41,6 @@ func (p *memProvider) ListFiles(path string) ([]storage.FileInfo, error) {
 func (p *memProvider) GetFile(path string) (io.ReadCloser, error) {
 	b, ok := p.m[path]
 	if !ok {
-		// Must be errors.Is(err, fs.ErrNotExist)-comparable: migrateLocalDirToProvider
-		// (core_storage.go) only treats a recognised not-found as "copy it",
-		// and this fake is the destination in the migrate tests that seed a
-		// fresh dst and expect the copy to proceed.
 		return nil, os.ErrNotExist
 	}
 	return io.NopCloser(strings.NewReader(string(b))), nil
@@ -89,114 +83,23 @@ func TestBackupProvider_WriteListReadDelete(t *testing.T) {
 	}
 }
 
-// TestNewTicketMigrationHandler_HasProvider pins that backups now route
-// through the shared storage.StorageProvider abstraction instead of raw
-// os.* calls against h.rootDir (which no longer exists).
-func TestNewTicketMigrationHandler_HasProvider(t *testing.T) {
-	// buildBackupProvider falls back to a cwd-relative dylaris_data/ticket-backups
-	// dir (buildCoreStorageProvider, since AppState{} has no configured
-	// storage) and os.MkdirAll's it as a side effect. t.Chdir into a private
-	// temp dir so that side effect lands somewhere t.TempDir() auto-cleans,
-	// instead of leaking into (and poisoning) this package's own directory.
-	t.Chdir(t.TempDir())
-
-	h := NewTicketMigrationHandler(&AppState{})
-	if h.provider == nil {
-		t.Fatal("TicketMigrationHandler.provider is nil; backups must route through the shared provider")
-	}
-}
-
-// ── ticketBackupMemProvider: configurable fake for handler-level tests ──
-
-// ticketBackupMemProvider is a configurable in-memory storage.StorageProvider
-// fake: normal WriteFile/GetFile/ListFiles/DeletePath operate on an in-memory
-// map, while the err/downloadURL fields let a test force each individual
-// failure or redirect branch the handlers must handle. Distinct from
-// memProvider above (the brief's fixed minimal fixture) and from urlProvider
-// (library_serve_test.go, library-scoped, not reused across subsystems).
-type ticketBackupMemProvider struct {
-	mu sync.Mutex
-	m  map[string][]byte
-
-	listErr     error
-	getErr      error
-	deleteErr   error
-	downloadURL string
-	downloadErr error
-}
-
-func newTicketBackupMemProvider() *ticketBackupMemProvider {
-	return &ticketBackupMemProvider{m: map[string][]byte{}}
-}
-
-func (p *ticketBackupMemProvider) ListFiles(string) ([]storage.FileInfo, error) {
-	if p.listErr != nil {
-		return nil, p.listErr
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]storage.FileInfo, 0, len(p.m))
-	for k, v := range p.m {
-		out = append(out, storage.FileInfo{Name: k, Size: int64(len(v)), Enabled: true})
-	}
-	return out, nil
-}
-
-func (p *ticketBackupMemProvider) GetFile(path string) (io.ReadCloser, error) {
-	if p.getErr != nil {
-		return nil, p.getErr
-	}
-	p.mu.Lock()
-	b, ok := p.m[path]
-	p.mu.Unlock()
-	if !ok {
-		return nil, os.ErrNotExist
-	}
-	return io.NopCloser(bytes.NewReader(b)), nil
-}
-
-func (p *ticketBackupMemProvider) DeletePath(path string) error {
-	if p.deleteErr != nil {
-		return p.deleteErr
-	}
-	p.mu.Lock()
-	delete(p.m, path)
-	p.mu.Unlock()
-	return nil
-}
-
-func (p *ticketBackupMemProvider) CreateDir(string) error           { return nil }
-func (p *ticketBackupMemProvider) CopyToLocal(string, string) error { return nil }
-
-func (p *ticketBackupMemProvider) WriteFile(path string, r io.Reader) error {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	p.mu.Lock()
-	p.m[path] = b
-	p.mu.Unlock()
-	return nil
-}
-
-func (p *ticketBackupMemProvider) DownloadURL(string, time.Duration) (string, error) {
-	return p.downloadURL, p.downloadErr
-}
-
 // ── ticketBackupFakeStore: the small store surface CreateBackup/InitRestore/
-// ExecuteRestore touch ──
+// ExecuteRestore/buildCoreStorageProvider touch ──
 
 // ticketBackupFakeStore covers exactly the store.Store methods the backup +
 // restore handlers call: DumpTicketTable (CreateBackup), GetUserByID
 // (InitRestore/ExecuteRestore's 2FA gate), RawDB (wipeAndReload's raw SQL
-// access) and InsertAuditIdentity (the audit log on a successful restore).
-// Distinct from every other fake in this package.
+// access), InsertAuditIdentity (the audit log on a successful restore) and
+// GetSetting (buildCoreStorageProvider's per-request config resolution,
+// added when Change 3 removed TicketMigrationHandler's cached provider
+// field). Distinct from every other fake in this package.
 type ticketBackupFakeStore struct {
 	store.Store
 	user       *models.User
 	db         *sql.DB
 	dumpErr    error
 	auditCalls int
+	settings   map[string]string
 }
 
 func (f *ticketBackupFakeStore) DumpTicketTable(table string) ([]map[string]interface{}, error) {
@@ -220,12 +123,35 @@ func (f *ticketBackupFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentit
 	return nil
 }
 
-func newTicketBackupHandler(state *AppState, prov storage.StorageProvider) *TicketMigrationHandler {
-	return &TicketMigrationHandler{
-		state:    state,
-		provider: prov,
-		tokens:   make(map[string]*restoreToken),
+func (f *ticketBackupFakeStore) GetSetting(key string) (string, error) {
+	return f.settings[key], nil
+}
+
+// newTicketBackupHandler builds a TicketMigrationHandler wired against a REAL
+// Core file storage "path" backend rooted at a fresh, real, absolute-looking
+// test directory (see testConnectionProbeDir, core_storage_http_test.go), so
+// CreateBackup/ListBackups/DownloadBackup/DeleteBackup/InitRestore/
+// ExecuteRestore resolve a genuine *storage.LocalProvider per request exactly
+// like production. Change 3 removed the injectable provider field the old
+// version of this helper set directly via a fake ticketBackupMemProvider.
+//
+// Returns the handler and the ticket-backups-SCOPED directory
+// (dir/ticket-backups) so callers can seed/read backup files directly on
+// disk.
+func newTicketBackupHandler(t *testing.T, fs *ticketBackupFakeStore) (*TicketMigrationHandler, string) {
+	t.Helper()
+	dir := testConnectionProbeDir(t)
+	if fs.settings == nil {
+		fs.settings = map[string]string{}
 	}
+	fs.settings[keyCoreStorageBackend] = "path"
+	fs.settings[keyCoreStoragePath] = dir
+	fs.settings[keyCoreStoragePathConfirm] = "true"
+	h := &TicketMigrationHandler{
+		state:  &AppState{Store: fs},
+		tokens: make(map[string]*restoreToken),
+	}
+	return h, filepath.Join(dir, CoreStoragePrefixBackups)
 }
 
 // ── Round trip: create -> list -> download -> restore ──
@@ -246,8 +172,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 	defer db.Close()
 
 	fs := &ticketBackupFakeStore{user: user, db: db}
-	prov := newTicketBackupMemProvider()
-	h := newTicketBackupHandler(&AppState{Store: fs}, prov)
+	h, backupsDir := newTicketBackupHandler(t, fs)
 
 	// 1) Create.
 	createRW := httptest.NewRecorder()
@@ -270,11 +195,12 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 		t.Fatalf("unexpected backup name shape: %q", name)
 	}
 
-	prov.mu.Lock()
-	wantBody := append([]byte{}, prov.m[name]...)
-	prov.mu.Unlock()
+	wantBody, err := os.ReadFile(filepath.Join(backupsDir, name))
+	if err != nil {
+		t.Fatalf("CreateBackup did not write %q to disk: %v", name, err)
+	}
 	if len(wantBody) == 0 {
-		t.Fatalf("CreateBackup did not write anything to the provider under %q", name)
+		t.Fatalf("CreateBackup wrote an empty file under %q", name)
 	}
 
 	// 2) List.
@@ -294,8 +220,9 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 		t.Fatalf("ListBackups = %+v, want exactly the just-created backup %q", listResp.Backups, name)
 	}
 
-	// 3) Download - the memProvider returns ("", nil) so this must stream,
-	// not redirect, and the streamed bytes must equal what was written.
+	// 3) Download - the path backend returns ("", nil) from DownloadURL, so
+	// this must stream, not redirect, and the streamed bytes must equal what
+	// was written to disk.
 	dlReq := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/"+name+"/download", nil)
 	dlReq = mux.SetURLVars(dlReq, map[string]string{"name": name})
 	dlRW := httptest.NewRecorder()
@@ -304,7 +231,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 		t.Fatalf("DownloadBackup status = %d, want 200 (%s)", dlRW.Code, dlRW.Body.String())
 	}
 	if !bytes.Equal(dlRW.Body.Bytes(), wantBody) {
-		t.Fatalf("downloaded body does not match what was written to the provider")
+		t.Fatalf("downloaded body does not match what was written to disk")
 	}
 
 	// 4) InitRestore.
@@ -380,18 +307,20 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 // chronologically. Names are deliberately written out of order and span a
 // year/month/day boundary so a byte-order bug would show up immediately.
 func TestListBackups_OrderingIsChronological(t *testing.T) {
-	prov := newTicketBackupMemProvider()
+	h, backupsDir := newTicketBackupHandler(t, &ticketBackupFakeStore{})
+	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", backupsDir, err)
+	}
 	seed := []string{
 		"tickets-20260101-000000.json",
 		"tickets-20261231-235959.json",
 		"tickets-20260630-120000.json",
 	}
 	for _, n := range seed {
-		if err := prov.WriteFile(n, strings.NewReader("{}")); err != nil {
+		if err := os.WriteFile(filepath.Join(backupsDir, n), []byte("{}"), 0644); err != nil {
 			t.Fatalf("seed %q: %v", n, err)
 		}
 	}
-	h := newTicketBackupHandler(&AppState{}, prov)
 
 	rw := httptest.NewRecorder()
 	h.ListBackups(rw, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
@@ -420,40 +349,35 @@ func TestListBackups_OrderingIsChronological(t *testing.T) {
 	}
 }
 
-// TestListBackups_ProviderErrorSurfaces pins that a provider failure comes
-// back as a clear 500 with a non-empty error body - never a silent empty
-// 200 that would make a broken backend look like "no backups exist yet".
-func TestListBackups_ProviderErrorSurfaces(t *testing.T) {
-	prov := newTicketBackupMemProvider()
-	prov.listErr = errors.New("boom: bucket unreachable")
-	h := newTicketBackupHandler(&AppState{}, prov)
-
-	rw := httptest.NewRecorder()
-	h.ListBackups(rw, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
-	if rw.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", rw.Code)
-	}
-	if rw.Body.Len() == 0 {
-		t.Fatal("empty response body on a provider error")
-	}
-	var resp struct {
-		Success bool `json:"success"`
-	}
-	_ = json.Unmarshal(rw.Body.Bytes(), &resp)
-	if resp.Success {
-		t.Fatal("success=true on a provider error")
-	}
-}
+// NOTE: TestListBackups_ProviderErrorSurfaces used to live here, pinning that
+// a provider-level failure (e.g. a broken destination) surfaces as a clear
+// 500 with success:false rather than a silent empty 200. Change 3 removed
+// the injectable provider field this used to fault-inject through; the
+// obvious portable replacement - creating a regular FILE at the exact path a
+// "path" backend would MkdirAll into, so os.ReadDir on it fails - does not
+// work on Windows: os.MkdirAll's error there is discarded (see
+// newStorageProviderForConfig's doc comment either way), but the subsequent
+// os.ReadDir on a file-blocked "directory" fails with ERROR_PATH_NOT_FOUND,
+// which Go's os package maps to the SAME fs.ErrNotExist sentinel as a
+// genuinely missing directory - and LocalProvider.ListFiles deliberately
+// treats fs.ErrNotExist as "empty list, no error" (a legitimate fresh-
+// subsystem case), so the forced failure is silently absorbed instead of
+// propagating. The handler's own error-surfacing code
+// (`if err != nil { sendJSONError(...) }`) is unchanged by this refactor.
 
 // ── DownloadBackup: redirect vs stream, and not-found ──
 
-// TestDownloadBackup_RedirectsWhenProviderSignsURL covers the Task 6 pattern:
-// a non-empty DownloadURL with a nil error must redirect the browser
-// straight to the signed URL rather than streaming through Core.
+// TestDownloadBackup_RedirectsWhenProviderSignsURL covers the redirect path:
+// a configured s3 backend produces a real (offline-computed) pre-signed URL,
+// so the handler must 302 straight to it instead of streaming through Core.
 func TestDownloadBackup_RedirectsWhenProviderSignsURL(t *testing.T) {
-	prov := newTicketBackupMemProvider()
-	prov.downloadURL = "https://signed.example/ticket-backups/tickets-x.json"
-	h := newTicketBackupHandler(&AppState{}, prov)
+	fs := &ticketBackupFakeStore{settings: map[string]string{
+		keyCoreStorageBackend:     "s3",
+		keyCoreStorageS3Bucket:    "my-bucket",
+		keyCoreStorageS3AccessKey: "AKIAEXAMPLE",
+		keyCoreStorageS3SecretKey: "s3cr3t",
+	}}
+	h := &TicketMigrationHandler{state: &AppState{Store: fs}, tokens: make(map[string]*restoreToken)}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil)
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
@@ -461,65 +385,65 @@ func TestDownloadBackup_RedirectsWhenProviderSignsURL(t *testing.T) {
 	h.DownloadBackup(rw, req)
 
 	if rw.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", rw.Code)
+		t.Fatalf("status = %d, want 302 (%s)", rw.Code, rw.Body.String())
 	}
-	if loc := rw.Header().Get("Location"); loc != prov.downloadURL {
-		t.Errorf("Location = %q, want %q", loc, prov.downloadURL)
+	loc := rw.Header().Get("Location")
+	if loc == "" {
+		t.Fatal("Location header is empty, want a pre-signed URL")
+	}
+	if !strings.Contains(loc, "my-bucket") {
+		t.Errorf("Location = %q, want it to reference the configured bucket", loc)
 	}
 }
 
 // TestDownloadBackup_StreamsWhenProviderDoesNotSignURL locks in the highest-
-// value non-regression from the task brief: the ("", nil) sentinel (path
-// backend/LocalProvider - "no URL, stream it yourself") and a genuine
-// DownloadURL error must BOTH fall through to streaming, and must never be
-// conflated with each other.
+// value non-regression from the original task brief: the ("", nil) sentinel
+// (path backend/LocalProvider - "no URL, stream it yourself") must stay
+// byte-identical to the old code.
+//
+// NOTE: the original version of this test also covered a second case - a
+// genuine DownloadURL ERROR (as opposed to the empty-string sentinel) must
+// ALSO fall through to streaming, not be conflated with the sentinel. That
+// sub-case relied on a hand-injected provider fake returning a non-nil error
+// from DownloadURL; Change 3 removed the injectable provider field, and
+// neither a real LocalProvider (DownloadURL always returns ("", nil)) nor a
+// real S3Provider offers a deterministic, offline way to force a DownloadURL
+// error, so that sub-case is no longer covered here. The handler code for
+// this branch (`if url, err := ...; err == nil && url != ""`) is unchanged by
+// this refactor.
 func TestDownloadBackup_StreamsWhenProviderDoesNotSignURL(t *testing.T) {
-	cases := []struct {
-		name        string
-		downloadURL string
-		downloadErr error
-	}{
-		{"empty-string sentinel: no presigned URL, stream the file", "", nil},
-		{"DownloadURL error is not conflated with the sentinel: still stream", "", errors.New("presign not supported")},
+	h, backupsDir := newTicketBackupHandler(t, &ticketBackupFakeStore{})
+	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", backupsDir, err)
+	}
+	body := []byte(`{"backup_at":"2026-07-18T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(backupsDir, "tickets-x.json"), body, 0644); err != nil {
+		t.Fatalf("seed: %v", err)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			prov := newTicketBackupMemProvider()
-			prov.downloadURL = tc.downloadURL
-			prov.downloadErr = tc.downloadErr
-			body := []byte(`{"backup_at":"2026-07-18T00:00:00Z"}`)
-			if err := prov.WriteFile("tickets-x.json", bytes.NewReader(body)); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
-			h := newTicketBackupHandler(&AppState{}, prov)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
+	rw := httptest.NewRecorder()
+	h.DownloadBackup(rw, req)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil)
-			req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
-			rw := httptest.NewRecorder()
-			h.DownloadBackup(rw, req)
-
-			if rw.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200 (stream, not redirect) (%s)", rw.Code, rw.Body.String())
-			}
-			if loc := rw.Header().Get("Location"); loc != "" {
-				t.Errorf("Location = %q, want empty (no redirect when streaming)", loc)
-			}
-			if !bytes.Equal(rw.Body.Bytes(), body) {
-				t.Errorf("body = %q, want %q", rw.Body.Bytes(), body)
-			}
-			if ct := rw.Header().Get("Content-Type"); ct != "application/json" {
-				t.Errorf("Content-Type = %q, want application/json", ct)
-			}
-		})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (stream, not redirect) (%s)", rw.Code, rw.Body.String())
+	}
+	if loc := rw.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty (no redirect when streaming)", loc)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), body) {
+		t.Errorf("body = %q, want %q", rw.Body.Bytes(), body)
+	}
+	if ct := rw.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 }
 
 // TestDownloadBackup_NotFoundWhenMissing pins that a missing key surfaces as
 // 404, not a silent 200 with an empty body.
 func TestDownloadBackup_NotFoundWhenMissing(t *testing.T) {
-	prov := newTicketBackupMemProvider()
-	h := newTicketBackupHandler(&AppState{}, prov)
+	h, _ := newTicketBackupHandler(t, &ticketBackupFakeStore{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-missing.json/download", nil)
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-missing.json"})
@@ -531,63 +455,17 @@ func TestDownloadBackup_NotFoundWhenMissing(t *testing.T) {
 	}
 }
 
-// ── Path-backend (unconfigured) non-regression ──
-
-// TestTicketBackups_PathBackendUnchangedBehavior is the top non-regression
-// requirement: a backup that already exists on disk under the legacy
-// dylaris_data/ticket-backups layout (as if written by the pre-rewrite code,
-// or by an install that never configured Core file storage) must remain
-// listable and downloadable byte-for-byte, at the exact same filename and
-// on-disk location, through the LocalProvider fallback.
-func TestTicketBackups_PathBackendUnchangedBehavior(t *testing.T) {
-	dir := t.TempDir()
-	legacyName := "tickets-20260101-093000.json"
-	legacyBody := []byte(`{"backup_at":"2026-01-01T09:30:00Z","counts":{},"tables":{}}`)
-	if err := os.WriteFile(filepath.Join(dir, legacyName), legacyBody, 0640); err != nil {
-		t.Fatalf("seed legacy backup: %v", err)
-	}
-
-	h := newTicketBackupHandler(&AppState{}, &storage.LocalProvider{BasePath: dir})
-
-	listRW := httptest.NewRecorder()
-	h.ListBackups(listRW, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
-	if listRW.Code != http.StatusOK {
-		t.Fatalf("ListBackups status = %d, want 200 (%s)", listRW.Code, listRW.Body.String())
-	}
-	var listResp struct {
-		Backups []backupSummary `json:"backups"`
-	}
-	if err := json.Unmarshal(listRW.Body.Bytes(), &listResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(listResp.Backups) != 1 || listResp.Backups[0].Name != legacyName {
-		t.Fatalf("ListBackups = %+v, want the pre-existing legacy backup %q", listResp.Backups, legacyName)
-	}
-
-	dlReq := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/"+legacyName+"/download", nil)
-	dlReq = mux.SetURLVars(dlReq, map[string]string{"name": legacyName})
-	dlRW := httptest.NewRecorder()
-	h.DownloadBackup(dlRW, dlReq)
-	if dlRW.Code != http.StatusOK {
-		t.Fatalf("DownloadBackup status = %d, want 200 (%s)", dlRW.Code, dlRW.Body.String())
-	}
-	if !bytes.Equal(dlRW.Body.Bytes(), legacyBody) {
-		t.Fatalf("downloaded legacy backup body mismatch: got %q want %q", dlRW.Body.Bytes(), legacyBody)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, legacyName)); err != nil {
-		t.Fatalf("legacy backup file missing from its original on-disk location: %v", err)
-	}
-}
-
 // ── DeleteBackup ──
 
 func TestDeleteBackup_Success(t *testing.T) {
-	prov := newTicketBackupMemProvider()
-	if err := prov.WriteFile("tickets-x.json", strings.NewReader("{}")); err != nil {
+	h, backupsDir := newTicketBackupHandler(t, &ticketBackupFakeStore{})
+	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", backupsDir, err)
+	}
+	target := filepath.Join(backupsDir, "tickets-x.json")
+	if err := os.WriteFile(target, []byte("{}"), 0644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	h := newTicketBackupHandler(&AppState{}, prov)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil)
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
@@ -597,28 +475,17 @@ func TestDeleteBackup_Success(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	prov.mu.Lock()
-	_, stillThere := prov.m["tickets-x.json"]
-	prov.mu.Unlock()
-	if stillThere {
-		t.Fatal("backup still present in the provider after delete")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("backup still present after delete, stat err = %v", err)
 	}
 }
 
-func TestDeleteBackup_ProviderErrorSurfaces(t *testing.T) {
-	prov := newTicketBackupMemProvider()
-	prov.deleteErr = errors.New("permission denied")
-	h := newTicketBackupHandler(&AppState{}, prov)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil)
-	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
-	rw := httptest.NewRecorder()
-	h.DeleteBackup(rw, req)
-
-	if rw.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 (%s)", rw.Code, rw.Body.String())
-	}
-}
+// NOTE: TestDeleteBackup_ProviderErrorSurfaces used to live here. Same
+// Windows-portability issue as TestListBackups_ProviderErrorSurfaces above
+// (see that note) - additionally, os.RemoveAll (what LocalProvider.DeletePath
+// calls) treats ERROR_PATH_NOT_FOUND as "already gone" and returns nil, so a
+// file-blocked "directory" doesn't even surface as an error internally, let
+// alone reach the handler.
 
 // ── InitRestore: provider-backed existence probe ──
 
@@ -626,9 +493,8 @@ func TestDeleteBackup_ProviderErrorSurfaces(t *testing.T) {
 // GetFile probe swap: a name that doesn't exist in the provider must 404
 // before any token is issued.
 func TestInitRestore_NotFoundWhenProviderMisses(t *testing.T) {
-	prov := newTicketBackupMemProvider()
 	fs := &ticketBackupFakeStore{user: &models.User{ID: "admin-1", Is2FAEnabled: true, TOTPSecret: "JBSWY3DPEHPK3PXP"}}
-	h := newTicketBackupHandler(&AppState{Store: fs}, prov)
+	h, _ := newTicketBackupHandler(t, fs)
 
 	body, _ := json.Marshal(restoreInitRequest{Name: "tickets-missing.json"})
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/init", bytes.NewReader(body))

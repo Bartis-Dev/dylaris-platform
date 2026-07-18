@@ -1048,29 +1048,6 @@ func TestCap_PlatformSettingsWriteSurfacePanel(t *testing.T) {
 	}
 }
 
-// TestCap_CoreStorageMigrateNeedsSettingsWrite guards Task 9's admin gate:
-// POST /api/settings/core-storage/migrate copies real on-disk data into
-// whatever backend is configured, so it must require settings.write like the
-// other core-storage write endpoints (save, test-connection), not merely
-// settings.read or plain authentication.
-func TestCap_CoreStorageMigrateNeedsSettingsWrite(t *testing.T) {
-	fs := &authzFakeStore{}
-	panelHolder(fs, "ro-id", "ro", "settings.read")
-	panelHolder(fs, "rw-id", "rw", "settings.read", "settings.write")
-	fs.addUser("plain-id", "plain", false)
-	srv := newAuthzTestServer(t, fs)
-
-	if c := doAs(t, srv, "POST", "/api/settings/core-storage/migrate", testIdentity{UserID: "ro-id", Username: "ro"}); c != 403 {
-		t.Errorf("settings.read-only holder must be 403 on migrate, got %d", c)
-	}
-	if c := doAs(t, srv, "POST", "/api/settings/core-storage/migrate", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
-		t.Errorf("ordinary user must be 403 on migrate, got %d", c)
-	}
-	if c := doAs(t, srv, "POST", "/api/settings/core-storage/migrate", testIdentity{UserID: "rw-id", Username: "rw"}); c == 403 {
-		t.Error("settings.write holder must not be 403 on migrate")
-	}
-}
-
 // TestCap_SettingsExemptAuthedGETsNotBlocked proves the settings reads meant
 // for EVERY authenticated user (not just settings.read holders) stay reachable
 // at the chokepoint: GET /settings/features, GET /settings/beam and GET
