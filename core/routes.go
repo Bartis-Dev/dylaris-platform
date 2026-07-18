@@ -282,6 +282,7 @@ var requiredCaps = map[string]string{
 	"/api/settings/library/test":                       "settings.read",
 	"/api/settings/core-storage":                       "settings.read",
 	"/api/settings/core-storage/test":                  "settings.write",
+	"/api/settings/core-storage/migrate":               "settings.write",
 	"/api/settings/filemanager":                        "settings.read",
 	"/api/settings/gateway":                            "settings.read",
 	"/api/settings/gateway/hub-redis-admin":            "settings.read",
@@ -1267,6 +1268,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.SaveConfig))).Methods("POST")
 	api.HandleFunc("/settings/core-storage/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.TestConnection))).Methods("POST")
+	// Admin-triggered migration of the legacy on-disk dylaris_data trees into
+	// the configured provider (Task 9). Config enforcement lives INSIDE the
+	// handler (CoreStorageConfigured check), not via RequireCoreStorageConfigured:
+	// that gate's route count is asserted at exactly 4 elsewhere
+	// (core_storage_gate_routes_test.go), and this route deliberately isn't one
+	// of them since "unconfigured" here is refused with a specific migration
+	// error message rather than the generic feature_disabled gate response.
+	api.HandleFunc("/settings/core-storage/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.Migrate))).Methods("POST")
 
 	// --- Regions ---
 	// User-facing: list of enabled regions (drives region pickers).

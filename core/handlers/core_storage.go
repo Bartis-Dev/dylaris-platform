@@ -361,3 +361,190 @@ func probeStorageProvider(prov storage.StorageProvider) (ok bool, message string
 	}
 	return true, "Storage reachable: write, read and delete all succeeded."
 }
+
+// --- Admin-triggered migration of existing local data into the configured backend ---
+
+// maxMigrateErrorsPerSubsystem caps how many individual per-file error
+// messages migrateLocalDirToProvider collects for one subsystem, so a badly
+// broken destination (e.g. every write failing) cannot blow up the response
+// body. Failed still counts every failure; only the message list is capped.
+const maxMigrateErrorsPerSubsystem = 20
+
+// migrateResult reports what happened while copying one legacy subsystem
+// directory (dylaris_data/<sub>) into its configured provider.
+//
+// OVERWRITE POLICY: SKIP-IF-EXISTS. A file already present at the
+// destination key is left untouched and counted as Skipped, never
+// overwritten. This is what makes the migration safely re-runnable: a
+// partial or interrupted run can simply be triggered again, and only the
+// files that did not make it across the first time are attempted again,
+// instead of re-transferring everything that already migrated cleanly.
+type migrateResult struct {
+	Copied  int      `json:"copied"`
+	Skipped int      `json:"skipped"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors,omitempty"`
+}
+
+func appendCappedMigrateError(errs []string, msg string) []string {
+	if len(errs) >= maxMigrateErrorsPerSubsystem {
+		return errs
+	}
+	return append(errs, msg)
+}
+
+// sameStorageDir reports whether a and b resolve to the identical on-disk
+// directory. Used to refuse a migration whose destination is the exact
+// directory it would read from: LocalProvider.WriteFile does os.Create
+// (truncate) on the destination path, so if that path is the same file
+// already open for reading, the "copy" would destroy the very original that
+// rule 1 (never touch the source) requires this migration to leave alone.
+func sameStorageDir(a, b string) bool {
+	ca, errA := filepath.Abs(a)
+	cb, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return filepath.Clean(ca) == filepath.Clean(cb)
+}
+
+// migrateLocalDirToProvider walks srcRoot and writes every regular file into
+// prov under its srcRoot-relative, forward-slash key, skipping any key that
+// already exists at the destination (see migrateResult's overwrite-policy
+// doc). Missing srcRoot is a no-op (fresh install with nothing to migrate
+// yet). The source is only ever opened for reading; nothing under srcRoot is
+// removed, moved or modified, so a failed or partial run can always be
+// retried, and reverting the storage config rolls back to the untouched
+// originals.
+//
+// A single file's open/write failure is recorded in the result and does NOT
+// abort the walk - the rest of the tree is still attempted. The returned
+// error is non-nil whenever the result carries at least one failure (a
+// per-file failure, or one of the fatal conditions below), so callers can
+// treat "err != nil" as "this subsystem did not fully succeed" while still
+// having the itemized detail in the result.
+func migrateLocalDirToProvider(srcRoot string, prov storage.StorageProvider) (migrateResult, error) {
+	var res migrateResult
+
+	if lp, ok := prov.(*storage.LocalProvider); ok && sameStorageDir(srcRoot, lp.BasePath) {
+		err := fmt.Errorf("migrate: destination %q is the same directory as the source %q; refusing to copy onto itself", lp.BasePath, srcRoot)
+		res.Failed = 1
+		res.Errors = []string{err.Error()}
+		return res, err
+	}
+
+	info, statErr := os.Stat(srcRoot)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return res, nil
+		}
+		res.Failed = 1
+		res.Errors = []string{statErr.Error()}
+		return res, statErr
+	}
+	if !info.IsDir() {
+		err := fmt.Errorf("migrate: %q is not a directory", srcRoot)
+		res.Failed = 1
+		res.Errors = []string{err.Error()}
+		return res, err
+	}
+
+	_ = filepath.WalkDir(srcRoot, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			res.Failed++
+			res.Errors = appendCappedMigrateError(res.Errors, p+": "+err.Error())
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(srcRoot, p)
+		if relErr != nil {
+			res.Failed++
+			res.Errors = appendCappedMigrateError(res.Errors, p+": "+relErr.Error())
+			return nil
+		}
+		key := filepath.ToSlash(rel)
+
+		// Skip-if-exists: StorageProvider has no dedicated Exists check, so
+		// GetFile is used as a best-effort probe. Any error (missing key, or
+		// a transient backend hiccup) is treated as "not present yet" and
+		// falls through to the write attempt below, so a genuine destination
+		// problem surfaces as a write failure rather than a silently skipped
+		// file.
+		if rc, getErr := prov.GetFile(key); getErr == nil {
+			rc.Close()
+			res.Skipped++
+			return nil
+		}
+
+		f, openErr := os.Open(p)
+		if openErr != nil {
+			res.Failed++
+			res.Errors = appendCappedMigrateError(res.Errors, key+": open source: "+openErr.Error())
+			return nil
+		}
+		writeErr := prov.WriteFile(key, f)
+		f.Close()
+		if writeErr != nil {
+			res.Failed++
+			res.Errors = appendCappedMigrateError(res.Errors, key+": "+writeErr.Error())
+			return nil
+		}
+		res.Copied++
+		return nil
+	})
+
+	if res.Failed > 0 {
+		return res, fmt.Errorf("migrate: %d file(s) failed under %q", res.Failed, srcRoot)
+	}
+	return res, nil
+}
+
+// Migrate POST /api/settings/core-storage/migrate - PANEL settings.write.
+// Copies the legacy dylaris_data/{library,ticket-attachments,ticket-backups}
+// trees into the currently configured provider, scoped per subsystem exactly
+// like buildCoreStorageProvider. Requires a valid configured destination:
+// migrating into the unconfigured legacy fallback would just copy
+// dylaris_data onto itself, so this refuses outright (400) instead of
+// running a pointless no-op.
+//
+// SAFETY: only ever copies. The source trees are never deleted, moved or
+// modified, so this is safe to re-run after a partial failure (skip-if-
+// exists, see migrateResult) and a bad destination config can always be
+// rolled back by reverting the Core file storage settings.
+//
+// Every subsystem is attempted even if another one fails or refuses (e.g.
+// hitting the same-directory guard), so one bad subsystem never hides
+// whether the other two succeeded. "success" in the response is true only
+// when every subsystem completed with zero failures; a partial result is
+// always reported as such, never as success.
+func (h *CoreStorageHandler) Migrate(w http.ResponseWriter, r *http.Request) {
+	if !h.state.CoreStorageConfigured() {
+		sendJSONError(w, "Configure Core file storage before migrating.", http.StatusBadRequest)
+		return
+	}
+	baseDir, _ := os.Getwd()
+	subs := []string{CoreStoragePrefixLibrary, CoreStoragePrefixAttachments, CoreStoragePrefixBackups}
+	results := map[string]migrateResult{}
+	success := true
+	for _, sub := range subs {
+		prov, err := h.state.buildCoreStorageProvider(sub)
+		if err != nil {
+			results[sub] = migrateResult{Failed: 1, Errors: []string{"provider: " + err.Error()}}
+			success = false
+			continue
+		}
+		src := filepath.Join(baseDir, "dylaris_data", sub)
+		res, migErr := migrateLocalDirToProvider(src, prov)
+		results[sub] = res
+		if migErr != nil {
+			success = false
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": success,
+		"results": results,
+		"note":    "Original files were left in place. Verify the new backend, then remove the old dirs manually.",
+	})
+}
