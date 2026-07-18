@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -202,6 +203,18 @@ func TestS3Provider_DeletePath_DoesNotDeleteSiblingsWithSharedPrefix(t *testing.
 // the non-zip directory branch of CopyToLocal: it must copy only the objects
 // under the source prefix, never a sibling whose key merely starts with the
 // same string (e.g. "mods" must not also pull in "modsBackup/x.jar").
+//
+// This asserts the EXACT set of files that end up under destPath, not just
+// the absence of a couple of guessed leak paths. CopyToLocal's rel-name
+// computation, `strings.TrimPrefix(strings.TrimPrefix(o.Key, base), "/")`,
+// strips the literal string `base` ("library/mods"), not a slash-bounded
+// path segment. So under the pre-pathObjects bug, a leaked
+// "library/modsBackup/x.jar" would NOT land at destPath/x.jar or under
+// destPath/modsBackup/ - it lands at destPath/Backup/x.jar (only the
+// substring "library/mods" is stripped, leaving "Backup/x.jar"). A check
+// that only looks for x.jar or a modsBackup dir never notices that and
+// passes regardless of the bug. Walking the whole tree and comparing the
+// full relative-path set catches any leak wherever it lands.
 func TestS3Provider_CopyToLocal_NonZipDirectory_DoesNotCopySiblingPrefix(t *testing.T) {
 	fos := newFakeObjectStore()
 	p := &S3Provider{os: fos, prefix: "library"}
@@ -221,22 +234,45 @@ func TestS3Provider_CopyToLocal_NonZipDirectory_DoesNotCopySiblingPrefix(t *test
 		t.Fatalf("CopyToLocal: %v", err)
 	}
 
-	for _, name := range []string{"a.jar", "b.jar"} {
-		got, err := os.ReadFile(filepath.Join(dst, name))
+	var got []string
+	err := filepath.WalkDir(dst, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatalf("read copied %s: %v", name, err)
+			return err
 		}
-		want := seed["mods/"+name]
-		if string(got) != want {
-			t.Errorf("%s content = %q, want %q", name, got, want)
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dst, p)
+		if err != nil {
+			return err
+		}
+		got = append(got, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk dst: %v", err)
+	}
+	sort.Strings(got)
+
+	want := []string{"a.jar", "b.jar"}
+	if len(got) != len(want) {
+		t.Fatalf("files under destPath = %v, want exactly %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("files under destPath = %v, want exactly %v", got, want)
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(dst, "x.jar")); !os.IsNotExist(err) {
-		t.Errorf("modsBackup/x.jar leaked into CopyToLocal(\"mods\", ...) output, stat err = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dst, "modsBackup")); !os.IsNotExist(err) {
-		t.Errorf("modsBackup directory unexpectedly created in CopyToLocal(\"mods\", ...) output")
+	for _, name := range want {
+		gotContent, err := os.ReadFile(filepath.Join(dst, name))
+		if err != nil {
+			t.Fatalf("read copied %s: %v", name, err)
+		}
+		wantContent := seed["mods/"+name]
+		if string(gotContent) != wantContent {
+			t.Errorf("%s content = %q, want %q", name, gotContent, wantContent)
+		}
 	}
 }
 
