@@ -28,18 +28,23 @@ type telemetryStore interface {
 }
 
 // TelemetryHeartbeat posts anonymous platform stats to dylaris.dev every 10
-// minutes for the public live-counter banner. Sends:
-//   - SHA256(coreID)[:16] as instanceId (no hostnames, no user data)
+// minutes for the public live-counter on the website. Sends:
+//   - instanceId: SHA256(salt + CLUSTER_SECRET)[:16]. Stable per DEPLOYMENT,
+//     not per Core: every Core of one cluster shares CLUSTER_SECRET, so a
+//     load-balanced multi-Core setup counts as ONE self-hoster, and the id
+//     survives restarts, redeploys and leader changes. No hostname or user
+//     data ever leaves the box.
 //   - type: platform | gateway (from routing_mode setting)
-//   - servers / online / players counts
+//   - servers / online / players counts (players unused by the counter today)
 //   - version string for build correlation
 //
-// Default ENABLED. Opt out via Settings → Features (telemetry_enabled = false)
+// Default ENABLED. Opt out via Settings -> Features (telemetry_enabled = false)
 // or the DYLARIS_TELEMETRY=false ENV (hard kill, ignores DB setting).
-// Leader-gated so multi-Core deployments only post once.
+// Leader-gated so multi-Core deployments only post once; if leadership briefly
+// overlaps during a lease handover the shared instanceId just dedupes.
 type TelemetryHeartbeat struct {
 	store       telemetryStore
-	coreID      string
+	instanceID  string
 	region      string
 	coreVersion string
 	leader      leader.Election
@@ -50,10 +55,24 @@ type TelemetryHeartbeat struct {
 // heartbeat. Hardcoded for now — bump alongside platform releases.
 const TelemetryCoreVersion = "0.17.0"
 
-func NewTelemetryHeartbeat(store telemetryStore, coreID, region string) *TelemetryHeartbeat {
+// telemetryInstanceSalt namespaces the instanceId hash so the value shared with
+// the website can never be confused with any other CLUSTER_SECRET-derived hash,
+// and gives us a version handle if the id scheme ever changes.
+const telemetryInstanceSalt = "dylaris-telemetry-instance-v1"
+
+// deriveInstanceID turns the deployment-wide CLUSTER_SECRET into a stable,
+// opaque 16-hex-char id. Deterministic and identical across every Core that
+// shares the secret, so one deployment maps to exactly one id. Truncated to
+// 64 bits: collision-safe for a counter, and not reversible to the secret.
+func deriveInstanceID(clusterSecret string) string {
+	sum := sha256.Sum256([]byte(telemetryInstanceSalt + ":" + clusterSecret))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+func NewTelemetryHeartbeat(store telemetryStore, clusterSecret, region string) *TelemetryHeartbeat {
 	return &TelemetryHeartbeat{
 		store:       store,
-		coreID:      coreID,
+		instanceID:  deriveInstanceID(clusterSecret),
 		region:      region,
 		coreVersion: TelemetryCoreVersion,
 		httpClient:  &http.Client{Timeout: 15 * time.Second},
@@ -127,11 +146,8 @@ func (t *TelemetryHeartbeat) post(ctx context.Context) {
 	}
 	players, _ := t.store.SumLatestPlayerCounts()
 
-	sum := sha256.Sum256([]byte(t.coreID))
-	instanceID := hex.EncodeToString(sum[:])[:16]
-
 	payload := map[string]interface{}{
-		"instanceId": instanceID,
+		"instanceId": t.instanceID,
 		"type":       instType,
 		"servers":    len(servers),
 		"online":     online,
@@ -146,6 +162,13 @@ func (t *TelemetryHeartbeat) post(ctx context.Context) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", fmt.Sprintf("Dylaris-Telemetry/%s", t.coreVersion))
+	// Optional shared secret. When the receiving endpoint enforces auth
+	// (HEARTBEAT_SECRET on the site), this Core must send the matching key or its
+	// heartbeats are rejected (401). Empty = no header, so an unsecured endpoint
+	// keeps working unchanged.
+	if key := strings.TrimSpace(os.Getenv("DYLARIS_TELEMETRY_KEY")); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		// Network blips are silent — operator doesn't need to see a stack

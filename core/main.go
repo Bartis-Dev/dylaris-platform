@@ -454,7 +454,7 @@ func main() {
 	// Telemetry heartbeat. Posts anonymous platform stats to
 	// dylaris.dev every 10min for the live counter on the website.
 	// Leader-gated so multi-Core deployments don't double-count.
-	telemetryHeartbeat := services.NewTelemetryHeartbeat(pgStore, cfg.CoreID, cfg.Region)
+	telemetryHeartbeat := services.NewTelemetryHeartbeat(pgStore, cfg.ClusterSecret, cfg.Region)
 	telemetryHeartbeat.SetLeader(coreLeader)
 	telemetryHeartbeat.Start(context.Background())
 
