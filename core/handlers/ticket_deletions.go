@@ -24,8 +24,12 @@ type TicketDeletionsHandler struct {
 
 func NewTicketDeletionsHandler(state *AppState) *TicketDeletionsHandler {
 	return &TicketDeletionsHandler{
-		state:    state,
-		provider: buildAttachmentProvider(),
+		state: state,
+		// Same shared-storage-scoped provider as TicketAttachmentsHandler so
+		// cascade-delete cleanup targets the same backend attachments were
+		// actually written to (S3-configured installs would otherwise clean
+		// up the legacy local dir while uploads land in S3).
+		provider: buildAttachmentProvider(state),
 	}
 }
 
