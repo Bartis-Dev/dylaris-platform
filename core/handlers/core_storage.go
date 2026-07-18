@@ -265,6 +265,8 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	candidate.Backend = strings.TrimSpace(candidate.Backend)
+	candidate.Path = strings.TrimSpace(candidate.Path)
 	effective := mergeCoreStorageCandidate(candidate, h.state.LoadCoreStorageConfig())
 
 	if err := validateCoreStorageConfig(effective); err != nil {
