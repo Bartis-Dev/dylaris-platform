@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,6 +74,12 @@ func NewTicketMigrationHandler(state *AppState) *TicketMigrationHandler {
 func buildBackupProvider(state *AppState) storage.StorageProvider {
 	p, err := state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
+		// A valid-looking config that still fails to build (e.g. backup.NewS3
+		// rejecting bad creds/an unreachable endpoint at construction) must not
+		// fail silently: CoreStorageConfigured() only re-validates FIELDS, so
+		// the write gate stays open while every backup quietly falls back to a
+		// node-local blob - the split-brain path.
+		log.Printf("ticket-backups: core storage provider build failed, falling back to legacy local dir: %v", err)
 		baseDir, _ := os.Getwd()
 		root := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixBackups)
 		os.MkdirAll(root, 0755)

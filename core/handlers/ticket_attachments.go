@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -44,6 +43,12 @@ func NewTicketAttachmentsHandler(state *AppState) *TicketAttachmentsHandler {
 func buildAttachmentProvider(state *AppState) storage.StorageProvider {
 	p, err := state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
 	if err != nil {
+		// A valid-looking config that still fails to build (e.g. backup.NewS3
+		// rejecting bad creds/an unreachable endpoint at construction) must not
+		// fail silently: CoreStorageConfigured() only re-validates FIELDS, so
+		// the write gate stays open while every attachment upload quietly
+		// falls back to a node-local blob - the split-brain path.
+		log.Printf("ticket-attachments: core storage provider build failed, falling back to legacy local dir: %v", err)
 		baseDir, _ := os.Getwd()
 		root := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixAttachments)
 		os.MkdirAll(root, 0755)
@@ -143,6 +148,45 @@ func attachmentAllowed(filename string, head []byte) (string, error) {
 			return sniff, nil
 		}
 		return "", fmt.Errorf("content does not match the declared %s type", ext)
+	}
+}
+
+// clampAttachmentContentType returns mime unchanged when it is safe to
+// reflect verbatim on a download response, otherwise the deliberately inert
+// "application/octet-stream" fallback. Mirrors the sniff families
+// attachmentAllowed accepts at upload time (image/*, application/pdf,
+// application/zip, text/* other than text/html, and the
+// application/octet-stream / application/gzip / application/x-tar shapes a
+// valid gzip/tar/JSON payload sniffs as) so this only ever narrows an
+// existing row's type, never widens it.
+//
+// This exists for rows written BEFORE the sniff-based Mime was enforced
+// (Task 7): those can still hold the client's originally DECLARED
+// Content-Type - e.g. "text/html" - since only the extension and sniffed
+// bytes decide storage now, but nothing retroactively fixed already-stored
+// rows. nosniff plus Content-Disposition: attachment already stop a browser
+// from acting on the BODY; this closes the same gap for the Content-Type
+// header itself, for old and new rows alike, without a data migration.
+func clampAttachmentContentType(mime string) string {
+	base := mime
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.TrimSpace(base)
+	switch {
+	case strings.HasPrefix(base, "text/html"):
+		return "application/octet-stream"
+	case strings.HasPrefix(base, "image/"),
+		strings.HasPrefix(base, "text/"),
+		base == "application/pdf",
+		base == "application/zip",
+		base == "application/gzip",
+		base == "application/x-gzip",
+		base == "application/x-tar",
+		base == "application/octet-stream":
+		return mime
+	default:
+		return "application/octet-stream"
 	}
 }
 
@@ -384,7 +428,22 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		sendJSONError(w, err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
-	body := io.MultiReader(bytes.NewReader(head), file)
+
+	// Rewind instead of stitching head + file back together with
+	// io.MultiReader: multipart.File is guaranteed to implement io.Seeker, so
+	// seeking keeps body just as seekable as file was before the peek.
+	// S3Provider.WriteFile (core/storage/s3provider.go) passes this reader
+	// straight through to the AWS SDK's PutObject with no content length; the
+	// SDK's checksum middleware refuses an unseekable stream outright on a
+	// plain-HTTP endpoint, which is exactly the documented self-hosted MinIO
+	// use case (http://minio:9000) - an io.MultiReader here made every
+	// attachment upload 500 on such an install.
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		log.Printf("ticket-attachments: seek-to-start after peek failed for ticket %d: %v", t.ID, err)
+		sendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
+		return
+	}
+	var body io.Reader = file
 
 	// Optional AV scan: when a scanner is configured, spool to a temp file so
 	// the whole object can be scanned before it lands in storage. Disabled
@@ -538,6 +597,13 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 		sendJSONError(w, "Attachment not found", http.StatusNotFound)
 		return
 	}
+
+	// Deliberately never tries provider.DownloadURL, unlike the library and
+	// ticket-backups download handlers: a pre-signed S3 redirect would let
+	// the object storage backend serve its own headers, bypassing the
+	// nosniff / exact Content-Length / Content-Disposition enforcement below.
+	// Attachments always stream through Core so those headers are guaranteed,
+	// at the cost of not offloading the transfer to the object store.
 	rc, err := h.provider.GetFile(a.StorageKey)
 	if err != nil {
 		sendJSONError(w, "File missing on storage", http.StatusGone)
@@ -549,7 +615,10 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	// client's declared claim - see attachmentAllowed), and nosniff plus
 	// Content-Disposition: attachment together stop a browser from executing
 	// or rendering the body regardless of what Content-Type it carries.
-	w.Header().Set("Content-Type", a.Mime)
+	// clampAttachmentContentType additionally covers rows written before that
+	// sniff-based Mime was enforced, which can still hold a client-declared
+	// value like text/html - see its doc comment.
+	w.Header().Set("Content-Type", clampAttachmentContentType(a.Mime))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", a.SizeBytes))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+a.Filename+`"`)

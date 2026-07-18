@@ -92,6 +92,27 @@ func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 	}
 }
 
+// TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret guards Minor 6:
+// switching the backend away from s3 must clear the stored S3 secret too, so
+// it doesn't linger orphaned (with S3SecretSet still reporting true) once
+// the s3 config it belonged to is no longer in use.
+func TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	seedCoreStorageS3(fs)
+	h := NewCoreStorageHandler(&AppState{Store: fs})
+
+	dir := testConnectionProbeDir(t)
+	body, _ := json.Marshal(CoreStorageConfig{Backend: "path", Path: dir, PathConfirmed: true})
+	rw := httptest.NewRecorder()
+	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if fs.kv[keyCoreStorageS3SecretKey] != "" {
+		t.Errorf("stored s3 secret not cleared after switching to path backend, got %q", fs.kv[keyCoreStorageS3SecretKey])
+	}
+}
+
 func TestCoreStorage_SaveRejectsInvalid(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
 	h := NewCoreStorageHandler(&AppState{Store: fs})

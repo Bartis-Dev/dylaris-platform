@@ -92,3 +92,36 @@ func TestNewAttachmentScanner(t *testing.T) {
 		}
 	})
 }
+
+// TestClampAttachmentContentType pins Minor 7: the served Content-Type is
+// clamped to an allowlist of sniff-derived shapes, falling back to
+// application/octet-stream for anything else - closing the residual gap for
+// attachment rows stored before the sniff-based Mime was enforced, which can
+// still hold a client-DECLARED value like text/html.
+func TestClampAttachmentContentType(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"image passes through", "image/png", "image/png"},
+		{"pdf passes through", "application/pdf", "application/pdf"},
+		{"zip passes through", "application/zip", "application/zip"},
+		{"gzip passes through", "application/gzip", "application/gzip"},
+		{"legacy x-gzip passes through", "application/x-gzip", "application/x-gzip"},
+		{"tar passes through", "application/x-tar", "application/x-tar"},
+		{"octet-stream passes through", "application/octet-stream", "application/octet-stream"},
+		{"text/plain with charset passes through unchanged", "text/plain; charset=utf-8", "text/plain; charset=utf-8"},
+		{"pre-fix declared text/html is clamped", "text/html", "application/octet-stream"},
+		{"pre-fix declared text/html with charset is clamped", "text/html; charset=utf-8", "application/octet-stream"},
+		{"unknown/unexpected type is clamped", "application/javascript", "application/octet-stream"},
+		{"empty is clamped", "", "application/octet-stream"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := clampAttachmentContentType(c.in); got != c.want {
+				t.Fatalf("clampAttachmentContentType(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

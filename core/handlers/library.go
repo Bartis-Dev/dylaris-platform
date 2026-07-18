@@ -4,6 +4,7 @@ import (
 	"dylaris-core/storage"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,17 +27,18 @@ func NewLibraryHandler(state *AppState) *LibraryHandler {
 func buildProvider(state *AppState) storage.StorageProvider {
 	p, err := state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
+		// A valid-looking config that still fails to build (e.g. backup.NewS3
+		// rejecting bad creds/an unreachable endpoint at construction) must not
+		// fail silently: CoreStorageConfigured() only re-validates FIELDS, so
+		// the write gate stays open while every library upload quietly falls
+		// back to a node-local blob - the split-brain path.
+		log.Printf("library: core storage provider build failed, falling back to legacy local dir: %v", err)
 		baseDir, _ := os.Getwd()
 		libPath := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixLibrary)
 		os.MkdirAll(libPath, 0755)
 		return &storage.LocalProvider{BasePath: libPath}
 	}
 	return p
-}
-
-// RefreshProvider is called when the library settings are changed
-func (h *LibraryHandler) RefreshProvider() {
-	h.provider = buildProvider(h.state)
 }
 
 // GetLibraryHandler GET /api/library?path=

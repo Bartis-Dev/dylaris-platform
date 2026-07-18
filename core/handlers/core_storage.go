@@ -267,8 +267,14 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	// Only touch the stored secret when the request actually submitted a new
 	// one; a blank incoming secret must never overwrite what's already saved.
+	// The one exception: switching the backend away from s3 clears the
+	// stored secret outright, so it doesn't linger orphaned (with
+	// S3SecretSet still reporting true) once the s3 config it belongs to is
+	// no longer in use.
 	if req.S3SecretKey != "" {
 		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, req.S3SecretKey})
+	} else if effective.Backend != "s3" {
+		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, ""})
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -628,6 +634,6 @@ func (h *CoreStorageHandler) Migrate(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": success,
 		"results": results,
-		"note":    "Original files were left in place. Verify the new backend, then remove the old dirs manually.",
+		"note":    "Original files were left in place. Restart Core first so new uploads use the new backend, then run Migrate again to pick up anything written to the old location before the restart, verify the new backend, and only then remove the old directories manually.",
 	})
 }

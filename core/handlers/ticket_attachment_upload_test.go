@@ -530,3 +530,48 @@ func TestDownloadAttachment_NoSniffHeader(t *testing.T) {
 		t.Fatalf("X-Content-Type-Options = %q, want %q", got, "nosniff")
 	}
 }
+
+// seekAssertingProvider is a StorageProvider fake whose WriteFile records
+// only whether the reader IT WAS HANDED implements io.Seeker - it never
+// needs to actually persist anything for this regression guard. Embeds the
+// interface (left nil) so any other method is never expected to be called
+// during UploadAttachment; calling one would panic loudly rather than
+// silently succeed.
+type seekAssertingProvider struct {
+	storage.StorageProvider
+	called   bool
+	seekable bool
+}
+
+func (p *seekAssertingProvider) WriteFile(path string, content io.Reader) error {
+	p.called = true
+	_, p.seekable = content.(io.Seeker)
+	return nil
+}
+
+// TestUploadAttachment_WriteFileReceivesSeekableReader is the Fix 1
+// regression guard: S3Provider.WriteFile (core/storage/s3provider.go) passes
+// its reader straight through to the AWS SDK's PutObject with no content
+// length. The SDK's checksum middleware refuses an unseekable stream outright
+// on a plain-HTTP endpoint - exactly the documented self-hosted MinIO use
+// case (http://minio:9000) - so UploadAttachment must hand WriteFile
+// something seekable (the multipart.File itself, rewound after the sniff
+// peek), never an io.MultiReader stitched from the peeked head plus the rest
+// of the stream.
+func TestUploadAttachment_WriteFileReceivesSeekableReader(t *testing.T) {
+	fp := &seekAssertingProvider{}
+	fs := &attachmentUploadFakeStore{ticket: &models.Ticket{ID: 1, UserID: testTicketOwner}}
+	h := &TicketAttachmentsHandler{state: &AppState{Store: fs}, provider: fp}
+
+	rw := httptest.NewRecorder()
+	h.UploadAttachment(rw, newAttachmentUploadRequest(t, "logo.png", "image/png", pngBytes(2000)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if !fp.called {
+		t.Fatal("provider.WriteFile was never called")
+	}
+	if !fp.seekable {
+		t.Fatal("provider.WriteFile received a reader that does not implement io.Seeker - S3Provider.WriteFile passes it straight to PutObject with no content length, and the AWS SDK's checksum middleware refuses an unseekable stream on a plain-HTTP endpoint (e.g. self-hosted MinIO)")
+	}
+}

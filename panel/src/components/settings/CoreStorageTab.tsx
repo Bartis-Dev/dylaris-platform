@@ -313,9 +313,10 @@ export default function CoreStorageTab() {
       <div className="alert alert-warning text-xs">
         <AlertTriangle size={14} className="shrink-0 mt-0.5" />
         <span>
-          Migrating copies files into the backend configured above, but Core keeps serving uploads and downloads
-          through the configuration it loaded at startup until it is restarted. Restart Core after migrating,
-          otherwise the migrated files will look like they disappeared even though nothing was deleted.
+          Saving takes effect immediately for new uploads, but this Core process keeps using the backend it loaded
+          at startup until it is restarted - anything uploaded in between still lands in the old location. Restart
+          Core first, then run Migrate again to pick up anything written during that window, verify the new
+          backend, and only then remove the old directories manually.
         </span>
       </div>
 
