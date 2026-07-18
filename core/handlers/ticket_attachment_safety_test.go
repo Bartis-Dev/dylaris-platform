@@ -17,31 +17,30 @@ func TestAttachmentAllowed(t *testing.T) {
 	cases := []struct {
 		name     string
 		filename string
-		declared string
 		head     []byte
 		wantErr  bool
 	}{
-		{"png accepted", "logo.png", "image/png", png, false},
-		{"pdf accepted", "report.pdf", "application/pdf", pdf, false},
-		{"log accepted as text", "server.log", "text/plain", txt, false},
-		{"txt accepted", "notes.txt", "text/plain", txt, false},
-		{"executable extension rejected", "evil.exe", "application/octet-stream", elf, true},
-		{"disallowed extension rejected even with image header", "evil.sh", "image/png", png, true},
-		{"header-vs-sniff mismatch rejected: .png but ELF bytes", "sneaky.png", "image/png", elf, true},
-		{"no extension rejected", "README", "text/plain", txt, true},
+		{"png accepted", "logo.png", png, false},
+		{"pdf accepted", "report.pdf", pdf, false},
+		{"log accepted as text", "server.log", txt, false},
+		{"txt accepted", "notes.txt", txt, false},
+		{"executable extension rejected", "evil.exe", elf, true},
+		{"disallowed extension rejected even with image header", "evil.sh", png, true},
+		{"extension-vs-sniff mismatch rejected: .png but ELF bytes", "sneaky.png", elf, true},
+		{"no extension rejected", "README", txt, true},
 		// Extra case beyond the brief's minimum: a shell script disguised
 		// under an allowed image extension. DetectContentType sniffs plain
 		// ASCII script text as "text/plain", which does not satisfy the
 		// "image/" family the .png extension requires, so this must be
-		// rejected by the same declared-vs-sniff mismatch path as the ELF
+		// rejected by the same extension-vs-sniff mismatch path as the ELF
 		// case above.
-		{"shell script disguised as .png rejected", "evil.png", "image/png", script, true},
+		{"shell script disguised as .png rejected", "evil.png", script, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := attachmentAllowed(c.filename, c.declared, c.head)
+			_, err := attachmentAllowed(c.filename, c.head)
 			if (err != nil) != c.wantErr {
-				t.Fatalf("attachmentAllowed(%q,%q) err = %v, wantErr %v", c.filename, c.declared, err, c.wantErr)
+				t.Fatalf("attachmentAllowed(%q) err = %v, wantErr %v", c.filename, err, c.wantErr)
 			}
 		})
 	}

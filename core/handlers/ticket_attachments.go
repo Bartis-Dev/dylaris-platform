@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -51,11 +53,20 @@ func buildAttachmentProvider(state *AppState) storage.StorageProvider {
 }
 
 // allowedAttachmentExts maps an accepted lower-case file extension to the
-// sniff family it must belong to. "text" means the sniffed type must be
-// text/* or the generic octet-stream fallback (DetectContentType has no
-// dedicated signature for plain text/log files); "application/" families
-// accept any application/* sniff result (archives sniff loosely - see
-// self-review note in task-7-report.md).
+// validation family attachmentAllowed applies to it:
+//   - "image/", "application/pdf", "application/zip" - tight families: the
+//     http.DetectContentType sniff of the real bytes must start with exactly
+//     that string.
+//   - "text" - the sniff must start with "text/" and must NOT be "text/html"
+//     (an HTML/script body is not what a .txt/.log/.json extension means).
+//   - "gzip" - the peeked head must start with the real gzip magic
+//     (\x1F\x8B), checked on the raw bytes rather than the sniff string.
+//   - "tar" - the peeked head must carry the real POSIX ustar magic
+//     ("ustar") at its fixed offset (257), checked on the raw bytes. A sniff
+//     family check alone cannot do this job: Go's DetectContentType has no
+//     tar signature, so a genuine tar entry AND an ELF/PE payload both sniff
+//     as the same application/octet-stream - only the actual header magic
+//     tells them apart.
 var allowedAttachmentExts = map[string]string{
 	".png":  "image/",
 	".jpg":  "image/",
@@ -66,64 +77,91 @@ var allowedAttachmentExts = map[string]string{
 	".txt":  "text",
 	".log":  "text",
 	".zip":  "application/zip",
-	".gz":   "application/",
-	".tar":  "application/",
+	".gz":   "gzip",
+	".tar":  "tar",
 	".json": "text",
 }
 
 // attachmentAllowed enforces the extension allowlist AND that the sniffed
-// bytes do not contradict it (defence against a .png that is actually
-// something else). The declared client MIME (the multipart part's
-// Content-Type header) is advisory only and is never trusted on its own -
-// only the extension and the http.DetectContentType sniff of the actual
-// leading bytes decide the outcome.
-func attachmentAllowed(filename, declaredMIME string, head []byte) error {
+// bytes actually belong to the family that extension requires (defence
+// against a .png that is actually something else). It returns the sniffed
+// content type on success so the caller can persist and later serve THAT
+// value rather than the client's claim.
+//
+// The client's declared MIME (the multipart part's Content-Type header) is
+// deliberately not a parameter here and is not consulted anywhere in this
+// file: browsers and upload clients routinely send an inaccurate
+// Content-Type (e.g. plain "application/octet-stream" for a real PNG), so
+// trusting - or even cross-checking against - that value would either
+// falsely reject legitimate uploads or let an attacker's own claim stand in
+// as ground truth. Only the extension and http.DetectContentType's sniff of
+// the actual leading bytes decide the outcome.
+func attachmentAllowed(filename string, head []byte) (string, error) {
 	ext := strings.ToLower(filepath.Ext(filename))
 	family, ok := allowedAttachmentExts[ext]
 	if !ok {
-		return fmt.Errorf("file type %q is not allowed", ext)
+		return "", fmt.Errorf("file type %q is not allowed", ext)
 	}
-	sniff := http.DetectContentType(head) // e.g. "image/png; charset=..."
-	// Reject anything the sniffer flags as a binary executable outright.
-	// (Go's stdlib DetectContentType has no dedicated executable signature
-	// today - kept as forward-compatible defence-in-depth; the actual
-	// enforcement for a disguised executable is the family-mismatch check
-	// below, since a genuine PE/ELF/Mach-O payload will not sniff as the
-	// declared family either.)
-	if strings.HasPrefix(sniff, "application/x-msdownload") ||
-		strings.HasPrefix(sniff, "application/x-elf") ||
-		strings.HasPrefix(sniff, "application/x-mach-binary") ||
-		strings.HasPrefix(sniff, "application/x-executable") {
-		return fmt.Errorf("file content looks like an executable and is not allowed")
-	}
-	switch {
-	case family == "text":
-		// DetectContentType returns "text/plain..." or "application/octet-stream"
-		// for arbitrary text/logs; accept text/* and octet-stream, reject a
-		// recognised non-text binary type sneaking in under a .txt/.log name.
-		if strings.HasPrefix(sniff, "text/") || strings.HasPrefix(sniff, "application/octet-stream") {
-			return nil
+	sniff := http.DetectContentType(head) // e.g. "image/png" or "text/plain; charset=utf-8"
+
+	switch family {
+	case "text":
+		// text/* only - the previous application/octet-stream escape hatch
+		// let a raw ELF/PE/Mach-O payload named payload.txt/.log/.json
+		// through, since Go's sniffer has no executable signature and falls
+		// back to octet-stream for arbitrary binary content. text/html is
+		// excluded too, so an HTML/script body uploaded as notes.txt is
+		// rejected rather than stored and later served back to a browser.
+		if !strings.HasPrefix(sniff, "text/") || strings.HasPrefix(sniff, "text/html") {
+			return "", fmt.Errorf("content does not match the %s file type", ext)
 		}
-		return fmt.Errorf("content does not match the %s file type", ext)
-	case family == "application/":
-		if strings.HasPrefix(sniff, "application/") || strings.HasPrefix(sniff, "text/plain") {
-			return nil
+		return sniff, nil
+	case "gzip":
+		// Real gzip magic on the raw bytes, not a loose sniff-string check -
+		// the previous "application/* or text/plain" rule accepted a shell
+		// script as payload.gz.
+		if len(head) < 2 || head[0] != 0x1F || head[1] != 0x8B {
+			return "", fmt.Errorf("content does not match the %s file type", ext)
 		}
-		return fmt.Errorf("content does not match the %s file type", ext)
+		return sniff, nil
+	case "tar":
+		// The ustar magic sits at a fixed 257-byte offset within the first
+		// (and, for any archive whose first entry uses a full POSIX/GNU
+		// header block, only) 512-byte block - well within our 512-byte
+		// peek. A pre-POSIX (legacy V7) tar without this magic, or anything
+		// shorter than the offset, is rejected: correctness of the check
+		// (catching a disguised ELF/PE) takes priority over accepting every
+		// historical tar variant.
+		const ustarOffset = 257
+		if len(head) < ustarOffset+5 || string(head[ustarOffset:ustarOffset+5]) != "ustar" {
+			return "", fmt.Errorf("content does not match the %s file type", ext)
+		}
+		return sniff, nil
 	default:
+		// Tight families: image/*, application/pdf, application/zip.
 		if strings.HasPrefix(sniff, family) {
-			return nil
+			return sniff, nil
 		}
-		return fmt.Errorf("content does not match the declared %s type", ext)
+		return "", fmt.Errorf("content does not match the declared %s type", ext)
 	}
 }
 
 // AttachmentScanner is the optional AV hook. A nil scanner means no scanning
 // (default). A hit (or any scan error - see newAttachmentScanner) returns a
-// non-nil error.
+// non-nil error. A genuine virus hit wraps errScanHit (via errors.Is); any
+// other error signals an infrastructure failure (dial/read/write/malformed
+// reply) - UploadAttachment rejects the upload in both cases (fail-closed)
+// but returns a different HTTP status for each.
 type AttachmentScanner interface {
 	Scan(r io.Reader) error
 }
+
+// errScanHit is the sentinel a scanner wraps into its returned error when it
+// reports an actual virus hit (as opposed to being unable to complete the
+// scan at all). Used with errors.Is so UploadAttachment can return 415 for a
+// real hit and 503 for a scanner/infrastructure problem, while still
+// rejecting the upload in both cases.
+var errScanHit = errors.New("attachment rejected by virus scan")
 
 // newAttachmentScanner returns a clamd INSTREAM scanner when CLAMAV_ADDR is
 // set, otherwise nil (scanning off by default; enabling it is a config
@@ -189,7 +227,7 @@ func (c *clamdScanner) Scan(r io.Reader) error {
 	n, _ := conn.Read(resp)
 	out := string(resp[:n])
 	if strings.Contains(out, "FOUND") {
-		return fmt.Errorf("attachment rejected by virus scan: %s", strings.TrimSpace(out))
+		return fmt.Errorf("%w: %s", errScanHit, strings.TrimSpace(out))
 	}
 	return nil
 }
@@ -295,11 +333,11 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	}
 	defer file.Close()
 
+	// The multipart part's declared Content-Type header is deliberately never
+	// read here: it is neither validated against nor persisted (see the
+	// attachmentAllowed doc comment) - only the extension and the sniffed
+	// bytes decide what gets accepted and what gets stored as the Mime.
 	filename := sanitizeAttachmentFilename(header.Filename)
-	mime := header.Header.Get("Content-Type")
-	if mime == "" {
-		mime = "application/octet-stream"
-	}
 	size := header.Size
 
 	// Quota checks before writing.
@@ -329,9 +367,20 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	// full file still streams to storage - the sniff peek must never consume
 	// bytes from what actually gets stored.
 	head := make([]byte, 512)
-	hn, _ := io.ReadFull(file, head)
+	hn, err := io.ReadFull(file, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		// A short file (fewer than 512 bytes) legitimately yields EOF or
+		// ErrUnexpectedEOF - that's fine, hn still holds however many bytes
+		// were read. Any other error is a genuine read failure; continuing
+		// would sniff an empty/truncated head as text/plain and could let
+		// content through on zero observed bytes.
+		log.Printf("ticket-attachments: peek read for ticket %d failed: %v", t.ID, err)
+		sendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
+		return
+	}
 	head = head[:hn]
-	if err := attachmentAllowed(filename, mime, head); err != nil {
+	sniffedMime, err := attachmentAllowed(filename, head)
+	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
@@ -358,9 +407,19 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		}
 		// Fail-closed: any non-nil error from Scan (a genuine hit OR an
 		// infrastructure failure such as clamd being unreachable) rejects the
-		// upload. See the clamdScanner doc comment for the rationale.
+		// upload either way. See the clamdScanner doc comment for the
+		// rationale. The HTTP status and message differ though: a real hit is
+		// a client-content problem (415), an infra failure is a server-side
+		// condition (503) - and the raw error (which can contain internal
+		// host/port details) is logged server-side only, never returned to
+		// the ticket user.
 		if serr := h.scanner.Scan(tmp); serr != nil {
-			sendJSONError(w, serr.Error(), http.StatusUnsupportedMediaType)
+			if errors.Is(serr, errScanHit) {
+				sendJSONError(w, "File rejected by virus scan", http.StatusUnsupportedMediaType)
+			} else {
+				log.Printf("ticket-attachments: scan failed for ticket %d: %v", t.ID, serr)
+				sendJSONError(w, "Attachment scanning is temporarily unavailable, please try again later", http.StatusServiceUnavailable)
+			}
 			return
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
@@ -392,7 +451,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		TicketID:   t.ID,
 		MessageID:  msgID,
 		Filename:   filename,
-		Mime:       mime,
+		Mime:       sniffedMime,
 		SizeBytes:  size,
 		StorageKey: storageKey,
 		UploadedBy: &uid,
@@ -486,7 +545,12 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	}
 	defer rc.Close()
 
+	// The stored Mime is the sniffed type from upload time (never the
+	// client's declared claim - see attachmentAllowed), and nosniff plus
+	// Content-Disposition: attachment together stop a browser from executing
+	// or rendering the body regardless of what Content-Type it carries.
 	w.Header().Set("Content-Type", a.Mime)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", a.SizeBytes))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+a.Filename+`"`)
 	io.Copy(w, rc)
