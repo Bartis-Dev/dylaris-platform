@@ -313,7 +313,7 @@ func TestCoreStorageHandler_Migrate_HappyPathThenIdempotent(t *testing.T) {
 	// Destination has the right bytes at the right (nested) relative key.
 	destChecks := map[string]string{
 		filepath.Join(destDir, CoreStoragePrefixLibrary, "lib.txt"):           "L",
-		filepath.Join(destDir, CoreStoragePrefixAttachments, "att.txt"):      "A",
+		filepath.Join(destDir, CoreStoragePrefixAttachments, "att.txt"):       "A",
 		filepath.Join(destDir, CoreStoragePrefixBackups, "nested", "bak.txt"): "B",
 	}
 	for path, want := range destChecks {
@@ -326,7 +326,7 @@ func TestCoreStorageHandler_Migrate_HappyPathThenIdempotent(t *testing.T) {
 	// Originals untouched.
 	srcChecks := map[string]string{
 		filepath.Join(srcRoot, CoreStoragePrefixLibrary, "lib.txt"):           "L",
-		filepath.Join(srcRoot, CoreStoragePrefixAttachments, "att.txt"):      "A",
+		filepath.Join(srcRoot, CoreStoragePrefixAttachments, "att.txt"):       "A",
 		filepath.Join(srcRoot, CoreStoragePrefixBackups, "nested", "bak.txt"): "B",
 	}
 	for path, want := range srcChecks {
