@@ -62,11 +62,6 @@ func NewProvider(storageType, basePath string, opts map[string]string) (StorageP
 	}
 }
 
-// newS3ProviderFromOpts is a placeholder until the S3 backend lands (Task 2).
-func newS3ProviderFromOpts(_ map[string]string) (StorageProvider, error) {
-	return nil, fmt.Errorf("storage: s3 backend not available yet")
-}
-
 // ==========================================
 // LOCAL PROVIDER
 // ==========================================
