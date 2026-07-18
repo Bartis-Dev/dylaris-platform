@@ -65,6 +65,19 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enabling Tickets requires Core file storage (attachments + backups need a
+	// durable off-host home). Refuse the whole PUT so nothing is half-written.
+	if req.Tickets && !h.state.CoreStorageConfigured() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "core_storage_required",
+			"message": "Configure Core file storage before enabling Tickets.",
+		})
+		return
+	}
+
 	writes := []struct {
 		key      string
 		val      bool

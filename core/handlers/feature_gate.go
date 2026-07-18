@@ -16,6 +16,10 @@ const FeatureTickets = "tickets"
 // FeatureShareLinks is the canonical name for the modpack share-links sub-feature.
 const FeatureShareLinks = "modpack_share_links"
 
+// FeatureCoreStorage is the canonical name used in the 503 feature_disabled
+// body when a WRITE is attempted before Core file storage is configured.
+const FeatureCoreStorage = "core_storage"
+
 // RequireModpacksEnabled blocks the request with 503 feature_disabled when
 // the platform-wide modpacks toggle is off. Use on every WRITE endpoint that
 // touches modpack data (modpacks CRUD, versions, mods, publish, mrpack PAT
@@ -52,6 +56,20 @@ func (s *AppState) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsTicketsEnabled(r.Context()) {
 			featureDisabledResponse(w, FeatureTickets, "The ticket system is disabled by the platform admin.")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// RequireCoreStorageConfigured blocks a WRITE with 503 feature_disabled when no
+// valid Core file storage config exists. Wrap every endpoint that STORES a blob
+// (library upload/mkdir, ticket attachment upload, ticket backup create).
+func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.CoreStorageConfigured() {
+			featureDisabledResponse(w, FeatureCoreStorage,
+				"Configure Core file storage (Settings -> Core file storage) before uploading.")
 			return
 		}
 		next(w, r)
