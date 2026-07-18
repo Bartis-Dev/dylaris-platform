@@ -1,7 +1,12 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +130,15 @@ func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StoragePr
 		_ = os.MkdirAll(root, 0755)
 		return &storage.LocalProvider{BasePath: root}, nil
 	}
+	return newStorageProviderForConfig(cfg, subPrefix)
+}
+
+// newStorageProviderForConfig builds a StorageProvider strictly from cfg
+// (assumed already validated), scoped to subPrefix. Unlike
+// buildCoreStorageProvider, this never falls back to the legacy local dir:
+// TestConnection needs a hard failure on a broken candidate config, not a
+// silent success against the wrong backend.
+func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string) (storage.StorageProvider, error) {
 	if cfg.Backend == "s3" {
 		prefix := subPrefix
 		if cfg.S3Prefix != "" {
@@ -143,4 +157,159 @@ func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StoragePr
 	root := filepath.Join(cfg.Path, subPrefix)
 	_ = os.MkdirAll(root, 0755)
 	return storage.NewProvider("path", root, nil)
+}
+
+// --- Admin HTTP surface: config CRUD + test-connection ---
+
+// CoreStorageHandler serves the shared Core file storage config CRUD + probe.
+type CoreStorageHandler struct {
+	state *AppState
+}
+
+func NewCoreStorageHandler(state *AppState) *CoreStorageHandler {
+	return &CoreStorageHandler{state: state}
+}
+
+// GetConfig GET /api/settings/core-storage - PANEL settings.read (RequireCap
+// at the route). The stored S3 secret is never emitted: S3SecretKey is
+// blanked (and, thanks to its "omitempty" json tag, omitted entirely from
+// the response) while S3SecretSet tells the panel one is already stored.
+func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := h.state.LoadCoreStorageConfig()
+	cfg.S3SecretKey = "" // write-only; never emitted
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"settings": cfg,
+	})
+}
+
+// mergeCoreStorageCandidate resolves the effective config to act on: an
+// empty request-body backend means "nothing submitted", so the caller falls
+// back to the stored config entirely; otherwise a blank secret in the
+// candidate keeps the stored secret rather than wiping it, so an admin can
+// edit other fields (SaveConfig) or re-test (TestConnection) without
+// re-entering it.
+func mergeCoreStorageCandidate(candidate, existing CoreStorageConfig) CoreStorageConfig {
+	if candidate.Backend == "" {
+		return existing
+	}
+	if candidate.S3SecretKey == "" {
+		candidate.S3SecretKey = existing.S3SecretKey
+	}
+	return candidate
+}
+
+// SaveConfig POST /api/settings/core-storage - PANEL settings.write
+// (RequireCap at the route). Validates before persisting anything, so a
+// rejected save never partially overwrites a previously-good config.
+func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
+	var req CoreStorageConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.Backend = strings.TrimSpace(req.Backend)
+	req.Path = strings.TrimSpace(req.Path)
+
+	existing := h.state.LoadCoreStorageConfig()
+	effective := mergeCoreStorageCandidate(req, existing)
+	if err := validateCoreStorageConfig(effective); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	pairs := []struct{ k, v string }{
+		{keyCoreStorageBackend, effective.Backend},
+		{keyCoreStoragePath, effective.Path},
+		{keyCoreStoragePathConfirm, boolStr(effective.PathConfirmed)},
+		{keyCoreStorageS3Endpoint, effective.S3Endpoint},
+		{keyCoreStorageS3Bucket, effective.S3Bucket},
+		{keyCoreStorageS3Region, effective.S3Region},
+		{keyCoreStorageS3AccessKey, effective.S3AccessKey},
+		{keyCoreStorageS3PathStyle, boolStr(effective.S3PathStyle)},
+		{keyCoreStorageS3Prefix, effective.S3Prefix},
+	}
+	// Only touch the stored secret when the request actually submitted a new
+	// one; a blank incoming secret must never overwrite what's already saved.
+	if req.S3SecretKey != "" {
+		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, req.S3SecretKey})
+	}
+	for _, p := range pairs {
+		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
+			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			return
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// coreStorageProbePayload is the fixed content the connection-test probe
+// writes and expects back verbatim.
+const coreStorageProbePayload = "dylaris-probe"
+
+// TestConnection POST /api/settings/core-storage/test - PANEL settings.write
+// (RequireCap at the route). Builds a provider from the CANDIDATE config in
+// the request body (not the saved one) so an admin can test before saving;
+// an empty/absent body falls back to testing the currently-saved config, and
+// a blank secret in a submitted candidate reuses the stored one, mirroring
+// SaveConfig. The probe writes, reads back and deletes a uniquely-named
+// object under a "_probe" sub-prefix so it never touches real Library/ticket
+// data.
+func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
+	respond := func(ok bool, msg string) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": msg})
+	}
+
+	var candidate CoreStorageConfig
+	if err := json.NewDecoder(r.Body).Decode(&candidate); err != nil && err != io.EOF {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	effective := mergeCoreStorageCandidate(candidate, h.state.LoadCoreStorageConfig())
+
+	if err := validateCoreStorageConfig(effective); err != nil {
+		respond(false, err.Error())
+		return
+	}
+	prov, err := newStorageProviderForConfig(effective, "_probe")
+	if err != nil {
+		respond(false, "Could not build provider: "+err.Error())
+		return
+	}
+	ok, msg := probeStorageProvider(prov)
+	respond(ok, msg)
+}
+
+// probeStorageProvider writes, reads back and deletes a uniquely-named probe
+// object to verify the backend is reachable and read/write-consistent. The
+// probe key is deleted on every path, including a read error or a
+// read-back/content mismatch, so a broken candidate config never leaves a
+// stray object behind.
+func probeStorageProvider(prov storage.StorageProvider) (ok bool, message string) {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	key := "probe-" + hex.EncodeToString(b) + ".txt"
+
+	if err := prov.WriteFile(key, strings.NewReader(coreStorageProbePayload)); err != nil {
+		return false, "Write failed: " + err.Error()
+	}
+	rc, err := prov.GetFile(key)
+	if err != nil {
+		_ = prov.DeletePath(key)
+		return false, "Read-back failed: " + err.Error()
+	}
+	got, readErr := io.ReadAll(rc)
+	rc.Close()
+	if readErr != nil {
+		_ = prov.DeletePath(key)
+		return false, "Read-back failed: " + readErr.Error()
+	}
+	if string(got) != coreStorageProbePayload {
+		_ = prov.DeletePath(key)
+		return false, "Read-back mismatch: storage backend is not consistent"
+	}
+	if err := prov.DeletePath(key); err != nil {
+		return false, "Cleanup failed: " + err.Error()
+	}
+	return true, "Storage reachable: write, read and delete all succeeded."
 }

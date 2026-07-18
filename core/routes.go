@@ -280,6 +280,8 @@ var requiredCaps = map[string]string{
 	"/api/admin/xdp/config":                            "settings.read",
 	"/api/settings/library":                            "settings.read",
 	"/api/settings/library/test":                       "settings.read",
+	"/api/settings/core-storage":                       "settings.read",
+	"/api/settings/core-storage/test":                  "settings.write",
 	"/api/settings/filemanager":                        "settings.read",
 	"/api/settings/gateway":                            "settings.read",
 	"/api/settings/gateway/hub-redis-admin":            "settings.read",
@@ -432,6 +434,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	settingsHandler := handlers.NewSettingsHandler(appState, libraryHandler)
 	authzHandler := handlers.NewAuthzHandler()
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
+	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -1259,6 +1262,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveBackupConfig))).Methods("POST")
 	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetWarpFirewallSettings))).Methods("GET")
 	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveWarpFirewallSettings))).Methods("POST")
+	// Shared Core file storage config (Library/ticket-attachments/ticket-backups
+	// backend, path or s3) - CRUD + a write+read+delete connection probe.
+	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")
+	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.SaveConfig))).Methods("POST")
+	api.HandleFunc("/settings/core-storage/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.TestConnection))).Methods("POST")
 
 	// --- Regions ---
 	// User-facing: list of enabled regions (drives region pickers).
