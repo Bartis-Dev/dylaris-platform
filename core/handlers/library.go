@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type LibraryHandler struct {
@@ -19,26 +20,14 @@ func NewLibraryHandler(state *AppState) *LibraryHandler {
 	return &LibraryHandler{state: state, provider: buildProvider(state)}
 }
 
-// buildProvider reads the library configuration from the DB and creates the appropriate provider
+// buildProvider builds the library-scoped provider from the shared Core file
+// storage config (falls back to the legacy dylaris_data/library dir while the
+// config is unset, so existing installs keep browsing).
 func buildProvider(state *AppState) storage.StorageProvider {
-	libType := ""
-	libPath := ""
-
-	if state.Store != nil {
-		libType, _ = state.Store.GetSetting("library_type")
-		libPath, _ = state.Store.GetSetting("library_path")
-	}
-
-	if libPath == "" {
-		// Default: dylaris_data/library next to the working directory
-		baseDir, _ := os.Getwd()
-		libPath = filepath.Join(baseDir, "dylaris_data", "library")
-	}
-
-	os.MkdirAll(libPath, 0755)
-	p, err := storage.NewProvider(libType, libPath, nil)
+	p, err := state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
-		p = &storage.LocalProvider{BasePath: libPath}
+		baseDir, _ := os.Getwd()
+		return &storage.LocalProvider{BasePath: filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixLibrary)}
 	}
 	return p
 }
@@ -301,6 +290,14 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 			sendJSONError(w, "Access denied", http.StatusForbidden)
 			return
 		}
+	}
+
+	// Prefer a short-lived pre-signed URL when the backend supports it (S3):
+	// redirect the browser straight to object storage instead of streaming
+	// every byte through Core.
+	if url, err := h.provider.DownloadURL(path, 5*time.Minute); err == nil && url != "" {
+		http.Redirect(w, r, url, http.StatusFound)
+		return
 	}
 
 	rc, err := h.provider.GetFile(path)
