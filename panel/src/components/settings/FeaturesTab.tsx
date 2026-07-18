@@ -40,8 +40,15 @@ export default function FeaturesTab() {
     // Tickets requires Core file storage (attachments + backups need a durable
     // off-host home) - the backend 409s ("core_storage_required") on enable
     // otherwise. Fetched once so the toggle can be disabled with a hint
-    // instead of letting the admin hit a failed save.
-    const [storageConfigured, setStorageConfigured] = useState(true);
+    // instead of letting the admin hit a failed save. Starts as `null`
+    // (unknown) rather than defaulting to "configured", so there is no window
+    // where the toggle is optimistically enabled before the fetch resolves;
+    // `storageConfigured !== true` treats both "unknown" and "confirmed not
+    // configured" as disabled. If the fetch itself fails, storageConfigured
+    // is set to `true` (usable) rather than left stuck at "unknown" forever -
+    // the backend still correctly 409s on enable if storage really isn't
+    // configured, so failing open here just avoids a dead toggle.
+    const [storageConfigured, setStorageConfigured] = useState<boolean | null>(null);
 
     // WS5 custom-tab reverse proxy toggles - same save-on-click/blur pattern
     // as the platform flags above, but its own admin settings endpoint.
@@ -73,7 +80,13 @@ export default function FeaturesTab() {
             if (res.success && res.features) setPlatformFlags(res.features);
         });
         getCoreStorage().then(res => {
-            setStorageConfigured(!!res.success && !!res.settings && canSaveCoreStorage(res.settings));
+            if (!res.success) {
+                // Fetch/parse failed - fail open so the toggle isn't stuck
+                // disabled indefinitely; the backend still enforces the 409.
+                setStorageConfigured(true);
+                return;
+            }
+            setStorageConfigured(!!res.settings && canSaveCoreStorage(res.settings));
         });
         getTabProxySettings().then(res => {
             if (res.success && res.settings) setTabProxy(res.settings);
@@ -261,14 +274,14 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.tickets}
-                        disabled={platformSaving !== null || (!platformFlags.tickets && !storageConfigured)}
+                        disabled={platformSaving !== null || (!platformFlags.tickets && storageConfigured !== true)}
                         onClick={() => savePlatformFlag('tickets', !platformFlags.tickets)}
                         className={`toggle-track ${platformFlags.tickets ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.tickets ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
-                {!platformFlags.tickets && !storageConfigured && (
+                {!platformFlags.tickets && storageConfigured !== true && (
                     <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
                         <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                         <span>Requires Core file storage. Configure and save it under Settings -&gt; Core Storage first.</span>

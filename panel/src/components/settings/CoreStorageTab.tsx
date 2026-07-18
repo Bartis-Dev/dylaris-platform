@@ -47,7 +47,7 @@ export default function CoreStorageTab() {
     });
   }, []);
 
-  const canSave = canSaveCoreStorage(settings);
+  const canSave = canSaveCoreStorage(settings, snapshotRef.current);
   const savedConfigured = snapshotRef.current !== null && canSaveCoreStorage(snapshotRef.current);
   const identityChanged = settings.backend === 's3' && s3IdentityChanged(settings, snapshotRef.current);
 
@@ -167,8 +167,9 @@ export default function CoreStorageTab() {
       {settings.backend === 'path' && (
         <div className="space-y-4">
           <div className="flex flex-col gap-[5px]">
-            <label className="input-label">Absolute Path</label>
+            <label className="input-label" htmlFor="core-storage-path">Absolute Path</label>
             <input
+              id="core-storage-path"
               type="text"
               value={settings.path}
               onChange={e => set('path', e.target.value)}
@@ -177,13 +178,13 @@ export default function CoreStorageTab() {
             />
           </div>
 
-          <div className="flex items-start gap-2 rounded-(--radius-md) border border-(--warning-border) bg-(--warning-ghost) px-3 py-2.5">
-            <AlertTriangle size={16} className="text-(--warning) shrink-0 mt-0.5" />
-            <p className="text-xs text-(--base-08)">
+          <div className="alert alert-warning text-xs">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            <span>
               Must be reachable by <strong>every</strong> Core. A host-local directory only works with a single Core or
               all Cores pinned to one host. For multiple Cores across hosts, mount a shared filesystem here (NFS/SMB/WebDAV)
               or use S3.
-            </p>
+            </span>
           </div>
 
           <label className="flex items-start gap-2 cursor-pointer select-none group">
@@ -208,30 +209,31 @@ export default function CoreStorageTab() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Endpoint URL (blank = AWS)</label>
-              <input type="text" value={settings.s3Endpoint} onChange={e => set('s3Endpoint', e.target.value)}
+              <label className="input-label" htmlFor="core-storage-s3-endpoint">Endpoint URL (blank = AWS)</label>
+              <input id="core-storage-s3-endpoint" type="text" value={settings.s3Endpoint} onChange={e => set('s3Endpoint', e.target.value)}
                 placeholder="https://s3.example.com" className="input-mono w-full" />
             </div>
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Bucket</label>
-              <input type="text" value={settings.s3Bucket} onChange={e => set('s3Bucket', e.target.value)}
+              <label className="input-label" htmlFor="core-storage-s3-bucket">Bucket</label>
+              <input id="core-storage-s3-bucket" type="text" value={settings.s3Bucket} onChange={e => set('s3Bucket', e.target.value)}
                 placeholder="dylaris-core" className="input-mono w-full" />
             </div>
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Region</label>
-              <input type="text" value={settings.s3Region} onChange={e => set('s3Region', e.target.value)}
+              <label className="input-label" htmlFor="core-storage-s3-region">Region</label>
+              <input id="core-storage-s3-region" type="text" value={settings.s3Region} onChange={e => set('s3Region', e.target.value)}
                 placeholder="us-east-1" className="input-mono w-full" />
             </div>
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Access Key</label>
-              <input type="text" value={settings.s3AccessKey} onChange={e => set('s3AccessKey', e.target.value)}
+              <label className="input-label" htmlFor="core-storage-s3-access-key">Access Key</label>
+              <input id="core-storage-s3-access-key" type="text" value={settings.s3AccessKey} onChange={e => set('s3AccessKey', e.target.value)}
                 placeholder="AKIA..." className="input-mono w-full" />
             </div>
           </div>
 
           <div className="flex flex-col gap-[5px]">
-            <label className="input-label">Secret Key</label>
+            <label className="input-label" htmlFor="core-storage-s3-secret-key">Secret Key</label>
             <input
+              id="core-storage-s3-secret-key"
               type="password"
               value={settings.s3SecretKey || ''}
               onChange={e => set('s3SecretKey', e.target.value)}
@@ -245,21 +247,21 @@ export default function CoreStorageTab() {
               </p>
             )}
             {identityChanged && (
-              <p className="flex items-start gap-1.5 text-xs text-(--warning-light) bg-(--warning-ghost) border border-(--warning-border) rounded-(--radius-md) px-2.5 py-2 mt-1">
-                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <div className="alert alert-warning text-xs mt-1">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <span>
                   You changed the endpoint, bucket or access key. Re-enter the secret to save: the backend refuses to pair
                   a stored secret with a different identity (this prevents credentials from being silently re-pointed at a
                   different endpoint).
                 </span>
-              </p>
+              </div>
             )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Key Prefix (optional)</label>
-              <input type="text" value={settings.s3Prefix} onChange={e => set('s3Prefix', e.target.value)}
+              <label className="input-label" htmlFor="core-storage-s3-prefix">Key Prefix (optional)</label>
+              <input id="core-storage-s3-prefix" type="text" value={settings.s3Prefix} onChange={e => set('s3Prefix', e.target.value)}
                 placeholder="core" className="input-mono w-full" />
             </div>
             <label className="flex items-center gap-2 sm:mt-6 cursor-pointer select-none group">
@@ -308,13 +310,13 @@ export default function CoreStorageTab() {
         {!savedConfigured && ' Save a valid config above to enable this.'}
       </p>
 
-      <div className="flex items-start gap-2 rounded-(--radius-md) border border-(--warning-border) bg-(--warning-ghost) px-3 py-2.5">
-        <AlertTriangle size={16} className="text-(--warning) shrink-0 mt-0.5" />
-        <p className="text-xs text-(--base-08)">
+      <div className="alert alert-warning text-xs">
+        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+        <span>
           Migrating copies files into the backend configured above, but Core keeps serving uploads and downloads
           through the configuration it loaded at startup until it is restarted. Restart Core after migrating,
           otherwise the migrated files will look like they disappeared even though nothing was deleted.
-        </p>
+        </span>
       </div>
 
       {/* Migration result detail */}
