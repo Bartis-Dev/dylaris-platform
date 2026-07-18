@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/storage"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -33,8 +35,8 @@ import (
 //   - A typed confirmation phrase matching the backup name
 //   - A 15-second cooldown between "initiate" and "execute" so a misclick can be cancelled
 type TicketMigrationHandler struct {
-	state   *AppState
-	rootDir string
+	state    *AppState
+	provider storage.StorageProvider
 
 	// Outstanding restore tokens. Cleared when consumed or when expired.
 	tokensMu sync.Mutex
@@ -55,14 +57,28 @@ const (
 )
 
 func NewTicketMigrationHandler(state *AppState) *TicketMigrationHandler {
-	baseDir, _ := os.Getwd()
-	root := filepath.Join(baseDir, "dylaris_data", "ticket-backups")
-	os.MkdirAll(root, 0755)
 	return &TicketMigrationHandler{
-		state:   state,
-		rootDir: root,
-		tokens:  make(map[string]*restoreToken),
+		state:    state,
+		provider: buildBackupProvider(state),
+		tokens:   make(map[string]*restoreToken),
 	}
+}
+
+// buildBackupProvider builds the ticket-backups-scoped provider from the
+// shared Core file storage config (falls back to the legacy
+// dylaris_data/ticket-backups dir while the config is unset, so existing
+// installs keep listing/downloading/restoring already-created backups).
+// Mirrors buildProvider (library.go) / buildAttachmentProvider
+// (ticket_attachments.go).
+func buildBackupProvider(state *AppState) storage.StorageProvider {
+	p, err := state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	if err != nil {
+		baseDir, _ := os.Getwd()
+		root := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixBackups)
+		os.MkdirAll(root, 0755)
+		return &storage.LocalProvider{BasePath: root}
+	}
+	return p
 }
 
 // ── Status: counts + external-DB config visibility ───────────────────
@@ -264,49 +280,49 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	name := "tickets-" + time.Now().UTC().Format("20060102-150405") + ".json"
-	path := filepath.Join(h.rootDir, name)
-	if err := os.WriteFile(path, body, 0640); err != nil {
+	// Timestamp captured once so the filename suffix and the reported
+	// CreatedAt can never drift apart across a second boundary.
+	now := time.Now().UTC()
+	name := "tickets-" + now.Format("20060102-150405") + ".json"
+	if err := h.provider.WriteFile(name, bytes.NewReader(body)); err != nil {
 		sendJSONError(w, "Failed to write backup: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	info, _ := os.Stat(path)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"backup": backupSummary{
 			Name:      name,
-			Size:      info.Size(),
-			CreatedAt: info.ModTime(),
+			Size:      int64(len(body)),
+			CreatedAt: now,
 			Counts:    counts,
 		},
 	})
 }
 
 // ListBackups GET /api/admin/tickets/backups
+//
+// CreatedAt is intentionally left zero-valued here: object stores expose no
+// cheap per-key mtime through ListFiles, so per-file creation time is not
+// available on the provider path. Ordering instead relies on the
+// timestamped filename (tickets-YYYYMMDD-HHMMSS.json), which sorts
+// lexicographically in the same order as chronologically — this is a
+// documented, intentional trade-off from the storage-provider rework.
 func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir(h.rootDir)
+	files, err := h.provider.ListFiles("/")
 	if err != nil {
-		sendJSONError(w, "Failed to read backup dir", http.StatusInternalServerError)
+		sendJSONError(w, "Failed to list backups: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var out []backupSummary
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+	for _, f := range files {
+		if f.IsDir || !strings.HasSuffix(f.Name, ".json") {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		out = append(out, backupSummary{
-			Name:      e.Name(),
-			Size:      info.Size(),
-			CreatedAt: info.ModTime(),
-		})
+		out = append(out, backupSummary{Name: f.Name, Size: f.Size})
 	}
-	// Newest first.
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	// Newest first — the timestamped name is the sort key (see doc comment).
+	sort.Slice(out, func(i, j int) bool { return out[i].Name > out[j].Name })
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"backups": out,
@@ -320,20 +336,26 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	path := filepath.Join(h.rootDir, name)
-	f, err := os.Open(path)
+
+	// Prefer a short-lived pre-signed URL when the backend supports it (S3):
+	// redirect the browser straight to object storage instead of streaming
+	// every byte through Core. The ("", nil) sentinel (LocalProvider / path
+	// backend) AND any error from DownloadURL both fall through to
+	// streaming — an error must never be conflated with "no URL, stream it".
+	if url, err := h.provider.DownloadURL(name, 5*time.Minute); err == nil && url != "" {
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
+
+	rc, err := h.provider.GetFile(name)
 	if err != nil {
 		sendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
 	}
-	defer f.Close()
-	info, _ := f.Stat()
+	defer rc.Close()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-	if info != nil {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-	}
-	io.Copy(w, f)
+	io.Copy(w, rc)
 }
 
 // DeleteBackup DELETE /api/admin/tickets/backups/{name}
@@ -343,8 +365,8 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	if err := os.Remove(filepath.Join(h.rootDir, name)); err != nil {
-		sendJSONError(w, "Delete failed", http.StatusInternalServerError)
+	if err := h.provider.DeletePath(name); err != nil {
+		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -381,9 +403,11 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	if _, err := os.Stat(filepath.Join(h.rootDir, name)); err != nil {
+	if rc, err := h.provider.GetFile(name); err != nil {
 		sendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
+	} else {
+		rc.Close()
 	}
 
 	tokenBytes := make([]byte, 24)
@@ -476,8 +500,17 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Read the backup file BEFORE wiping anything.
-	body, err := os.ReadFile(filepath.Join(h.rootDir, t.BackupName))
+	// Read the backup file BEFORE wiping anything. The restore flow only
+	// ever needs the raw bytes (unmarshalled below), never a real path on
+	// disk, so no temp-file staging is needed here — GetFile + ReadAll is
+	// sufficient regardless of backend.
+	rc, err := h.provider.GetFile(t.BackupName)
+	if err != nil {
+		sendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
+		return
+	}
+	body, err := io.ReadAll(rc)
+	rc.Close()
 	if err != nil {
 		sendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
 		return
