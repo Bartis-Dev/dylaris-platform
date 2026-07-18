@@ -429,6 +429,20 @@ func TestCoreStorage_TestConnection_BlankSecretChangedEndpoint_Rejected(t *testi
 	}
 }
 
+// disableAWSRetries forces the AWS SDK to attempt exactly once instead of
+// its default 3-attempt retry-with-backoff. Port 1 on 127.0.0.1 refuses the
+// connection instantly (no DNS lookup, no listener), but the SDK's default
+// retryer still treats a connection-refused dial error as retryable and
+// sleeps out an exponential backoff between attempts, which is what made
+// these tests take several seconds each despite already targeting loopback.
+// AWS_MAX_ATTEMPTS is read by awsconfig.LoadDefaultConfig (used in
+// storage/backup/s3.go, a production file this fix does not touch), so
+// setting it here is a test-only way to get a single, immediate attempt.
+func disableAWSRetries(t *testing.T) {
+	t.Helper()
+	t.Setenv("AWS_MAX_ATTEMPTS", "1")
+}
+
 // TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidation
 // proves the reused secret actually clears validateCoreStorageConfig (unlike
 // the "changed" cases above): the probe proceeds to an actual write attempt
@@ -437,6 +451,7 @@ func TestCoreStorage_TestConnection_BlankSecretChangedEndpoint_Rejected(t *testi
 // validation error - that is the observable difference between "merge
 // backfilled the secret" and "merge left it blank".
 func TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidation(t *testing.T) {
+	disableAWSRetries(t)
 	fs := newCoreStorageHTTPFakeStore()
 	fs.kv[keyCoreStorageBackend] = "s3"
 	fs.kv[keyCoreStorageS3Endpoint] = "http://127.0.0.1:1"
@@ -462,6 +477,7 @@ func TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidatio
 // wire body, not just the CoreStorageConfig struct: a future change that
 // surfaces the secret under some other key must still be caught.
 func TestCoreStorage_TestConnection_FailureBody_NeverLeaksSecret(t *testing.T) {
+	disableAWSRetries(t)
 	fs := newCoreStorageHTTPFakeStore()
 	h := NewCoreStorageHandler(&AppState{Store: fs})
 
