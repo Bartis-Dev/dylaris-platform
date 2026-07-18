@@ -27,7 +27,9 @@ func buildProvider(state *AppState) storage.StorageProvider {
 	p, err := state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
 		baseDir, _ := os.Getwd()
-		return &storage.LocalProvider{BasePath: filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixLibrary)}
+		libPath := filepath.Join(baseDir, "dylaris_data", CoreStoragePrefixLibrary)
+		os.MkdirAll(libPath, 0755)
+		return &storage.LocalProvider{BasePath: libPath}
 	}
 	return p
 }
