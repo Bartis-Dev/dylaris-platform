@@ -18,6 +18,18 @@ type gateFakeStore struct {
 
 func (f *gateFakeStore) GetSetting(key string) (string, error) { return f.kv[key], nil }
 
+// SetSetting persists into the same map GetSetting reads from. Needed once a
+// test drives FeatureSettingsHandler.Set() past its guards into the actual
+// writes loop (e.g. the tickets:false success path), which calls SetSetting
+// for every toggle in the bundle.
+func (f *gateFakeStore) SetSetting(key, value string) error {
+	if f.kv == nil {
+		f.kv = map[string]string{}
+	}
+	f.kv[key] = value
+	return nil
+}
+
 func TestRequireCoreStorageConfigured(t *testing.T) {
 	called := false
 	inner := func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(http.StatusOK) }
@@ -51,17 +63,35 @@ func TestRequireCoreStorageConfigured(t *testing.T) {
 }
 
 func TestFeatureSettings_RefusesTicketsWhenStorageUnconfigured(t *testing.T) {
-	st := &AppState{
-		Store:  &gateFakeStore{kv: map[string]string{}},
-		Events: services.NewSystemEventsPublisher(nil),
+	newHandler := func() *FeatureSettingsHandler {
+		st := &AppState{
+			Store:  &gateFakeStore{kv: map[string]string{}},
+			Events: services.NewSystemEventsPublisher(nil),
+		}
+		st.FeatureFlags = services.NewFeatureFlags(st.Store)
+		return NewFeatureSettingsHandler(st)
 	}
-	st.FeatureFlags = services.NewFeatureFlags(st.Store)
-	h := NewFeatureSettingsHandler(st)
 
-	rw := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/settings/features", strings.NewReader(`{"tickets":true,"modpacks":true,"autoMove":false}`))
-	h.Set(rw, req)
-	if rw.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 when enabling tickets without storage (%s)", rw.Code, rw.Body.String())
-	}
+	t.Run("tickets true is refused when storage unconfigured", func(t *testing.T) {
+		h := newHandler()
+		rw := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/admin/settings/features", strings.NewReader(`{"tickets":true,"modpacks":true,"autoMove":false}`))
+		h.Set(rw, req)
+		if rw.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409 when enabling tickets without storage (%s)", rw.Code, rw.Body.String())
+		}
+	})
+
+	// The other half of the ON/OFF asymmetry: an operator must never be
+	// trapped in an enabled-but-broken state, so turning Tickets OFF (or
+	// leaving it off) must always succeed regardless of storage config.
+	t.Run("tickets false always succeeds when storage unconfigured", func(t *testing.T) {
+		h := newHandler()
+		rw := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/admin/settings/features", strings.NewReader(`{"tickets":false,"modpacks":false,"autoMove":false}`))
+		h.Set(rw, req)
+		if rw.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: disabling tickets must never be blocked by the storage gate (%s)", rw.Code, rw.Body.String())
+		}
+	})
 }

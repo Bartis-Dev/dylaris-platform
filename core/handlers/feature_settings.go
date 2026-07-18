@@ -73,7 +73,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "core_storage_required",
-			"message": "Configure Core file storage before enabling Tickets.",
+			"message": "Configure Core file storage (Settings -> Core file storage) before enabling Tickets.",
 		})
 		return
 	}

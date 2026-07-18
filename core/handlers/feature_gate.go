@@ -69,7 +69,7 @@ func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.Hand
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.CoreStorageConfigured() {
 			featureDisabledResponse(w, FeatureCoreStorage,
-				"Configure Core file storage (Settings -> Core file storage) before uploading.")
+				"Configure Core file storage (Settings -> Core file storage) before writing files.")
 			return
 		}
 		next(w, r)
