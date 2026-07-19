@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     HardDrive, Loader2, CircleCheck, CircleAlert, Play, ShieldAlert,
-    Download, FileSearch, X, Trash2, ArrowRight, Info,
+    Download, FileSearch, X, ArrowRight, Info,
 } from 'lucide-react';
 import {
     getStorageOverview, getStorageMigration, startStorageMigration,
@@ -36,10 +36,47 @@ const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
 // objects only, so the report renders an extra note for both.
 const MODPACKS_PREFIX = 'modpacks';
 
+// startBlockReason explains why "Start migration" is disabled, in the SAME
+// order as canStartMigration/targetConfigValid (lib/storageMigration.ts), so
+// this message can never disagree with the button. Callers only render it
+// while !formValid; every branch that would fire once the form is actually
+// valid is unreachable in practice and exists only so the function is total.
+function startBlockReason(form: MigrationForm, dataSets: StorageDataSet[]): string {
+    if (!form.dataSet) return 'Choose a source data set.';
+    if (form.deleteSource && !deleteSourceAllowed(form.verifyMode)) {
+        return 'A sampled verification cannot authorize deleting the source: switch to a full verification or uncheck delete.';
+    }
+    if (form.deleteSource && form.targetKind !== 'config') {
+        return 'Deleting the source requires the new-storage-backend target shape, not another data set.';
+    }
+    const source = dataSets.find(d => d.id === form.dataSet);
+    if (!source || !source.migratable) return 'The selected source is unknown or not migratable.';
+    if (form.targetKind === 'config') {
+        if (!source.supportsTargetConfig) return 'The selected source cannot target a new storage backend; choose another data set as the target instead.';
+        const cfg = form.targetConfig;
+        if (cfg.backend === 's3') {
+            if (!cfg.s3Bucket) return 'Enter the target bucket.';
+            if (!cfg.s3AccessKey) return 'Enter the target access key.';
+            if (!cfg.s3SecretKey) return 'Enter the target secret key.';
+        } else if (cfg.backend === 'path') {
+            if (!cfg.path.startsWith('/')) return 'Enter an absolute target path (starting with "/").';
+            if (!cfg.pathConfirmed) return 'Confirm the target path is reachable from every Core instance and is not the current location.';
+        } else {
+            return 'Choose a target storage backend (S3-compatible or filesystem path).';
+        }
+        return 'Complete the target storage config.';
+    }
+    if (!form.targetDataSet || form.dataSet === form.targetDataSet) return 'Choose a target data set different from the source.';
+    const target = dataSets.find(d => d.id === form.targetDataSet);
+    if (!target || !target.migratable) return 'The selected target is unknown or not migratable.';
+    return 'Complete the migration form.';
+}
+
 export default function StorageMigrationTab() {
     const [dataSets, setDataSets] = useState<StorageDataSet[]>([]);
     const [job, setJob] = useState<StorageMigrationJob | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const [wizardOpen, setWizardOpen] = useState(false);
     const [form, setForm] = useState<MigrationForm>(EMPTY_MIGRATION_FORM);
@@ -50,15 +87,35 @@ export default function StorageMigrationTab() {
     const [downloading, setDownloading] = useState(0);
 
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const toastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const flash = (msg: string, ok = true) => {
+        if (toastTimeout.current) clearTimeout(toastTimeout.current);
         setToast({ msg, ok });
-        setTimeout(() => setToast(null), 4000);
+        toastTimeout.current = setTimeout(() => setToast(null), 4000);
     };
+    useEffect(() => () => {
+        if (toastTimeout.current) clearTimeout(toastTimeout.current);
+    }, []);
 
+    // load() must not silently swallow a failed request: Overview deliberately
+    // returns 500 (rather than an empty list) when it cannot read manifests,
+    // specifically so this is never mistaken for "storage not configured yet".
+    // Rendering the empty state on a failed request would tell the operator
+    // their storage is unconfigured when Core actually could not read it.
     const load = useCallback(async () => {
         const [ov, jb] = await Promise.all([getStorageOverview(), getStorageMigration()]);
-        if (ov.success && ov.dataSets) setDataSets(ov.dataSets);
-        if (jb.success) setJob(jb.hasJob && jb.job ? jb.job : null);
+        let err: string | null = null;
+        if (ov.success && ov.dataSets) {
+            setDataSets(ov.dataSets);
+        } else {
+            err = ov.message || 'Could not load the storage overview.';
+        }
+        if (jb.success) {
+            setJob(jb.hasJob && jb.job ? jb.job : null);
+        } else if (!err) {
+            err = jb.message || 'Could not load the migration job status.';
+        }
+        setLoadError(err);
         setLoading(false);
     }, []);
 
@@ -112,6 +169,19 @@ export default function StorageMigrationTab() {
         ...f,
         dataSet: d.id,
         targetKind: d.supportsTargetConfig ? 'config' : 'dataset',
+        targetDataSet: '',
+        targetConfig: EMPTY_TARGET_CONFIG,
+        deleteSource: false,
+    }));
+
+    // pickTargetKind switches which target shape is active for a source that
+    // supports both (supportsTargetConfig: true - core-storage, modpacks). It
+    // clears the OTHER target field for the same reason pickSource does: a
+    // stale value must never travel with the request. deleteSource resets too
+    // - it is only legal for the config shape (canOfferDelete).
+    const pickTargetKind = (kind: 'dataset' | 'config') => setForm(f => ({
+        ...f,
+        targetKind: kind,
         targetDataSet: '',
         targetConfig: EMPTY_TARGET_CONFIG,
         deleteSource: false,
@@ -227,7 +297,9 @@ export default function StorageMigrationTab() {
 
             <div className="card p-5 space-y-3">
                 <div className="mono-label">Data sets</div>
-                {dataSets.length === 0 ? (
+                {loadError ? (
+                    <p className="alert alert-error text-xs">{loadError}</p>
+                ) : dataSets.length === 0 ? (
                     <p className="alert alert-info text-xs">
                         No storage data sets are configured yet. Configure Core file storage first.
                     </p>
@@ -288,7 +360,7 @@ export default function StorageMigrationTab() {
                                 <X size={16} />
                             </button>
                         </div>
-                        <div className="modal-body space-y-5">
+                        <div className="modal-body max-h-[70vh] overflow-y-auto space-y-5">
                             <div className="space-y-2">
                                 <div className="mono-label">1. Source</div>
                                 {migratable.map(d => (
@@ -314,7 +386,29 @@ export default function StorageMigrationTab() {
                                         <Info size={12} className="mt-0.5 shrink-0" /> {sourceSet.note}
                                     </p>
                                 )}
-                                {sourceSet?.supportsTargetConfig ? (
+                                {/* supportsTargetConfig gates the ad-hoc-config shape only, not
+                                    whether this source may ALSO pair row-to-row with another data
+                                    set (see the `targets` comment above). A source that supports
+                                    both gets an explicit shape choice; a source that supports only
+                                    the row shape gets no toggle, because there is no choice to make
+                                    (an ad-hoc config would be a 400 for it). */}
+                                {sourceSet?.supportsTargetConfig && (
+                                    <div className="space-y-2">
+                                        <ModeOption
+                                            selected={form.targetKind === 'config'}
+                                            onClick={() => pickTargetKind('config')}
+                                            title="A new storage backend"
+                                            desc="Type in an ad-hoc destination. The active config is repointed here after a passing verification."
+                                        />
+                                        <ModeOption
+                                            selected={form.targetKind === 'dataset'}
+                                            onClick={() => pickTargetKind('dataset')}
+                                            title="Another data set"
+                                            desc="Copy onto an already-configured data set instead, e.g. staging modpacks onto Core file storage. Nothing is repointed automatically; repoint the consumer yourself afterwards."
+                                        />
+                                    </div>
+                                )}
+                                {form.targetKind === 'config' ? (
                                     <TargetConfigFields
                                         cfg={form.targetConfig}
                                         onChange={patch => setForm(f => ({ ...f, targetConfig: { ...f.targetConfig, ...patch } }))}
@@ -335,7 +429,7 @@ export default function StorageMigrationTab() {
                             <p className="alert alert-info text-xs">
                                 Order: copy, verify, switch the active config to the target, then delete the old copy
                                 if you opt in. The switch happens only after a passing verification, and if it fails
-                                nothing is deleted - the data stays in both places and the wizard tells you which
+                                nothing is deleted - the data stays in both places and the job panel tells you which
                                 config is live.
                             </p>
 
@@ -381,15 +475,19 @@ export default function StorageMigrationTab() {
                                             <span>Delete the source after a passing verification</span>
                                         </label>
                                         <p className="alert alert-warning text-xs">
-                                            This is irreversible and cannot be cancelled once it starts. The source should be quiet for a
-                                            delete run: objects written after the manifest was captured are not in it, will show up as
-                                            &quot;extra&quot; at verification, and will NOT be deleted.
+                                            This is irreversible and cannot be cancelled once it starts. Objects written to the source
+                                            after the manifest was captured are not in it, are not copied to the target, and are not
+                                            deleted - and this verification cannot see them at all, because it compares the target
+                                            against the manifest. Quiesce the source before a delete run, or capture a fresh inventory first.
                                         </p>
                                     </>
                                 )}
                             </div>
                         </div>
                         <div className="modal-footer">
+                            {!formValid && (
+                                <span className="text-xs text-(--base-06) mr-auto self-center">{startBlockReason(form, dataSets)}</span>
+                            )}
                             <button onClick={() => setWizardOpen(false)} className="btn btn-secondary" disabled={submitting}>Cancel</button>
                             <button
                                 onClick={submitMigration}
@@ -452,7 +550,7 @@ function DataSetRow({
                 </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-                <button onClick={onManifest} className="btn btn-secondary btn-sm" disabled={busy} title="Read every object once and record its checksum">
+                <button onClick={onManifest} className="btn btn-secondary btn-sm" disabled={busy || !ds.migratable} title="Read every object once and record its checksum">
                     <FileSearch size={12} /> Inventory
                 </button>
                 <button onClick={onVerifyFull} className="btn btn-secondary btn-sm" disabled={busy || !m} title="Hash every object against the last manifest">
@@ -523,6 +621,13 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                         <CircleCheck size={12} /> The active config now points at the target; the system is reading from it.
                     </div>
                 )}
+                {job.kind === 'migrate' && !job.configSwitched && job.phase === 'done' && (
+                    <div className="text-(--warning-light) flex items-center gap-1">
+                        <Info size={12} /> The copy is verified on the target, but the active config still points at the
+                        source: this was a data-set-to-data-set migrate, so nothing was repointed automatically.
+                        Repoint the consuming subsystem at the target yourself, and remove the old copy only once you have.
+                    </div>
+                )}
                 {job.stale && (
                     <div className="text-(--error-light) flex items-center gap-1">
                         <CircleAlert size={12} /> No heartbeat - the Core running this job may have stopped.
@@ -559,18 +664,31 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                 labelled NOT VERIFIED and must not point at a report that is not
                 there. Only a run that actually produced one gets a verdict. */}
             {job.phase === 'done' && (
-                <div className="text-xs text-(--success-light) bg-(--success-ghost) border border-(--success-border) rounded-md p-3 flex items-center gap-1">
-                    <CircleCheck size={12} />
-                    {job.verify
-                        ? `${verifyVerdictLabel(job.verify)} - see the report below.`
-                        : 'Finished.'}
+                <div className="text-xs text-(--success-light) bg-(--success-ghost) border border-(--success-border) rounded-md p-3 space-y-1">
+                    <div className="flex items-center gap-1">
+                        <CircleCheck size={12} />
+                        {job.verify
+                            ? `${verifyVerdictLabel(job.verify)} - see the report below.`
+                            : 'Finished.'}
+                    </div>
+                    {/* finish() (storage_migration_job.go) always appends this
+                        outcome sentence - what happened to the old copy - as the
+                        LAST log line before the job goes done, so it is safe to
+                        read directly rather than making the operator expand the
+                        log to learn it. */}
+                    {job.log?.length > 0 && (
+                        <div className="text-(--base-08)">{job.log[job.log.length - 1]}</div>
+                    )}
                 </div>
             )}
 
             {job.verify && <VerifyView report={job.verify} dataSet={job.dataSet} />}
 
             {job.log?.length > 0 && (
-                <details className="text-xs" open={inProgress}>
+                <details
+                    className="text-xs"
+                    open={inProgress || job.phase === 'done' || job.phase === 'failed' || job.phase === 'cancelled'}
+                >
                     <summary className="cursor-pointer text-(--base-06) mono-label">Log ({job.log.length})</summary>
                     <pre className="mt-2 max-h-64 overflow-auto bg-(--base-01) border border-(--base-03) rounded-md p-3 font-mono text-[11px] text-(--base-06) whitespace-pre-wrap">
 {job.log.join('\n')}
@@ -587,7 +705,9 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                     <div className="flex flex-wrap items-center gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2">
                         <ShieldAlert size={14} className="text-(--warning-light)" />
                         <span className="text-xs text-(--base-07)">
-                            Cancelling stops at the next object boundary. Nothing half-written is left behind and the source is untouched. Continue?
+                            Cancelling stops at the next object boundary. Nothing half-written is left behind, but any
+                            objects already copied stay on the target; re-running with the same manifest resumes from
+                            there. The source is untouched. Continue?
                         </span>
                         <button className="btn btn-primary btn-sm" onClick={onCancel} disabled={cancelling}>
                             {cancelling ? <Loader2 size={14} className="animate-spin" /> : null} Yes, cancel
