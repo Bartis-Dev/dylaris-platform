@@ -223,15 +223,19 @@ export function canStartMigration(form: MigrationForm, dataSets: StorageDataSet[
   // row-to-row shape, in EITHER role. Start() resolves TargetDataSet through
   // plain Resolve() and checks only that it resolves and differs from the
   // source - it never consults supportsTargetConfig on the target, so this
-  // must not either. Two real flows depend on that: modpacks ->
-  // modpacks@core-storage (copy modpacks onto Core storage, verify, then
-  // switch modpack_storage_provider by hand) and its inverse,
-  // modpacks@core-storage -> modpacks (move modpacks off the shared Core file
-  // storage onto a dedicated modpack backend). The inverse is the ONLY way to
-  // express that move: a config target FROM modpacks@core-storage is refused
-  // server-side (sourceCoreStorageConfigFor refuses a namespace inside the
-  // shared Core file storage as a config-switch source, since switching on
-  // its behalf alone would strand the other namespaces).
+  // must not either. Blocking it would forbid legitimate row-to-row pairs in
+  // both directions: modpacks -> modpacks@core-storage (stage a copy on Core
+  // storage, verify, repoint by hand) and modpacks@core-storage -> modpacks
+  // (catch a leftover Core-storage copy up to an already-repointed dedicated
+  // modpack backend).
+  //
+  // Neither is the ONLY way to move modpacks between backends, and neither is
+  // the preferred one. dataSet "modpacks" + targetConfig is a separate,
+  // server-supported flow (sourceCoreStorageConfigFor accepts modpacks,
+  // because modpack_storage_* is its own settings namespace), and it is the
+  // better expression: it repoints modpack_storage_provider automatically
+  // after a passing verify, and it is the only form Validate permits
+  // deleteSource on.
   if (!form.targetDataSet || form.dataSet === form.targetDataSet) return false;
   const target = dataSets.find(d => d.id === form.targetDataSet);
   return !!target && target.migratable;
@@ -264,9 +268,11 @@ export interface StartStorageMigrationBody {
   manifestId?: number;
 }
 
-// startMigrateFromForm is the wizard's submit path. It sends EXACTLY ONE of
-// targetDataSet / targetConfig (the server rejects both or neither with 400),
-// and it mirrors canStartMigration's deleteSource rule in full: dropped
+// startMigrateFromForm is the wizard's submit path. It never sends BOTH
+// targetDataSet and targetConfig (the server rejects both, and neither, with
+// 400); that they are also non-empty is canStartMigration's precondition, not
+// this builder's - it forwards an empty targetDataSet as-is.
+// It mirrors canStartMigration's deleteSource rule in full: dropped
 // whenever the verify mode cannot authorize it (safety invariant 2) AND
 // whenever the target is the row-to-row shape, where nothing repoints the
 // consuming subsystem (Validate's "deleteSource requires targetConfig").

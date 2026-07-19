@@ -80,8 +80,9 @@ export interface ListStorageManifestsResponse {
 }
 
 // listStorageManifests leaves limit unset by default; the handler's
-// PostgresStore.ListStorageManifests then falls back to 50. Pass it
-// explicitly to see more than that (or fewer).
+// PostgresStore.ListStorageManifests then falls back to 50. Pass any positive
+// value to raise that; the store applies no upper cap. A non-positive limit
+// hits the same fallback, so it cannot be used to ask for fewer.
 export async function listStorageManifests(dataSet?: string, limit?: number): Promise<ListStorageManifestsResponse> {
   try {
     const params = new URLSearchParams();

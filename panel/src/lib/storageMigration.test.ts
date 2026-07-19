@@ -175,13 +175,12 @@ describe('canStartMigration', () => {
   it('accepts modpacks -> modpacks@core-storage: a legitimate manual flow', () => {
     expect(canStartMigration(rowForm({ dataSet: 'modpacks', targetDataSet: 'modpacks@core-storage' }), dataSets)).toBe(true);
   });
-  // The inverse direction is the ONLY way to express "move modpacks off the
-  // shared Core file storage onto a dedicated modpack backend": a config
-  // target FROM modpacks@core-storage is refused server-side
-  // (sourceCoreStorageConfigFor refuses a namespace inside the shared Core
-  // file storage as a config-switch source). supportsTargetConfig on the
-  // TARGET (modpacks, true) must not block this either.
-  it('accepts modpacks@core-storage -> modpacks: the only way to express that move', () => {
+  // supportsTargetConfig gates the ad-hoc-config target shape in EITHER role,
+  // so it must not block a row-to-row pair just because the target happens to
+  // also accept a config. This is the only row here whose TARGET has
+  // supportsTargetConfig true (modpacks), which is why the pair above did not
+  // catch the clause this pins.
+  it('accepts a row-to-row target whose data set also supports an ad-hoc config', () => {
     expect(canStartMigration(rowForm({ dataSet: 'modpacks@core-storage', targetDataSet: 'modpacks' }), dataSets)).toBe(true);
   });
   // Safety invariant 2, mirrored client-side. The API returns 400 for this
