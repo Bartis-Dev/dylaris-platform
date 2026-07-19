@@ -12,6 +12,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
 
 	pbNode "dylaris-proto/node"
@@ -520,13 +521,23 @@ func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
 // ───────────── helpers ─────────────
 
 // backupDeps assembles the runtime handles the storage factory passes to
-// the node-local provider. s3 / shared ignore the registry + store, so
+// the node-local and core-storage providers. s3 / shared ignore all of it, so
 // the same Deps can be reused everywhere a Storage is opened in this
 // handler — keeps the call-sites uniform.
 func (h *BackupHandler) backupDeps() backupstorage.Deps {
 	return backupstorage.Deps{
 		Registry:  h.state.GRPCRegistry,
 		NodeStore: h.state.Store,
+		// Resolved PER CALL, never cached: the shared Core file storage
+		// config can change under a running Core, and every other provider
+		// in this codebase resolves per request too.
+		CoreStorage: func(subPrefix string) (backupstorage.Storage, error) {
+			prov, err := h.state.buildCoreStorageProvider(subPrefix)
+			if err != nil {
+				return nil, err
+			}
+			return storage.NewCoreStorageBackupAdapter(prov), nil
+		},
 	}
 }
 

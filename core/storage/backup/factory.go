@@ -15,9 +15,27 @@ import (
 // node-local storage (download, delete, list) so the operation can be
 // dispatched to the right Node.
 type Deps struct {
-	Registry  *nodegrpc.Registry  // Active gRPC connections to Nodes
-	NodeStore NodeStore           // Looks up a Node's ID by server UUID
+	Registry  *nodegrpc.Registry // Active gRPC connections to Nodes
+	NodeStore NodeStore          // Looks up a Node's ID by server UUID
+
+	// CoreStorage builds an ALREADY-ADAPTED backup.Storage backed by the
+	// shared Core file storage, scoped to the given sub-prefix. It returns a
+	// Storage rather than a storage.StorageProvider on purpose: package
+	// `storage` already imports this package (storage/s3provider.go uses
+	// backup.Object / backup.NewS3), so importing `storage` from here would
+	// be a cycle. handlers/backup.go supplies the closure, which wraps
+	// buildCoreStorageProvider in storage.NewCoreStorageBackupAdapter.
+	//
+	// Nil for callers that never touch the "core-storage" provider.
+	CoreStorage func(subPrefix string) (Storage, error)
 }
+
+// CoreStorageSubPrefix is the namespace server backups occupy inside the ONE
+// configured Core file storage. It duplicates the canonical
+// handlers.CoreStoragePrefixServerBackups because this package must not
+// import handlers (handlers already imports this package). The two are held
+// together by handlers.TestCoreStorageSubPrefixesMatch.
+const CoreStorageSubPrefix = "server-backups"
 
 // NodeStore is the narrow store surface the node-local provider depends on.
 // Implemented by the existing store.Store interface — kept abstract here so
@@ -51,6 +69,20 @@ func Open(ctx context.Context, bs *models.BackupStorage, deps Deps) (Storage, er
 			return nil, fmt.Errorf("node-local storage requires gRPC registry and node-store handles")
 		}
 		return NewNodeLocal(deps.Registry, deps.NodeStore), nil
+	case "core-storage":
+		// Backups land on whatever the shared Core file storage is
+		// configured as (path or s3), under CoreStorageSubPrefix. This is an
+		// adapter, not a new backend, and it cannot presign an upload - a
+		// BYON tenant node therefore uploads through Core rather than
+		// directly. See storage.CoreStorageBackupAdapter.
+		if deps.CoreStorage == nil {
+			return nil, fmt.Errorf("core-storage backup provider requires a CoreStorage builder")
+		}
+		st, err := deps.CoreStorage(CoreStorageSubPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("core-storage backup provider: %w", err)
+		}
+		return st, nil
 	default:
 		return nil, fmt.Errorf("unknown backup provider: %s", bs.Provider)
 	}
