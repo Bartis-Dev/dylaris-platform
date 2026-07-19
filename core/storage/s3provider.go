@@ -111,12 +111,13 @@ func (p *S3Provider) WriteFile(path string, content io.Reader) error {
 
 // GetFile returns a reader for path, normalizing a recognised "object does
 // not exist" error to be errors.Is(err, fs.ErrNotExist)-comparable. Callers
-// (notably the storage migration's skip-if-exists probe, core/handlers/
-// core_storage.go) need to tell "genuinely missing" apart from any other
-// backend failure (503/timeout/throttle/permission), which on S3 can fail a
-// GetObject just as easily as a missing key - collapsing both into "missing"
-// would make a transient error look like "safe to overwrite". Any other
-// error is returned unwrapped.
+// (notably the storage migration's skip-if-exists probe,
+// services/storagemigrate/copy.go:targetAlreadyMatches) need to tell
+// "genuinely missing" apart from any other backend failure
+// (503/timeout/throttle/permission), which on S3 can fail a GetObject just as
+// easily as a missing key - collapsing both into "missing" would make a
+// transient error look like "safe to overwrite". Any other error is returned
+// unwrapped.
 func (p *S3Provider) GetFile(path string) (io.ReadCloser, error) {
 	rc, err := p.os.Get(context.Background(), p.key(path))
 	if err != nil {
