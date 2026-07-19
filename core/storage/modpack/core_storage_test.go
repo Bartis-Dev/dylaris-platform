@@ -2,7 +2,6 @@ package modpack
 
 import (
 	"errors"
-	"io"
 	"strings"
 	"testing"
 
@@ -153,10 +152,6 @@ func TestNewProviderFromSettings_CoreStorageBuilderErrorPropagates(t *testing.T)
 }
 
 func TestNewProviderFromSettings_ExistingCasesUnchanged(t *testing.T) {
-	build := func(string) (storage.StorageProvider, error) {
-		t.Fatal("buildCore must not be called for a non core-storage provider")
-		return nil, nil
-	}
 	cases := []struct {
 		name     string
 		settings map[string]string
@@ -170,6 +165,12 @@ func TestNewProviderFromSettings_ExistingCasesUnchanged(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// build closes over this subtest's own *testing.T (not the parent),
+			// so a call here reports via t.Fatal on the goroutine that owns it.
+			build := func(string) (storage.StorageProvider, error) {
+				t.Fatal("buildCore must not be called for a non core-storage provider")
+				return nil, nil
+			}
 			get := func(k string) (string, error) { return c.settings[k], nil }
 			prov, err := NewProviderFromSettings(get, build)
 			if (err != nil) != c.wantErr {
@@ -205,5 +206,3 @@ func TestNewProviderFromSettings_LocalStillResolves(t *testing.T) {
 		t.Fatalf("LocalProvider.Paths = %v, want one path (mirroring is unchanged)", lp.Paths)
 	}
 }
-
-var _ io.Reader = strings.NewReader("")

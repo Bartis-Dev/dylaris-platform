@@ -74,6 +74,22 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validModpackProvider mirrors the switch in storage/modpack/factory.go's
+// NewProviderFromSettings. Without this allowlist a typo (or an
+// aspirationally-named future backend) would persist to
+// modpack_storage_provider and only fail much later when a pack is actually
+// read or written.
+//
+// NOTE: this is an input allowlist, not an authorization boundary, same as
+// validBackupProvider in backup.go.
+func validModpackProvider(p string) bool {
+	switch p {
+	case "local", "s3", "core-storage":
+		return true
+	}
+	return false
+}
+
 // Set PUT /api/admin/settings/modpacks
 //
 // Body: full modpackSettings. Empty S3SecretKey means "don't change", so the
@@ -89,8 +105,8 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	if req.Provider == "" {
 		req.Provider = "local"
 	}
-	if req.Provider != "local" && req.Provider != "s3" {
-		sendJSONError(w, "provider must be local or s3", http.StatusBadRequest)
+	if !validModpackProvider(req.Provider) {
+		sendJSONError(w, "provider must be local, s3 or core-storage", http.StatusBadRequest)
 		return
 	}
 
