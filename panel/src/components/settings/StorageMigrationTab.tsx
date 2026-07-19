@@ -413,6 +413,21 @@ export default function StorageMigrationTab() {
                                         desc={d.backendLabel}
                                     />
                                 ))}
+                                {/* Rendered here, at the target picker, rather than next to the
+                                    submit button: the modal body scrolls while the footer does
+                                    not, so a warning placed at the bottom sits below the fold
+                                    while Start stays clickable. This is the decision point. */}
+                                {sameLocationSuspected && (
+                                    <p className="alert alert-warning text-xs">
+                                        Source and target report the same backend location ({sourceSet?.backendLabel}). If
+                                        they really are the same place, the copy would do nothing, a verification would
+                                        pass trivially by comparing the target against its own manifest, and removing
+                                        &quot;the old copy&quot; afterwards would delete the only copy there is. This only
+                                        compares the displayed labels and is not exhaustive - it can miss cases where two
+                                        data sets alias the same storage under different labels, so the absence of this
+                                        warning does not mean the locations are actually different.
+                                    </p>
+                                )}
                             </div>
 
                             <p className="alert alert-info text-xs">
@@ -473,17 +488,6 @@ export default function StorageMigrationTab() {
                                 )}
                             </div>
 
-                            {sameLocationSuspected && (
-                                <p className="alert alert-warning text-xs">
-                                    Source and target report the same backend location ({sourceSet?.backendLabel}). If
-                                    they really are the same place, the copy would do nothing, a verification would
-                                    pass trivially by comparing the target against its own manifest, and removing
-                                    &quot;the old copy&quot; afterwards would delete the only copy there is. This only
-                                    compares the displayed labels and is not exhaustive - it can miss cases where two
-                                    data sets alias the same storage under different labels, so the absence of this
-                                    warning does not mean the locations are actually different.
-                                </p>
-                            )}
                         </div>
                         <div className="modal-footer">
                             {!formValid && (
