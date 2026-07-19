@@ -109,6 +109,15 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "provider must be local, s3 or core-storage", http.StatusBadRequest)
 		return
 	}
+	// Checked for every provider, not only "s3": the writes below persist the
+	// endpoint whatever the provider is, Get echoes it back, and
+	// modpackBackendLabel reads it straight out of the settings table. Gating
+	// this on req.Provider == "s3" would leave a save with provider "local" as
+	// an open path for the same credential.
+	if err := validateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Normalize paths: strip empties + dedupe + MkdirAll so the provider
 	// doesn't fail on first Put. We deliberately do NOT validate writability
