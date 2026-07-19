@@ -29,6 +29,7 @@ type storageMigrationFakeStore struct {
 	manifests []models.StorageManifest
 	entries   map[int][]models.StorageManifestEntry
 	deleted   []int
+	onAudit   func(*models.AuditEventIdentity)
 }
 
 func newStorageMigrationFakeStore() *storageMigrationFakeStore {
@@ -73,7 +74,12 @@ func (f *storageMigrationFakeStore) DeleteStorageManifest(id int) error {
 	f.deleted = append(f.deleted, id)
 	return nil
 }
-func (f *storageMigrationFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
+func (f *storageMigrationFakeStore) InsertAuditIdentity(e *models.AuditEventIdentity) error {
+	if f.onAudit != nil {
+		f.onAudit(e)
+	}
+	return nil
+}
 
 // storageMigrationTestRoot returns a Linux-absolute test-scoped directory.
 // validateCoreStorageConfig deliberately requires a leading "/" (the config
@@ -172,18 +178,32 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 		adHoc[s.ID] = s.SupportsTargetConfig
 		notes[s.ID] = s.Note
 	}
-	// The Core-file-storage data sets ARE migratable: their target is an
-	// ad-hoc storage config supplied in the start request, not the saved
-	// config (which describes where they already live).
-	for _, id := range []string{"library", "ticket-attachments", "ticket-backups", "modpacks"} {
+	// Every blob data set is migratable, including the ones that only offer
+	// the manual flow: they still capture manifests and verify.
+	for _, id := range []string{CoreStorageDataSetID, "library", "ticket-attachments", "ticket-backups", "modpacks", ModpacksCoreStorageDataSetID} {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("%s missing from the overview", id)
 		}
 		if !byID[id] {
-			t.Errorf("%s is marked not migratable; it moves to an ad-hoc target config", id)
+			t.Errorf("%s is marked not migratable", id)
 		}
+	}
+	// Exactly the data sets that OWN a settings-configured backend advertise an
+	// ad-hoc target config, because advertising one is a promise to repoint
+	// that backend after the copy. The four namespaces inside the shared Core
+	// file storage own nothing: switching for any one of them repoints the
+	// other three onto a backend their data was never copied to.
+	for _, id := range []string{CoreStorageDataSetID, "modpacks"} {
 		if !adHoc[id] {
-			t.Errorf("%s must advertise SupportsTargetConfig: it is backed by one settings-configured backend", id)
+			t.Errorf("%s must advertise SupportsTargetConfig: it is backed by its own settings-configured backend", id)
+		}
+	}
+	for _, id := range []string{"library", "ticket-attachments", "ticket-backups", ModpacksCoreStorageDataSetID} {
+		if adHoc[id] {
+			t.Errorf("%s must NOT advertise SupportsTargetConfig: it shares one config with the other Core file storage namespaces, so switching it alone would strand them", id)
+		}
+		if !strings.Contains(notes[id], CoreStorageDataSetID) {
+			t.Errorf("%s note = %q, want it to point the operator at the %q data set", id, notes[id], CoreStorageDataSetID)
 		}
 	}
 	if !byID["server-backups:1"] {
@@ -203,6 +223,79 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 	}
 }
 
+// TestStorageDataSetResolver_SharedCoreStorageNamespacesCannotSwitchTheConfig
+// is the refusal behind SupportsTargetConfig: false above. library,
+// ticket-attachments, ticket-backups and modpacks@core-storage all read ONE
+// saved Core file storage config, so letting any of them name a target config
+// would repoint the others too - onto a backend their data had never been
+// copied to - and strand them irrecoverably, since their source config would
+// then name that new empty backend.
+func TestStorageDataSetResolver_SharedCoreStorageNamespacesCannotSwitchTheConfig(t *testing.T) {
+	tgt := services.StorageTargetConfig{Backend: "path", Path: "/mnt/elsewhere", PathConfirmed: true}
+
+	for _, id := range []string{"library", "ticket-attachments", "ticket-backups", ModpacksCoreStorageDataSetID} {
+		t.Run(id, func(t *testing.T) {
+			fs := newStorageMigrationFakeStore()
+			configuredPathStorage(t, fs)
+			res := NewStorageDataSetResolver(&AppState{Store: fs})
+
+			_, _, err := res.ResolveTarget(context.Background(), id, tgt)
+			if err == nil {
+				t.Fatal("ResolveTarget err = nil, want a refusal: this namespace shares its config with the others")
+			}
+			if !strings.Contains(err.Error(), CoreStorageDataSetID) {
+				t.Errorf("err = %v, want it to name the %q data set as the way to move the whole Core file storage", err, CoreStorageDataSetID)
+			}
+			// The switch path has to refuse too, not just the resolve path:
+			// the job calls SwitchConfig separately, after verification.
+			if err := res.SwitchConfig(context.Background(), id, tgt); err == nil {
+				t.Error("SwitchConfig err = nil, want the same refusal")
+			}
+			if fs.kv[keyCoreStoragePath] != "/mnt/shared" {
+				t.Errorf("the shared config was repointed to %q by a refused switch", fs.kv[keyCoreStoragePath])
+			}
+		})
+	}
+}
+
+func TestStorageDataSetResolver_CombinedCoreStorageIsConfigSwitchable(t *testing.T) {
+	// The counterpart: the combined data set DOES own the shared config, so it
+	// resolves a target and switches. It is the automatic move the four
+	// namespaces above are pointed at.
+	srcRoot := storageMigrationTestRoot(t, "src")
+	tgtRoot := storageMigrationTestRoot(t, "tgt")
+	fs := newStorageMigrationFakeStore()
+	fs.kv[keyCoreStorageBackend] = "path"
+	fs.kv[keyCoreStoragePath] = srcRoot
+	fs.kv[keyCoreStoragePathConfirm] = "true"
+	st := &AppState{Store: fs}
+	res := NewStorageDataSetResolver(st)
+
+	ds, label, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
+		Backend: "path", Path: tgtRoot, PathConfirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	if ds == nil {
+		t.Fatal("ResolveTarget returned a nil DataSet")
+	}
+	// The combined set is rooted at the Core storage ROOT, with no sub-prefix:
+	// that is what makes it enumerate library/, ticket-attachments/ and
+	// ticket-backups/ together and reproduce the layout on the target.
+	if label != "path:"+tgtRoot {
+		t.Errorf("label = %q, want the bare target root %q (no sub-prefix)", label, "path:"+tgtRoot)
+	}
+	if err := res.SwitchConfig(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
+		Backend: "path", Path: tgtRoot, PathConfirmed: true,
+	}); err != nil {
+		t.Fatalf("SwitchConfig: %v", err)
+	}
+	if fs.kv[keyCoreStoragePath] != tgtRoot {
+		t.Errorf("saved path = %q, want the target %q", fs.kv[keyCoreStoragePath], tgtRoot)
+	}
+}
+
 func TestStorageDataSetResolver_ResolveTargetRefusesTheSourceLocation(t *testing.T) {
 	// The refusal must happen here, at resolve time, so Start fails before a
 	// single object is read. Discovering it mid-copy would mean the engine had
@@ -214,7 +307,7 @@ func TestStorageDataSetResolver_ResolveTargetRefusesTheSourceLocation(t *testing
 	fs.kv[keyCoreStoragePathConfirm] = "true"
 	res := NewStorageDataSetResolver(&AppState{Store: fs})
 
-	_, _, err := res.ResolveTarget(context.Background(), "library", services.StorageTargetConfig{
+	_, _, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "path", Path: root, PathConfirmed: true,
 	})
 	if !errors.Is(err, ErrTargetSameLocation) {
@@ -222,16 +315,82 @@ func TestStorageDataSetResolver_ResolveTargetRefusesTheSourceLocation(t *testing
 	}
 }
 
+func TestStorageDataSetResolver_ResolveTargetRefusesBeforeCreatingTheTargetDir(t *testing.T) {
+	// ORDER, not just outcome. buildTargetStorageProvider reaches os.MkdirAll,
+	// so a buildability check CREATES the target directory. It therefore has to
+	// run AFTER the same-location refusal, never before - a refused migration
+	// must leave the filesystem exactly as it found it. Asserting only the
+	// error cannot tell the two orderings apart, so this asserts the directory.
+	root := storageMigrationTestRoot(t, "root")
+	fs := newStorageMigrationFakeStore()
+	fs.kv[keyCoreStorageBackend] = "path"
+	fs.kv[keyCoreStoragePath] = root
+	fs.kv[keyCoreStoragePathConfirm] = "true"
+	// modpacks-on-Core-storage as the source, so the target carries a real
+	// sub-prefix directory that MkdirAll would have to create.
+	fs.kv["modpack_storage_provider"] = "core-storage"
+	res := NewStorageDataSetResolver(&AppState{Store: fs})
+
+	sub := filepath.Join(root, CoreStoragePrefixModpacks)
+	if _, err := os.Stat(sub); !os.IsNotExist(err) {
+		t.Fatalf("precondition: %q must not exist yet (stat err = %v)", sub, err)
+	}
+
+	_, _, err := res.ResolveTarget(context.Background(), "modpacks", services.StorageTargetConfig{
+		Backend: "path", Path: root, PathConfirmed: true,
+	})
+	if !errors.Is(err, ErrTargetSameLocation) {
+		t.Fatalf("ResolveTarget err = %v, want ErrTargetSameLocation", err)
+	}
+	if _, err := os.Stat(sub); !os.IsNotExist(err) {
+		t.Fatalf("a refused ResolveTarget created %q (stat err = %v); the provider was built before the same-location check", sub, err)
+	}
+}
+
+func TestStorageDataSetResolver_ResolveTargetRefusesAParentOfTheModpackRoot(t *testing.T) {
+	// THE aliasing case for modpacks on its own local backend. That provider
+	// (modpack.LocalProvider) writes at filepath.Join(base, key) with NO
+	// sub-directory, so its root IS modpack_storage_paths[0]. A target root one
+	// level up therefore resolves to <target>/modpacks, which is the very same
+	// directory - a parent/child pair, not a trivially different one.
+	//
+	// Appending the sub-prefix to BOTH sides compared "<paths[0]>/modpacks"
+	// against "<target>/modpacks" and called them distinct. The copy then
+	// rewrote every object onto itself, a full verify passed (it compared each
+	// file with itself), the switch succeeded, and an opted-in deleteSource
+	// removed the only copy.
+	parent := storageMigrationTestRoot(t, "parent")
+	modpackRoot := filepath.ToSlash(filepath.Join(parent, CoreStoragePrefixModpacks))
+	if err := os.MkdirAll(modpackRoot, 0755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", modpackRoot, err)
+	}
+
+	fs := newStorageMigrationFakeStore()
+	configuredPathStorage(t, fs)
+	fs.kv["modpack_storage_provider"] = "local"
+	pathsJSON, _ := json.Marshal([]string{modpackRoot})
+	fs.kv["modpack_storage_paths"] = string(pathsJSON)
+	res := NewStorageDataSetResolver(&AppState{Store: fs})
+
+	_, _, err := res.ResolveTarget(context.Background(), "modpacks", services.StorageTargetConfig{
+		Backend: "path", Path: parent, PathConfirmed: true,
+	})
+	if !errors.Is(err, ErrTargetSameLocation) {
+		t.Fatalf("ResolveTarget err = %v, want ErrTargetSameLocation: modpack root %q and target %q resolve to the same directory", err, modpackRoot, parent)
+	}
+}
+
 func TestStorageDataSetResolver_ResolveTargetBuildsAnUnsavedTarget(t *testing.T) {
 	srcRoot := storageMigrationTestRoot(t, "src")
 	tgtRoot := storageMigrationTestRoot(t, "tgt")
 	fs := newStorageMigrationFakeStore()
-	fs.kv[keyCoreStorageBackend] = "path"
-	fs.kv[keyCoreStoragePath] = srcRoot
-	fs.kv[keyCoreStoragePathConfirm] = "true"
+	configuredPathStorage(t, fs)
+	fs.kv["modpack_storage_provider"] = "local"
+	pathsJSON, _ := json.Marshal([]string{srcRoot})
+	fs.kv["modpack_storage_paths"] = string(pathsJSON)
 	res := NewStorageDataSetResolver(&AppState{Store: fs})
 
-	ds, label, err := res.ResolveTarget(context.Background(), "library", services.StorageTargetConfig{
+	ds, label, err := res.ResolveTarget(context.Background(), "modpacks", services.StorageTargetConfig{
 		Backend: "path", Path: tgtRoot, PathConfirmed: true,
 	})
 	if err != nil {
@@ -240,12 +399,12 @@ func TestStorageDataSetResolver_ResolveTargetBuildsAnUnsavedTarget(t *testing.T)
 	if ds == nil {
 		t.Fatal("ResolveTarget returned a nil DataSet")
 	}
-	if !strings.Contains(label, tgtRoot) || !strings.Contains(label, "library") {
+	if !strings.Contains(label, tgtRoot) || !strings.Contains(label, CoreStoragePrefixModpacks) {
 		t.Errorf("label = %q, want it to name the target root and the sub-prefix", label)
 	}
 	// The saved config must be untouched: resolving a target is not a switch.
-	if fs.kv[keyCoreStoragePath] != srcRoot {
-		t.Errorf("the saved config changed during ResolveTarget: %q", fs.kv[keyCoreStoragePath])
+	if fs.kv["modpack_storage_paths"] != string(pathsJSON) {
+		t.Errorf("the saved config changed during ResolveTarget: %q", fs.kv["modpack_storage_paths"])
 	}
 }
 
@@ -254,10 +413,51 @@ func TestStorageDataSetResolver_ResolveTargetRejectsAnInvalidConfig(t *testing.T
 	configuredPathStorage(t, fs)
 	res := NewStorageDataSetResolver(&AppState{Store: fs})
 
-	if _, _, err := res.ResolveTarget(context.Background(), "library", services.StorageTargetConfig{
+	if _, _, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "s3", S3Bucket: "b", // no credentials
 	}); err == nil {
 		t.Fatal("ResolveTarget err = nil, want validateCoreStorageConfig to reject it")
+	}
+}
+
+func TestStorageDataSetResolver_ModpackConfiguredPathsParsesTheStoredJSON(t *testing.T) {
+	// modpack_storage_paths is written as a JSON array (ModpackSettingsHandler
+	// .Set does json.Marshal(cleaned); NewProviderFromSettings reads it back
+	// the same way). A comma split returns the literal bracketed, quoted JSON
+	// text as a "path", which can never equal a real root - so it does not just
+	// mislabel the backend, it silently defeats the same-location refusal for
+	// the modpacks data set, because a garbled source path never compares equal
+	// to any target.
+	cases := []struct {
+		name string
+		raw  string
+		set  bool
+		want []string
+	}{
+		{"the real stored format", `["/data/modpacks","/mnt/mirror"]`, true, []string{"/data/modpacks", "/mnt/mirror"}},
+		{"a single path", `["/data/modpacks"]`, true, []string{"/data/modpacks"}},
+		{"an empty array", `[]`, true, []string{}},
+		{"an empty setting", "", true, nil},
+		{"the setting is absent", "", false, nil},
+		{"malformed JSON is not silently split into pseudo-paths", `/data/modpacks,/mnt/mirror`, true, nil},
+		{"a JSON scalar instead of an array", `"/data/modpacks"`, true, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := newStorageMigrationFakeStore()
+			if c.set {
+				fs.kv["modpack_storage_paths"] = c.raw
+			}
+			got := NewStorageDataSetResolver(&AppState{Store: fs}).modpackConfiguredPaths()
+			if len(got) != len(c.want) {
+				t.Fatalf("modpackConfiguredPaths = %#v, want %#v", got, c.want)
+			}
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Fatalf("modpackConfiguredPaths = %#v, want %#v", got, c.want)
+				}
+			}
+		})
 	}
 }
 
@@ -280,7 +480,7 @@ func TestStorageDataSetResolver_SwitchConfigPersistsTheTarget(t *testing.T) {
 	st := &AppState{Store: fs}
 	res := NewStorageDataSetResolver(st)
 
-	err := res.SwitchConfig(context.Background(), "library", services.StorageTargetConfig{
+	err := res.SwitchConfig(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
 		S3Region: "eu-central-1", S3AccessKey: "AKIA-NEW", S3SecretKey: "NEW-SECRET",
 		S3Prefix: "prod",
@@ -324,6 +524,55 @@ func TestStorageMigrationHandler_StartNeverEchoesOrAuditsTheTargetSecret(t *test
 	}
 	if strings.Contains(rw.Body.String(), secret) {
 		t.Fatalf("the error response echoed the target secret: %s", rw.Body.String())
+	}
+}
+
+func TestStorageMigrationHandler_AResolverFailureNeverEchoesTheTargetSecret(t *testing.T) {
+	// The test above stops at req.Validate(), which never sees the resolver.
+	// This one wires a REAL service over the REAL resolver and drives the path
+	// that actually carries the credential: ResolveTarget fails, the service
+	// wraps it ("target storage: %w"), and Start hands err.Error() straight to
+	// sendJSONError. Anything a resolver error puts in its text is therefore
+	// readable in a 400 body over HTTP, and the target config - secret included
+	// - is the value in scope right where those errors are built.
+	//
+	// The service is constructed with nil Redis and a nil manifest store on
+	// purpose: Start reaches the resolver before it touches either.
+	const secret = "SENTINEL-RESOLVER-SECRET"
+	root := storageMigrationTestRoot(t, "root")
+	fs := newStorageMigrationFakeStore()
+	fs.kv[keyCoreStorageBackend] = "path"
+	fs.kv[keyCoreStoragePath] = root
+	fs.kv[keyCoreStoragePathConfirm] = "true"
+	state := &AppState{Store: fs}
+	state.StorageMigration = services.NewStorageMigrationService(nil, nil, NewStorageDataSetResolver(state))
+	h := NewStorageMigrationHandler(state)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"kind": "migrate", "dataSet": CoreStorageDataSetID,
+		"targetConfig": map[string]interface{}{
+			// Passes the request-shape check (backend is set) and fails inside
+			// the resolver: validateCoreStorageConfig wants a bucket.
+			"backend": "s3", "s3Endpoint": "https://new.example.com",
+			"s3AccessKey": "AKIAEXAMPLEKEY", "s3SecretKey": secret,
+		},
+		"verifyMode": "full",
+	})
+	rw := httptest.NewRecorder()
+	h.Start(rw, httptest.NewRequest(http.MethodPost, "/api/admin/storage/migration", bytes.NewReader(body)))
+
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("Start status = %d, want 400 (%s)", rw.Code, rw.Body.String())
+	}
+	// Positive control: without this the test would still pass if Start had
+	// bailed out earlier and never reached the resolver at all.
+	if !strings.Contains(rw.Body.String(), "target storage") {
+		t.Fatalf("the 400 did not come from the resolver path this test exists to cover: %s", rw.Body.String())
+	}
+	for _, leak := range []string{secret, "AKIAEXAMPLEKEY"} {
+		if strings.Contains(rw.Body.String(), leak) {
+			t.Errorf("a resolver error echoed %q to the caller: %s", leak, rw.Body.String())
+		}
 	}
 }
 
@@ -494,6 +743,30 @@ func TestStorageMigrationHandler_DeleteManifest(t *testing.T) {
 	}
 	if len(fs.deleted) != 1 || fs.deleted[0] != 4 {
 		t.Errorf("deleted = %v, want [4]", fs.deleted)
+	}
+}
+
+func TestStorageMigrationHandler_DeleteManifestUnknownIDIs404(t *testing.T) {
+	// Consistent with ExportManifest on the same id, and no audit row: a 200
+	// tells the operator a deletion happened, and an audit trail that records
+	// deletions which never occurred is worse than no entry.
+	fs := newStorageMigrationFakeStore()
+	audited := 0
+	fs.onAudit = func(*models.AuditEventIdentity) { audited++ }
+	h := NewStorageMigrationHandler(&AppState{Store: fs})
+
+	req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/admin/storage/manifests/99", nil), map[string]string{"id": "99"})
+	rw := httptest.NewRecorder()
+	h.DeleteManifest(rw, req)
+
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (%s)", rw.Code, rw.Body.String())
+	}
+	if len(fs.deleted) != 0 {
+		t.Errorf("deleted = %v, want no delete attempted", fs.deleted)
+	}
+	if audited != 0 {
+		t.Errorf("audit rows written = %d, want 0 for a no-op delete", audited)
 	}
 }
 

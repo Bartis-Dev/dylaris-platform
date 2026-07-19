@@ -83,7 +83,16 @@ func coreStorageRoot(cfg CoreStorageConfig, subPrefix string) string {
 }
 
 // sameCoreStorageLocation reports whether src and tgt name the same physical
-// place for subPrefix.
+// place.
+//
+// The two sub-prefixes are separate on purpose. They are usually identical, but
+// a data set whose SOURCE provider adds no sub-directory of its own while its
+// migration target does is a real case - see storageSourceLocation in
+// storage_migration.go for the one that exists (modpacks on its own local
+// backend). Feeding a single sub-prefix to both sides there compared
+// "<src>/modpacks" against "<tgt>/modpacks" when the source root was already
+// the modpacks directory, which is off by one level in the UNDER-refusal
+// direction: it accepted a target that resolved to the source itself.
 //
 // For a path backend this is os.SameFile - device and inode - and NOT a string
 // compare. That distinction is load-bearing: "/mnt/old" and "/mnt/new" are
@@ -101,7 +110,7 @@ func coreStorageRoot(cfg CoreStorageConfig, subPrefix string) string {
 // allowed.
 //
 // A path backend and an s3 backend are never the same location.
-func sameCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) (bool, error) {
+func sameCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPrefix string) (bool, error) {
 	srcS3 := src.Backend == "s3"
 	tgtS3 := tgt.Backend == "s3"
 	if srcS3 != tgtS3 {
@@ -115,30 +124,29 @@ func sameCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) (bool
 		// function exists to prevent.
 		return strings.Trim(src.S3Endpoint, "/") == strings.Trim(tgt.S3Endpoint, "/") &&
 			strings.Trim(src.S3Bucket, "/") == strings.Trim(tgt.S3Bucket, "/") &&
-			effectiveS3Prefix(src, subPrefix) == effectiveS3Prefix(tgt, subPrefix), nil
+			effectiveS3Prefix(src, srcSubPrefix) == effectiveS3Prefix(tgt, tgtSubPrefix), nil
 	}
 
 	// Two configs naming the exact same root are trivially the same location,
-	// whether or not the data set's sub-prefix directory has been created
-	// under it yet (e.g. a brand-new install that has never written to this
-	// data set). This is a fast-path exact-match short-circuit, not a
-	// replacement for the os.SameFile check below: it can only ever add a
-	// TRUE positive for a literally-identical path, and does nothing for the
-	// harder case of two DIFFERENT path strings aliasing the same directory
-	// through a symlink or a bind mount, which os.SameFile below still has to
-	// catch.
-	if filepath.Clean(src.Path) == filepath.Clean(tgt.Path) {
+	// whether or not that directory has been created yet (e.g. a brand-new
+	// install that has never written to this data set). This is a fast-path
+	// exact-match short-circuit, not a replacement for the os.SameFile check
+	// below: it can only ever add a TRUE positive for a literally-identical
+	// path, and does nothing for the harder case of two DIFFERENT path strings
+	// aliasing the same directory through a symlink or a bind mount, which
+	// os.SameFile below still has to catch.
+	if filepath.Clean(coreStorageRoot(src, srcSubPrefix)) == filepath.Clean(coreStorageRoot(tgt, tgtSubPrefix)) {
 		return true, nil
 	}
 
-	srcInfo, err := os.Stat(coreStorageRoot(src, subPrefix))
+	srcInfo, err := os.Stat(coreStorageRoot(src, srcSubPrefix))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("stat source root: %w", err)
 	}
-	tgtInfo, err := os.Stat(coreStorageRoot(tgt, subPrefix))
+	tgtInfo, err := os.Stat(coreStorageRoot(tgt, tgtSubPrefix))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -151,8 +159,8 @@ func sameCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) (bool
 // ensureDistinctCoreStorageLocation refuses a same-location target. It runs at
 // Start, before any object is read: discovering this mid-copy would mean the
 // engine had already overwritten source objects with themselves.
-func ensureDistinctCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) error {
-	same, err := sameCoreStorageLocation(src, tgt, subPrefix)
+func ensureDistinctCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPrefix string) error {
+	same, err := sameCoreStorageLocation(src, tgt, srcSubPrefix, tgtSubPrefix)
 	if err != nil {
 		return err
 	}

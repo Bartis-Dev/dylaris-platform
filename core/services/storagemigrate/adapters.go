@@ -237,17 +237,25 @@ type ModpackKeySource interface {
 }
 
 type modpackDataSet struct {
+	id    string
 	label string
 	prov  modpack.ModpackStorageProvider
 	keys  ModpackKeySource
 }
 
 // NewModpackDataSet adapts the modpack provider plus its DB key source.
-func NewModpackDataSet(label string, prov modpack.ModpackStorageProvider, keys ModpackKeySource) DataSet {
-	return &modpackDataSet{label: label, prov: prov, keys: keys}
+//
+// The id is the CALLER's, not a constant: more than one data set is
+// modpack-shaped (the settings-configured "modpacks" backend and the modpacks
+// namespace inside the shared Core file storage), and ID() is what lands in
+// StorageManifest.DataSet. Hard-coding DataSetModpacks made every one of them
+// write and read manifests under the same key, so a manifest captured against
+// one backend surfaced as the other's latest.
+func NewModpackDataSet(id, label string, prov modpack.ModpackStorageProvider, keys ModpackKeySource) DataSet {
+	return &modpackDataSet{id: id, label: label, prov: prov, keys: keys}
 }
 
-func (d *modpackDataSet) ID() string    { return DataSetModpacks }
+func (d *modpackDataSet) ID() string    { return d.id }
 func (d *modpackDataSet) Label() string { return d.label }
 
 // List enumerates DB-referenced keys and sizes them via Stat. Blank keys and
@@ -260,7 +268,7 @@ func (d *modpackDataSet) Label() string { return d.label }
 func (d *modpackDataSet) List(_ context.Context) ([]ObjectRef, error) {
 	keys, err := d.keys.ListModpackStorageKeys()
 	if err != nil {
-		return nil, fmt.Errorf("storagemigrate: list %s: %w", DataSetModpacks, err)
+		return nil, fmt.Errorf("storagemigrate: list %s: %w", d.id, err)
 	}
 	seen := map[string]bool{}
 	out := []ObjectRef{}

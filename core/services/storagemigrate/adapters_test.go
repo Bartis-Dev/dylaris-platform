@@ -325,6 +325,20 @@ func (f *fakeModpackKeys) ListModversionSHA512ByStorageKey() (map[string]string,
 	return f.sha512s, nil
 }
 
+func TestModpackDataSet_IDIsTheCallersNotAConstant(t *testing.T) {
+	// ID() becomes StorageManifest.DataSet, and it is what a per-data-set
+	// manifest lookup filters on. Two modpack-shaped data sets exist (the
+	// settings-configured backend and the modpacks namespace inside the shared
+	// Core file storage); returning a constant here collapsed them onto one
+	// manifest key, so each row showed the other's captures.
+	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
+	for _, id := range []string{DataSetModpacks, "modpacks@core-storage"} {
+		if got := NewModpackDataSet(id, "Modpacks", prov, &fakeModpackKeys{}).ID(); got != id {
+			t.Errorf("ID() = %q, want %q", got, id)
+		}
+	}
+}
+
 func TestModpackDataSet_ListComesFromTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
@@ -335,7 +349,7 @@ func TestModpackDataSet_ListComesFromTheDatabase(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	ds := NewModpackDataSet("Modpacks", prov, &fakeModpackKeys{
+	ds := NewModpackDataSet(DataSetModpacks, "Modpacks", prov, &fakeModpackKeys{
 		keys:    []string{"a/pack.mrpack", "", "missing.mrpack"},
 		sha512s: map[string]string{},
 	})
@@ -366,7 +380,7 @@ func TestModpackDataSet_ListNormalizesLeadingSlash(t *testing.T) {
 
 	// A DB row with a leading slash must resolve to the SAME object as the
 	// slash-free form, not Stat as absent and get silently dropped.
-	ds := NewModpackDataSet("Modpacks", prov, &fakeModpackKeys{
+	ds := NewModpackDataSet(DataSetModpacks, "Modpacks", prov, &fakeModpackKeys{
 		keys:    []string{"/a/pack.mrpack"},
 		sha512s: map[string]string{},
 	})
@@ -383,7 +397,7 @@ func TestModpackDataSet_ListNormalizesLeadingSlash(t *testing.T) {
 func TestModpackDataSet_OpenWriteDeleteRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
-	ds := NewModpackDataSet("Modpacks", prov, &fakeModpackKeys{})
+	ds := NewModpackDataSet(DataSetModpacks, "Modpacks", prov, &fakeModpackKeys{})
 
 	if err := ds.Write(ctx, "x/pack.mrpack", strings.NewReader("payload"), 7); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -409,7 +423,7 @@ func TestModpackDataSet_OpenMissingIsErrNotExist(t *testing.T) {
 	// modpack.ErrNotFound is the package's own sentinel; the DataSet contract
 	// demands fs.ErrNotExist comparability.
 	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
-	ds := NewModpackDataSet("Modpacks", prov, &fakeModpackKeys{})
+	ds := NewModpackDataSet(DataSetModpacks, "Modpacks", prov, &fakeModpackKeys{})
 	_, err := ds.Open(context.Background(), "gone.mrpack")
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("Open(missing) err = %v, want errors.Is(err, fs.ErrNotExist)", err)
@@ -418,7 +432,7 @@ func TestModpackDataSet_OpenMissingIsErrNotExist(t *testing.T) {
 
 func TestModpackDataSet_ExposesChecksumHints(t *testing.T) {
 	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
-	ds := NewModpackDataSet("Modpacks", prov, &fakeModpackKeys{
+	ds := NewModpackDataSet(DataSetModpacks, "Modpacks", prov, &fakeModpackKeys{
 		keys:    []string{"a.jar"},
 		sha512s: map[string]string{"a.jar": "deadbeef"},
 	})

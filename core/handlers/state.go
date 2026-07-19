@@ -54,7 +54,9 @@ type AppState struct {
 	// StorageMigration drives the in-panel blob storage migration (inventory,
 	// copy, verify, optionally delete the source) for all five blob data
 	// sets. Shared job state lives in Redis so every admin sees the same live
-	// status. Nil when Redis is unavailable at boot.
+	// status. main.go assigns this unconditionally, so the nil branches the
+	// handlers keep are reachable only from tests that construct an AppState
+	// directly.
 	StorageMigration *services.StorageMigrationService
 
 	// CPUPinning reads node CPU topology (published to Redis by each node) and

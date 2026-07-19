@@ -153,10 +153,10 @@ func StorageMigrationInProgress(p StorageMigrationPhase) bool {
 // StorageTargetConfig is an AD-HOC target storage config supplied in a start
 // request and NOT read from the saved settings.
 //
-// This is what makes the three Core-file-storage data sets (library,
-// ticket-attachments, ticket-backups) and modpacks migratable at all: their
-// saved config describes where they live NOW, so using it as the target would
-// make source == target. The operator instead names the destination inline -
+// This is what makes the Core file storage (as a whole) and modpacks migratable
+// automatically: their saved config describes where they live NOW, so using it
+// as the target would make source == target. The operator instead names the
+// destination inline -
 // another S3, a WebDAV/NFS-mounted path, or back - and the engine builds a
 // provider from it. The mechanism already exists and is proven: TestConnection
 // (handlers/core_storage.go) builds a working provider from an unsaved
@@ -275,11 +275,18 @@ type StorageDataSetInfo struct {
 	// lives. It MUST NOT contain credentials.
 	BackendLabel string `json:"backendLabel"`
 	Migratable   bool   `json:"migratable"`
-	// SupportsTargetConfig reports how this data set names a migrate target.
-	// True: it is backed by a single settings-configured backend, so the target
-	// is an ad-hoc StorageTargetConfig (library, ticket-attachments,
-	// ticket-backups, modpacks). False: the target is another data-set id
-	// (server-backups rows, which are already multi-storage by design).
+	// SupportsTargetConfig reports whether this data set can name an ad-hoc
+	// StorageTargetConfig as its migrate target, which also means the engine
+	// repoints its backend after a passing verification.
+	//
+	// True only for a data set that OWNS a settings-configured backend: the
+	// Core file storage as a whole, and modpacks. False for a data set that
+	// merely lives inside one - the individual Core file storage namespaces
+	// share ONE config, so switching for any of them would repoint the others
+	// onto a backend their data was never copied to - and for server-backups
+	// rows, which are already multi-storage by design and target another row.
+	// A False data set still captures manifests and verifies, for the manual
+	// flow.
 	SupportsTargetConfig bool `json:"supportsTargetConfig"`
 	// Note explains a limitation, e.g. that node-local backups cannot be
 	// migrated through this engine, or that modpack verification covers

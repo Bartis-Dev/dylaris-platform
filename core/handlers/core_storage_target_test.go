@@ -182,7 +182,7 @@ func TestEnsureDistinctCoreStorageLocation_S3(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := ensureDistinctCoreStorageLocation(src, c.tgt, "library")
+			err := ensureDistinctCoreStorageLocation(src, c.tgt, "library", "library")
 			if (err != nil) != c.wantErr {
 				t.Fatalf("ensureDistinctCoreStorageLocation err = %v, wantErr %v", err, c.wantErr)
 			}
@@ -196,7 +196,7 @@ func TestEnsureDistinctCoreStorageLocation_S3(t *testing.T) {
 func TestEnsureDistinctCoreStorageLocation_PathIdenticalString(t *testing.T) {
 	root := t.TempDir()
 	cfg := CoreStorageConfig{Backend: "path", Path: root, PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(cfg, cfg, "library"); !errors.Is(err, ErrTargetSameLocation) {
+	if err := ensureDistinctCoreStorageLocation(cfg, cfg, "library", "library"); !errors.Is(err, ErrTargetSameLocation) {
 		t.Fatalf("err = %v, want ErrTargetSameLocation", err)
 	}
 }
@@ -225,7 +225,7 @@ func TestEnsureDistinctCoreStorageLocation_PathViaSymlinkIsStillTheSameLocation(
 
 	src := CoreStorageConfig{Backend: "path", Path: realDir, PathConfirmed: true}
 	tgt := CoreStorageConfig{Backend: "path", Path: linkDir, PathConfirmed: true}
-	err := ensureDistinctCoreStorageLocation(src, tgt, "library")
+	err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library")
 	if !errors.Is(err, ErrTargetSameLocation) {
 		t.Fatalf("err = %v, want ErrTargetSameLocation: %q and %q are the same directory through a symlink, and a string compare would have accepted this target", err, realDir, linkDir)
 	}
@@ -250,7 +250,7 @@ func makeDirJunction(link, target string) error {
 func TestEnsureDistinctCoreStorageLocation_DifferentPathsAreAccepted(t *testing.T) {
 	src := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
 	tgt := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(src, tgt, "library"); err != nil {
+	if err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library"); err != nil {
 		t.Fatalf("err = %v, want two distinct temp dirs accepted", err)
 	}
 }
@@ -261,7 +261,7 @@ func TestEnsureDistinctCoreStorageLocation_AMissingTargetDirIsNotTheSameLocation
 	// mount is impossible.
 	src := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
 	tgt := CoreStorageConfig{Backend: "path", Path: filepath.Join(t.TempDir(), "does-not-exist-yet"), PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(src, tgt, "library"); err != nil {
+	if err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library"); err != nil {
 		t.Fatalf("err = %v, want a not-yet-created target accepted", err)
 	}
 }
@@ -279,7 +279,7 @@ func TestEnsureDistinctCoreStorageLocation_AMissingSourceRootIsNotTheSameLocatio
 	}
 	src := CoreStorageConfig{Backend: "path", Path: srcRoot, PathConfirmed: true}
 	tgt := CoreStorageConfig{Backend: "path", Path: tgtRoot, PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(src, tgt, "library"); err != nil {
+	if err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library"); err != nil {
 		t.Fatalf("err = %v, want a source that has never been written to accepted", err)
 	}
 }
@@ -315,7 +315,7 @@ func TestSameCoreStorageLocation_AHardStatErrorPropagates(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			same, err := sameCoreStorageLocation(c.src, c.tgt, "library")
+			same, err := sameCoreStorageLocation(c.src, c.tgt, "library", "library")
 			if err == nil {
 				t.Fatalf("err = nil (same = %v), want a hard error: an unreadable root is unknown, not distinct", same)
 			}
@@ -325,7 +325,7 @@ func TestSameCoreStorageLocation_AHardStatErrorPropagates(t *testing.T) {
 			// The job must refuse to start, but NOT by claiming the target is
 			// the source: that would send an operator hunting for an aliasing
 			// problem that does not exist.
-			jobErr := ensureDistinctCoreStorageLocation(c.src, c.tgt, "library")
+			jobErr := ensureDistinctCoreStorageLocation(c.src, c.tgt, "library", "library")
 			if jobErr == nil {
 				t.Fatal("ensureDistinctCoreStorageLocation err = nil, want the stat error to reach the caller")
 			}
