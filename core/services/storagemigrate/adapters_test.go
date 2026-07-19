@@ -110,6 +110,9 @@ type fakeBackupStorage struct {
 	// normalize NoSuchKey (only Delete does).
 	notFoundErr error
 	deleted     []string
+	// provider is what Provider() reports. Defaults to "s3"; tests override it
+	// to exercise the node-local rejection in NewBackupDataSet.
+	provider string
 }
 
 func newFakeBackupStorage() *fakeBackupStorage {
@@ -117,10 +120,11 @@ func newFakeBackupStorage() *fakeBackupStorage {
 		objects:     map[string][]byte{},
 		getErr:      map[string]error{},
 		notFoundErr: errRawNoSuchKey,
+		provider:    "s3",
 	}
 }
 
-func (f *fakeBackupStorage) Provider() string { return "s3" }
+func (f *fakeBackupStorage) Provider() string { return f.provider }
 func (f *fakeBackupStorage) Put(_ context.Context, key string, r io.Reader, _ int64) error {
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -174,7 +178,10 @@ var errRawNoSuchKey = errors.New("operation error S3: GetObject, api error NoSuc
 func TestBackupDataSet_ListIsSortedAndOpenNormalizesNotFound(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeBackupStorage()
-	ds := NewBackupDataSet(ServerBackupsDataSetID(3), "Server backups (Hetzner S3)", st)
+	ds, err := NewBackupDataSet(ServerBackupsDataSetID(3), "Server backups (Hetzner S3)", st)
+	if err != nil {
+		t.Fatalf("NewBackupDataSet: %v", err)
+	}
 
 	if ds.ID() != "server-backups:3" {
 		t.Fatalf("ID = %q, want server-backups:3", ds.ID())
@@ -214,13 +221,46 @@ func TestBackupDataSet_OpenDoesNotSwallowRealFailures(t *testing.T) {
 	st.objects["srv-1/a.tar.gz"] = []byte("a")
 	st.getErr["srv-1/a.tar.gz"] = throttled
 
-	ds := NewBackupDataSet(ServerBackupsDataSetID(3), "Server backups", st)
-	_, err := ds.Open(ctx, "srv-1/a.tar.gz")
+	ds, err := NewBackupDataSet(ServerBackupsDataSetID(3), "Server backups", st)
+	if err != nil {
+		t.Fatalf("NewBackupDataSet: %v", err)
+	}
+	_, err = ds.Open(ctx, "srv-1/a.tar.gz")
 	if errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a throttle was normalized to fs.ErrNotExist (%v); that would let the copy loop overwrite live data", err)
 	}
 	if !errors.Is(err, throttled) {
 		t.Fatalf("Open err = %v, want it to wrap %v", err, throttled)
+	}
+}
+
+func TestNewBackupDataSet_RejectsNodeLocal(t *testing.T) {
+	st := newFakeBackupStorage()
+	st.provider = "node-local"
+
+	ds, err := NewBackupDataSet(ServerBackupsDataSetID(9), "Server backups (node-local)", st)
+	if err == nil {
+		t.Fatal("NewBackupDataSet(node-local) returned no error; a node-local source that cannot be " +
+			"enumerated would silently migrate as an empty data set")
+	}
+	if ds != nil {
+		t.Fatalf("NewBackupDataSet(node-local) returned a non-nil DataSet %v alongside an error", ds)
+	}
+}
+
+func TestNewBackupDataSet_AcceptsEnumerableProviders(t *testing.T) {
+	for _, provider := range []string{"s3", "local", "shared", "core-storage"} {
+		t.Run(provider, func(t *testing.T) {
+			st := newFakeBackupStorage()
+			st.provider = provider
+			ds, err := NewBackupDataSet(ServerBackupsDataSetID(1), "Server backups", st)
+			if err != nil {
+				t.Fatalf("NewBackupDataSet(%s) returned an error: %v", provider, err)
+			}
+			if ds == nil {
+				t.Fatalf("NewBackupDataSet(%s) returned a nil DataSet with no error", provider)
+			}
+		})
 	}
 }
 
@@ -297,6 +337,29 @@ func TestModpackDataSet_ListComesFromTheDatabase(t *testing.T) {
 		if r.Key == "orphan.mrpack" {
 			t.Fatal("an orphan appeared in the modpack key space; it cannot, by construction")
 		}
+	}
+}
+
+func TestModpackDataSet_ListNormalizesLeadingSlash(t *testing.T) {
+	ctx := context.Background()
+	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
+	if err := prov.Put("a/pack.mrpack", []byte("aaa")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// A DB row with a leading slash must resolve to the SAME object as the
+	// slash-free form, not Stat as absent and get silently dropped.
+	ds := NewModpackDataSet("Modpacks", prov, &fakeModpackKeys{
+		keys:    []string{"/a/pack.mrpack"},
+		sha512s: map[string]string{},
+	})
+
+	refs, err := ds.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(refs) != 1 || refs[0].Key != "a/pack.mrpack" || refs[0].Size != 3 {
+		t.Fatalf("List = %+v, want exactly [{a/pack.mrpack 3}] (leading slash normalized)", refs)
 	}
 }
 

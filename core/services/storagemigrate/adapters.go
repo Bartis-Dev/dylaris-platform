@@ -14,6 +14,8 @@ import (
 	"dylaris-core/storage"
 	"dylaris-core/storage/backup"
 	"dylaris-core/storage/modpack"
+
+	"github.com/aws/smithy-go"
 )
 
 // Stable data-set identifiers. The three StorageProvider-backed ones reuse
@@ -115,8 +117,23 @@ type backupDataSet struct {
 }
 
 // NewBackupDataSet adapts one backup_storages row.
-func NewBackupDataSet(id, label string, st backup.Storage) DataSet {
-	return &backupDataSet{id: id, label: label, st: st}
+//
+// It rejects a "node-local" backend outright. NodeLocalStorage.List (see
+// storage/backup/node_local.go) returns (nil, nil) whenever it is asked to
+// list with an empty prefix, because that backend can only enumerate one
+// server's archives at a time and has no server UUID to hand it. Per the
+// DataSet contract (dataset.go), (nil, nil) IS the legitimate encoding for
+// "this data set is empty" - so an unguarded backupDataSet built over
+// node-local would enumerate as empty, the copy loop would copy nothing,
+// verification would pass vacuously over an empty manifest, and the job
+// would report success while every real archive stays unmigrated on the
+// node. An unenumerable source must fail loudly, never be reportable as a
+// successfully migrated empty one.
+func NewBackupDataSet(id, label string, st backup.Storage) (DataSet, error) {
+	if st.Provider() == "node-local" {
+		return nil, fmt.Errorf("storagemigrate: %s: node-local backup storage cannot be enumerated as a whole key space", id)
+	}
+	return &backupDataSet{id: id, label: label, st: st}, nil
 }
 
 func (d *backupDataSet) ID() string    { return d.id }
@@ -160,8 +177,9 @@ func (d *backupDataSet) Delete(ctx context.Context, key string) error {
 }
 
 // notFoundCodes are the two S3 API error codes that mean "this object is not
-// here", matching the discrimination storage/s3provider.go and
-// storage/modpack/s3.go already make.
+// here". They are the string-fallback list only; the primary discrimination
+// below is the same errors.As(*smithy.APIError) type check that
+// storage/s3provider.go and storage/modpack/s3.go already make.
 var notFoundCodes = []string{"NoSuchKey", "NotFound"}
 
 // normalizeBackupNotFound converts a backend's "object missing" error into
@@ -169,6 +187,14 @@ var notFoundCodes = []string{"NoSuchKey", "NotFound"}
 // other error alone. Getting this wrong in either direction is dangerous: a
 // throttle mistaken for "missing" makes the copy loop overwrite live data,
 // and a "missing" mistaken for a failure makes a fresh migration impossible.
+//
+// The primary check is errors.As against smithy.APIError, matching the type
+// check storage/s3provider.go and storage/modpack/s3.go already make - it is
+// strictly safer than string matching, and once we have a typed APIError with
+// a non-matching code we KNOW it is not "missing" and can return early. The
+// substring fallback below only exists because this package's own test
+// doubles (and conceivably a future non-smithy backend) hand back a plain
+// errors.New that no type assertion will ever match.
 func normalizeBackupNotFound(key string, err error) error {
 	if err == nil {
 		return nil
@@ -176,6 +202,19 @@ func normalizeBackupNotFound(key string, err error) error {
 	if errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		code := ae.ErrorCode()
+		if code == "NoSuchKey" || code == "NotFound" {
+			return fmt.Errorf("backup get %s: %v: %w", key, err, fs.ErrNotExist)
+		}
+		// A typed APIError with any other code is definitively NOT missing -
+		// do not fall through to the string fallback below.
+		return err
+	}
+	// Fallback for non-smithy errors (including this package's test doubles):
+	// substring match on the same two codes. Weaker than the type check
+	// above, but the only option when the error isn't a smithy.APIError.
 	msg := err.Error()
 	for _, code := range notFoundCodes {
 		if strings.Contains(msg, code) {
@@ -226,7 +265,11 @@ func (d *modpackDataSet) List(_ context.Context) ([]ObjectRef, error) {
 	seen := map[string]bool{}
 	out := []ObjectRef{}
 	for _, k := range keys {
-		k = strings.TrimSpace(k)
+		// Trim whitespace AND leading/trailing slashes: a row holding
+		// "/a/pack.mrpack" and one holding "a/pack.mrpack" must collapse to
+		// the same key, otherwise the leading-slash form Stats as absent and
+		// is silently dropped from the manifest instead of being migrated.
+		k = strings.Trim(strings.TrimSpace(k), "/")
 		if k == "" || seen[k] {
 			continue
 		}
