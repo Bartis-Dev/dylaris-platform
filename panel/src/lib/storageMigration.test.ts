@@ -5,6 +5,7 @@ import {
   deleteSourceAllowed,
   targetConfigValid,
   canStartMigration,
+  startMigrateFromForm,
   formatPercent,
   formatBytes,
   verifyVerdictLabel,
@@ -174,6 +175,15 @@ describe('canStartMigration', () => {
   it('accepts modpacks -> modpacks@core-storage: a legitimate manual flow', () => {
     expect(canStartMigration(rowForm({ dataSet: 'modpacks', targetDataSet: 'modpacks@core-storage' }), dataSets)).toBe(true);
   });
+  // The inverse direction is the ONLY way to express "move modpacks off the
+  // shared Core file storage onto a dedicated modpack backend": a config
+  // target FROM modpacks@core-storage is refused server-side
+  // (sourceCoreStorageConfigFor refuses a namespace inside the shared Core
+  // file storage as a config-switch source). supportsTargetConfig on the
+  // TARGET (modpacks, true) must not block this either.
+  it('accepts modpacks@core-storage -> modpacks: the only way to express that move', () => {
+    expect(canStartMigration(rowForm({ dataSet: 'modpacks@core-storage', targetDataSet: 'modpacks' }), dataSets)).toBe(true);
+  });
   // Safety invariant 2, mirrored client-side. The API returns 400 for this
   // too; the UI must not let the operator get that far.
   it('rejects deleteSource under a sample verification', () => {
@@ -191,6 +201,55 @@ describe('canStartMigration', () => {
   // would orphan live references.
   it('rejects deleteSource in the row-to-row shape: nothing repoints the consumer, so the delete would orphan live references', () => {
     expect(canStartMigration(rowForm({ verifyMode: 'full', deleteSource: true }), dataSets)).toBe(false);
+  });
+});
+
+describe('startMigrateFromForm', () => {
+  it('the dataset shape omits targetConfig entirely', () => {
+    const body = startMigrateFromForm(rowForm());
+    expect(body.targetDataSet).toBe('server-backups:3');
+    expect(body.targetConfig).toBeUndefined();
+    expect('targetConfig' in body).toBe(false);
+  });
+
+  it('the s3 shape omits path and pathConfirmed', () => {
+    const body = startMigrateFromForm(form());
+    expect(body.targetDataSet).toBeUndefined();
+    expect(body.targetConfig).toBeDefined();
+    expect(Object.keys(body.targetConfig!).sort()).toEqual(
+      ['backend', 's3AccessKey', 's3Bucket', 's3Endpoint', 's3PathStyle', 's3Prefix', 's3Region', 's3SecretKey'].sort(),
+    );
+  });
+
+  it('the path shape omits every s3 field', () => {
+    const body = startMigrateFromForm(
+      form({ targetConfig: { ...EMPTY_TARGET_CONFIG, backend: 'path', path: '/mnt/new', pathConfirmed: true } }),
+    );
+    expect(body.targetConfig).toEqual({ backend: 'path', path: '/mnt/new', pathConfirmed: true });
+  });
+
+  // Minor fix: an unset backend must not be sent as a malformed path request
+  // ({backend: 'path', path: '', pathConfirmed: false}). It gets its own
+  // explicit branch and produces nothing beyond the bare backend field, so
+  // the server's own "targetConfig.backend is required" 400 is what surfaces.
+  it('an unset backend produces {backend: ""} with no path or s3 fields', () => {
+    const body = startMigrateFromForm(form({ targetConfig: EMPTY_TARGET_CONFIG }));
+    expect(body.targetConfig).toEqual({ backend: '' });
+  });
+
+  it('drops deleteSource under a sample verification', () => {
+    const body = startMigrateFromForm(form({ verifyMode: 'sample', deleteSource: true }));
+    expect(body.deleteSource).toBe(false);
+  });
+
+  // Pins the fix to Important 2: the submit path must mirror
+  // canStartMigration's rule that deleteSource requires the ad-hoc-config
+  // target shape, not just a full verify mode. Before the fix this emitted
+  // {deleteSource: true} for a row-to-row target under a full verify,
+  // guaranteeing a 400 from Validate's "deleteSource requires targetConfig".
+  it('drops deleteSource in the dataset shape even under a full verification', () => {
+    const body = startMigrateFromForm(rowForm({ verifyMode: 'full', deleteSource: true }));
+    expect(body.deleteSource).toBe(false);
   });
 });
 

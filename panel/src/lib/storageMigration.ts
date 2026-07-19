@@ -220,13 +220,93 @@ export function canStartMigration(form: MigrationForm, dataSets: StorageDataSet[
 
   // supportsTargetConfig gates ONLY the ad-hoc-config target shape above; it
   // says nothing about whether this data set may pair with another one in the
-  // row-to-row shape. The server places no such restriction there, and
-  // blocking it here would forbid a legitimate manual flow: modpacks ->
-  // modpacks@core-storage copies modpacks onto Core storage so the operator
-  // can verify before switching modpack_storage_provider by hand.
+  // row-to-row shape, in EITHER role. Start() resolves TargetDataSet through
+  // plain Resolve() and checks only that it resolves and differs from the
+  // source - it never consults supportsTargetConfig on the target, so this
+  // must not either. Two real flows depend on that: modpacks ->
+  // modpacks@core-storage (copy modpacks onto Core storage, verify, then
+  // switch modpack_storage_provider by hand) and its inverse,
+  // modpacks@core-storage -> modpacks (move modpacks off the shared Core file
+  // storage onto a dedicated modpack backend). The inverse is the ONLY way to
+  // express that move: a config target FROM modpacks@core-storage is refused
+  // server-side (sourceCoreStorageConfigFor refuses a namespace inside the
+  // shared Core file storage as a config-switch source, since switching on
+  // its behalf alone would strand the other namespaces).
   if (!form.targetDataSet || form.dataSet === form.targetDataSet) return false;
   const target = dataSets.find(d => d.id === form.targetDataSet);
-  return !!target && target.migratable && !target.supportsTargetConfig;
+  return !!target && target.migratable;
+}
+
+// StorageTargetConfigBody mirrors services.StorageTargetConfig. s3SecretKey is
+// write-only: it goes up with the start request and is never returned by any
+// endpoint, so the wizard must always collect it fresh.
+export interface StorageTargetConfigBody {
+  backend: string;
+  path?: string;
+  pathConfirmed?: boolean;
+  s3Endpoint?: string;
+  s3Bucket?: string;
+  s3Region?: string;
+  s3AccessKey?: string;
+  s3SecretKey?: string;
+  s3PathStyle?: boolean;
+  s3Prefix?: string;
+}
+
+export interface StartStorageMigrationBody {
+  kind: StorageJobKind;
+  dataSet: string;
+  // Exactly one of these on a migrate job. The server rejects both or neither.
+  targetDataSet?: string;
+  targetConfig?: StorageTargetConfigBody;
+  verifyMode?: VerifyMode;
+  deleteSource?: boolean;
+  manifestId?: number;
+}
+
+// startMigrateFromForm is the wizard's submit path. It sends EXACTLY ONE of
+// targetDataSet / targetConfig (the server rejects both or neither with 400),
+// and it mirrors canStartMigration's deleteSource rule in full: dropped
+// whenever the verify mode cannot authorize it (safety invariant 2) AND
+// whenever the target is the row-to-row shape, where nothing repoints the
+// consuming subsystem (Validate's "deleteSource requires targetConfig").
+//
+// For a path target the s3 fields are omitted entirely rather than sent
+// empty, and for an s3 target the path fields are omitted, so a half-filled
+// form from a backend the operator switched away from cannot travel with the
+// request. An unset backend ('') is its own explicit branch rather than
+// falling into the path case: it returns {backend: ''} with no path/s3 fields
+// at all, so the server's own "targetConfig.backend is required" 400 is what
+// the operator sees, not a fabricated empty path request.
+export function startMigrateFromForm(form: MigrationForm): StartStorageMigrationBody {
+  const body: StartStorageMigrationBody = {
+    kind: 'migrate',
+    dataSet: form.dataSet,
+    verifyMode: form.verifyMode,
+    deleteSource: form.targetKind === 'config' && form.verifyMode === 'full' && form.deleteSource,
+  };
+  if (form.targetKind === 'dataset') {
+    body.targetDataSet = form.targetDataSet;
+    return body;
+  }
+  const c = form.targetConfig;
+  if (c.backend === 's3') {
+    body.targetConfig = {
+      backend: 's3',
+      s3Endpoint: c.s3Endpoint,
+      s3Bucket: c.s3Bucket,
+      s3Region: c.s3Region,
+      s3AccessKey: c.s3AccessKey,
+      s3SecretKey: c.s3SecretKey,
+      s3PathStyle: c.s3PathStyle,
+      s3Prefix: c.s3Prefix,
+    };
+  } else if (c.backend === 'path') {
+    body.targetConfig = { backend: 'path', path: c.path, pathConfirmed: c.pathConfirmed };
+  } else {
+    body.targetConfig = { backend: c.backend };
+  }
+  return body;
 }
 
 export function formatPercent(fraction: number): string {

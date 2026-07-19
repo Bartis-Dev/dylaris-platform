@@ -1,14 +1,21 @@
 // Typed client for /api/admin/storage/*. Uses the core helpers directly
 // (the coreStorage.ts pattern) rather than the @/lib/api barrel.
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
-import type {
-  MigrationForm,
-  StorageDataSet,
-  StorageJobKind,
-  StorageManifest,
-  StorageMigrationJob,
-  VerifyMode,
+import {
+  startMigrateFromForm,
+  type StorageDataSet,
+  type StorageManifest,
+  type StorageMigrationJob,
+  type StorageTargetConfigBody,
+  type StartStorageMigrationBody,
 } from '@/lib/storageMigration';
+
+// startMigrateFromForm and the two body interfaces it builds live in
+// storageMigration.ts (not here) so they sit next to MigrationForm and get
+// exercised by the plain vitest suite there instead of needing DOM/fetch
+// mocks. Re-exported so this client's existing consumers are unaffected.
+export { startMigrateFromForm };
+export type { StorageTargetConfigBody, StartStorageMigrationBody };
 
 export interface StorageOverviewResponse {
   success: boolean;
@@ -41,33 +48,6 @@ export async function getStorageMigration(): Promise<StorageMigrationJobResponse
   }
 }
 
-// StorageTargetConfigBody mirrors services.StorageTargetConfig. s3SecretKey is
-// write-only: it goes up with the start request and is never returned by any
-// endpoint, so the wizard must always collect it fresh.
-export interface StorageTargetConfigBody {
-  backend: string;
-  path?: string;
-  pathConfirmed?: boolean;
-  s3Endpoint?: string;
-  s3Bucket?: string;
-  s3Region?: string;
-  s3AccessKey?: string;
-  s3SecretKey?: string;
-  s3PathStyle?: boolean;
-  s3Prefix?: string;
-}
-
-export interface StartStorageMigrationBody {
-  kind: StorageJobKind;
-  dataSet: string;
-  // Exactly one of these on a migrate job. The server rejects both or neither.
-  targetDataSet?: string;
-  targetConfig?: StorageTargetConfigBody;
-  verifyMode?: VerifyMode;
-  deleteSource?: boolean;
-  manifestId?: number;
-}
-
 export async function startStorageMigration(body: StartStorageMigrationBody): Promise<StorageMigrationJobResponse> {
   try {
     const res = await fetch(`${API_URL}/admin/storage/migration`, {
@@ -79,40 +59,6 @@ export async function startStorageMigration(body: StartStorageMigrationBody): Pr
   } catch (err) {
     return handleError(err) as StorageMigrationJobResponse;
   }
-}
-
-// startMigrateFromForm is the wizard's submit path. It sends EXACTLY ONE of
-// targetDataSet / targetConfig (the server rejects both or neither with 400)
-// and drops deleteSource when the verify mode cannot authorize it.
-//
-// For a path target the s3 fields are omitted entirely rather than sent empty,
-// and for an s3 target the path fields are omitted, so a half-filled form from
-// a backend the operator switched away from cannot travel with the request.
-export function startMigrateFromForm(form: MigrationForm): StartStorageMigrationBody {
-  const body: StartStorageMigrationBody = {
-    kind: 'migrate',
-    dataSet: form.dataSet,
-    verifyMode: form.verifyMode,
-    deleteSource: form.verifyMode === 'full' ? form.deleteSource : false,
-  };
-  if (form.targetKind === 'dataset') {
-    body.targetDataSet = form.targetDataSet;
-    return body;
-  }
-  const c = form.targetConfig;
-  body.targetConfig = c.backend === 's3'
-    ? {
-        backend: 's3',
-        s3Endpoint: c.s3Endpoint,
-        s3Bucket: c.s3Bucket,
-        s3Region: c.s3Region,
-        s3AccessKey: c.s3AccessKey,
-        s3SecretKey: c.s3SecretKey,
-        s3PathStyle: c.s3PathStyle,
-        s3Prefix: c.s3Prefix,
-      }
-    : { backend: 'path', path: c.path, pathConfirmed: c.pathConfirmed };
-  return body;
 }
 
 export async function cancelStorageMigration(): Promise<{ success: boolean; message?: string }> {
@@ -133,10 +79,16 @@ export interface ListStorageManifestsResponse {
   message?: string;
 }
 
-export async function listStorageManifests(dataSet?: string): Promise<ListStorageManifestsResponse> {
+// listStorageManifests leaves limit unset by default; the handler's
+// PostgresStore.ListStorageManifests then falls back to 50. Pass it
+// explicitly to see more than that (or fewer).
+export async function listStorageManifests(dataSet?: string, limit?: number): Promise<ListStorageManifestsResponse> {
   try {
-    const qs = dataSet ? `?dataSet=${encodeURIComponent(dataSet)}` : '';
-    const res = await fetch(`${API_URL}/admin/storage/manifests${qs}`, { headers: getAuthHeader() });
+    const params = new URLSearchParams();
+    if (dataSet) params.set('dataSet', dataSet);
+    if (limit !== undefined) params.set('limit', String(limit));
+    const qs = params.toString();
+    const res = await fetch(`${API_URL}/admin/storage/manifests${qs ? `?${qs}` : ''}`, { headers: getAuthHeader() });
     return (await handleResponse(res)) as ListStorageManifestsResponse;
   } catch (err) {
     return handleError(err) as ListStorageManifestsResponse;
@@ -155,10 +107,11 @@ export async function deleteStorageManifest(id: number): Promise<{ success: bool
   }
 }
 
-// manifestExportURL builds the CSV download URL. The export is a plain GET so
-// the browser can stream a 100k-row file straight to disk; the tab fetches it
-// with the auth header and hands the blob to a temporary anchor, because the
-// endpoint is Bearer-authed and a bare <a href> would arrive unauthenticated.
+// manifestExportURL builds the CSV download URL. The endpoint accepts a
+// ?token= query param too (AuthMiddleware allows that on GET for SSE +
+// downloads), but the tab fetches with the Authorization header and hands the
+// blob to a temporary anchor instead of using a bare <a href>, so the session
+// JWT never ends up in a URL, a Referer header or an access log.
 export function manifestExportURL(id: number): string {
   return `${API_URL}/admin/storage/manifests/${id}/export`;
 }
@@ -177,7 +130,9 @@ export async function downloadManifestCSV(id: number, dataSet: string): Promise<
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    // Deferred: revoking synchronously right after click() can abort the
+    // download in some browsers before they finish reading the blob URL.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     return { success: true };
   } catch (err) {
     return handleError(err) as { success: boolean; message?: string };
