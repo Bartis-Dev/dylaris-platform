@@ -215,6 +215,11 @@ func main() {
 	appState.StorageGate = storage.NewGate()
 	appState.SyncStorageGate()
 
+	// S3 connection state. Unlike the gate it has nothing to start or point at:
+	// it reacts to what the SDK reports about calls that already happened, and
+	// idles when the backend is a host path.
+	appState.StorageS3 = storage.NewS3Resilience()
+
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a
 	// single Redis Pub/Sub channel; panels subscribe via SSE so they refresh

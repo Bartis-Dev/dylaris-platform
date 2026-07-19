@@ -187,7 +187,7 @@ func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storag
 	// nil gate: cfg is a MIGRATION TARGET, a different location from the live
 	// one by definition (ensureDistinctCoreStorageLocation enforces it), so
 	// the live path's watchdog has no verdict to offer about it.
-	prov, err := newStorageProviderForConfig(cfg, subPrefix, nil)
+	prov, err := newStorageProviderForConfig(cfg, subPrefix, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("target storage: %w", err)
 	}

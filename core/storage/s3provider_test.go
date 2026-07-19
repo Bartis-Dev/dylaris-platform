@@ -18,13 +18,53 @@ import (
 
 // fakeObjectStore is an in-memory objectStore for S3Provider tests. It is
 // local to this file and never redeclared elsewhere.
+//
+// The failure fields are opt-in and the zero value behaves exactly as it did
+// before they existed, so the tests that predate them are unaffected. They let
+// the resilience tests in s3resilience_test.go drive a backend that fails a
+// bounded number of times and then recovers.
 type fakeObjectStore struct {
 	m map[string][]byte
+
+	// failErr is returned by the next failLeft operations instead of doing the
+	// work. A negative failLeft fails forever, which is how the budget test
+	// drives a backend that never comes back.
+	failErr  error
+	failLeft int
+
+	// attempts counts entries per operation name, so a test can assert that a
+	// call was made exactly once rather than merely that it returned an error.
+	attempts map[string]int
 }
 
-func newFakeObjectStore() *fakeObjectStore { return &fakeObjectStore{m: map[string][]byte{}} }
+func newFakeObjectStore() *fakeObjectStore {
+	return &fakeObjectStore{m: map[string][]byte{}, attempts: map[string]int{}}
+}
+
+// enter records an attempt and reports the injected failure when one is due.
+func (f *fakeObjectStore) enter(op string) error {
+	if f.attempts == nil {
+		f.attempts = map[string]int{}
+	}
+	f.attempts[op]++
+	if f.failErr == nil || f.failLeft == 0 {
+		return nil
+	}
+	if f.failLeft > 0 {
+		f.failLeft--
+	}
+	return f.failErr
+}
 
 func (f *fakeObjectStore) Put(_ context.Context, key string, r io.Reader, _ int64) error {
+	if err := f.enter("Put"); err != nil {
+		// Consume part of the reader first. A real Put has already read some of
+		// the body by the time the transport fails, which is exactly why a retry
+		// would upload only the remainder; this makes the fake fail the same way.
+		var head [1]byte
+		_, _ = r.Read(head[:])
+		return err
+	}
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -34,6 +74,9 @@ func (f *fakeObjectStore) Put(_ context.Context, key string, r io.Reader, _ int6
 }
 
 func (f *fakeObjectStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
+	if err := f.enter("Get"); err != nil {
+		return nil, err
+	}
 	b, ok := f.m[key]
 	if !ok {
 		return nil, fmt.Errorf("not found: %s", key)
@@ -42,11 +85,17 @@ func (f *fakeObjectStore) Get(_ context.Context, key string) (io.ReadCloser, err
 }
 
 func (f *fakeObjectStore) Delete(_ context.Context, key string) error {
+	if err := f.enter("Delete"); err != nil {
+		return err
+	}
 	delete(f.m, key)
 	return nil
 }
 
 func (f *fakeObjectStore) List(_ context.Context, prefix string) ([]backup.Object, error) {
+	if err := f.enter("List"); err != nil {
+		return nil, err
+	}
 	var out []backup.Object
 	for k, v := range f.m {
 		if strings.HasPrefix(k, prefix) {
@@ -58,6 +107,9 @@ func (f *fakeObjectStore) List(_ context.Context, prefix string) ([]backup.Objec
 }
 
 func (f *fakeObjectStore) DownloadURL(_ context.Context, key string, _ time.Duration) (string, error) {
+	if err := f.enter("DownloadURL"); err != nil {
+		return "", err
+	}
 	return "https://signed.example/" + key, nil
 }
 

@@ -38,7 +38,7 @@ func TestNewStorageProviderForConfigChecksGateBeforeMkdirAll(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "wedged")
 	cfg := CoreStorageConfig{Backend: "path", Path: base, PathConfirmed: true}
 
-	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, unhealthyGate(t))
+	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, unhealthyGate(t), nil)
 	if err == nil {
 		t.Fatal("newStorageProviderForConfig err = nil behind an unhealthy gate, want an error")
 	}
@@ -57,7 +57,7 @@ func TestNewStorageProviderForConfigHealthyGateBuildsGatedProvider(t *testing.T)
 	base := t.TempDir()
 	cfg := CoreStorageConfig{Backend: "path", Path: base, PathConfirmed: true}
 
-	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, storage.NewGate())
+	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, storage.NewGate(), nil)
 	if err != nil {
 		t.Fatalf("newStorageProviderForConfig: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNewStorageProviderForConfigNeverGatesS3(t *testing.T) {
 		S3AccessKey: "AKIAEXAMPLE",
 		S3SecretKey: "s3cr3t",
 	}
-	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, unhealthyGate(t))
+	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, unhealthyGate(t), nil)
 	if err != nil {
 		t.Fatalf("s3 build behind an unhealthy path gate: %v, want it unaffected", err)
 	}

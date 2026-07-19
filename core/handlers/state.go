@@ -71,6 +71,13 @@ type AppState struct {
 	// only ever a test - simply never gates.
 	StorageGate *storage.Gate
 
+	// StorageS3 is the connection state and retry loop for the configured s3
+	// core storage, the S3-side counterpart to StorageGate. It is long-lived
+	// because providers are rebuilt per request, so state kept on a provider
+	// would reset before anything could read it. Every method is nil-safe, so
+	// an AppState built without one - only ever a test - simply never pauses.
+	StorageS3 *storage.S3Resilience
+
 	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
 	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the
 	// leader-gated worker progresses expired grace windows. Nil-safe in callers.

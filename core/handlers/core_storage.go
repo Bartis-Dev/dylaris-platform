@@ -204,7 +204,7 @@ func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StoragePr
 	if err := validateCoreStorageConfig(cfg); err != nil {
 		return nil, err
 	}
-	prov, err := newStorageProviderForConfig(cfg, subPrefix, s.StorageGate)
+	prov, err := newStorageProviderForConfig(cfg, subPrefix, s.StorageGate, s.StorageS3)
 	if err != nil {
 		// An unreachable host path is not logged here. It is a per-REQUEST
 		// build, so a wedged mount would write one line per request for as
@@ -270,13 +270,20 @@ func coreStorageUnavailableResponse(w http.ResponseWriter, err error) {
 // that path: the migration target and the connection test both hand this
 // function a candidate config the gate knows nothing about. Those pass nil,
 // which disables gating for that build. The gate never applies to s3.
-func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *storage.Gate) (storage.StorageProvider, error) {
+//
+// s3res is the same arrangement for the s3 backend, and the nil cases matter
+// for a second reason there. The connection probe MUST fail fast: pausing a
+// "test connection" click for up to ten minutes to re-confirm an endpoint the
+// admin just typed wrong would be indefensible. The migration target passes nil
+// because, like the gate, the live instance knows nothing about a candidate
+// config. s3res never applies to a host path.
+func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *storage.Gate, s3res *storage.S3Resilience) (storage.StorageProvider, error) {
 	if cfg.Backend == "s3" {
 		prefix := subPrefix
 		if cfg.S3Prefix != "" {
 			prefix = cfg.S3Prefix + "/" + subPrefix
 		}
-		return storage.NewProvider("s3", "", map[string]string{
+		prov, err := storage.NewProvider("s3", "", map[string]string{
 			storage.OptS3Endpoint:  cfg.S3Endpoint,
 			storage.OptS3Bucket:    cfg.S3Bucket,
 			storage.OptS3Region:    cfg.S3Region,
@@ -285,6 +292,13 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *
 			storage.OptS3PathStyle: boolStr(cfg.S3PathStyle),
 			storage.OptS3Prefix:    prefix,
 		})
+		if err != nil {
+			return nil, err
+		}
+		if s3res == nil {
+			return prov, nil
+		}
+		return storage.NewS3ResilientProvider(prov, s3res), nil
 	}
 	root := filepath.Join(cfg.Path, subPrefix)
 	// BEFORE the MkdirAll, and that ordering is the whole point. This function
@@ -463,7 +477,7 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	// live one, so the live gate's verdict says nothing about it. An operator
 	// who asks to test a path is also entitled to have it actually tested
 	// rather than answered from a cached verdict.
-	prov, err := newStorageProviderForConfig(effective, "_probe", nil)
+	prov, err := newStorageProviderForConfig(effective, "_probe", nil, nil)
 	if err != nil {
 		respond(false, "Could not build provider: "+err.Error())
 		return
