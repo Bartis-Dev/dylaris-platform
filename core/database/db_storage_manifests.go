@@ -9,7 +9,7 @@ import (
 // order. Exposed as a function (rather than inlined) so a test can assert the
 // phase contains nothing destructive.
 func storageManifestsSchemaSQL() string {
-	return storageManifestsTable + "\n" + storageManifestEntriesTable + "\n" + storageManifestEntriesIndex
+	return storageManifestsTable + "\n" + storageManifestEntriesTable
 }
 
 const storageManifestsTable = `CREATE TABLE IF NOT EXISTS storage_manifests (
@@ -31,9 +31,6 @@ const storageManifestEntriesTable = `CREATE TABLE IF NOT EXISTS storage_manifest
 	PRIMARY KEY (manifest_id, key)
 )`
 
-const storageManifestEntriesIndex = `CREATE INDEX IF NOT EXISTS idx_storage_manifest_entries_manifest
-	ON storage_manifest_entries(manifest_id)`
-
 // applyStorageManifestsSchema creates the storage-migration manifest tables:
 //   - storage_manifests: one header per captured inventory of a blob data set
 //   - storage_manifest_entries: key + size + sha256 per object
@@ -47,9 +44,6 @@ func applyStorageManifestsSchema(db *sql.DB) error {
 	}
 	if _, err := db.Exec(storageManifestEntriesTable); err != nil {
 		return fmt.Errorf("storage manifests: create storage_manifest_entries: %w", err)
-	}
-	if _, err := db.Exec(storageManifestEntriesIndex); err != nil {
-		return fmt.Errorf("storage manifests: create storage_manifest_entries index: %w", err)
 	}
 	return nil
 }

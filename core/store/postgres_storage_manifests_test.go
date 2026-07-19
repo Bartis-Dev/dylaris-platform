@@ -203,7 +203,9 @@ func TestListModpackStorageKeys_UnionsThreeColumnsAndSkipsBlanks(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"storage_key"}).
 		AddRow("modpacks/a.mrpack").
 		AddRow("modpacks/b.jar").
-		AddRow("modpacks/c-client.mrpack")
+		AddRow("modpacks/c-client.mrpack").
+		AddRow("").
+		AddRow("   ")
 	mock.ExpectQuery(regexp.QuoteMeta("FROM modversions")).WillReturnRows(rows)
 
 	got, err := s.ListModpackStorageKeys()
@@ -222,12 +224,11 @@ func TestListModpackStorageKeys_QueryCoversAllThreeSources(t *testing.T) {
 	q := modpackStorageKeysSQL()
 	for _, want := range []string{
 		"modversions",
-		"storage_key",
 		"pack_builds",
-		"mrpack_storage_key",
 		"loaders",
-		"client_storage_key",
-		"<> ''",
+		"storage_key <> ''",
+		"mrpack_storage_key <> ''",
+		"client_storage_key <> ''",
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("modpack key-space query is missing %q:\n%s", want, q)
