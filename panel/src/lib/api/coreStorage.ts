@@ -43,6 +43,14 @@ export interface TestCoreStorageResponse {
   success: boolean;
   ok?: boolean;
   message?: string;
+  /**
+   * Set when the probe SUCCEEDED but the configured location is not durable -
+   * today: a path on the container's own filesystem rather than a mounted
+   * volume. It rides along with ok:true on purpose, because the write/read
+   * test really did pass; it is the durability of what was written that is in
+   * doubt. Render it somewhere persistent, not in a toast that vanishes.
+   */
+  warning?: string;
 }
 
 // testCoreStorage posts the CANDIDATE config (the current, possibly-unsaved

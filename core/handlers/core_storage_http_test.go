@@ -584,10 +584,10 @@ type fakeProbeProvider struct {
 }
 
 func (f *fakeProbeProvider) ListFiles(string) ([]storage.FileInfo, error)      { return nil, nil }
-func (f *fakeProbeProvider) CreateDir(string) error                           { return nil }
-func (f *fakeProbeProvider) CopyToLocal(string, string) error                 { return nil }
+func (f *fakeProbeProvider) CreateDir(string) error                            { return nil }
+func (f *fakeProbeProvider) CopyToLocal(string, string) error                  { return nil }
 func (f *fakeProbeProvider) DownloadURL(string, time.Duration) (string, error) { return "", nil }
-func (f *fakeProbeProvider) WriteFile(string, io.Reader) error                { return f.writeErr }
+func (f *fakeProbeProvider) WriteFile(string, io.Reader) error                 { return f.writeErr }
 
 func (f *fakeProbeProvider) GetFile(string) (io.ReadCloser, error) {
 	if f.getErr != nil {
@@ -654,5 +654,91 @@ func TestProbeStorageProvider_DeleteFailureAfterMatchReportsFailure(t *testing.T
 	ok, msg := probeStorageProvider(fp)
 	if ok {
 		t.Fatalf("ok = true, want false when cleanup delete fails (%s)", msg)
+	}
+}
+
+// TestCoreStorage_TestConnection_WarnsOnAnEphemeralPath covers the trap the
+// probe alone cannot see.
+//
+// probeStorageProvider writes, reads back and deletes a file. A directory that
+// exists only in the container's own writable layer passes all three, so an
+// operator who configured /mnt/nas-share but never added the bind mount got a
+// plain green result on storage that disappears at the next container
+// recreation. The warning has to ride along WITH ok:true, because the probe
+// genuinely did succeed - downgrading it to a failure would be wrong, and an
+// ephemeral path is a legitimate choice for a throwaway dev instance.
+func TestCoreStorage_TestConnection_WarnsOnAnEphemeralPath(t *testing.T) {
+	cases := []struct {
+		name string
+		// onRoot/determinable are what the per-OS probe reports.
+		onRoot       bool
+		determinable bool
+		backend      string
+		wantWarning  bool
+	}{
+		{name: "ephemeral path warns", onRoot: true, determinable: true, backend: "path", wantWarning: true},
+		{name: "mounted path does not warn", onRoot: false, determinable: true, backend: "path"},
+		// Off Linux the question is unanswerable. A guess either way is worse
+		// than silence: a false warning trains operators to ignore it.
+		{name: "undeterminable does not warn", onRoot: true, determinable: false, backend: "path"},
+		// s3 has no local path at all, so the check must not even be consulted.
+		{name: "s3 never warns", onRoot: true, determinable: true, backend: "s3"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			orig := pathOnContainerRootFS
+			t.Cleanup(func() { pathOnContainerRootFS = orig })
+			called := false
+			pathOnContainerRootFS = func(string) (bool, bool) {
+				called = true
+				return c.onRoot, c.determinable
+			}
+
+			fs := newCoreStorageHTTPFakeStore()
+			h := NewCoreStorageHandler(&AppState{Store: fs})
+			var body []byte
+			if c.backend == "s3" {
+				// A loopback port nothing listens on, the same shape the other
+				// s3 tests here use. The probe fails, which is fine: the point
+				// is that an s3 config has no local path, so the check must not
+				// be consulted at all - asserted via `called` below.
+				disableAWSRetries(t)
+				body, _ = json.Marshal(CoreStorageConfig{
+					Backend: "s3", S3Endpoint: "http://127.0.0.1:1", S3Bucket: "b",
+					S3AccessKey: "k", S3SecretKey: "s",
+				})
+			} else {
+				body, _ = json.Marshal(CoreStorageConfig{
+					Backend: "path", Path: testConnectionProbeDir(t), PathConfirmed: true,
+				})
+			}
+
+			rw := httptest.NewRecorder()
+			h.TestConnection(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage/test", bytes.NewReader(body)))
+			if rw.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+			}
+			got := rw.Body.String()
+
+			if c.backend == "s3" && called {
+				t.Errorf("the ephemeral-path check ran for an s3 config, which has no local path")
+			}
+			hasWarning := strings.Contains(got, "\"warning\"")
+			if hasWarning != c.wantWarning {
+				t.Fatalf("warning present = %v, want %v; body = %s", hasWarning, c.wantWarning, got)
+			}
+			if !c.wantWarning {
+				return
+			}
+			// The warning must not contradict the probe result it rides with.
+			if !strings.Contains(got, "\"ok\":true") {
+				t.Errorf("the warning replaced the probe verdict; body = %s", got)
+			}
+			for _, want := range []string{"LOST", "bind mount"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("warning does not mention %q, so it is not actionable; body = %s", want, got)
+				}
+			}
+		})
 	}
 }

@@ -133,6 +133,12 @@ func validateS3Endpoint(subject, endpoint string) error {
 	return nil
 }
 
+// pathOnContainerRootFS is the seam the ephemeral-path warning goes through.
+// The real implementation is per-OS (syscall.Stat on Linux, a "cannot tell"
+// stub elsewhere), so a test on any host can drive both answers without
+// needing a container or a real mount.
+var pathOnContainerRootFS = pathIsOnContainerRootFS
+
 // LoadCoreStorageConfig reads the persisted config. S3SecretKey is loaded so
 // callers that build a provider have it, but handlers must blank it before
 // returning to a client. S3SecretSet reflects whether a secret exists.
@@ -368,6 +374,9 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	respond := func(ok bool, msg string) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": msg})
 	}
+	respondWarn := func(ok bool, msg, warning string) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": msg, "warning": warning})
+	}
 
 	var candidate CoreStorageConfig
 	if err := json.NewDecoder(r.Body).Decode(&candidate); err != nil && err != io.EOF {
@@ -395,6 +404,20 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		// anything else - best-effort, so a tested-then-rejected/never-saved
 		// path doesn't keep an empty "_probe" dir behind forever.
 		_ = os.Remove(filepath.Join(effective.Path, "_probe"))
+
+		// The probe above passes on an UNMOUNTED path: a directory that only
+		// exists in the container's own writable layer is perfectly writable,
+		// readable and consistent, so every check this handler performs
+		// succeeds while the data silently disappears on the next container
+		// recreation. Reporting that as a plain green result is the trap.
+		//
+		// A warning, not a failure: an ephemeral path is a legitimate choice
+		// for a throwaway dev instance, and this handler must not be the thing
+		// that decides otherwise.
+		if onRoot, determinable := pathOnContainerRootFS(effective.Path); determinable && onRoot {
+			respondWarn(ok, msg, "This path is on the container's own filesystem, not a mounted volume, so everything written here is LOST when the container is recreated. The read/write test above still passes because that directory is genuinely writable. To keep the data, add a bind mount or volume for this path in your compose/stack file, or point the path at a directory inside a volume that is already mounted.")
+			return
+		}
 	}
 	respond(ok, msg)
 }

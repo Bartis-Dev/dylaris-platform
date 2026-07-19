@@ -24,6 +24,10 @@ export default function CoreStorageTab() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  // Kept out of the toast on purpose: a durability warning that scrolls away
+  // after three seconds is a warning nobody acts on. It stays on screen until
+  // the next test replaces or clears it.
+  const [testWarning, setTestWarning] = useState<string | null>(null);
 
   // Snapshot of the last-saved config, used for dirty detection.
   const snapshotRef = useRef<CoreStorageConfig | null>(null);
@@ -79,6 +83,9 @@ export default function CoreStorageTab() {
     const res = await testCoreStorage(settings);
     if (res.success && res.ok) showToast(res.message || 'Connection successful: write, read and delete all succeeded.');
     else showToast(res.message || 'Connection test failed.', false);
+    // Cleared on every test, so a warning never outlives the config that
+    // produced it: fixing the mount and re-testing makes it disappear.
+    setTestWarning(res.warning || null);
     setTesting(false);
   };
 
@@ -264,6 +271,13 @@ export default function CoreStorageTab() {
           {testing ? 'Testing...' : 'Test Connection'}
         </button>
       </div>
+
+      {testWarning && (
+        <div className="alert alert-warning text-xs flex items-start gap-2">
+          <CircleAlert size={14} className="shrink-0 mt-0.5" />
+          <span>{testWarning}</span>
+        </div>
+      )}
 
       {toast && (
         <div className="toast-container"><div className="toast">
