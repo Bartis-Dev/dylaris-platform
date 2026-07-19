@@ -11,7 +11,7 @@ import {
 } from '@/lib/api/storageMigration';
 import {
     storageMigrationInProgress, isCancellablePhase, deleteSourceAllowed,
-    canStartMigration, formatPercent, formatBytes, verifyVerdictLabel,
+    canStartMigration, startBlockReason, formatPercent, formatBytes, verifyVerdictLabel,
     progressPercent, EMPTY_MIGRATION_FORM, EMPTY_TARGET_CONFIG,
     type MigrationForm, type StorageDataSet, type StorageMigrationJob,
     type StorageMigrationPhase, type StorageVerifyReport, type TargetConfigForm,
@@ -36,47 +36,16 @@ const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
 // objects only, so the report renders an extra note for both.
 const MODPACKS_PREFIX = 'modpacks';
 
-// startBlockReason explains why "Start migration" is disabled, in the SAME
-// order as canStartMigration/targetConfigValid (lib/storageMigration.ts), so
-// this message can never disagree with the button. Callers only render it
-// while !formValid; every branch that would fire once the form is actually
-// valid is unreachable in practice and exists only so the function is total.
-function startBlockReason(form: MigrationForm, dataSets: StorageDataSet[]): string {
-    if (!form.dataSet) return 'Choose a source data set.';
-    if (form.deleteSource && !deleteSourceAllowed(form.verifyMode)) {
-        return 'A sampled verification cannot authorize deleting the source: switch to a full verification or uncheck delete.';
-    }
-    if (form.deleteSource && form.targetKind !== 'config') {
-        return 'Deleting the source requires the new-storage-backend target shape, not another data set.';
-    }
-    const source = dataSets.find(d => d.id === form.dataSet);
-    if (!source || !source.migratable) return 'The selected source is unknown or not migratable.';
-    if (form.targetKind === 'config') {
-        if (!source.supportsTargetConfig) return 'The selected source cannot target a new storage backend; choose another data set as the target instead.';
-        const cfg = form.targetConfig;
-        if (cfg.backend === 's3') {
-            if (!cfg.s3Bucket) return 'Enter the target bucket.';
-            if (!cfg.s3AccessKey) return 'Enter the target access key.';
-            if (!cfg.s3SecretKey) return 'Enter the target secret key.';
-        } else if (cfg.backend === 'path') {
-            if (!cfg.path.startsWith('/')) return 'Enter an absolute target path (starting with "/").';
-            if (!cfg.pathConfirmed) return 'Confirm the target path is reachable from every Core instance and is not the current location.';
-        } else {
-            return 'Choose a target storage backend (S3-compatible or filesystem path).';
-        }
-        return 'Complete the target storage config.';
-    }
-    if (!form.targetDataSet || form.dataSet === form.targetDataSet) return 'Choose a target data set different from the source.';
-    const target = dataSets.find(d => d.id === form.targetDataSet);
-    if (!target || !target.migratable) return 'The selected target is unknown or not migratable.';
-    return 'Complete the migration form.';
-}
-
 export default function StorageMigrationTab() {
     const [dataSets, setDataSets] = useState<StorageDataSet[]>([]);
     const [job, setJob] = useState<StorageMigrationJob | null>(null);
     const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string | null>(null);
+    // Kept as two separate error slots (rather than one shared loadError) so a
+    // job-status failure never displaces the data-set list, and a data-set
+    // overview failure never gets reported under the job panel: each renders
+    // only next to the section it actually describes.
+    const [overviewError, setOverviewError] = useState<string | null>(null);
+    const [jobError, setJobError] = useState<string | null>(null);
 
     const [wizardOpen, setWizardOpen] = useState(false);
     const [form, setForm] = useState<MigrationForm>(EMPTY_MIGRATION_FORM);
@@ -104,18 +73,18 @@ export default function StorageMigrationTab() {
     // their storage is unconfigured when Core actually could not read it.
     const load = useCallback(async () => {
         const [ov, jb] = await Promise.all([getStorageOverview(), getStorageMigration()]);
-        let err: string | null = null;
         if (ov.success && ov.dataSets) {
             setDataSets(ov.dataSets);
+            setOverviewError(null);
         } else {
-            err = ov.message || 'Could not load the storage overview.';
+            setOverviewError(ov.message || 'Could not load the storage overview.');
         }
         if (jb.success) {
             setJob(jb.hasJob && jb.job ? jb.job : null);
-        } else if (!err) {
-            err = jb.message || 'Could not load the migration job status.';
+            setJobError(null);
+        } else {
+            setJobError(jb.message || 'Could not load the migration job status.');
         }
-        setLoadError(err);
         setLoading(false);
     }, []);
 
@@ -138,6 +107,22 @@ export default function StorageMigrationTab() {
     const busy = !!job && storageMigrationInProgress(job.phase);
     const migratable = useMemo(() => dataSets.filter(d => d.migratable), [dataSets]);
     const sourceSet = useMemo(() => dataSets.find(d => d.id === form.dataSet), [dataSets, form.dataSet]);
+    const targetSet = useMemo(() => dataSets.find(d => d.id === form.targetDataSet), [dataSets, form.targetDataSet]);
+    // sameLocationSuspected flags a row-to-row pair whose backendLabel strings
+    // are identical. That label is location-COMPLETE for the Core-storage-
+    // derived rows (core-storage/library/ticket-attachments/ticket-backups/
+    // modpacks-on-core-storage all encode endpoint+bucket+prefix or path, plus
+    // sub-prefix) and for modpacks when modpack_storage_provider is
+    // "core-storage" - so an equal label there reliably means the same
+    // physical location (e.g. modpacks <-> modpacks@core-storage under that
+    // setting). It is NOT location-complete for a server-backups row, whose
+    // label is only "Name (provider)": two distinct backups configs can share
+    // that label. So an equal label is real signal; an UNequal label proves
+    // nothing either way. This is a warning, not a block, precisely because
+    // the check cannot see location equality it isn't told about.
+    const sameLocationSuspected = form.targetKind === 'dataset'
+        && !!sourceSet?.backendLabel
+        && sourceSet.backendLabel === targetSet?.backendLabel;
     // Every migratable data set except the source itself is offerable as a
     // row-to-row target. Do NOT additionally filter on supportsTargetConfig:
     // that field says how a data set names ITS OWN target when acting as a
@@ -291,19 +276,19 @@ export default function StorageMigrationTab() {
                 </button>
             </div>
 
+            {jobError && (
+                <p className="alert alert-error text-xs">{jobError}</p>
+            )}
             {job && (
                 <JobPanel job={job} onCancel={doCancel} cancelling={cancelling} />
             )}
 
             <div className="card p-5 space-y-3">
                 <div className="mono-label">Data sets</div>
-                {loadError ? (
-                    <p className="alert alert-error text-xs">{loadError}</p>
-                ) : dataSets.length === 0 ? (
-                    <p className="alert alert-info text-xs">
-                        No storage data sets are configured yet. Configure Core file storage first.
-                    </p>
-                ) : (
+                {overviewError && (
+                    <p className="alert alert-error text-xs">{overviewError}</p>
+                )}
+                {dataSets.length > 0 ? (
                     <div className="space-y-2">
                         {dataSets.map(ds => (
                             <DataSetRow
@@ -318,7 +303,11 @@ export default function StorageMigrationTab() {
                             />
                         ))}
                     </div>
-                )}
+                ) : !overviewError ? (
+                    <p className="alert alert-info text-xs">
+                        No storage data sets are configured yet. Configure Core file storage first.
+                    </p>
+                ) : null}
             </div>
 
             <div className="card p-5 space-y-3">
@@ -404,7 +393,7 @@ export default function StorageMigrationTab() {
                                             selected={form.targetKind === 'dataset'}
                                             onClick={() => pickTargetKind('dataset')}
                                             title="Another data set"
-                                            desc="Copy onto an already-configured data set instead, e.g. staging modpacks onto Core file storage. Nothing is repointed automatically; repoint the consumer yourself afterwards."
+                                            desc="Copy onto an already-configured data set instead. Nothing is repointed automatically; repoint the consumer yourself afterwards."
                                         />
                                     </div>
                                 )}
@@ -483,6 +472,18 @@ export default function StorageMigrationTab() {
                                     </>
                                 )}
                             </div>
+
+                            {sameLocationSuspected && (
+                                <p className="alert alert-warning text-xs">
+                                    Source and target report the same backend location ({sourceSet?.backendLabel}). If
+                                    they really are the same place, the copy would do nothing, a verification would
+                                    pass trivially by comparing the target against its own manifest, and removing
+                                    &quot;the old copy&quot; afterwards would delete the only copy there is. This only
+                                    compares the displayed labels and is not exhaustive - it can miss cases where two
+                                    data sets alias the same storage under different labels, so the absence of this
+                                    warning does not mean the locations are actually different.
+                                </p>
+                            )}
                         </div>
                         <div className="modal-footer">
                             {!formValid && (
@@ -623,9 +624,14 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                 )}
                 {job.kind === 'migrate' && !job.configSwitched && job.phase === 'done' && (
                     <div className="text-(--warning-light) flex items-center gap-1">
-                        <Info size={12} /> The copy is verified on the target, but the active config still points at the
-                        source: this was a data-set-to-data-set migrate, so nothing was repointed automatically.
-                        Repoint the consuming subsystem at the target yourself, and remove the old copy only once you have.
+                        {/* Mirrors the finish() comment in storage_migration_job.go:
+                            say what the engine did, not what configs exist. Whether
+                            anything still points at the source is unknowable from
+                            here - the same over-claim that had to come out of the
+                            delete log applies to this notice too. */}
+                        <Info size={12} /> The engine did not repoint any config for this migrate, and it cannot
+                        tell what still points at the source. Repoint the consuming subsystem at the target
+                        yourself, and remove the old copy only once you have.
                     </div>
                 )}
                 {job.stale && (

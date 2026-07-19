@@ -5,6 +5,7 @@ import {
   deleteSourceAllowed,
   targetConfigValid,
   canStartMigration,
+  startBlockReason,
   startMigrateFromForm,
   formatPercent,
   formatBytes,
@@ -200,6 +201,36 @@ describe('canStartMigration', () => {
   // would orphan live references.
   it('rejects deleteSource in the row-to-row shape: nothing repoints the consumer, so the delete would orphan live references', () => {
     expect(canStartMigration(rowForm({ verifyMode: 'full', deleteSource: true }), dataSets)).toBe(false);
+  });
+});
+
+describe('startBlockReason', () => {
+  // Pins the equivalence the panel relies on: the footer message is non-empty
+  // exactly when the button is disabled. Re-uses every case already exercised
+  // above rather than a fresh set, so this stands or falls with the SAME forms
+  // canStartMigration is tested against, instead of a hand-picked subset.
+  it('is non-empty if and only if canStartMigration rejects the form', () => {
+    const cases: MigrationForm[] = [
+      form(),
+      rowForm(),
+      form({ dataSet: '' }),
+      form({ targetConfig: validTargetConfig({ s3Bucket: '' }) }),
+      rowForm({ targetDataSet: '' }),
+      rowForm({ targetDataSet: 'server-backups:1' }),
+      rowForm({ dataSet: 'server-backups:2' }),
+      rowForm({ targetDataSet: 'server-backups:2' }),
+      form({ dataSet: 'nope' }),
+      form({ dataSet: 'server-backups:1' }),
+      rowForm({ dataSet: 'modpacks', targetDataSet: 'modpacks@core-storage' }),
+      rowForm({ dataSet: 'modpacks@core-storage', targetDataSet: 'modpacks' }),
+      form({ verifyMode: 'sample', deleteSource: true }),
+      form({ verifyMode: 'full', deleteSource: true }),
+      form({ verifyMode: 'sample', deleteSource: false }),
+      rowForm({ verifyMode: 'full', deleteSource: true }),
+    ];
+    for (const f of cases) {
+      expect(startBlockReason(f, dataSets) !== '').toBe(!canStartMigration(f, dataSets));
+    }
   });
 });
 

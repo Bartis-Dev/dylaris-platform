@@ -241,6 +241,49 @@ export function canStartMigration(form: MigrationForm, dataSets: StorageDataSet[
   return !!target && target.migratable;
 }
 
+// startBlockReason explains why "Start migration" is disabled, in the SAME
+// order as canStartMigration/targetConfigValid. It leads with a call to
+// canStartMigration itself, so the ''-vs-reason split can never drift out of
+// step with the button no matter what either function grows later; the
+// per-field messages below it are just the human-readable "why", derived by
+// calling targetConfigValid rather than re-deriving its pass/fail logic, and
+// need to be kept in step with it by hand only for their WORDING, not for
+// whether the button is enabled.
+export function startBlockReason(form: MigrationForm, dataSets: StorageDataSet[]): string {
+  if (canStartMigration(form, dataSets)) return '';
+
+  if (!form.dataSet) return 'Choose a source data set.';
+  if (form.deleteSource && !deleteSourceAllowed(form.verifyMode)) {
+    return 'A sampled verification cannot authorize deleting the source: switch to a full verification or uncheck delete.';
+  }
+  if (form.deleteSource && form.targetKind !== 'config') {
+    return 'Deleting the source requires the new-storage-backend target shape, not another data set.';
+  }
+  const source = dataSets.find(d => d.id === form.dataSet);
+  if (!source || !source.migratable) return 'The selected source is unknown or not migratable.';
+  if (form.targetKind === 'config') {
+    if (!source.supportsTargetConfig) return 'The selected source cannot target a new storage backend; choose another data set as the target instead.';
+    const cfg = form.targetConfig;
+    if (!targetConfigValid(cfg)) {
+      if (cfg.backend === 's3') {
+        if (!cfg.s3Bucket) return 'Enter the target bucket.';
+        if (!cfg.s3AccessKey) return 'Enter the target access key.';
+        if (!cfg.s3SecretKey) return 'Enter the target secret key.';
+      } else if (cfg.backend === 'path') {
+        if (!cfg.path.startsWith('/')) return 'Enter an absolute target path (starting with "/").';
+        if (!cfg.pathConfirmed) return 'Confirm the target path is reachable from every Core instance and is not the current location.';
+      } else {
+        return 'Choose a target storage backend (S3-compatible or filesystem path).';
+      }
+    }
+    return 'Complete the target storage config.';
+  }
+  if (!form.targetDataSet || form.dataSet === form.targetDataSet) return 'Choose a target data set different from the source.';
+  const target = dataSets.find(d => d.id === form.targetDataSet);
+  if (!target || !target.migratable) return 'The selected target is unknown or not migratable.';
+  return 'Complete the migration form.';
+}
+
 // StorageTargetConfigBody mirrors services.StorageTargetConfig. s3SecretKey is
 // write-only: it goes up with the start request and is never returned by any
 // endpoint, so the wizard must always collect it fresh.
