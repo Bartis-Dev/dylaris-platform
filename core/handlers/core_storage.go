@@ -295,7 +295,18 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *
 	if err := storage.GatedProviderBlocked(gate); err != nil {
 		return nil, err
 	}
-	_ = os.MkdirAll(root, 0755)
+	// Under the same concurrency bound as every provider method, for the same
+	// reason: on a wedged mount this MkdirAll is a syscall that never returns,
+	// and one per request is unbounded. MkdirAll's OWN error stays ignored as
+	// before; only the gate giving up on it aborts the build. There is no
+	// request context to pass here, and a caller waiting for a free slot is
+	// waiting on a bound, not on the mount.
+	if err := gate.Do(context.Background(), func() error {
+		_ = os.MkdirAll(root, 0755)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	prov, err := storage.NewProvider("path", root, nil)
 	if err != nil {
 		return nil, err

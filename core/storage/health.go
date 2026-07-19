@@ -90,6 +90,13 @@ type Gate struct {
 	// goroutine per tick forever instead of one in total.
 	sem chan struct{}
 
+	// fsSem bounds how many goroutines may be inside a host-path filesystem
+	// syscall at once, and fsDeadline is how long a detached one may run before
+	// its caller gives up on it. Both live here rather than as bare consts so a
+	// test can shrink them; see limiter.go for what they are for.
+	fsSem      chan struct{}
+	fsDeadline time.Duration
+
 	interval time.Duration
 	timeout  time.Duration
 	// probe is injected so tests can drive a stat that hangs, one that errors
@@ -108,10 +115,12 @@ func NewGate() *Gate {
 
 func newGate(interval, timeout time.Duration, probe func(root string) error) *Gate {
 	g := &Gate{
-		sem:      make(chan struct{}, 1),
-		interval: interval,
-		timeout:  timeout,
-		probe:    probe,
+		sem:        make(chan struct{}, 1),
+		fsSem:      make(chan struct{}, maxConcurrentFSOps),
+		fsDeadline: fsOpDeadline,
+		interval:   interval,
+		timeout:    timeout,
+		probe:      probe,
 	}
 	g.state.Store(&gateState{healthy: true})
 	return g
@@ -328,12 +337,18 @@ func GatedProviderBlocked(gate *Gate) error {
 	return nil
 }
 
-// gatedProvider checks the gate before every call and feeds whatever the inner
-// provider reports back into it.
+// gatedProvider checks the gate before every call, runs the inner call under
+// the gate's concurrency bound, and feeds whatever the inner provider reports
+// back into the gate.
 //
 // The fail-fast is a bound on new work reaching a mount that is known not to
 // answer. It cannot help a call already inside a syscall, and it is not a
-// promise that a call which passes the check will complete.
+// promise that a call which passes the check will complete. What the bound adds
+// is that the number of calls stuck in that state is a constant rather than a
+// function of traffic; see limiter.go.
+//
+// The split between the detached calls below and the two that run inline is
+// deliberate and is explained on Gate.Run.
 type gatedProvider struct {
 	inner StorageProvider
 	gate  *Gate
@@ -367,7 +382,9 @@ func (p *gatedProvider) ListFiles(ctx context.Context, path string) ([]FileInfo,
 	if err := p.blocked(); err != nil {
 		return nil, err
 	}
-	files, err := p.inner.ListFiles(ctx, path)
+	files, err := doValue(p.gate, ctx, func() ([]FileInfo, error) {
+		return p.inner.ListFiles(ctx, path)
+	}, nil)
 	return files, p.observe(err)
 }
 
@@ -375,7 +392,11 @@ func (p *gatedProvider) GetFile(ctx context.Context, path string) (io.ReadCloser
 	if err := p.blocked(); err != nil {
 		return nil, err
 	}
-	rc, err := p.inner.GetFile(ctx, path)
+	// The returned ReadCloser keeps its slot until Close, because the streaming
+	// reads happen in the handler where nothing else here can see them.
+	rc, err := openDetached(p.gate, ctx, func() (io.ReadCloser, error) {
+		return p.inner.GetFile(ctx, path)
+	})
 	return rc, p.observe(err)
 }
 
@@ -383,34 +404,44 @@ func (p *gatedProvider) DeletePath(ctx context.Context, path string) error {
 	if err := p.blocked(); err != nil {
 		return err
 	}
-	return p.observe(p.inner.DeletePath(ctx, path))
+	return p.observe(p.gate.Do(ctx, func() error {
+		return p.inner.DeletePath(ctx, path)
+	}))
 }
 
 func (p *gatedProvider) CreateDir(ctx context.Context, path string) error {
 	if err := p.blocked(); err != nil {
 		return err
 	}
-	return p.observe(p.inner.CreateDir(ctx, path))
+	return p.observe(p.gate.Do(ctx, func() error {
+		return p.inner.CreateDir(ctx, path)
+	}))
 }
 
 func (p *gatedProvider) CopyToLocal(ctx context.Context, srcPath, destPath string) error {
 	if err := p.blocked(); err != nil {
 		return err
 	}
-	return p.observe(p.inner.CopyToLocal(ctx, srcPath, destPath))
+	return p.observe(p.gate.Run(ctx, func() error {
+		return p.inner.CopyToLocal(ctx, srcPath, destPath)
+	}))
 }
 
 func (p *gatedProvider) WriteFile(ctx context.Context, path string, content io.Reader) error {
 	if err := p.blocked(); err != nil {
 		return err
 	}
-	return p.observe(p.inner.WriteFile(ctx, path, content))
+	return p.observe(p.gate.Run(ctx, func() error {
+		return p.inner.WriteFile(ctx, path, content)
+	}))
 }
 
 func (p *gatedProvider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	if err := p.blocked(); err != nil {
 		return "", err
 	}
-	url, err := p.inner.DownloadURL(ctx, key, ttl)
+	url, err := doValue(p.gate, ctx, func() (string, error) {
+		return p.inner.DownloadURL(ctx, key, ttl)
+	}, nil)
 	return url, p.observe(err)
 }
