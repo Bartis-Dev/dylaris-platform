@@ -659,7 +659,12 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 			// nothing was switched; say so rather than implying the engine
 			// repointed something.
 			s.update(func(j *StorageMigrationJob) {
-				j.appendLog("No Core-managed config exists for this source/target pairing, so nothing was switched. Repoint the consuming subsystem at the target yourself.")
+				// Says what the engine DID, not what configs exist. Whether
+				// something still points at the source is unknowable from
+				// here, and an operator reads this line while deciding what to
+				// clean up - the same over-claiming that had to be removed
+				// from the delete log.
+				j.appendLog("This is a data-set-to-data-set migrate, so the engine did not switch any config. Repoint the consuming subsystem at the target yourself, and remove the old copy only once you have.")
 			})
 		}
 	}
@@ -706,10 +711,12 @@ func finishMessage(req StorageMigrationRequest, report storagemigrate.StorageVer
 		return fmt.Sprintf("SAMPLE PASS: nothing wrong in the %.1f%% of objects checked. This is not a full guarantee.", report.CheckedFraction*100)
 	case req.Kind == StorageJobVerify:
 		return "Verification passed against every object in the manifest."
-	case req.DeleteSource && req.TargetConfig != nil:
-		return "Migration complete: verified in full, the active config now points at the target, and the old copy has been removed."
+	// Validate refuses deleteSource unless the target is a targetConfig, so
+	// there is no "source removed but nothing repointed" outcome to describe:
+	// that is exactly the ordering the delete gate exists to prevent, and an
+	// arm here claiming it happened would advertise a path that cannot run.
 	case req.DeleteSource:
-		return "Migration complete, verified in full, and the source has been removed. Point the consuming subsystem at the new backend."
+		return "Migration complete: verified in full, the active config now points at the target, and the old copy has been removed."
 	case req.TargetConfig != nil && report.Mode == storagemigrate.VerifyModeSample:
 		return fmt.Sprintf("Copy complete and the active config now points at the target. SAMPLE PASS over %.1f%% of objects; the old copy was left in place. Remove it yourself once you are satisfied - a sampled verification can never authorize that automatically.", report.CheckedFraction*100)
 	case req.TargetConfig != nil:
