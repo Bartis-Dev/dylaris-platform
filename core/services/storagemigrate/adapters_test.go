@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/smithy-go"
+
 	"dylaris-core/storage"
 	"dylaris-core/storage/backup"
 	"dylaris-core/storage/modpack"
@@ -277,6 +279,21 @@ func TestNormalizeBackupNotFound(t *testing.T) {
 		{"NotFound text", errors.New("api error NotFound: Not Found"), true},
 		{"throttle is not missing", errors.New("api error SlowDown"), false},
 		{"permission is not missing", errors.New("api error AccessDenied"), false},
+
+		// The typed branch is the one real S3 traffic takes: S3Storage.Get
+		// returns a raw AWS SDK error that satisfies smithy.APIError, so the
+		// string fallback below it is unreachable in production. These cases
+		// cover it directly rather than only through non-smithy doubles.
+		{"typed NoSuchKey", &smithy.GenericAPIError{Code: "NoSuchKey", Message: "The specified key does not exist."}, true},
+		{"typed NotFound", &smithy.GenericAPIError{Code: "NotFound", Message: "Not Found"}, true},
+		{"typed throttle is not missing", &smithy.GenericAPIError{Code: "SlowDown", Message: "Please reduce your request rate."}, false},
+		{"typed missing-bucket is not missing", &smithy.GenericAPIError{Code: "NoSuchBucket", Message: "The specified bucket does not exist."}, false},
+
+		// A typed error short-circuits before the substring fallback, so a
+		// non-matching code wins even when its message contains "NotFound".
+		// Without that early return a throttle could be read as "missing",
+		// which is the direction that makes the copy loop overwrite live data.
+		{"typed non-matching code beats NotFound in the message", &smithy.GenericAPIError{Code: "SlowDown", Message: "NotFound appears here"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
