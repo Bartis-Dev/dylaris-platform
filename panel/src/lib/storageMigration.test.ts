@@ -10,6 +10,7 @@ import {
   formatPercent,
   formatBytes,
   verifyVerdictLabel,
+  examinedBytesFraction,
   progressPercent,
   EMPTY_MIGRATION_FORM,
   EMPTY_TARGET_CONFIG,
@@ -311,10 +312,37 @@ describe('formatBytes', () => {
   });
 });
 
+// The panel sentence reads "Examined N of M objects; of those, X of Y bytes
+// were successfully read". Y has to be the examined population. Using the whole
+// manifest instead made a flawless sample run render as though nearly every
+// byte had failed to read.
+describe('examinedBytesFraction', () => {
+  const sampled: StorageVerifyReport = {
+    ok: true, mode: 'sample', manifestId: 1, capturedAt: '2026-07-19T09:00:00Z',
+    objectsInManifest: 1000, objectsChecked: 100,
+    bytesInManifest: 1000, bytesExamined: 100, bytesChecked: 100,
+    checkedFraction: 0.1, bytesCheckedFraction: 0.1,
+    problems: [], problemsTotal: 0, log: [],
+  };
+  it('a clean sample reads as fully read over the population it examined', () => {
+    expect(examinedBytesFraction(sampled)).toBe(1);
+  });
+  it('is not the whole-manifest share, which stays available separately', () => {
+    expect(sampled.bytesCheckedFraction).toBe(0.1);
+    expect(examinedBytesFraction(sampled)).not.toBe(sampled.bytesCheckedFraction);
+  });
+  it('an unreadable object lowers it, because it contributes no bytes', () => {
+    expect(examinedBytesFraction({ ...sampled, bytesChecked: 40 })).toBe(0.4);
+  });
+  it('returns 0 rather than dividing by an empty population', () => {
+    expect(examinedBytesFraction({ ...sampled, bytesExamined: 0, bytesChecked: 0 })).toBe(0);
+  });
+});
+
 describe('verifyVerdictLabel', () => {
   const base: StorageVerifyReport = {
     ok: true, mode: 'full', manifestId: 1, capturedAt: '2026-07-19T09:00:00Z',
-    objectsInManifest: 10, objectsChecked: 10, bytesInManifest: 100, bytesChecked: 100,
+    objectsInManifest: 10, objectsChecked: 10, bytesInManifest: 100, bytesExamined: 100, bytesChecked: 100,
     checkedFraction: 1, bytesCheckedFraction: 1, problems: [], problemsTotal: 0, log: [],
   };
   it('a passing full run reads as PASS', () => {

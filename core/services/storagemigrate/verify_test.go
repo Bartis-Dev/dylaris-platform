@@ -669,6 +669,63 @@ func TestVerify_SampleFractionsDropBelowOneWhenObjectsAreSkipped(t *testing.T) {
 	}
 }
 
+// TestVerify_BytesExaminedIsTheSampledPopulationNotTheWholeManifest pins the
+// denominator the panel puts BytesChecked over.
+//
+// BytesChecked counts only the objects the hashing loop visited, but the report
+// used to offer BytesInManifest as its only companion figure. In sample mode
+// that pairs a sampled numerator with a whole-manifest denominator - the exact
+// mixed-population bug already fixed for the progress bar - so a flawless
+// sample run rendered as though almost every byte had failed to read. That
+// under-claim is in the safe direction, but it is still a number that does not
+// mean what the sentence around it says.
+func TestVerify_BytesExaminedIsTheSampledPopulationNotTheWholeManifest(t *testing.T) {
+	const n = 300
+	entries, bodies := sampleFixture(t, n)
+	target := newMemDataSet(DataSetLibrary, "target")
+	for _, e := range entries {
+		target.put(e.Key, bodies[e.Key])
+	}
+
+	t.Run("sample mode examines less than the manifest", func(t *testing.T) {
+		rep, err := Verify(context.Background(), target, manifestHeader(1, entries), entries, VerifyModeSample, VerifyOptions{
+			Rand: rand.New(rand.NewSource(7)),
+		})
+		if err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+		// The population BytesExamined describes must be exactly the one
+		// ObjectsChecked counts, not the manifest.
+		wantExamined := int64(sampleLargeCount(n)) * (sampleSmallObjectBytes + 1)
+		if rep.BytesExamined != wantExamined {
+			t.Fatalf("BytesExamined = %d, want %d (%d sampled objects x %d manifest bytes each)",
+				rep.BytesExamined, wantExamined, sampleLargeCount(n), int64(sampleSmallObjectBytes+1))
+		}
+		if rep.BytesExamined >= rep.BytesInManifest {
+			t.Fatalf("BytesExamined = %d, BytesInManifest = %d: the sample must examine strictly fewer bytes, or this figure adds nothing",
+				rep.BytesExamined, rep.BytesInManifest)
+		}
+		// The point of the field: over its own population a clean sample run
+		// reads a far higher share than the whole-manifest figure suggests.
+		overExamined := float64(rep.BytesChecked) / float64(rep.BytesExamined)
+		if overExamined <= rep.BytesFraction {
+			t.Errorf("bytes over the examined population = %v, over the manifest = %v: the honest denominator must not read worse than the mixed one",
+				overExamined, rep.BytesFraction)
+		}
+	})
+
+	t.Run("full mode examines the whole manifest", func(t *testing.T) {
+		rep, err := Verify(context.Background(), target, manifestHeader(1, entries), entries, VerifyModeFull, VerifyOptions{})
+		if err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+		if rep.BytesExamined != rep.BytesInManifest {
+			t.Fatalf("BytesExamined = %d, BytesInManifest = %d: full mode attempts every object, so the two must agree",
+				rep.BytesExamined, rep.BytesInManifest)
+		}
+	})
+}
+
 // TestVerify_SampleReportsProgressOverTheSamplePopulation proves Progress's
 // objectsTotal and bytesTotal describe the SAME population in sample mode.
 // Progress is invoked only from inside the content-hashing loop, which in

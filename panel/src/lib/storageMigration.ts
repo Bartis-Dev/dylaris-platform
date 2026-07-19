@@ -41,8 +41,16 @@ export interface StorageVerifyReport {
   objectsInManifest: number;
   objectsChecked: number;
   bytesInManifest: number;
+  /**
+   * Manifest size of the objects the run attempted to read, i.e. the population
+   * objectsChecked counts. This is the denominator bytesChecked belongs over;
+   * bytesInManifest describes the whole manifest and in sample mode is a
+   * different, larger population.
+   */
+  bytesExamined: number;
   bytesChecked: number;
   checkedFraction: number;
+  /** bytesChecked over the WHOLE manifest, not over bytesExamined. */
   bytesCheckedFraction: number;
   problems: StorageVerifyEntry[];
   problemsTotal: number;
@@ -378,6 +386,19 @@ export function formatBytes(n: number): string {
     unit += 1;
   }
   return unit === 0 ? `${Math.round(value)} B` : `${value.toFixed(1)} ${BYTE_UNITS[unit]}`;
+}
+
+// examinedBytesFraction is bytesChecked over the population the run actually
+// attempted, which is what a sentence beginning "of those" has to use.
+// report.bytesCheckedFraction answers a different question - the share of the
+// WHOLE manifest - and in sample mode those two populations differ by design,
+// so the fields are deliberately not interchangeable.
+//
+// Returns 0 when nothing was examined, mirroring the engine's own guard against
+// dividing by an empty manifest.
+export function examinedBytesFraction(report: StorageVerifyReport): number {
+  if (report.bytesExamined <= 0) return 0;
+  return report.bytesChecked / report.bytesExamined;
 }
 
 // verifyVerdictLabel never renders a bare "OK" for a sampled run: a sample

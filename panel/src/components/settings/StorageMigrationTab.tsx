@@ -11,7 +11,7 @@ import {
 } from '@/lib/api/storageMigration';
 import {
     storageMigrationInProgress, isCancellablePhase, deleteSourceAllowed,
-    canStartMigration, startBlockReason, formatPercent, formatBytes, verifyVerdictLabel,
+    canStartMigration, startBlockReason, formatPercent, formatBytes, verifyVerdictLabel, examinedBytesFraction,
     progressPercent, EMPTY_MIGRATION_FORM, EMPTY_TARGET_CONFIG,
     type MigrationForm, type StorageDataSet, type StorageMigrationJob,
     type StorageMigrationPhase, type StorageVerifyReport, type TargetConfigForm,
@@ -761,13 +761,20 @@ function VerifyView({ report, dataSet }: { report: StorageVerifyReport; dataSet:
                     run where every object was unreadable still reaches 100% here while
                     the verdict is FAIL. Splitting out "successfully read" ties the byte
                     figure to the objects that actually passed, so the two numbers
-                    explain each other instead of silently contradicting. */}
+                    explain each other instead of silently contradicting.
+
+                    The "of those" denominator is bytesExamined, NOT bytesInManifest:
+                    "those" is the examined population, and in sample mode the manifest
+                    is a strictly larger one. Pairing them made a flawless sample run
+                    read as though nearly every byte had failed. The whole-manifest
+                    share is still worth stating, so sample mode gets it as its own
+                    sentence where its denominator is named. */}
                 <span className="font-mono uppercase tracking-wide mr-2">{verifyVerdictLabel(report)}</span>
                 Examined {report.objectsChecked.toLocaleString()} of {report.objectsInManifest.toLocaleString()} objects
-                ({formatPercent(report.checkedFraction)}); of those, {formatBytes(report.bytesChecked)} of {formatBytes(report.bytesInManifest)}
-                {' '}({formatPercent(report.bytesCheckedFraction)}) were successfully read. A missing or unreadable
+                ({formatPercent(report.checkedFraction)}); of those, {formatBytes(report.bytesChecked)} of {formatBytes(report.bytesExamined)}
+                {' '}({formatPercent(examinedBytesFraction(report))}) were successfully read. A missing or unreadable
                 object counts as examined here but contributes no bytes.
-                {report.mode === 'sample' && ' Missing and extra objects were still detected in full.'}
+                {report.mode === 'sample' && ` That is ${formatPercent(report.bytesCheckedFraction)} of the manifest's ${formatBytes(report.bytesInManifest)} in total. Missing and extra objects were still detected in full.`}
             </div>
 
             {dataSet.startsWith(MODPACKS_PREFIX) && (

@@ -81,19 +81,27 @@ type StorageVerifyEntry struct {
 // That is a genuine limitation of the current schema; this report cannot and
 // does not claim otherwise.
 type StorageVerifyReport struct {
-	OK                bool                 `json:"ok"`
-	Mode              string               `json:"mode"`
-	ManifestID        int                  `json:"manifestId"`
-	CapturedAt        time.Time            `json:"capturedAt"`
-	ObjectsInManifest int64                `json:"objectsInManifest"`
-	ObjectsChecked    int64                `json:"objectsChecked"`
-	BytesInManifest   int64                `json:"bytesInManifest"`
-	BytesChecked      int64                `json:"bytesChecked"`
-	CheckedFraction   float64              `json:"checkedFraction"`
-	BytesFraction     float64              `json:"bytesCheckedFraction"`
-	Problems          []StorageVerifyEntry `json:"problems"`
-	ProblemsTotal     int                  `json:"problemsTotal"`
-	Log               []string             `json:"log"`
+	OK                bool      `json:"ok"`
+	Mode              string    `json:"mode"`
+	ManifestID        int       `json:"manifestId"`
+	CapturedAt        time.Time `json:"capturedAt"`
+	ObjectsInManifest int64     `json:"objectsInManifest"`
+	ObjectsChecked    int64     `json:"objectsChecked"`
+	BytesInManifest   int64     `json:"bytesInManifest"`
+	// BytesExamined is the manifest size of the objects this run ATTEMPTED to
+	// read, i.e. the population ObjectsChecked counts. It is the honest
+	// denominator for BytesChecked: pairing BytesChecked with BytesInManifest
+	// instead mixes a sampled numerator with a whole-manifest denominator, the
+	// same defect already fixed once for the progress bar below, and it makes a
+	// clean sample report read as though most bytes had failed to read. In full
+	// mode it equals BytesInManifest.
+	BytesExamined   int64                `json:"bytesExamined"`
+	BytesChecked    int64                `json:"bytesChecked"`
+	CheckedFraction float64              `json:"checkedFraction"`
+	BytesFraction   float64              `json:"bytesCheckedFraction"`
+	Problems        []StorageVerifyEntry `json:"problems"`
+	ProblemsTotal   int                  `json:"problemsTotal"`
+	Log             []string             `json:"log"`
 }
 
 // AuthorizesSourceDelete reports whether this report may be used to justify
@@ -294,6 +302,10 @@ func Verify(ctx context.Context, target DataSet, manifest *models.StorageManifes
 		hashBytesTotal += e.Size
 	}
 	objectsSkipped := rep.ObjectsInManifest - total
+	// The report gets the same population figure the progress bar uses, so the
+	// panel can put BytesChecked over a denominator that describes the objects
+	// this run actually attempted rather than the whole manifest.
+	rep.BytesExamined = hashBytesTotal
 
 	for _, e := range sorted {
 		if cancelled() {
