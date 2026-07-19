@@ -174,9 +174,22 @@ func TestDeleteSource_PropagatesADeleteFailure(t *testing.T) {
 	src.put("b.jar", "bb")
 	manifest := manifestOf(t, newSubsetOf(src.memDataSet, "a.jar", "b.jar"))
 
-	_, err := DeleteSource(ctx, src, manifest, DeleteOptions{})
+	res, err := DeleteSource(ctx, src, manifest, DeleteOptions{})
 	if err == nil {
 		t.Fatal("DeleteSource err = nil, want the delete failure surfaced")
+	}
+
+	// A bare err != nil check would stay green if a refactor discarded the
+	// partial result or carried on past the failure. The three properties an
+	// operator has to be able to trust after a partial delete are pinned here.
+	if !strings.Contains(err.Error(), "b.jar") {
+		t.Errorf("err = %v, want it to name the key that failed", err)
+	}
+	if res.ObjectsDeleted != 1 {
+		t.Errorf("ObjectsDeleted = %d, want 1 (the work done before the failure must survive the error)", res.ObjectsDeleted)
+	}
+	if _, stillThere := src.snapshot()["b.jar"]; !stillThere {
+		t.Error("b.jar is gone, want the failing key and everything after it left untouched")
 	}
 }
 

@@ -140,6 +140,12 @@ func DeleteSource(ctx context.Context, src DataSet, entries []models.StorageMani
 			opts.Progress(res.ObjectsDeleted, 0, total, res.BytesFreed, bytesTotal, e.Key)
 		}
 	}
-	logf("Source cleared: %d object(s), %d bytes freed.", res.ObjectsDeleted, res.BytesFreed)
+	// Deliberately NOT "source cleared": this deletes exactly the keys the
+	// manifest names. Anything written after the capture is still there, and
+	// for modpacks the manifest only covers DB-referenced objects, so bucket
+	// orphans are out of reach by construction. An operator reads this line
+	// while deciding whether to tear the old bucket down, so it must not
+	// claim an emptiness this function cannot observe.
+	logf("Removed %d object(s) named in the manifest, %d bytes freed. Anything written to the source after the manifest was captured is untouched.", res.ObjectsDeleted, res.BytesFreed)
 	return res, nil
 }
