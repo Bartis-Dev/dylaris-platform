@@ -202,6 +202,22 @@ type Store interface {
 	ListBackupRestores(serverID, limit int) ([]models.BackupRestore, error)
 	UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) error
 
+	// --- Storage migration manifests ---
+	CreateStorageManifest(m *models.StorageManifest, entries []models.StorageManifestEntry) (int, error)
+	GetStorageManifest(id int) (*models.StorageManifest, error)
+	ListStorageManifests(dataSet string, limit int) ([]models.StorageManifest, error)
+	ListStorageManifestEntries(manifestID int) ([]models.StorageManifestEntry, error)
+	DeleteStorageManifest(id int) error
+	// ListModpackStorageKeys returns the union of modversions.storage_key,
+	// pack_builds.mrpack_storage_key and loaders.client_storage_key. It is the
+	// ONLY way to enumerate the modpacks key space: ModpackStorageProvider has
+	// no List.
+	ListModpackStorageKeys() ([]string, error)
+	// ListModversionSHA512ByStorageKey maps storage_key -> the third-party
+	// SHA-512 already recorded for that mod file. Opportunistic cross-check
+	// input only; never a manifest source of truth.
+	ListModversionSHA512ByStorageKey() (map[string]string, error)
+
 	// --- Modules ---
 	ListModules() ([]models.Module, error)
 	GetModuleByID(id int) (*models.Module, error)
