@@ -80,8 +80,8 @@ func (d *providerDataSet) Label() string { return d.label }
 
 // List walks the WHOLE key space. StorageProvider.ListFiles is one directory
 // level only, so the recursion is mandatory - see storage.WalkProvider.
-func (d *providerDataSet) List(_ context.Context) ([]ObjectRef, error) {
-	files, err := storage.WalkProvider(d.prov, "")
+func (d *providerDataSet) List(ctx context.Context) ([]ObjectRef, error) {
+	files, err := storage.WalkProvider(ctx, d.prov, "")
 	if err != nil {
 		return nil, fmt.Errorf("storagemigrate: list %s: %w", d.id, err)
 	}
@@ -96,16 +96,16 @@ func (d *providerDataSet) List(_ context.Context) ([]ObjectRef, error) {
 // returns os.Open's error and S3Provider.GetFile normalizes a genuine
 // NoSuchKey/NotFound to an fs.ErrNotExist-comparable error while leaving any
 // other backend failure unwrapped.
-func (d *providerDataSet) Open(_ context.Context, key string) (io.ReadCloser, error) {
-	return d.prov.GetFile(key)
+func (d *providerDataSet) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	return d.prov.GetFile(ctx, key)
 }
 
-func (d *providerDataSet) Write(_ context.Context, key string, r io.Reader, _ int64) error {
-	return d.prov.WriteFile(key, r)
+func (d *providerDataSet) Write(ctx context.Context, key string, r io.Reader, _ int64) error {
+	return d.prov.WriteFile(ctx, key, r)
 }
 
-func (d *providerDataSet) Delete(_ context.Context, key string) error {
-	return d.prov.DeletePath(key)
+func (d *providerDataSet) Delete(ctx context.Context, key string) error {
+	return d.prov.DeletePath(ctx, key)
 }
 
 // ---------- backup.Storage-backed data set (server-backups:<id>) ----------

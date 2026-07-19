@@ -34,26 +34,25 @@ func NewCoreStorageBackupAdapter(p StorageProvider) *CoreStorageBackupAdapter {
 // Provider is the textual name persisted in backup_storages.provider.
 func (a *CoreStorageBackupAdapter) Provider() string { return "core-storage" }
 
-// Put stores the stream. ctx and size are DROPPED: both underlying WriteFile
-// implementations are io.Copy-based and context-unaware, and neither needs a
-// declared length. Documented rather than faked.
-func (a *CoreStorageBackupAdapter) Put(_ context.Context, key string, r io.Reader, _ int64) error {
-	return a.prov.WriteFile(key, r)
+// Put stores the stream. size is still DROPPED: neither underlying WriteFile
+// implementation needs a declared length. ctx is now threaded through.
+func (a *CoreStorageBackupAdapter) Put(ctx context.Context, key string, r io.Reader, _ int64) error {
+	return a.prov.WriteFile(ctx, key, r)
 }
 
 // Get returns a reader for key. S3Provider.GetFile already normalizes a
 // genuinely-missing key to an fs.ErrNotExist-comparable error and leaves every
 // other backend failure unwrapped; LocalProvider returns os.Open's error,
 // which is fs.ErrNotExist-comparable too.
-func (a *CoreStorageBackupAdapter) Get(_ context.Context, key string) (io.ReadCloser, error) {
-	return a.prov.GetFile(key)
+func (a *CoreStorageBackupAdapter) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return a.prov.GetFile(ctx, key)
 }
 
 // Delete removes key. Idempotent per the backup.Storage contract:
 // LocalProvider.DeletePath is os.RemoveAll (nil on missing) and
 // S3Provider.DeletePath returns nil for a missing key. Verified, no wrapper.
-func (a *CoreStorageBackupAdapter) Delete(_ context.Context, key string) error {
-	return a.prov.DeletePath(key)
+func (a *CoreStorageBackupAdapter) Delete(ctx context.Context, key string) error {
+	return a.prov.DeletePath(ctx, key)
 }
 
 // List enumerates every object under prefix, recursively, returning FULL keys
@@ -67,8 +66,8 @@ func (a *CoreStorageBackupAdapter) Delete(_ context.Context, key string) error {
 // run.StorageKey, not by object mtime, and the panel shows
 // backup_runs.started_at. Nothing reads Object.LastModified off a List/Stat
 // result today. Do not start.
-func (a *CoreStorageBackupAdapter) List(_ context.Context, prefix string) ([]backup.Object, error) {
-	files, err := WalkProvider(a.prov, prefix)
+func (a *CoreStorageBackupAdapter) List(ctx context.Context, prefix string) ([]backup.Object, error) {
+	files, err := WalkProvider(ctx, a.prov, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("core-storage backup list %q: %w", prefix, err)
 	}
@@ -94,12 +93,12 @@ func (a *CoreStorageBackupAdapter) List(_ context.Context, prefix string) ([]bac
 // stream or abort 4 GB. Its two accepted costs: LastModified is the zero
 // time (see List), and on S3 it costs a prefix List of the parent. Acceptable
 // because Stat is not on any hot path - backups are minutes apart at most.
-func (a *CoreStorageBackupAdapter) Stat(_ context.Context, key string) (backup.Object, error) {
+func (a *CoreStorageBackupAdapter) Stat(ctx context.Context, key string) (backup.Object, error) {
 	dir := path.Dir(key)
 	if dir == "." || dir == "/" {
 		dir = ""
 	}
-	entries, err := a.prov.ListFiles(dir)
+	entries, err := a.prov.ListFiles(ctx, dir)
 	if err != nil {
 		return backup.Object{}, fmt.Errorf("core-storage backup stat %q: %w", key, err)
 	}
@@ -115,8 +114,8 @@ func (a *CoreStorageBackupAdapter) Stat(_ context.Context, key string) (backup.O
 
 // DownloadURL passes straight through: ("", nil) for the path backend, a
 // presigned GET for s3.
-func (a *CoreStorageBackupAdapter) DownloadURL(_ context.Context, key string, ttl time.Duration) (string, error) {
-	return a.prov.DownloadURL(key, ttl)
+func (a *CoreStorageBackupAdapter) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return a.prov.DownloadURL(ctx, key, ttl)
 }
 
 // UploadURL is not supported. StorageProvider has no presigned-PUT seam at

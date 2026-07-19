@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -21,19 +22,21 @@ type walkFakeProvider struct {
 	calls []string
 }
 
-func (f *walkFakeProvider) ListFiles(path string) ([]FileInfo, error) {
+func (f *walkFakeProvider) ListFiles(_ context.Context, path string) ([]FileInfo, error) {
 	f.calls = append(f.calls, path)
 	if err := f.listErr[path]; err != nil {
 		return nil, err
 	}
 	return f.dirs[path], nil
 }
-func (f *walkFakeProvider) GetFile(string) (io.ReadCloser, error) { return nil, nil }
-func (f *walkFakeProvider) DeletePath(string) error               { return nil }
-func (f *walkFakeProvider) CreateDir(string) error                { return nil }
-func (f *walkFakeProvider) CopyToLocal(string, string) error      { return nil }
-func (f *walkFakeProvider) WriteFile(string, io.Reader) error     { return nil }
-func (f *walkFakeProvider) DownloadURL(string, time.Duration) (string, error) {
+func (f *walkFakeProvider) GetFile(context.Context, string) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (f *walkFakeProvider) DeletePath(context.Context, string) error           { return nil }
+func (f *walkFakeProvider) CreateDir(context.Context, string) error            { return nil }
+func (f *walkFakeProvider) CopyToLocal(context.Context, string, string) error  { return nil }
+func (f *walkFakeProvider) WriteFile(context.Context, string, io.Reader) error { return nil }
+func (f *walkFakeProvider) DownloadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
 }
 
@@ -54,7 +57,7 @@ func TestWalkProvider_RecursesEveryLevel(t *testing.T) {
 			{Name: "deep.cfg", Size: 7},
 		},
 	}}
-	got, err := WalkProvider(f, "")
+	got, err := WalkProvider(context.Background(), f, "")
 	if err != nil {
 		t.Fatalf("WalkProvider err = %v, want nil", err)
 	}
@@ -82,7 +85,7 @@ func TestWalkProvider_SortedAscendingByKey(t *testing.T) {
 		},
 		"mid": {{Name: "beta.txt", Size: 1}},
 	}}
-	got, err := WalkProvider(f, "")
+	got, err := WalkProvider(context.Background(), f, "")
 	if err != nil {
 		t.Fatalf("WalkProvider err = %v", err)
 	}
@@ -98,7 +101,7 @@ func TestWalkProvider_SortedAscendingByKey(t *testing.T) {
 
 func TestWalkProvider_EmptyAndMissingRootAreNotErrors(t *testing.T) {
 	f := &walkFakeProvider{dirs: map[string][]FileInfo{"": {}}}
-	got, err := WalkProvider(f, "")
+	got, err := WalkProvider(context.Background(), f, "")
 	if err != nil {
 		t.Fatalf("WalkProvider on empty root err = %v, want nil", err)
 	}
@@ -114,7 +117,7 @@ func TestWalkProvider_KeysAreRelativeToRoot(t *testing.T) {
 			{Name: "a.jar", Size: 4},
 		},
 	}}
-	got, err := WalkProvider(f, "library")
+	got, err := WalkProvider(context.Background(), f, "library")
 	if err != nil {
 		t.Fatalf("WalkProvider err = %v", err)
 	}
@@ -129,7 +132,7 @@ func TestWalkProvider_PropagatesListError(t *testing.T) {
 		dirs:    map[string][]FileInfo{"": {{Name: "mods", IsDir: true}}},
 		listErr: map[string]error{"mods": boom},
 	}
-	if _, err := WalkProvider(f, ""); !errors.Is(err, boom) {
+	if _, err := WalkProvider(context.Background(), f, ""); !errors.Is(err, boom) {
 		t.Fatalf("WalkProvider err = %v, want it to wrap %v (a backend error is NOT an empty dir)", err, boom)
 	}
 }
@@ -149,7 +152,7 @@ func TestWalkProvider_DepthCapIsEnforced(t *testing.T) {
 	}
 	dirs[path] = []FileInfo{{Name: "leaf.txt", Size: 1}}
 	f := &walkFakeProvider{dirs: dirs}
-	if _, err := WalkProvider(f, ""); !errors.Is(err, ErrWalkTooDeep) {
+	if _, err := WalkProvider(context.Background(), f, ""); !errors.Is(err, ErrWalkTooDeep) {
 		t.Fatalf("WalkProvider err = %v, want ErrWalkTooDeep", err)
 	}
 }
@@ -163,11 +166,11 @@ func TestWalkProvider_AgainstLocalProvider(t *testing.T) {
 		{"a/one.txt", "bb"},
 		{"a/b/two.txt", "c"},
 	} {
-		if err := p.WriteFile(f.key, strings.NewReader(f.body)); err != nil {
+		if err := p.WriteFile(context.Background(), f.key, strings.NewReader(f.body)); err != nil {
 			t.Fatalf("WriteFile %s: %v", f.key, err)
 		}
 	}
-	got, err := WalkProvider(p, "")
+	got, err := WalkProvider(context.Background(), p, "")
 	if err != nil {
 		t.Fatalf("WalkProvider err = %v", err)
 	}

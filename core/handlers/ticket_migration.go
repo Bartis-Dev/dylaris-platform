@@ -271,7 +271,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	// CreatedAt can never drift apart across a second boundary.
 	now := time.Now().UTC()
 	name := "tickets-" + now.Format("20060102-150405") + ".json"
-	if err := prov.WriteFile(name, bytes.NewReader(body)); err != nil {
+	if err := prov.WriteFile(r.Context(), name, bytes.NewReader(body)); err != nil {
 		sendJSONError(w, "Failed to write backup: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -301,7 +301,7 @@ func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Requ
 		coreStorageUnavailableResponse(w)
 		return
 	}
-	files, err := prov.ListFiles("/")
+	files, err := prov.ListFiles(r.Context(), "/")
 	if err != nil {
 		sendJSONError(w, "Failed to list backups: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -340,12 +340,12 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 	// every byte through Core. The ("", nil) sentinel (LocalProvider / path
 	// backend) AND any error from DownloadURL both fall through to
 	// streaming — an error must never be conflated with "no URL, stream it".
-	if url, err := prov.DownloadURL(name, 5*time.Minute); err == nil && url != "" {
+	if url, err := prov.DownloadURL(r.Context(), name, 5*time.Minute); err == nil && url != "" {
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
 
-	rc, err := prov.GetFile(name)
+	rc, err := prov.GetFile(r.Context(), name)
 	if err != nil {
 		sendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
@@ -368,7 +368,7 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 		coreStorageUnavailableResponse(w)
 		return
 	}
-	if err := prov.DeletePath(name); err != nil {
+	if err := prov.DeletePath(r.Context(), name); err != nil {
 		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -411,7 +411,7 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		coreStorageUnavailableResponse(w)
 		return
 	}
-	if rc, err := prov.GetFile(name); err != nil {
+	if rc, err := prov.GetFile(r.Context(), name); err != nil {
 		sendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
 	} else {
@@ -518,7 +518,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// ever needs the raw bytes (unmarshalled below), never a real path on
 	// disk, so no temp-file staging is needed here — GetFile + ReadAll is
 	// sufficient regardless of backend.
-	rc, err := prov.GetFile(t.BackupName)
+	rc, err := prov.GetFile(r.Context(), t.BackupName)
 	if err != nil {
 		sendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
 		return

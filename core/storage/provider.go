@@ -2,6 +2,7 @@ package storage
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -21,20 +22,29 @@ type FileInfo struct {
 // StorageProvider is the interface for all core-storage backends (library,
 // ticket attachments, ticket backups). Keys are forward-slash-separated and
 // provider-relative.
+//
+// How far ctx actually reaches differs per backend, so do not read it as a
+// blanket cancellation guarantee. S3Provider hands it to every SDK call, so a
+// cancelled ctx aborts the in-flight HTTP request. LocalProvider only checks
+// it on entry and between copy chunks: a filesystem syscall that is already
+// blocked (a hung NFS or CIFS mount) cannot be interrupted from userspace, and
+// no ctx will change that.
 type StorageProvider interface {
-	ListFiles(path string) ([]FileInfo, error)
-	GetFile(path string) (io.ReadCloser, error)
-	DeletePath(path string) error
-	CreateDir(path string) error
+	ListFiles(ctx context.Context, path string) ([]FileInfo, error)
+	GetFile(ctx context.Context, path string) (io.ReadCloser, error)
+	DeletePath(ctx context.Context, path string) error
+	CreateDir(ctx context.Context, path string) error
 	// CopyToLocal copies a file/dir from storage to a local destination path.
 	// If the source is a .zip, it gets extracted into destPath.
-	CopyToLocal(srcPath, destPath string) error
+	CopyToLocal(ctx context.Context, srcPath, destPath string) error
 	// WriteFile stores an uploaded file into storage at the given path.
-	WriteFile(path string, content io.Reader) error
+	WriteFile(ctx context.Context, path string, content io.Reader) error
 	// DownloadURL returns a short-lived pre-signed GET URL when the backend
-	// supports it (S3). LocalProvider returns ("", nil) so the caller streams
-	// the bytes through Core instead of redirecting.
-	DownloadURL(key string, ttl time.Duration) (string, error)
+	// supports it (S3). LocalProvider has no such URL and returns ("", nil)
+	// so the caller streams the bytes through Core instead of redirecting.
+	// Callers must treat an error as "cannot redirect" and fall through to
+	// streaming, never conflate it with "no URL available".
+	DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
 // Opt keys accepted by NewProvider for the "s3" backend.
@@ -79,7 +89,10 @@ func (p *LocalProvider) validatePath(reqPath string) (string, error) {
 	return cleanPath, nil
 }
 
-func (p *LocalProvider) ListFiles(path string) ([]FileInfo, error) {
+func (p *LocalProvider) ListFiles(ctx context.Context, path string) ([]FileInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	safePath, err := p.validatePath(path)
 	if err != nil {
 		return nil, err
@@ -117,7 +130,10 @@ func (p *LocalProvider) ListFiles(path string) ([]FileInfo, error) {
 	return files, nil
 }
 
-func (p *LocalProvider) GetFile(path string) (io.ReadCloser, error) {
+func (p *LocalProvider) GetFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	safePath, err := p.validatePath(path)
 	if err != nil {
 		return nil, err
@@ -125,7 +141,10 @@ func (p *LocalProvider) GetFile(path string) (io.ReadCloser, error) {
 	return os.Open(safePath)
 }
 
-func (p *LocalProvider) DeletePath(path string) error {
+func (p *LocalProvider) DeletePath(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	safePath, err := p.validatePath(path)
 	if err != nil {
 		return err
@@ -133,7 +152,10 @@ func (p *LocalProvider) DeletePath(path string) error {
 	return os.RemoveAll(safePath)
 }
 
-func (p *LocalProvider) CreateDir(path string) error {
+func (p *LocalProvider) CreateDir(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	safePath, err := p.validatePath(path)
 	if err != nil {
 		return err
@@ -146,6 +168,31 @@ func (p *LocalProvider) CreateDir(path string) error {
 // recognisable prefix so those orphans can be swept and so ListFiles can hide
 // them: a caller must never be handed a partial upload as if it were a file.
 const uploadTempPrefix = ".dylaris-upload-"
+
+// ctxReader aborts a stream copy between chunks: once ctx is done, Read
+// reports the context error instead of handing over the next chunk.
+//
+// This is deliberately the whole mechanism, and it is worth being clear about
+// its limit. It stops a copy that is still making progress (a client that
+// disconnected mid-upload, a job that was cancelled), which is what an
+// io.Copy over a network body needs. It cannot unblock a Read or Write that is
+// ALREADY stuck inside a syscall on a wedged mount, because nothing in
+// userspace can. That case needs the watchdog, not a context.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func newCtxReader(ctx context.Context, r io.Reader) io.Reader {
+	return &ctxReader{ctx: ctx, r: r}
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
 
 // WriteFile stages the upload next to its destination and renames it into
 // place, so the destination name only ever refers to a complete file.
@@ -162,7 +209,10 @@ const uploadTempPrefix = ".dylaris-upload-"
 // Caveat worth knowing: rename is atomic on local filesystems, but neither
 // CIFS nor NFS guarantees it. On those this is a large improvement over
 // truncate-in-place, not a guarantee.
-func (p *LocalProvider) WriteFile(path string, content io.Reader) error {
+func (p *LocalProvider) WriteFile(ctx context.Context, path string, content io.Reader) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	safePath, err := p.validatePath(path)
 	if err != nil {
 		return err
@@ -191,7 +241,7 @@ func (p *LocalProvider) WriteFile(path string, content io.Reader) error {
 	if err := tmp.Chmod(0644); err != nil {
 		return err
 	}
-	if _, err := io.Copy(tmp, content); err != nil {
+	if _, err := io.Copy(tmp, newCtxReader(ctx, content)); err != nil {
 		return err
 	}
 	// Sync before rename, not for crash durability but for error reporting: on
@@ -211,14 +261,17 @@ func (p *LocalProvider) WriteFile(path string, content io.Reader) error {
 	return nil
 }
 
-func (p *LocalProvider) CopyToLocal(srcPath, destPath string) error {
+func (p *LocalProvider) CopyToLocal(ctx context.Context, srcPath, destPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	safeSrc, err := p.validatePath(srcPath)
 	if err != nil {
 		return err
 	}
 
 	if strings.HasSuffix(strings.ToLower(safeSrc), ".zip") {
-		return extractZip(safeSrc, destPath)
+		return extractZip(ctx, safeSrc, destPath)
 	}
 
 	info, err := os.Stat(safeSrc)
@@ -226,12 +279,15 @@ func (p *LocalProvider) CopyToLocal(srcPath, destPath string) error {
 		return err
 	}
 	if info.IsDir() {
-		return copyDir(safeSrc, destPath)
+		return copyDir(ctx, safeSrc, destPath)
 	}
-	return copyFile(safeSrc, filepath.Join(destPath, info.Name()))
+	return copyFile(ctx, safeSrc, filepath.Join(destPath, info.Name()))
 }
 
-func (p *LocalProvider) DownloadURL(key string, ttl time.Duration) (string, error) {
+func (p *LocalProvider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return "", nil
 }
 
@@ -239,7 +295,7 @@ func (p *LocalProvider) DownloadURL(key string, ttl time.Duration) (string, erro
 // HELPERS
 // ==========================================
 
-func extractZip(src, dest string) error {
+func extractZip(ctx context.Context, src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
@@ -251,6 +307,9 @@ func extractZip(src, dest string) error {
 	}
 
 	for _, f := range r.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		fpath := filepath.Join(dest, f.Name)
 		if !strings.HasPrefix(filepath.Clean(fpath), filepath.Clean(dest)+string(os.PathSeparator)) {
 			return fmt.Errorf("illegal file path: %s", fpath)
@@ -271,7 +330,7 @@ func extractZip(src, dest string) error {
 			out.Close()
 			return err
 		}
-		_, err = io.Copy(out, rc)
+		_, err = io.Copy(out, newCtxReader(ctx, rc))
 		out.Close()
 		rc.Close()
 		if err != nil {
@@ -281,7 +340,7 @@ func extractZip(src, dest string) error {
 	return nil
 }
 
-func copyDir(src, dst string) error {
+func copyDir(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(dst, 0755); err != nil {
 		return err
 	}
@@ -290,25 +349,28 @@ func copyDir(src, dst string) error {
 		return err
 	}
 	for _, e := range entries {
-		if err := copyPath(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := copyPath(ctx, filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func copyPath(src, dst string) error {
+func copyPath(ctx context.Context, src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 	if info.IsDir() {
-		return copyDir(src, dst)
+		return copyDir(ctx, src, dst)
 	}
-	return copyFile(src, dst)
+	return copyFile(ctx, src, dst)
 }
 
-func copyFile(src, dst string) error {
+func copyFile(ctx context.Context, src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -319,6 +381,6 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, in)
+	_, err = io.Copy(out, newCtxReader(ctx, in))
 	return err
 }

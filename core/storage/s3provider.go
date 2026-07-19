@@ -105,8 +105,8 @@ func (p *S3Provider) pathObjects(ctx context.Context, reqPath string) ([]backup.
 	return out, nil
 }
 
-func (p *S3Provider) WriteFile(path string, content io.Reader) error {
-	return p.os.Put(context.Background(), p.key(path), content, 0)
+func (p *S3Provider) WriteFile(ctx context.Context, path string, content io.Reader) error {
+	return p.os.Put(ctx, p.key(path), content, 0)
 }
 
 // GetFile returns a reader for path, normalizing a recognised "object does
@@ -118,8 +118,8 @@ func (p *S3Provider) WriteFile(path string, content io.Reader) error {
 // easily as a missing key - collapsing both into "missing" would make a
 // transient error look like "safe to overwrite". Any other error is returned
 // unwrapped.
-func (p *S3Provider) GetFile(path string) (io.ReadCloser, error) {
-	rc, err := p.os.Get(context.Background(), p.key(path))
+func (p *S3Provider) GetFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	rc, err := p.os.Get(ctx, p.key(path))
 	if err != nil {
 		if isS3NotFound(err) {
 			return nil, fmt.Errorf("s3 GetFile %s: %w", path, fs.ErrNotExist)
@@ -142,10 +142,9 @@ func isS3NotFound(err error) bool {
 	return false
 }
 
-func (p *S3Provider) DeletePath(path string) error {
+func (p *S3Provider) DeletePath(ctx context.Context, path string) error {
 	// Delete the object at the key AND every object under it (dir semantics),
 	// never a sibling whose name merely starts with the same string.
-	ctx := context.Background()
 	objs, err := p.pathObjects(ctx, path)
 	if err != nil {
 		return err
@@ -162,18 +161,18 @@ func (p *S3Provider) DeletePath(path string) error {
 }
 
 // CreateDir is a no-op: object stores have no directories.
-func (p *S3Provider) CreateDir(path string) error { return nil }
+func (p *S3Provider) CreateDir(ctx context.Context, path string) error { return nil }
 
-func (p *S3Provider) DownloadURL(key string, ttl time.Duration) (string, error) {
-	return p.os.DownloadURL(context.Background(), p.key(key), ttl)
+func (p *S3Provider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return p.os.DownloadURL(ctx, p.key(key), ttl)
 }
 
 // ListFiles synthesizes one directory level from the flat key space: files are
 // keys with no further "/" after the list prefix; dirs are the distinct first
 // path segments of deeper keys.
-func (p *S3Provider) ListFiles(path string) ([]FileInfo, error) {
+func (p *S3Provider) ListFiles(ctx context.Context, path string) ([]FileInfo, error) {
 	pfx := p.listPrefix(path)
-	objs, err := p.os.List(context.Background(), pfx)
+	objs, err := p.os.List(ctx, pfx)
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +198,7 @@ func (p *S3Provider) ListFiles(path string) ([]FileInfo, error) {
 
 // CopyToLocal stages the object(s) into destPath. A .zip source is downloaded
 // to a temp file and extracted; anything else is copied verbatim.
-func (p *S3Provider) CopyToLocal(srcPath, destPath string) error {
-	ctx := context.Background()
+func (p *S3Provider) CopyToLocal(ctx context.Context, srcPath, destPath string) error {
 	if strings.HasSuffix(strings.ToLower(srcPath), ".zip") {
 		rc, err := p.os.Get(ctx, p.key(srcPath))
 		if err != nil {
@@ -212,12 +210,12 @@ func (p *S3Provider) CopyToLocal(srcPath, destPath string) error {
 			return err
 		}
 		defer os.Remove(tmp.Name())
-		if _, err := io.Copy(tmp, rc); err != nil {
+		if _, err := io.Copy(tmp, newCtxReader(ctx, rc)); err != nil {
 			tmp.Close()
 			return err
 		}
 		tmp.Close()
-		return extractZip(tmp.Name(), destPath)
+		return extractZip(ctx, tmp.Name(), destPath)
 	}
 	// Non-zip: copy every object at the exact key or nested under it into
 	// destPath, preserving the relative layout, never a sibling whose name
@@ -251,7 +249,7 @@ func (p *S3Provider) CopyToLocal(srcPath, destPath string) error {
 			rc.Close()
 			return err
 		}
-		_, cerr := io.Copy(f, rc)
+		_, cerr := io.Copy(f, newCtxReader(ctx, rc))
 		f.Close()
 		rc.Close()
 		if cerr != nil {

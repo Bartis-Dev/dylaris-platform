@@ -36,7 +36,7 @@ func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	files, err := prov.ListFiles(path)
+	files, err := prov.ListFiles(r.Context(), path)
 	if err != nil {
 		sendJSONError(w, "Could not list library files: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -183,7 +183,7 @@ func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Req
 		coreStorageUnavailableResponse(w)
 		return
 	}
-	if err := prov.DeletePath(req.Path); err != nil {
+	if err := prov.DeletePath(r.Context(), req.Path); err != nil {
 		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -209,7 +209,7 @@ func (h *LibraryHandler) MkdirLibraryHandler(w http.ResponseWriter, r *http.Requ
 		coreStorageUnavailableResponse(w)
 		return
 	}
-	if err := prov.CreateDir(req.Path); err != nil {
+	if err := prov.CreateDir(r.Context(), req.Path); err != nil {
 		sendJSONError(w, "Create dir failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -259,7 +259,7 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 		}
 		defer f.Close()
 
-		if err := prov.WriteFile(destPath, f); err != nil {
+		if err := prov.WriteFile(r.Context(), destPath, f); err != nil {
 			sendJSONError(w, fmt.Sprintf("Upload failed for %s: %v", cleanName, err), http.StatusInternalServerError)
 			return
 		}
@@ -303,12 +303,12 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 	// Prefer a short-lived pre-signed URL when the backend supports it (S3):
 	// redirect the browser straight to object storage instead of streaming
 	// every byte through Core.
-	if url, err := prov.DownloadURL(path, 5*time.Minute); err == nil && url != "" {
+	if url, err := prov.DownloadURL(r.Context(), path, 5*time.Minute); err == nil && url != "" {
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
 
-	rc, err := prov.GetFile(path)
+	rc, err := prov.GetFile(r.Context(), path)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return

@@ -31,42 +31,45 @@ type memProvider struct{ m map[string][]byte }
 
 func newMemProvider() *memProvider { return &memProvider{m: map[string][]byte{}} }
 
-func (p *memProvider) ListFiles(path string) ([]storage.FileInfo, error) {
+func (p *memProvider) ListFiles(_ context.Context, path string) ([]storage.FileInfo, error) {
 	var out []storage.FileInfo
 	for k, v := range p.m {
 		out = append(out, storage.FileInfo{Name: k, Size: int64(len(v)), Enabled: true})
 	}
 	return out, nil
 }
-func (p *memProvider) GetFile(path string) (io.ReadCloser, error) {
+func (p *memProvider) GetFile(_ context.Context, path string) (io.ReadCloser, error) {
 	b, ok := p.m[path]
 	if !ok {
 		return nil, os.ErrNotExist
 	}
 	return io.NopCloser(strings.NewReader(string(b))), nil
 }
-func (p *memProvider) DeletePath(path string) error { delete(p.m, path); return nil }
-func (p *memProvider) CreateDir(string) error       { return nil }
-func (p *memProvider) CopyToLocal(string, string) error {
+func (p *memProvider) DeletePath(_ context.Context, path string) error {
+	delete(p.m, path)
 	return nil
 }
-func (p *memProvider) WriteFile(path string, r io.Reader) error {
+func (p *memProvider) CreateDir(context.Context, string) error           { return nil }
+func (p *memProvider) CopyToLocal(context.Context, string, string) error { return nil }
+func (p *memProvider) WriteFile(_ context.Context, path string, r io.Reader) error {
 	b, _ := io.ReadAll(r)
 	p.m[path] = b
 	return nil
 }
-func (p *memProvider) DownloadURL(string, time.Duration) (string, error) { return "", nil }
+func (p *memProvider) DownloadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
 
 func TestBackupProvider_WriteListReadDelete(t *testing.T) {
 	p := newMemProvider()
-	if err := p.WriteFile("tickets-20260718-101010.json", strings.NewReader(`{"ok":true}`)); err != nil {
+	if err := p.WriteFile(context.Background(), "tickets-20260718-101010.json", strings.NewReader(`{"ok":true}`)); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	files, _ := p.ListFiles("/")
+	files, _ := p.ListFiles(context.Background(), "/")
 	if len(files) != 1 || files[0].Name != "tickets-20260718-101010.json" {
 		t.Fatalf("ListFiles = %+v, want the one backup", files)
 	}
-	rc, err := p.GetFile("tickets-20260718-101010.json")
+	rc, err := p.GetFile(context.Background(), "tickets-20260718-101010.json")
 	if err != nil {
 		t.Fatalf("GetFile: %v", err)
 	}
@@ -75,10 +78,10 @@ func TestBackupProvider_WriteListReadDelete(t *testing.T) {
 	if string(got) != `{"ok":true}` {
 		t.Errorf("GetFile = %q", got)
 	}
-	if err := p.DeletePath("tickets-20260718-101010.json"); err != nil {
+	if err := p.DeletePath(context.Background(), "tickets-20260718-101010.json"); err != nil {
 		t.Fatalf("DeletePath: %v", err)
 	}
-	if files, _ := p.ListFiles("/"); len(files) != 0 {
+	if files, _ := p.ListFiles(context.Background(), "/"); len(files) != 0 {
 		t.Errorf("backup still present after delete: %+v", files)
 	}
 }

@@ -137,7 +137,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 		log.Printf("ticket-deletion: core storage unavailable, skipping attachment blob cleanup for ticket %d: %v", id, err)
 	} else {
 		for _, k := range storageKeys {
-			if err := prov.DeletePath(k); err != nil {
+			if err := prov.DeletePath(r.Context(), k); err != nil {
 				log.Printf("ticket-deletion: failed to remove attachment blob %s: %v", k, err)
 			}
 		}

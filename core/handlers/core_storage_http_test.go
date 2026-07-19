@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -583,27 +584,33 @@ type fakeProbeProvider struct {
 	deleteCalled int
 }
 
-func (f *fakeProbeProvider) ListFiles(string) ([]storage.FileInfo, error)      { return nil, nil }
-func (f *fakeProbeProvider) CreateDir(string) error                            { return nil }
-func (f *fakeProbeProvider) CopyToLocal(string, string) error                  { return nil }
-func (f *fakeProbeProvider) DownloadURL(string, time.Duration) (string, error) { return "", nil }
-func (f *fakeProbeProvider) WriteFile(string, io.Reader) error                 { return f.writeErr }
+func (f *fakeProbeProvider) ListFiles(context.Context, string) ([]storage.FileInfo, error) {
+	return nil, nil
+}
+func (f *fakeProbeProvider) CreateDir(context.Context, string) error           { return nil }
+func (f *fakeProbeProvider) CopyToLocal(context.Context, string, string) error { return nil }
+func (f *fakeProbeProvider) DownloadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+func (f *fakeProbeProvider) WriteFile(context.Context, string, io.Reader) error {
+	return f.writeErr
+}
 
-func (f *fakeProbeProvider) GetFile(string) (io.ReadCloser, error) {
+func (f *fakeProbeProvider) GetFile(context.Context, string) (io.ReadCloser, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
 	return io.NopCloser(strings.NewReader(f.readBack)), nil
 }
 
-func (f *fakeProbeProvider) DeletePath(string) error {
+func (f *fakeProbeProvider) DeletePath(context.Context, string) error {
 	f.deleteCalled++
 	return f.deleteErr
 }
 
 func TestProbeStorageProvider_Success(t *testing.T) {
 	fp := &fakeProbeProvider{readBack: coreStorageProbePayload}
-	ok, msg := probeStorageProvider(fp)
+	ok, msg := probeStorageProvider(context.Background(), fp)
 	if !ok {
 		t.Fatalf("ok = false, want true (%s)", msg)
 	}
@@ -612,13 +619,15 @@ func TestProbeStorageProvider_Success(t *testing.T) {
 	}
 }
 
-// TestProbeStorageProvider_WriteFailureCleansUpProbe guards Fix 3: a failed
-// WriteFile can leave a truncated probe object behind (LocalProvider.WriteFile
-// is os.Create + io.Copy), so the write-failure path must still attempt
-// cleanup like every other return path.
+// TestProbeStorageProvider_WriteFailureCleansUpProbe guards Fix 3: the
+// write-failure path must attempt cleanup like every other return path,
+// because a backend is not required to leave nothing behind after a failed
+// write. LocalProvider happens to be tidy about it now (it stages and
+// renames); the probe does not get to assume that of the provider it was
+// handed.
 func TestProbeStorageProvider_WriteFailureCleansUpProbe(t *testing.T) {
 	fp := &fakeProbeProvider{writeErr: errors.New("disk full")}
-	ok, msg := probeStorageProvider(fp)
+	ok, msg := probeStorageProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false on write failure (%s)", msg)
 	}
@@ -629,7 +638,7 @@ func TestProbeStorageProvider_WriteFailureCleansUpProbe(t *testing.T) {
 
 func TestProbeStorageProvider_MismatchStillDeletesProbe(t *testing.T) {
 	fp := &fakeProbeProvider{readBack: "not-what-was-written"}
-	ok, msg := probeStorageProvider(fp)
+	ok, msg := probeStorageProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false on mismatch (%s)", msg)
 	}
@@ -640,7 +649,7 @@ func TestProbeStorageProvider_MismatchStillDeletesProbe(t *testing.T) {
 
 func TestProbeStorageProvider_ReadErrorStillDeletesProbe(t *testing.T) {
 	fp := &fakeProbeProvider{getErr: errors.New("boom")}
-	ok, msg := probeStorageProvider(fp)
+	ok, msg := probeStorageProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false on read error (%s)", msg)
 	}
@@ -651,7 +660,7 @@ func TestProbeStorageProvider_ReadErrorStillDeletesProbe(t *testing.T) {
 
 func TestProbeStorageProvider_DeleteFailureAfterMatchReportsFailure(t *testing.T) {
 	fp := &fakeProbeProvider{readBack: coreStorageProbePayload, deleteErr: errors.New("locked")}
-	ok, msg := probeStorageProvider(fp)
+	ok, msg := probeStorageProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false when cleanup delete fails (%s)", msg)
 	}

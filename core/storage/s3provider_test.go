@@ -65,13 +65,13 @@ func TestS3Provider_WriteGetDelete_AppliesPrefix(t *testing.T) {
 	fos := newFakeObjectStore()
 	p := &S3Provider{os: fos, prefix: "library"}
 
-	if err := p.WriteFile("dir/a.txt", strings.NewReader("payload")); err != nil {
+	if err := p.WriteFile(context.Background(), "dir/a.txt", strings.NewReader("payload")); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	if _, ok := fos.m["library/dir/a.txt"]; !ok {
 		t.Fatalf("stored keys = %v, want library/dir/a.txt (prefix applied)", keys(fos.m))
 	}
-	rc, err := p.GetFile("dir/a.txt")
+	rc, err := p.GetFile(context.Background(), "dir/a.txt")
 	if err != nil {
 		t.Fatalf("GetFile: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestS3Provider_WriteGetDelete_AppliesPrefix(t *testing.T) {
 	if string(got) != "payload" {
 		t.Errorf("GetFile = %q, want payload", got)
 	}
-	if err := p.DeletePath("dir/a.txt"); err != nil {
+	if err := p.DeletePath(context.Background(), "dir/a.txt"); err != nil {
 		t.Fatalf("DeletePath: %v", err)
 	}
 	if _, ok := fos.m["library/dir/a.txt"]; ok {
@@ -90,7 +90,7 @@ func TestS3Provider_WriteGetDelete_AppliesPrefix(t *testing.T) {
 
 func TestS3Provider_DownloadURL_ReturnsSignedPrefixedKey(t *testing.T) {
 	p := &S3Provider{os: newFakeObjectStore(), prefix: "library"}
-	url, err := p.DownloadURL("dir/a.txt", time.Minute)
+	url, err := p.DownloadURL(context.Background(), "dir/a.txt", time.Minute)
 	if err != nil {
 		t.Fatalf("DownloadURL: %v", err)
 	}
@@ -102,11 +102,11 @@ func TestS3Provider_DownloadURL_ReturnsSignedPrefixedKey(t *testing.T) {
 func TestS3Provider_ListFiles_SynthesizesImmediateChildren(t *testing.T) {
 	fos := newFakeObjectStore()
 	p := &S3Provider{os: fos, prefix: "library"}
-	_ = p.WriteFile("root.txt", strings.NewReader("r"))
-	_ = p.WriteFile("mods/one.jar", strings.NewReader("j"))
-	_ = p.WriteFile("mods/two.jar", strings.NewReader("j"))
+	_ = p.WriteFile(context.Background(), "root.txt", strings.NewReader("r"))
+	_ = p.WriteFile(context.Background(), "mods/one.jar", strings.NewReader("j"))
+	_ = p.WriteFile(context.Background(), "mods/two.jar", strings.NewReader("j"))
 
-	files, err := p.ListFiles("/")
+	files, err := p.ListFiles(context.Background(), "/")
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestS3Provider_ListFiles_SynthesizesImmediateChildren(t *testing.T) {
 
 func TestS3Provider_CreateDirIsNoop(t *testing.T) {
 	p := &S3Provider{os: newFakeObjectStore(), prefix: "library"}
-	if err := p.CreateDir("anything"); err != nil {
+	if err := p.CreateDir(context.Background(), "anything"); err != nil {
 		t.Errorf("CreateDir = %v, want nil (no-op for object stores)", err)
 	}
 }
@@ -171,17 +171,17 @@ func TestS3Provider_DeletePath_DoesNotDeleteSiblingsWithSharedPrefix(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			fos := newFakeObjectStore()
 			p := &S3Provider{os: fos, prefix: "library"}
-			if err := p.WriteFile("world/level.dat", strings.NewReader("w")); err != nil {
+			if err := p.WriteFile(context.Background(), "world/level.dat", strings.NewReader("w")); err != nil {
 				t.Fatalf("seed world/level.dat: %v", err)
 			}
-			if err := p.WriteFile("world_nether/level.dat", strings.NewReader("n")); err != nil {
+			if err := p.WriteFile(context.Background(), "world_nether/level.dat", strings.NewReader("n")); err != nil {
 				t.Fatalf("seed world_nether/level.dat: %v", err)
 			}
-			if err := p.WriteFile("readme.txt", strings.NewReader("r")); err != nil {
+			if err := p.WriteFile(context.Background(), "readme.txt", strings.NewReader("r")); err != nil {
 				t.Fatalf("seed readme.txt: %v", err)
 			}
 
-			if err := p.DeletePath(tt.deletePath); err != nil {
+			if err := p.DeletePath(context.Background(), tt.deletePath); err != nil {
 				t.Fatalf("DeletePath(%q): %v", tt.deletePath, err)
 			}
 
@@ -224,13 +224,13 @@ func TestS3Provider_CopyToLocal_NonZipDirectory_DoesNotCopySiblingPrefix(t *test
 		"modsBackup/x.jar": "x-content",
 	}
 	for k, v := range seed {
-		if err := p.WriteFile(k, strings.NewReader(v)); err != nil {
+		if err := p.WriteFile(context.Background(), k, strings.NewReader(v)); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
 		}
 	}
 
 	dst := t.TempDir()
-	if err := p.CopyToLocal("mods", dst); err != nil {
+	if err := p.CopyToLocal(context.Background(), "mods", dst); err != nil {
 		t.Fatalf("CopyToLocal: %v", err)
 	}
 

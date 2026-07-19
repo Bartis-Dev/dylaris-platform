@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -395,7 +396,7 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		respond(false, "Could not build provider: "+err.Error())
 		return
 	}
-	ok, msg := probeStorageProvider(prov)
+	ok, msg := probeStorageProvider(r.Context(), prov)
 	if effective.Backend == "path" || effective.Backend == "local" {
 		// newStorageProviderForConfig(effective, "_probe") MkdirAll'd this
 		// exact directory; probeStorageProvider cleans up the object inside
@@ -427,34 +428,35 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 // probe key is deleted on every path, including a write error, a read error,
 // or a read-back/content mismatch, so a broken candidate config never leaves
 // a stray object behind.
-func probeStorageProvider(prov storage.StorageProvider) (ok bool, message string) {
+func probeStorageProvider(ctx context.Context, prov storage.StorageProvider) (ok bool, message string) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	key := "probe-" + hex.EncodeToString(b) + ".txt"
 
-	if err := prov.WriteFile(key, strings.NewReader(coreStorageProbePayload)); err != nil {
-		// A failed WriteFile can still leave a truncated object behind
-		// (LocalProvider.WriteFile is os.Create + io.Copy, so a mid-copy
-		// failure leaves a partial file), so cleanup here too.
-		_ = prov.DeletePath(key)
+	if err := prov.WriteFile(ctx, key, strings.NewReader(coreStorageProbePayload)); err != nil {
+		// LocalProvider no longer leaves a partial object behind on a failed
+		// write (it stages and renames), but the interface does not promise
+		// that of a backend, and DeletePath is idempotent. Clean up on this
+		// path too rather than trusting every implementation to be tidy.
+		_ = prov.DeletePath(ctx, key)
 		return false, "Write failed: " + err.Error()
 	}
-	rc, err := prov.GetFile(key)
+	rc, err := prov.GetFile(ctx, key)
 	if err != nil {
-		_ = prov.DeletePath(key)
+		_ = prov.DeletePath(ctx, key)
 		return false, "Read-back failed: " + err.Error()
 	}
 	got, readErr := io.ReadAll(rc)
 	rc.Close()
 	if readErr != nil {
-		_ = prov.DeletePath(key)
+		_ = prov.DeletePath(ctx, key)
 		return false, "Read-back failed: " + readErr.Error()
 	}
 	if string(got) != coreStorageProbePayload {
-		_ = prov.DeletePath(key)
+		_ = prov.DeletePath(ctx, key)
 		return false, "Read-back mismatch: storage backend is not consistent"
 	}
-	if err := prov.DeletePath(key); err != nil {
+	if err := prov.DeletePath(ctx, key); err != nil {
 		return false, "Cleanup failed: " + err.Error()
 	}
 	return true, "Storage reachable: write, read and delete all succeeded."

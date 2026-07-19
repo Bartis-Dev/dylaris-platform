@@ -2,6 +2,7 @@ package modpack
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,14 @@ const CoreStorageSubPrefix = "modpacks"
 // byte-for-byte identical memory profile. Reshaping ModpackStorageProvider to
 // stream would touch packs_mrpack.go's zip assembly and the SHA1/MD5
 // computation in packs_import.go, and is explicitly out of scope here.
+//
+// On context: every method below passes context.Background() to the underlying
+// StorageProvider, because ModpackStorageProvider has no ctx parameter. The
+// consequence is real, not cosmetic: a modpack read or write against the shared
+// Core storage cannot be cancelled or deadline-bound, so a hung S3 call or a
+// wedged mount blocks the caller for as long as the backend takes. This is a
+// known gap. Closing it means threading ctx through ModpackStorageProvider and
+// its callers, which is a separate change.
 type CoreStorageProvider struct {
 	prov storage.StorageProvider
 }
@@ -45,7 +54,7 @@ func NewCoreStorageProvider(p storage.StorageProvider) *CoreStorageProvider {
 }
 
 func (p *CoreStorageProvider) Put(key string, data []byte) error {
-	if err := p.prov.WriteFile(key, bytes.NewReader(data)); err != nil {
+	if err := p.prov.WriteFile(context.Background(), key, bytes.NewReader(data)); err != nil {
 		return fmt.Errorf("modpack storage: core-storage put %s: %w", key, err)
 	}
 	return nil
@@ -55,7 +64,7 @@ func (p *CoreStorageProvider) Put(key string, data []byte) error {
 // ErrNotFound, because every caller in handlers/packs_*.go branches on
 // ErrNotFound and would otherwise treat a 404 as a 500.
 func (p *CoreStorageProvider) Get(key string) ([]byte, error) {
-	rc, err := p.prov.GetFile(key)
+	rc, err := p.prov.GetFile(context.Background(), key)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrNotFound
@@ -73,7 +82,7 @@ func (p *CoreStorageProvider) Get(key string) ([]byte, error) {
 // Delete is idempotent: LocalProvider.DeletePath is os.RemoveAll (nil on
 // missing) and S3Provider.DeletePath returns nil for a missing key.
 func (p *CoreStorageProvider) Delete(key string) error {
-	if err := p.prov.DeletePath(key); err != nil {
+	if err := p.prov.DeletePath(context.Background(), key); err != nil {
 		return fmt.Errorf("modpack storage: core-storage delete %s: %w", key, err)
 	}
 	return nil
@@ -87,7 +96,7 @@ func (p *CoreStorageProvider) Stat(key string) (int64, bool, error) {
 	if dir == "." || dir == "/" {
 		dir = ""
 	}
-	entries, err := p.prov.ListFiles(dir)
+	entries, err := p.prov.ListFiles(context.Background(), dir)
 	if err != nil {
 		return 0, false, fmt.Errorf("modpack storage: core-storage stat %s: %w", key, err)
 	}

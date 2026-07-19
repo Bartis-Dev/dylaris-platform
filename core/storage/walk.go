@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -38,9 +39,9 @@ var ErrWalkTooDeep = errors.New("storage: directory tree deeper than MaxWalkDept
 //
 // The result is sorted ascending by Key so the copy loop and the manifest are
 // deterministic across runs and backends.
-func WalkProvider(p StorageProvider, root string) ([]WalkedFile, error) {
+func WalkProvider(ctx context.Context, p StorageProvider, root string) ([]WalkedFile, error) {
 	out := []WalkedFile{}
-	if err := walkInto(p, root, "", 0, &out); err != nil {
+	if err := walkInto(ctx, p, root, "", 0, &out); err != nil {
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
@@ -49,11 +50,11 @@ func WalkProvider(p StorageProvider, root string) ([]WalkedFile, error) {
 
 // walkInto lists one level at dir (the provider-relative path) and recurses.
 // rel is the key prefix accumulated relative to the ORIGINAL walk root.
-func walkInto(p StorageProvider, dir, rel string, depth int, out *[]WalkedFile) error {
+func walkInto(ctx context.Context, p StorageProvider, dir, rel string, depth int, out *[]WalkedFile) error {
 	if depth > MaxWalkDepth {
 		return fmt.Errorf("%w (at %q)", ErrWalkTooDeep, dir)
 	}
-	entries, err := p.ListFiles(dir)
+	entries, err := p.ListFiles(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("storage: list %q: %w", dir, err)
 	}
@@ -67,7 +68,7 @@ func walkInto(p StorageProvider, dir, rel string, depth int, out *[]WalkedFile) 
 			childRel = rel + "/" + e.Name
 		}
 		if e.IsDir {
-			if err := walkInto(p, childDir, childRel, depth+1, out); err != nil {
+			if err := walkInto(ctx, p, childDir, childRel, depth+1, out); err != nil {
 				return err
 			}
 			continue

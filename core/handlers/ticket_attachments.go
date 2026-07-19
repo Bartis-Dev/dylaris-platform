@@ -487,7 +487,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	// keeps per-ticket pruning trivial when the ticket gets hard-deleted.
 	attachID := randomAttachmentID()
 	storageKey := fmt.Sprintf("tickets/%d/%s-%s", t.ID, attachID, filename)
-	if err := prov.WriteFile(storageKey, body); err != nil {
+	if err := prov.WriteFile(r.Context(), storageKey, body); err != nil {
 		sendJSONError(w, "Failed to store file", http.StatusInternalServerError)
 		return
 	}
@@ -513,7 +513,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	insertedID, err := h.state.Store.AddTicketAttachment(a)
 	if err != nil {
 		// Best-effort cleanup if the DB rejected after the file landed.
-		_ = prov.DeletePath(storageKey)
+		_ = prov.DeletePath(r.Context(), storageKey)
 		sendJSONError(w, "Failed to persist metadata", http.StatusInternalServerError)
 		return
 	}
@@ -605,7 +605,7 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	// nosniff / exact Content-Length / Content-Disposition enforcement below.
 	// Attachments always stream through Core so those headers are guaranteed,
 	// at the cost of not offloading the transfer to the object store.
-	rc, err := prov.GetFile(a.StorageKey)
+	rc, err := prov.GetFile(r.Context(), a.StorageKey)
 	if err != nil {
 		sendJSONError(w, "File missing on storage", http.StatusGone)
 		return
@@ -658,7 +658,7 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 	if prov, perr := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments); perr != nil {
 		log.Printf("ticket-attachments: core storage unavailable, skipping blob cleanup for attachment %d (%s): %v", aid, a.StorageKey, perr)
 	} else {
-		_ = prov.DeletePath(a.StorageKey)
+		_ = prov.DeletePath(r.Context(), a.StorageKey)
 	}
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,

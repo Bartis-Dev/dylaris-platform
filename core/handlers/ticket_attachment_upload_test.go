@@ -386,7 +386,7 @@ func TestUploadAttachment_ByteIntegrity(t *testing.T) {
 	storageKey := fs.attachments[0].StorageKey
 
 	prov := &storage.LocalProvider{BasePath: filepath.Join(dir, CoreStoragePrefixAttachments)}
-	rc, err := prov.GetFile(storageKey)
+	rc, err := prov.GetFile(context.Background(), storageKey)
 	if err != nil {
 		t.Fatalf("GetFile(%q): %v", storageKey, err)
 	}

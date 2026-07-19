@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -88,10 +89,10 @@ func TestBuildTargetStorageProvider_BuildsAWorkingUnsavedPathProvider(t *testing
 	if err != nil {
 		t.Fatalf("buildTargetStorageProvider: %v", err)
 	}
-	if err := prov.WriteFile("a.jar", strings.NewReader("hello")); err != nil {
+	if err := prov.WriteFile(context.Background(), "a.jar", strings.NewReader("hello")); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	rc, err := prov.GetFile("a.jar")
+	rc, err := prov.GetFile(context.Background(), "a.jar")
 	if err != nil {
 		t.Fatalf("GetFile: %v", err)
 	}
