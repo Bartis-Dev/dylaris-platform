@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
@@ -52,3 +53,11 @@ type Storage interface {
 	// return ("", nil).
 	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
+
+// ErrUploadURLUnsupported is returned by backends that cannot presign an
+// upload. Callers MUST already have gated on Provider()=="s3" before asking:
+// services/node_storage_access.go:51 and services/migration_orchestrator.go:658
+// both do. LocalStorage and NodeLocalStorage keep their existing ("", nil)
+// returns - that IS their documented contract and changing it would alter
+// behavior outside this workstream's scope.
+var ErrUploadURLUnsupported = errors.New("backup storage: presigned upload not supported for this backend")
