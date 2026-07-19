@@ -823,10 +823,14 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 	cases := []struct {
 		name string
 		// setup mutates the settings the resolver reads.
-		setup      func(fs *storageMigrationFakeStore)
-		sourceID   string
-		targetID   string
-		wantRefuse bool
+		setup    func(fs *storageMigrationFakeStore)
+		sourceID string
+		targetID string
+		// wantErr is the sentinel the pair must be refused with, or nil when the
+		// pair is legitimate. The two sentinels describe different failures, so
+		// asserting the specific one keeps a containment refusal from passing as
+		// an equality refusal.
+		wantErr error
 	}{
 		{
 			// THE case this check exists for, and the mutation that pins it:
@@ -836,9 +840,9 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 			setup: func(fs *storageMigrationFakeStore) {
 				fs.kv["modpack_storage_provider"] = "core-storage"
 			},
-			sourceID:   "modpacks",
-			targetID:   ModpacksCoreStorageDataSetID,
-			wantRefuse: true,
+			sourceID: "modpacks",
+			targetID: ModpacksCoreStorageDataSetID,
+			wantErr:  ErrTargetSameLocation,
 		},
 		{
 			// The mutation control for the row above: the SAME pair on a local
@@ -895,9 +899,9 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 					{ID: 2, Name: "Secondary", Provider: "core-storage"},
 				}
 			},
-			sourceID:   "server-backups:1",
-			targetID:   "server-backups:2",
-			wantRefuse: true,
+			sourceID: "server-backups:1",
+			targetID: "server-backups:2",
+			wantErr:  ErrTargetSameLocation,
 		},
 		{
 			// One side determinable, one not: still not proof of equality.
@@ -912,23 +916,45 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 			targetID: "server-backups:2",
 		},
 		{
-			// CONTAINMENT, not equality. library lives INSIDE core-storage; the
-			// two are different roots. That is a different failure mode with
-			// different handling, and folding it in here would be over-refusal.
-			name:     "PASS library to core-storage (containment, not equality)",
+			// CONTAINMENT, refused with its own sentinel. Library keys are
+			// relative to library/, so copying them to the storage ROOT rebases
+			// every one of them into the live namespace beside modpacks/ and
+			// server-backups/. MkdirLibraryHandler lets an operator create a
+			// library folder called "modpacks", and copyOne overwrites on a
+			// checksum mismatch, so the collision destroys a live object.
+			name:     "REFUSE library to core-storage (library is stored inside it)",
 			sourceID: "library",
 			targetID: CoreStorageDataSetID,
+			wantErr:  ErrTargetNestedLocation,
 		},
 		{
-			name:     "PASS core-storage to modpacks@core-storage (containment, not equality)",
+			// The same nesting the other way round: the outer data set's keys
+			// get rebased INTO the inner one's live namespace.
+			name:     "REFUSE core-storage to modpacks@core-storage (modpacks is stored inside it)",
 			sourceID: CoreStorageDataSetID,
 			targetID: ModpacksCoreStorageDataSetID,
+			wantErr:  ErrTargetNestedLocation,
 		},
 		{
 			// Two sibling namespaces under one config are two directories.
 			name:     "PASS library to ticket-attachments",
 			sourceID: "library",
 			targetID: "ticket-attachments",
+		},
+		{
+			// The over-refusal guard for the containment rule. The target is the
+			// storage ROOT, whose empty sub-prefix nests everything - but only on
+			// a SHARED root. With the modpack backend on a local path of its own,
+			// these are two unrelated trees and the migration is legitimate, so
+			// the sub-prefix comparison must never be reached.
+			name: "PASS modpacks to core-storage when the modpack backend is a separate local root",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.kv["modpack_storage_provider"] = "local"
+				paths, _ := json.Marshal([]string{localModpackRoot})
+				fs.kv["modpack_storage_paths"] = string(paths)
+			},
+			sourceID: "modpacks",
+			targetID: CoreStorageDataSetID,
 		},
 		{
 			// An unknown id is not location-determinable either.
@@ -948,9 +974,9 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 			res := NewStorageDataSetResolver(&AppState{Store: fs})
 
 			err := res.EnsureDistinctDataSetLocations(context.Background(), c.sourceID, c.targetID)
-			if c.wantRefuse {
-				if !errors.Is(err, ErrTargetSameLocation) {
-					t.Fatalf("EnsureDistinctDataSetLocations(%q, %q) err = %v, want ErrTargetSameLocation", c.sourceID, c.targetID, err)
+			if c.wantErr != nil {
+				if !errors.Is(err, c.wantErr) {
+					t.Fatalf("EnsureDistinctDataSetLocations(%q, %q) err = %v, want %v", c.sourceID, c.targetID, err, c.wantErr)
 				}
 				for _, want := range []string{c.sourceID, c.targetID} {
 					if !strings.Contains(err.Error(), want) {
@@ -1085,5 +1111,36 @@ func TestModpackBackendLabel_SanitizesAHostileEndpoint(t *testing.T) {
 
 	if label := res.modpackBackendLabel(); strings.Contains(label, secret) {
 		t.Fatalf("modpack backend label %q leaked the credential", label)
+	}
+}
+
+// TestSubPrefixContains pins the nesting predicate the containment refusal is
+// built on. Equality must return false: that is the same-location case, and
+// letting it answer true here would replace a precise refusal message with a
+// vaguer one. The match is segment-aware so a sibling whose name merely starts
+// with another data set's name is not read as living inside it.
+func TestSubPrefixContains(t *testing.T) {
+	cases := []struct {
+		name  string
+		outer string
+		inner string
+		want  bool
+	}{
+		{"the root contains every data set", "", "library", true},
+		{"the root contains a nested data set", "", "modpacks", true},
+		{"a data set does not contain the root", "library", "", false},
+		{"equality is not containment", "library", "library", false},
+		{"the root is not nested in itself", "", "", false},
+		{"siblings do not contain each other", "library", "modpacks", false},
+		{"a name prefix is not containment", "modpacks", "modpacks-archive", false},
+		{"a real nested path is containment", "modpacks", "modpacks/vanilla", true},
+		{"surrounding slashes do not change the answer", "/library/", "library", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := subPrefixContains(c.outer, c.inner); got != c.want {
+				t.Errorf("subPrefixContains(%q, %q) = %v, want %v", c.outer, c.inner, got, c.want)
+			}
+		})
 	}
 }

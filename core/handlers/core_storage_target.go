@@ -29,6 +29,13 @@ import (
 // same physical location as its source.
 var ErrTargetSameLocation = errors.New("core storage: the target resolves to the same location as the source")
 
+// ErrTargetNestedLocation is returned when one side of a migration is stored
+// INSIDE the other on a shared root. Kept separate from ErrTargetSameLocation
+// because the two fail differently: equality rewrites objects onto themselves,
+// while containment rebases keys into the other data set's live namespace,
+// where a name collision overwrites a live object.
+var ErrTargetNestedLocation = errors.New("core storage: one data set is stored inside the other")
+
 // coreStorageConfigFromTarget converts the transport shape (declared in
 // services, because services cannot import handlers) into the handlers shape.
 // This is the ONLY conversion point between the two, so the field mapping

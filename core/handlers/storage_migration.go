@@ -473,13 +473,26 @@ func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetL
 // path plus os.SameFile, so a symlink, junction or bind-mount alias is caught;
 // trimmed endpoint + bucket + effective prefix for s3) - and never labels.
 //
-// What it deliberately does NOT refuse:
-//   - a pair where either side is not location-determinable. Inequality is not
-//     proof, and refusing on unknown would kill server-backups:a ->
-//     server-backups:b.
-//   - CONTAINMENT. library -> core-storage and core-storage ->
-//     modpacks@core-storage are nesting, not equality: a different failure mode
-//     with different handling, and folding it in here would be over-refusal.
+// It refuses two shapes of overlap, with separate messages because they fail
+// differently:
+//
+//	EQUALITY - the pair is one location under two names. The copy rewrites every
+//	object onto itself and the verification compares that location against its
+//	own manifest.
+//
+//	CONTAINMENT - one side nests inside the other on the same root, e.g.
+//	library -> core-storage (library/ lives inside the storage root) or
+//	core-storage -> modpacks@core-storage. Data-set keys are relative to their
+//	own sub-prefix, so copying across a nesting boundary rebases them into the
+//	OTHER data set's live namespace, and copyOne overwrites on a checksum
+//	mismatch. MkdirLibraryHandler lets an operator create a library folder
+//	called "modpacks", which is all it takes to overwrite live modpack objects.
+//	This is not over-refusal: a nested pair is never a meaningful migration,
+//	because the contained side is already stored inside the containing one.
+//
+// What it deliberately does NOT refuse: a pair where either side is not
+// location-determinable. Inequality is not proof, and refusing on unknown would
+// kill server-backups:a -> server-backups:b.
 func (r *StorageDataSetResolver) EnsureDistinctDataSetLocations(_ context.Context, sourceID, targetID string) error {
 	src, srcOK := r.dataSetLocation(sourceID)
 	tgt, tgtOK := r.dataSetLocation(targetID)
@@ -494,7 +507,47 @@ func (r *StorageDataSetResolver) EnsureDistinctDataSetLocations(_ context.Contex
 		return fmt.Errorf("%w: data sets %q and %q are different names for one physical location, so copying between them would rewrite every object onto itself and the verification would compare that location against its own manifest; pick a target that lives somewhere else",
 			ErrTargetSameLocation, sourceID, targetID)
 	}
+
+	// Containment is only possible on a shared ROOT, so the sub-prefixes are
+	// compared only once the roots are known to match. Passing "" here asks
+	// sameCoreStorageLocation the root-level question with the same
+	// symlink/bind-mount-aware comparator used above.
+	sameRoot, err := sameCoreStorageLocation(src.cfg, tgt.cfg, "", "")
+	if err != nil {
+		return err
+	}
+	if !sameRoot {
+		return nil
+	}
+	if subPrefixContains(tgt.subPrefix, src.subPrefix) {
+		return fmt.Errorf("%w: data set %q is stored INSIDE %q, so copying it there would rebase its keys into the other data set's live namespace and overwrite any object whose name collides; there is nothing to move, the objects are already there",
+			ErrTargetNestedLocation, sourceID, targetID)
+	}
+	if subPrefixContains(src.subPrefix, tgt.subPrefix) {
+		return fmt.Errorf("%w: data set %q is stored INSIDE %q, so copying the outer one into it would rebase every key into the inner data set's live namespace and overwrite any object whose name collides",
+			ErrTargetNestedLocation, targetID, sourceID)
+	}
 	return nil
+}
+
+// subPrefixContains reports whether outer strictly nests inner: every object
+// stored under inner also sits inside outer. The empty sub-prefix is the
+// storage ROOT and therefore contains every other data set.
+//
+// Equality returns false on purpose. That is the same-location case, which the
+// caller has already refused with a message describing that failure instead.
+// The comparison is segment-aware so a future sub-prefix "modpacks-archive" is
+// not read as living inside "modpacks".
+func subPrefixContains(outer, inner string) bool {
+	outer = strings.Trim(outer, "/")
+	inner = strings.Trim(inner, "/")
+	if outer == inner {
+		return false
+	}
+	if outer == "" {
+		return true
+	}
+	return strings.HasPrefix(inner, outer+"/")
 }
 
 // ResolveTarget builds the target DataSet from an AD-HOC storage config, i.e.
