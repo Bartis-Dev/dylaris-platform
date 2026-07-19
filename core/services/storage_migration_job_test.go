@@ -271,8 +271,29 @@ func TestStorageMigrationRequest_Validate(t *testing.T) {
 		{"migrate with bad verify mode", StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "library", VerifyMode: "partial"}, true},
 		{"verify without manifest id", StorageMigrationRequest{Kind: StorageJobVerify, DataSet: "library", VerifyMode: "full"}, true},
 		// Safety invariant 2, enforced at the API boundary and not only in the UI.
-		{"delete source under a sample verify", StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "library", VerifyMode: "sample", DeleteSource: true}, true},
-		{"delete source under a full verify", StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "library", VerifyMode: "full", DeleteSource: true}, false},
+		{
+			"delete source under a sample verify",
+			StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "sample", DeleteSource: true,
+				TargetConfig: &StorageTargetConfig{Backend: "path", Path: "/mnt/new", PathConfirmed: true}},
+			true,
+		},
+		{
+			"delete source under a full verify",
+			StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full", DeleteSource: true,
+				TargetConfig: &StorageTargetConfig{Backend: "path", Path: "/mnt/new", PathConfirmed: true}},
+			false,
+		},
+		{
+			// Only the targetConfig form lets the engine repoint the active
+			// config, and only a settled config can authorize a delete. With a
+			// targetDataSet target the operator repoints the consuming
+			// subsystem afterwards, so a delete here would run BEFORE that
+			// repoint and orphan live references.
+			"delete source with a target DATA SET rather than a target config",
+			StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "ticket-attachments",
+				VerifyMode: "full", DeleteSource: true},
+			true,
+		},
 		// deleteSource is meaningless without a copy phase.
 		{"delete source on a manifest job", StorageMigrationRequest{Kind: StorageJobManifest, DataSet: "library", DeleteSource: true}, true},
 
@@ -427,17 +448,24 @@ func TestStorageMigration_MigrateCopiesVerifiesAndLeavesTheSourceAlone(t *testin
 }
 
 func TestStorageMigration_DeleteSourceRunsOnlyAfterAPassingFullVerify(t *testing.T) {
+	// Deleting the source is only ever reachable through the targetConfig form,
+	// because only that form lets the engine repoint the active config, and only
+	// a settled config authorizes a delete (Validate refuses the targetDataSet +
+	// deleteSource shape outright).
 	rdb := newStorageMigrationTestRedis(t)
 	src := newSMDataSet("library", "Library (source)")
 	src.put("a.jar", "aaa")
-	target := newSMDataSet("library-target", "Library (target)")
-	svc := NewStorageMigrationService(rdb, newSMStore(), &smResolver{
-		sets:   map[string]*smDataSet{"library": src, "library-target": target},
-		labels: map[string]string{"library": "path:/old", "library-target": "path:/new"},
-	})
+	target := newSMDataSet("library", "Library (ad-hoc target)")
+	res := &smResolver{
+		sets:       map[string]*smDataSet{"library": src},
+		labels:     map[string]string{"library": "path:/old"},
+		adHoc:      target,
+		adHocLabel: "path:/new",
+	}
+	svc := NewStorageMigrationService(rdb, newSMStore(), res)
 
 	if _, err := svc.Start(context.Background(), StorageMigrationRequest{
-		Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "library-target",
+		Kind: StorageJobMigrate, DataSet: "library", TargetConfig: adHocTargetConfig(),
 		VerifyMode: "full", DeleteSource: true,
 	}, "admin-uuid", "root"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -447,16 +475,19 @@ func TestStorageMigration_DeleteSourceRunsOnlyAfterAPassingFullVerify(t *testing
 	if done.Phase != StoragePhaseDone {
 		t.Fatalf("phase = %q (error %q), want done", done.Phase, done.Error)
 	}
+	if done.Verify == nil || !done.Verify.OK || done.Verify.Mode != storagemigrate.VerifyModeFull {
+		t.Fatalf("verify = %+v, want a passing FULL report: nothing else may authorize the delete", done.Verify)
+	}
 	if len(src.snapshot()) != 0 {
 		t.Errorf("source = %v, want it emptied after a passing full verify + opt-in", src.snapshot())
 	}
 	if len(target.snapshot()) != 1 {
 		t.Errorf("target = %v, want the migrated object", target.snapshot())
 	}
-	// A data-set-to-data-set migrate has no Core-managed config to switch, so
-	// nothing was switched and the flag stays honest.
-	if done.ConfigSwitched {
-		t.Error("ConfigSwitched = true for a data-set target; there is no Core-managed config for that pairing")
+	// The delete is gated on a settled config, so a run that reached the delete
+	// must have switched first.
+	if !done.ConfigSwitched {
+		t.Error("ConfigSwitched = false on a run that deleted the source; the delete may only follow a successful switch")
 	}
 }
 
@@ -669,6 +700,15 @@ func TestStorageMigration_CancelUnwindsToCancelled(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		src.put(fmt.Sprintf("f%02d.jar", i), strings.Repeat("x", i+1))
 	}
+	// Hold the job inside manifesting, on its very first object read, until the
+	// cancel has been recorded. Without this the 20 tiny in-memory objects race
+	// the Cancel call to the finish line and the assertion below would accept a
+	// runner that ignores cancellation entirely.
+	src.block = make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(src.block) }) }
+	t.Cleanup(release)
+
 	svc := NewStorageMigrationService(rdb, newSMStore(), &smResolver{
 		sets:   map[string]*smDataSet{"library": src},
 		labels: map[string]string{"library": "path:/x"},
@@ -679,17 +719,78 @@ func TestStorageMigration_CancelUnwindsToCancelled(t *testing.T) {
 	}, "admin", "root"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	waitForPhase(t, svc, StoragePhaseManifesting)
 	if err := svc.Cancel(context.Background()); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
+	release() // the cancel is now durable; let the run reach its next object boundary
 
 	done := waitForPhase(t, svc, StoragePhaseCancelled, StoragePhaseDone, StoragePhaseFailed)
-	if done.Phase != StoragePhaseCancelled && done.Phase != StoragePhaseDone {
-		t.Fatalf("phase = %q, want cancelled (or done if it beat the cancel)", done.Phase)
+	if done.Phase != StoragePhaseCancelled {
+		t.Fatalf("phase = %q (error %q), want cancelled: the job was pinned inside manifesting until the cancel was recorded, so it cannot have beaten it", done.Phase, done.Error)
 	}
-	// The source is untouched either way - manifesting only reads.
+	// The source is untouched - manifesting only reads.
 	if len(src.snapshot()) != 20 {
 		t.Errorf("source lost objects during a cancelled run: %d left, want 20", len(src.snapshot()))
+	}
+}
+
+func TestStorageMigration_CancelIsRefusedInTheNonCancellablePhases(t *testing.T) {
+	// switching_config and deleting_source are past the point where unwinding is
+	// safe: a half-applied switch, like a half-cancelled delete, is strictly
+	// worse than a completed one. Cancel must refuse them AND must not leave the
+	// flag behind, or the runner would act on it at its next boundary anyway.
+	cases := []struct {
+		phase       StorageMigrationPhase
+		wantRefused bool
+	}{
+		{StoragePhaseSwitchingConfig, true},
+		{StoragePhaseDeleting, true},
+		// Positive controls: the cancellable phases must still be cancellable,
+		// so a blanket refusal cannot pass this test.
+		{StoragePhaseManifesting, false},
+		{StoragePhaseCopying, false},
+	}
+	for _, c := range cases {
+		t.Run(string(c.phase), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := newStorageMigrationTestRedis(t)
+			svc := NewStorageMigrationService(rdb, newSMStore(), &smResolver{sets: map[string]*smDataSet{}})
+
+			b, _ := json.Marshal(&StorageMigrationJob{
+				ID: "job-1", Kind: StorageJobMigrate, Phase: c.phase, DataSet: "library",
+				StartedAt: time.Now(), UpdatedAt: time.Now(),
+			})
+			if err := rdb.Set(ctx, storageMigrationJobKey, b, storageJobTTL).Err(); err != nil {
+				t.Fatalf("seed job: %v", err)
+			}
+
+			err := svc.Cancel(ctx)
+			flag, flagErr := rdb.Get(ctx, storageMigrationCancelKey).Result()
+
+			if c.wantRefused {
+				if err == nil {
+					t.Fatalf("Cancel in %q returned nil; that phase is past the point of no return", c.phase)
+				}
+				if flagErr != redis.Nil {
+					t.Fatalf("Cancel in %q was refused but left the cancel flag %q behind (err %v); the runner would act on it at its next boundary", c.phase, flag, flagErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Cancel in %q err = %v, want it accepted", c.phase, err)
+			}
+			if flag != "job-1" {
+				t.Fatalf("cancel flag = %q (err %v), want the job id recorded", flag, flagErr)
+			}
+			ttl, terr := rdb.TTL(ctx, storageMigrationCancelKey).Result()
+			if terr != nil {
+				t.Fatalf("TTL: %v", terr)
+			}
+			if ttl <= storageMigrationLockTTL {
+				t.Errorf("cancel flag TTL = %s, want longer than the lock TTL %s: the heartbeat refreshes the lock but not this key, so a cancel issued during a long single-object copy must not expire before the next boundary", ttl, storageMigrationLockTTL)
+			}
+		})
 	}
 }
 

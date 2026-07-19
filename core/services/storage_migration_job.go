@@ -243,6 +243,15 @@ func (r StorageMigrationRequest) Validate() error {
 			// not check every object, so it can never authorize a delete.
 			return errors.New("deleteSource requires verifyMode \"full\": a sampled verification cannot authorize deleting the source")
 		}
+		if r.DeleteSource && !hasCfg {
+			// The engine can only settle the active config when it is the thing
+			// doing the repointing, which is the targetConfig form. For a
+			// data-set-to-data-set pairing the operator repoints the consuming
+			// subsystem afterwards, so a delete here would run BEFORE that
+			// repoint and orphan live references. The operator migrates,
+			// verifies, repoints, and then removes the old storage themselves.
+			return errors.New("deleteSource requires targetConfig: with a targetDataSet target nothing repoints the consuming subsystem, so deleting the source here would orphan live references - migrate, verify, repoint, then remove the old storage yourself")
+		}
 		return nil
 	default:
 		return fmt.Errorf("unknown kind %q (want migrate, manifest or verify)", r.Kind)
@@ -440,7 +449,13 @@ func (s *StorageMigrationService) Cancel(ctx context.Context) error {
 	if job.Phase == StoragePhaseDeleting {
 		return errors.New("the delete-source phase cannot be cancelled; it is already the point of no return")
 	}
-	return s.redis.Set(ctx, storageMigrationCancelKey, job.ID, storageMigrationLockTTL).Err()
+	// storageJobTTL, not the lock TTL: the heartbeat refreshes the lock but not
+	// this key, so a lock-length TTL could let a cancel issued during a long
+	// single-object copy expire before the next object boundary is reached -
+	// the operator would see "cancelling" and the job would finish anyway. The
+	// key outliving its job is harmless: the runner deletes it when it exits,
+	// and Start deletes it again before launching the next one.
+	return s.redis.Set(ctx, storageMigrationCancelKey, job.ID, storageJobTTL).Err()
 }
 
 // cancelled reports whether a cancel has been requested for THIS job.
@@ -605,12 +620,14 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 	// --- switching_config ---
 	//
 	// configSettled answers "is it safe to delete the source now?". It is true
-	// when either the active config has actually been repointed at the target,
-	// or there is no Core-managed config for this pairing at all (a
-	// data-set-to-data-set migrate, e.g. server-backups:1 -> server-backups:2,
-	// where the operator repoints the consuming subsystem themselves). It is
-	// what gets handed to AuthorizeSourceDelete, so the delete cannot run ahead
-	// of the switch.
+	// if and ONLY if SwitchConfig actually succeeded and the active config now
+	// points at the target. It is what gets handed to AuthorizeSourceDelete, so
+	// the delete cannot run ahead of the switch.
+	//
+	// It is deliberately NOT set for a data-set-to-data-set migrate. "The
+	// request named a targetDataSet" is not the same claim as "no Core-managed
+	// config points at this source", and nothing here can check the second one;
+	// Validate refuses deleteSource for that shape instead.
 	configSettled := false
 	if req.Kind == StorageJobMigrate {
 		if serr := storagemigrate.AuthorizeConfigSwitch(&report); serr != nil {
@@ -637,10 +654,10 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 				j.appendLog("Active config switched to the target. The system now reads from the target.")
 			})
 		} else {
-			// No Core-managed config exists for a data-set-to-data-set pairing.
-			// ConfigSwitched stays false because nothing was switched; say so
-			// rather than implying the engine repointed something.
-			configSettled = true
+			// A data-set-to-data-set pairing: the engine has no config to
+			// repoint. ConfigSwitched and configSettled both stay false because
+			// nothing was switched; say so rather than implying the engine
+			// repointed something.
 			s.update(func(j *StorageMigrationJob) {
 				j.appendLog("No Core-managed config exists for this source/target pairing, so nothing was switched. Repoint the consuming subsystem at the target yourself.")
 			})
