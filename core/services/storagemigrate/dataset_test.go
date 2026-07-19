@@ -25,6 +25,13 @@ type memDataSet struct {
 	objects  map[string][]byte
 	openErr  map[string]error
 	writeErr map[string]error
+	// partialWriteN lets a test simulate a write that fails PARTWAY through:
+	// when writeErr[key] is also set, Write copies exactly that many bytes
+	// from the reader into the target before returning the error, leaving a
+	// genuinely truncated object behind - neither "no object" nor "the whole
+	// object". Absent (or no entry for key), Write behaves exactly as before:
+	// this field is inert for every test that does not set it.
+	partialWriteN map[string]int
 	// deleted records every Delete call, in order, so a test can prove the
 	// source was never mutated.
 	deleted []string
@@ -32,11 +39,12 @@ type memDataSet struct {
 
 func newMemDataSet(id, label string) *memDataSet {
 	return &memDataSet{
-		id:       id,
-		label:    label,
-		objects:  map[string][]byte{},
-		openErr:  map[string]error{},
-		writeErr: map[string]error{},
+		id:            id,
+		label:         label,
+		objects:       map[string][]byte{},
+		openErr:       map[string]error{},
+		writeErr:      map[string]error{},
+		partialWriteN: map[string]int{},
 	}
 }
 
@@ -85,14 +93,27 @@ func (m *memDataSet) Open(_ context.Context, key string) (io.ReadCloser, error) 
 
 func (m *memDataSet) Write(_ context.Context, key string, r io.Reader, _ int64) error {
 	m.mu.Lock()
-	if err := m.writeErr[key]; err != nil {
+	err := m.writeErr[key]
+	n, wantPartial := m.partialWriteN[key]
+	m.mu.Unlock()
+
+	if err != nil && wantPartial {
+		// Simulate a write that crashes/errors PARTWAY through: n bytes land
+		// on the target before the failure. This is the case a later resume
+		// run must catch by checksum, never by existence alone.
+		buf := make([]byte, n)
+		read, _ := io.ReadFull(r, buf)
+		m.mu.Lock()
+		m.objects[key] = append([]byte(nil), buf[:read]...)
 		m.mu.Unlock()
 		return err
 	}
-	m.mu.Unlock()
-	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
+	}
+	b, rerr := io.ReadAll(r)
+	if rerr != nil {
+		return rerr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -105,19 +105,27 @@ func TestCopyAll_TargetOpenFailureThatIsNotMissingFailsTheJob(t *testing.T) {
 	entries := manifestOf(t, src)
 
 	target := newMemDataSet(DataSetLibrary, "target")
-	target.put("a.jar", "aaa")
+	// Deliberately DIFFERENT from the source content ("aaa"): if the loop
+	// wrongly treated the throttle as "absent" and overwrote the target,
+	// identical content would make that overwrite invisible to snapshot().
+	target.put("a.jar", "DO-NOT-OVERWRITE")
 	throttled := errors.New("api error SlowDown")
 	target.openErr["a.jar"] = throttled
 
 	_, err := CopyAll(ctx, src, target, entries, CopyOptions{})
 	if err == nil {
-		t.Fatal("CopyAll err = nil, want the target-open failure to fail the object")
+		t.Error("CopyAll err = nil, want the target-open failure to fail the object")
 	}
 	if !errors.Is(err, throttled) {
-		t.Fatalf("CopyAll err = %v, want it to wrap %v", err, throttled)
+		t.Errorf("CopyAll err = %v, want it to wrap %v", err, throttled)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		t.Fatal("a throttle was reported as a missing object")
+		t.Error("a throttle was reported as a missing object")
+	}
+	// The rule is "must NOT write", not merely "returns an error": prove the
+	// target was never touched.
+	if got := target.snapshot()["a.jar"]; got != "DO-NOT-OVERWRITE" {
+		t.Errorf("target a.jar = %q after the failed run, want it byte-for-byte UNCHANGED", got)
 	}
 }
 
@@ -230,6 +238,45 @@ func TestCopyAll_ResumesAfterAPartialFailure(t *testing.T) {
 	got := target.snapshot()
 	if got["a.jar"] != "aaa" || got["b.jar"] != "bbb" || got["c.jar"] != "ccc" {
 		t.Errorf("target after resume = %v, want all three objects", got)
+	}
+}
+
+func TestCopyAll_ResumesOverATruncatedTargetObject(t *testing.T) {
+	// The case that actually matters for the later source-delete step: a
+	// crashed/interrupted write can leave a PARTIAL object on the target -
+	// not "no object", not "the whole object". A resume run must detect that
+	// via checksum mismatch (same as any other corrupt target) and re-copy
+	// it, never skip it because a key with that name merely exists.
+	ctx := context.Background()
+	src := newMemDataSet(DataSetLibrary, "source")
+	src.put("a.jar", "abcdefghij") // 10 bytes
+	entries := manifestOf(t, src)
+
+	target := newMemDataSet(DataSetLibrary, "target")
+	target.writeErr["a.jar"] = errors.New("connection reset")
+	target.partialWriteN["a.jar"] = 3 // only 3 of 10 bytes land before the failure
+	if _, err := CopyAll(ctx, src, target, entries, CopyOptions{}); err == nil {
+		t.Fatal("first run err = nil, want the injected mid-write failure")
+	}
+	if got := target.snapshot()["a.jar"]; got != "abc" {
+		t.Fatalf("target after the crashed write = %q, want the truncated prefix %q", got, "abc")
+	}
+
+	// Fix the target and re-run the SAME manifest. The truncated object must
+	// be re-copied, not skipped: its size (3) already disagrees with the
+	// manifest, but the property under test is the checksum path, which is
+	// what actually protects a same-size truncation/corruption too.
+	delete(target.writeErr, "a.jar")
+	delete(target.partialWriteN, "a.jar")
+	res, err := CopyAll(ctx, src, target, entries, CopyOptions{})
+	if err != nil {
+		t.Fatalf("resume run: %v", err)
+	}
+	if res.ObjectsSkipped != 0 || res.ObjectsCopied != 1 {
+		t.Errorf("result = %+v, want 0 skipped / 1 copied (a truncated object must never be skipped)", res)
+	}
+	if got := target.snapshot()["a.jar"]; got != "abcdefghij" {
+		t.Errorf("target after resume = %q, want the full source content %q", got, "abcdefghij")
 	}
 }
 

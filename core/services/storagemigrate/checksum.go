@@ -28,9 +28,11 @@ func Checksum(r io.Reader) (string, int64, error) {
 	return ChecksumInto(io.Discard, r)
 }
 
-// ChecksumInto copies r into w while hashing it, in a single pass. The copy
-// loop uses this so a migrated object is written and verified from the exact
-// same bytes, with no second read of the source.
+// ChecksumInto copies r into w while hashing it (SHA-256), in a single pass.
+// Manifest capture (see manifest.go) uses this when a key carries a
+// pre-existing checksum hint in another algorithm: w is a second hash.Hash
+// (currently always SHA-512), so both digests come from the one read of the
+// source instead of hashing it twice.
 func ChecksumInto(w io.Writer, r io.Reader) (string, int64, error) {
 	h := sha256.New()
 	buf := make([]byte, checksumBufSize)
