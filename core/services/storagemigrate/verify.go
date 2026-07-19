@@ -103,11 +103,13 @@ type StorageVerifyReport struct {
 // A sample-mode report can never return true here, no matter how clean OK
 // looks: sampling only ever hashed the CONTENTS of a bounded subset of the
 // larger objects (see SelectSample), so an OK sample proves less than an OK
-// full run. Every caller that gates a delete - the migration job built in a
-// later task - must call this method rather than re-deriving the rule from
-// OK and Mode itself, so the safety-critical check exists in exactly one
-// place instead of being reimplemented, and possibly gotten wrong, at every
-// call site that ever needs to answer this question.
+// full run. Every caller that gates a delete must reach this method rather
+// than re-deriving the rule from OK and Mode itself, so the safety-critical
+// check exists in exactly one place instead of being reimplemented, and
+// possibly gotten wrong, at every call site that ever needs to answer this
+// question. Reaching it INDIRECTLY satisfies that rule: the migration job
+// calls AuthorizeSourceDelete, which calls this method rather than restating
+// the predicate, so the rule still has exactly one home.
 func (r StorageVerifyReport) AuthorizesSourceDelete() bool {
 	return r.OK && r.Mode == VerifyModeFull
 }

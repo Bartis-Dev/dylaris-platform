@@ -30,16 +30,26 @@ func AuthorizeConfigSwitch(report *StorageVerifyReport) error {
 // SwitchFailureReport is the message a failed switching_config phase reports.
 //
 // This is the ONE outcome where the operator must not be left guessing: the
-// copy succeeded and verified, so the data now exists in BOTH places, and the
-// old config is still the live one. Saying only "switch failed" would invite
-// someone to start deleting. The phrasing names both locations, states that
-// nothing was deleted, and says which config is active.
-func SwitchFailureReport(sourceLabel, targetLabel string) string {
+// copy succeeded, so the data now exists in BOTH places, and the old config is
+// still the live one. Saying only "switch failed" would invite someone to start
+// deleting. The phrasing names both locations, states that nothing was deleted,
+// and says which config is active.
+//
+// verifyMode is taken as an argument rather than assumed, because
+// AuthorizeConfigSwitch deliberately does NOT require VerifyModeFull: a switch
+// is reversible, so a passing SAMPLE verification is enough to reach this
+// phase. A flat "and verified" would therefore overstate what actually ran, on
+// the very message whose job is to stop someone deleting data.
+func SwitchFailureReport(sourceLabel, targetLabel, verifyMode string) string {
+	verified := "a FULL verification passed (every object in the manifest was hashed)"
+	if verifyMode == VerifyModeSample {
+		verified = "a SAMPLE verification passed (presence checked for every object in the manifest, contents hashed for a bounded subset only, so some objects were never content-checked)"
+	}
 	return fmt.Sprintf(
-		"The copy completed and verified, but switching the active config failed. "+
+		"The copy completed and %s, but switching the active config failed. "+
 			"The data now exists in both places: %s (source) and %s (target). "+
 			"Nothing was deleted. The SOURCE config is still active, so the system is "+
 			"serving from %s. Fix the cause and re-run: the copy resumes and skips "+
 			"everything already identical.",
-		sourceLabel, targetLabel, sourceLabel)
+		verified, sourceLabel, targetLabel, sourceLabel)
 }

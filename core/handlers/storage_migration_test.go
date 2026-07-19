@@ -47,6 +47,14 @@ func (f *storageMigrationFakeStore) SetSetting(k, v string) error {
 func (f *storageMigrationFakeStore) ListBackupStorages() ([]models.BackupStorage, error) {
 	return f.storages, nil
 }
+func (f *storageMigrationFakeStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
+	for i := range f.storages {
+		if f.storages[i].ID == id {
+			return &f.storages[i], nil
+		}
+	}
+	return nil, nil
+}
 func (f *storageMigrationFakeStore) ListStorageManifests(dataSet string, limit int) ([]models.StorageManifest, error) {
 	if dataSet == "" {
 		return f.manifests, nil
@@ -789,5 +797,293 @@ func TestStorageMigrationHandler_ListManifests(t *testing.T) {
 	_ = json.Unmarshal(rw.Body.Bytes(), &got)
 	if len(got.Manifests) != 1 || got.Manifests[0].ID != 2 {
 		t.Fatalf("manifests = %+v, want only the library one", got.Manifests)
+	}
+}
+
+// TestStorageDataSetResolver_EnsureDistinctDataSetLocations is the row-to-row
+// same-location refusal.
+//
+// Start used to check only that the two data-set IDS differed as strings, and
+// ensureDistinctCoreStorageLocation ran only on the ad-hoc-TargetConfig path.
+// A pair resolving to ONE physical location was therefore accepted: the copy
+// skipped every object as already identical, the verification compared the
+// location against its own manifest for a trivial 100% PASS, and finishMessage
+// then told the operator "the source was left in place; remove it once you have
+// switched the backend over" - about the same directory.
+//
+// The refusal must be narrow. Over-refusal is what this workstream fought
+// repeatedly, so every legitimate shape below is a positive control that a
+// blanket "different ids, refuse if unsure" rule would fail.
+func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
+	// The local modpack root is deliberately NOT under the Core storage root,
+	// so "modpacks -> modpacks@core-storage" on the local backend is a genuine
+	// move between two distinct places.
+	const localModpackRoot = "/mnt/modpacks-elsewhere"
+
+	cases := []struct {
+		name string
+		// setup mutates the settings the resolver reads.
+		setup      func(fs *storageMigrationFakeStore)
+		sourceID   string
+		targetID   string
+		wantRefuse bool
+	}{
+		{
+			// THE case this check exists for, and the mutation that pins it:
+			// with the modpack backend pointed at Core storage, "modpacks" and
+			// "modpacks@core-storage" are one directory under one config.
+			name: "REFUSE modpacks to modpacks@core-storage when the modpack backend IS core storage",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.kv["modpack_storage_provider"] = "core-storage"
+			},
+			sourceID:   "modpacks",
+			targetID:   ModpacksCoreStorageDataSetID,
+			wantRefuse: true,
+		},
+		{
+			// The mutation control for the row above: the SAME pair on a local
+			// modpack backend is the documented way to move modpacks onto Core
+			// storage. Refusing it would break the feature.
+			name: "PASS modpacks to modpacks@core-storage on a local modpack backend",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.kv["modpack_storage_provider"] = "local"
+				paths, _ := json.Marshal([]string{localModpackRoot})
+				fs.kv["modpack_storage_paths"] = string(paths)
+			},
+			sourceID: "modpacks",
+			targetID: ModpacksCoreStorageDataSetID,
+		},
+		{
+			// Likewise for an s3 modpack backend against a path-backed Core
+			// storage: a path backend and an s3 backend are never one location.
+			name: "PASS modpacks to modpacks@core-storage on an s3 modpack backend",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.kv["modpack_storage_provider"] = "s3"
+				fs.kv["modpack_storage_s3_endpoint"] = "https://s3.example.com"
+				fs.kv["modpack_storage_s3_bucket"] = "modpacks"
+			},
+			sourceID: "modpacks",
+			targetID: ModpacksCoreStorageDataSetID,
+		},
+		{
+			// Neither side is location-determinable from here: a backup row's
+			// location lives in its provider-specific Config. Inequality is not
+			// proof, but refusing on "unknown" would kill this documented flow.
+			name: "PASS server-backups row to server-backups row (not location-determinable)",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.storages = []models.BackupStorage{
+					{ID: 1, Name: "Hetzner", Provider: "s3"},
+					{ID: 2, Name: "Backblaze", Provider: "s3"},
+				}
+			},
+			sourceID: "server-backups:1",
+			targetID: "server-backups:2",
+		},
+		{
+			// The extension the original adjudication missed. A backup row with
+			// provider "core-storage" ALWAYS lands under the same sub-prefix in
+			// the shared Core file storage, whatever its Config says - Open
+			// ignores the Config for that provider. This workstream allowlisted
+			// "core-storage" as a backup provider, so two such rows are trivial
+			// to create, and backupStorageLabel is only "Name (provider)", so
+			// their labels differ by design and no label-based panel warning
+			// can fire.
+			name: "REFUSE core-storage backup row to core-storage backup row",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.storages = []models.BackupStorage{
+					{ID: 1, Name: "Primary", Provider: "core-storage"},
+					{ID: 2, Name: "Secondary", Provider: "core-storage"},
+				}
+			},
+			sourceID:   "server-backups:1",
+			targetID:   "server-backups:2",
+			wantRefuse: true,
+		},
+		{
+			// One side determinable, one not: still not proof of equality.
+			name: "PASS core-storage backup row to s3 backup row",
+			setup: func(fs *storageMigrationFakeStore) {
+				fs.storages = []models.BackupStorage{
+					{ID: 1, Name: "Primary", Provider: "core-storage"},
+					{ID: 2, Name: "Hetzner", Provider: "s3"},
+				}
+			},
+			sourceID: "server-backups:1",
+			targetID: "server-backups:2",
+		},
+		{
+			// CONTAINMENT, not equality. library lives INSIDE core-storage; the
+			// two are different roots. That is a different failure mode with
+			// different handling, and folding it in here would be over-refusal.
+			name:     "PASS library to core-storage (containment, not equality)",
+			sourceID: "library",
+			targetID: CoreStorageDataSetID,
+		},
+		{
+			name:     "PASS core-storage to modpacks@core-storage (containment, not equality)",
+			sourceID: CoreStorageDataSetID,
+			targetID: ModpacksCoreStorageDataSetID,
+		},
+		{
+			// Two sibling namespaces under one config are two directories.
+			name:     "PASS library to ticket-attachments",
+			sourceID: "library",
+			targetID: "ticket-attachments",
+		},
+		{
+			// An unknown id is not location-determinable either.
+			name:     "PASS unknown id",
+			sourceID: "library",
+			targetID: "not-a-data-set",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := newStorageMigrationFakeStore()
+			configuredPathStorage(t, fs)
+			if c.setup != nil {
+				c.setup(fs)
+			}
+			res := NewStorageDataSetResolver(&AppState{Store: fs})
+
+			err := res.EnsureDistinctDataSetLocations(context.Background(), c.sourceID, c.targetID)
+			if c.wantRefuse {
+				if !errors.Is(err, ErrTargetSameLocation) {
+					t.Fatalf("EnsureDistinctDataSetLocations(%q, %q) err = %v, want ErrTargetSameLocation", c.sourceID, c.targetID, err)
+				}
+				for _, want := range []string{c.sourceID, c.targetID} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("refusal %q does not name %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("EnsureDistinctDataSetLocations(%q, %q) err = %v, want nil: over-refusal breaks a documented flow", c.sourceID, c.targetID, err)
+			}
+		})
+	}
+}
+
+// TestStorageDataSetResolver_LocationCheckIsLocationCompleteNotAStringCompare
+// proves the row-to-row check reuses the LOCATION-complete comparator rather
+// than comparing labels or raw path strings. Two different path strings naming
+// ONE directory are exactly the shape a naive comparison misses, and the shape
+// that makes the copy rewrite every object onto itself.
+func TestStorageDataSetResolver_LocationCheckIsLocationCompleteNotAStringCompare(t *testing.T) {
+	root := storageMigrationTestRoot(t, "root")
+	coreModpacks := filepath.ToSlash(filepath.Join(root, CoreStoragePrefixModpacks))
+	if err := os.MkdirAll(coreModpacks, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// A different STRING for the same directory. filepath.Clean collapses it,
+	// which is the comparator's fast path; os.SameFile is what additionally
+	// catches a symlink or bind-mount alias that no string rewrite can.
+	alias := root + "/./" + CoreStoragePrefixModpacks + "/../" + CoreStoragePrefixModpacks
+
+	fs := newStorageMigrationFakeStore()
+	fs.kv[keyCoreStorageBackend] = "path"
+	fs.kv[keyCoreStoragePath] = root
+	fs.kv[keyCoreStoragePathConfirm] = "true"
+	fs.kv["modpack_storage_provider"] = "local"
+	paths, _ := json.Marshal([]string{alias})
+	fs.kv["modpack_storage_paths"] = string(paths)
+	res := NewStorageDataSetResolver(&AppState{Store: fs})
+
+	err := res.EnsureDistinctDataSetLocations(context.Background(), "modpacks", ModpacksCoreStorageDataSetID)
+	if !errors.Is(err, ErrTargetSameLocation) {
+		t.Fatalf("err = %v, want ErrTargetSameLocation: %q and %q are one directory", err, alias, coreModpacks)
+	}
+}
+
+// TestValidateCoreStorageConfig_RejectsCredentialsInTheS3Endpoint closes the
+// live half of the sanitizer finding. validateCoreStorageConfig checked bucket,
+// access key and secret only - it never parsed the endpoint - so
+// "https://AKIA...:secret@minio.internal" was an ACCEPTED config whose
+// credential then flowed into storage_manifests.backend_label (durable, in
+// Postgres), the Redis job record, the panel job log and the manifest CSV.
+func TestValidateCoreStorageConfig_RejectsCredentialsInTheS3Endpoint(t *testing.T) {
+	base := func(endpoint string) CoreStorageConfig {
+		return CoreStorageConfig{
+			Backend: "s3", S3Bucket: "dylaris", S3AccessKey: "k", S3SecretKey: "s",
+			S3Endpoint: endpoint,
+		}
+	}
+	cases := []struct {
+		name       string
+		endpoint   string
+		wantReject bool
+	}{
+		{"credentials in the endpoint", "https://AKIAEXAMPLE:supersecret@minio.internal", true},
+		{"user only, no password", "https://AKIAEXAMPLE@minio.internal", true},
+		// A password containing a space defeats url.Parse, which is why this
+		// fails CLOSED on "@" rather than trusting a clean parse.
+		{"unparseable credentials", "https://user:pass word@minio.internal", true},
+		{"schemeless credentials", "AKIAEXAMPLE:supersecret@minio.internal", true},
+		// Positive controls: the ordinary shapes must still be accepted.
+		{"plain https endpoint", "https://s3.example.com", false},
+		{"endpoint with a port", "http://minio.internal:9000", false},
+		{"empty endpoint (AWS default, region selects the host)", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateCoreStorageConfig(base(c.endpoint))
+			if c.wantReject {
+				if err == nil {
+					t.Fatalf("validateCoreStorageConfig(endpoint=%q) err = nil, want a rejection: this config persists a credential", c.endpoint)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateCoreStorageConfig(endpoint=%q) err = %v, want nil", c.endpoint, err)
+			}
+		})
+	}
+}
+
+// TestCoreStorageBackendLabel_SanitizesAHostileEndpoint is the other half: a
+// config that predates or bypasses the validation above must still not put a
+// credential in a label. coreStorageBackendLabel concatenated the raw endpoint,
+// while SanitizeBackendLabel - the function documented as "the ONE place in the
+// codebase allowed to build that string" - had zero production callers.
+func TestCoreStorageBackendLabel_SanitizesAHostileEndpoint(t *testing.T) {
+	const secret = "supersecretvalue"
+	cases := []struct {
+		name     string
+		endpoint string
+		sub      string
+	}{
+		{"userinfo in a schemed endpoint", "https://AKIAEXAMPLE:" + secret + "@minio.internal", "library"},
+		{"userinfo in a schemeless endpoint", "AKIAEXAMPLE:" + secret + "@minio.internal", "library"},
+		{"unparseable userinfo fails closed", "https://user:" + secret + " x@minio.internal", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			label := coreStorageBackendLabel(CoreStorageConfig{
+				Backend: "s3", S3Endpoint: c.endpoint, S3Bucket: "dylaris",
+				S3AccessKey: "AKIAEXAMPLE", S3SecretKey: secret,
+			}, c.sub)
+			if strings.Contains(label, secret) {
+				t.Fatalf("label %q leaked the credential from endpoint %q", label, c.endpoint)
+			}
+		})
+	}
+}
+
+// TestModpackBackendLabel_SanitizesAHostileEndpoint covers the second live
+// label builder. The modpack s3 endpoint is operator-supplied too and its label
+// reaches the same manifest rows, job records and CSV exports.
+func TestModpackBackendLabel_SanitizesAHostileEndpoint(t *testing.T) {
+	const secret = "modpacksecret"
+	fs := newStorageMigrationFakeStore()
+	configuredPathStorage(t, fs)
+	fs.kv["modpack_storage_provider"] = "s3"
+	fs.kv["modpack_storage_s3_endpoint"] = "https://AKIAEXAMPLE:" + secret + "@minio.internal"
+	fs.kv["modpack_storage_s3_bucket"] = "modpacks"
+	res := NewStorageDataSetResolver(&AppState{Store: fs})
+
+	if label := res.modpackBackendLabel(); strings.Contains(label, secret) {
+		t.Fatalf("modpack backend label %q leaked the credential", label)
 	}
 }

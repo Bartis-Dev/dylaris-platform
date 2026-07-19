@@ -57,7 +57,7 @@ const (
 type StorageJobKind string
 
 const (
-	StorageJobMigrate  StorageJobKind = "migrate"  // manifest -> copy -> verify -> [delete]
+	StorageJobMigrate  StorageJobKind = "migrate"  // manifest -> copy -> verify -> [switch config] -> [delete]
 	StorageJobManifest StorageJobKind = "manifest" // manifest only (manual mode, step 1)
 	StorageJobVerify   StorageJobKind = "verify"   // verify a target against a stored manifest
 )
@@ -309,6 +309,23 @@ type StorageDataSetResolver interface {
 	// which point the engine would have overwritten source objects with
 	// themselves. Returns a credential-free label.
 	ResolveTarget(ctx context.Context, sourceID string, cfg StorageTargetConfig) (storagemigrate.DataSet, string, error)
+	// EnsureDistinctDataSetLocations refuses a source/target DATA-SET PAIR that
+	// resolves to one physical location. Two different ids are not proof of two
+	// different places: several data sets are namespaces inside one configured
+	// backend, and a data set's backend is settings-driven, so an id pair the
+	// panel renders as two rows can be a single directory or bucket prefix.
+	//
+	// It exists because ResolveTarget's refusal covers only the ad-hoc-config
+	// path. Without this, the row-to-row path copies every object onto itself,
+	// verifies the location against its own manifest for a trivial 100% PASS,
+	// and then reports that the source may be removed once the backend is
+	// switched over - which is the same directory.
+	//
+	// It must return nil when either side is not location-determinable:
+	// inequality is not proof, and refusing on "unknown" would kill legitimate
+	// flows (server-backups row to server-backups row). Nesting is not equality
+	// either, so a data set CONTAINED in the other is not refused here.
+	EnsureDistinctDataSetLocations(ctx context.Context, sourceID, targetID string) error
 	// SwitchConfig persists cfg as the ACTIVE config for sourceID, through the
 	// same write path the settings form uses. Called only from the
 	// switching_config phase, only after a passing verification, and it is the
@@ -364,6 +381,18 @@ func (s *StorageMigrationService) Start(ctx context.Context, req StorageMigratio
 			if req.DataSet == req.TargetDataSet {
 				return nil, errors.New("the target is the same data set as the source")
 			}
+			// Different IDS are not different PLACES. Several data sets are
+			// namespaces inside one settings-configured backend, so a pair the
+			// panel shows as two rows can resolve to one directory or bucket
+			// prefix - at which point the copy skips everything as already
+			// identical, the verification compares the location against its own
+			// manifest and passes at 100%, and the finish message tells the
+			// operator to remove the "old" copy. The refusal lands here, at
+			// Start, for the same reason ResolveTarget's does: before a single
+			// object is read.
+			if err := s.resolver.EnsureDistinctDataSetLocations(ctx, req.DataSet, req.TargetDataSet); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if req.Kind == StorageJobVerify {
@@ -408,7 +437,15 @@ func (s *StorageMigrationService) Start(ctx context.Context, req StorageMigratio
 		job.appendLog(fmt.Sprintf("Target: %s.", targetLabel))
 	}
 	if req.Kind == StorageJobMigrate {
-		job.appendLog("Order: copy, verify, switch the active config to the target, then delete the old copy if opted in. The switch happens only after a passing verification, and nothing is deleted before the switch succeeds.")
+		// Scoped to the shape it is true for. Only the targetConfig form has a
+		// config to repoint, and Validate makes deleteSource unrepresentable
+		// without one, so promising a switch and a delete on the row-to-row
+		// path would describe machinery that cannot run on this job.
+		if req.TargetConfig != nil {
+			job.appendLog("Order: copy, verify, switch the active config to the target, then delete the source objects named in the manifest if opted in. The switch happens only after a passing verification, and nothing is deleted before the switch succeeds.")
+		} else {
+			job.appendLog("Order: copy, then verify. This job names another data set as its target, so the engine repoints no config and deletes nothing; repoint the consuming subsystem yourself once the verification has passed.")
+		}
 	}
 	if req.DeleteSource {
 		job.appendLog("The source WILL be deleted, but only after a full verification passes AND the config switch succeeds.")
@@ -507,7 +544,12 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 	if req.Kind == StorageJobMigrate || req.Kind == StorageJobManifest {
 		s.update(func(j *StorageMigrationJob) {
 			j.Phase = StoragePhaseManifesting
-			j.appendLog("Inventorying the source: every object is read once and checksummed.")
+			// "every object the data set LISTS", not "every object": a
+			// modpack-shaped data set enumerates its keys from the database, so
+			// a storage object no row points at is never listed and therefore
+			// never inventoried. The engine cannot see those, so it must not
+			// claim to have read them.
+			j.appendLog("Inventorying the source: every object the data set lists is read once and checksummed. For modpacks that listing comes from the database, so objects in storage that no database row references are not enumerated.")
 		})
 		manifest, entries, err = storagemigrate.CaptureManifest(ctx, src, s.store, storagemigrate.CaptureOptions{
 			BackendLabel: s.sourceLabel(),
@@ -527,7 +569,7 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 			return
 		}
 		if err != nil {
-			s.fail("capture manifest: " + err.Error())
+			s.failSourceIntact("capture manifest: " + err.Error())
 			return
 		}
 		s.update(func(j *StorageMigrationJob) {
@@ -543,20 +585,20 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 	if req.Kind == StorageJobVerify {
 		manifest, err = s.store.GetStorageManifest(req.ManifestID)
 		if err != nil {
-			s.fail("load manifest: " + err.Error())
+			s.failSourceIntact("load manifest: " + err.Error())
 			return
 		}
 		if manifest == nil {
-			s.fail(fmt.Sprintf("manifest #%d does not exist", req.ManifestID))
+			s.failSourceIntact(fmt.Sprintf("manifest #%d does not exist", req.ManifestID))
 			return
 		}
 		if manifest.DataSet != req.DataSet {
-			s.fail(fmt.Sprintf("manifest #%d was captured for data set %q, not %q", req.ManifestID, manifest.DataSet, req.DataSet))
+			s.failSourceIntact(fmt.Sprintf("manifest #%d was captured for data set %q, not %q", req.ManifestID, manifest.DataSet, req.DataSet))
 			return
 		}
 		entries, err = s.store.ListStorageManifestEntries(manifest.ID)
 		if err != nil {
-			s.fail("load manifest entries: " + err.Error())
+			s.failSourceIntact("load manifest entries: " + err.Error())
 			return
 		}
 		s.update(func(j *StorageMigrationJob) {
@@ -594,7 +636,7 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 			return
 		}
 		if cerr != nil {
-			s.fail("copy: " + cerr.Error())
+			s.failSourceIntact("copy: " + cerr.Error())
 			return
 		}
 	}
@@ -603,7 +645,10 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 	s.update(func(j *StorageMigrationJob) {
 		j.Phase = StoragePhaseVerifying
 		j.ObjectsDone, j.BytesDone = 0, 0
-		j.appendLog(fmt.Sprintf("Verifying (%s). Presence is always checked in full; %s.",
+		// Scoped to the manifest, which is what the report actually covers.
+		// "Every object" would over-claim for a modpack-shaped data set, whose
+		// manifest and whose "extra" check both come from the database listing.
+		j.appendLog(fmt.Sprintf("Verifying (%s) against the manifest. Presence is checked for every object the manifest names; %s. Objects the data set does not list - for modpacks, storage objects no database row references - are outside this check.",
 			req.VerifyMode, verifyScopeNote(req.VerifyMode)))
 	})
 	report, verr := storagemigrate.Verify(ctx, target, manifest, entries, req.VerifyMode, storagemigrate.VerifyOptions{
@@ -622,14 +667,16 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 		return
 	}
 	if verr != nil {
-		s.fail("verify: " + verr.Error())
+		s.failSourceIntact("verify: " + verr.Error())
 		return
 	}
 	s.update(func(j *StorageMigrationJob) { j.Verify = &report })
 
 	// Partial failure is failure. There is no "completed with warnings".
 	if !report.OK {
-		s.fail(fmt.Sprintf("verification found %d problem(s); the source was NOT modified", report.ProblemsTotal))
+		// failSourceIntact appends the "source was NOT modified" line, so the
+		// message itself no longer repeats it.
+		s.failSourceIntact(fmt.Sprintf("verification found %d problem(s)", report.ProblemsTotal))
 		return
 	}
 
@@ -647,7 +694,7 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 	configSettled := false
 	if req.Kind == StorageJobMigrate {
 		if serr := storagemigrate.AuthorizeConfigSwitch(&report); serr != nil {
-			s.fail(serr.Error())
+			s.failSourceIntact(serr.Error())
 			return
 		}
 		if req.TargetConfig != nil {
@@ -661,7 +708,11 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 				// places and the OLD config is still live. Say exactly that,
 				// and delete nothing: an operator told only "switch failed"
 				// might start cleaning up the wrong side.
-				s.fail(storagemigrate.SwitchFailureReport(s.sourceLabel(), s.targetLabel()) + " (" + serr.Error() + ")")
+				// Plain fail, not failSourceIntact: SwitchFailureReport already
+				// states that nothing was deleted and which config is live, and
+				// it names the verification's SCOPE rather than claiming a
+				// blanket "verified".
+				s.fail(storagemigrate.SwitchFailureReport(s.sourceLabel(), s.targetLabel(), report.Mode) + " (" + serr.Error() + ")")
 				return
 			}
 			configSettled = true
@@ -688,15 +739,20 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 	// --- deleting_source ---
 	if req.Kind == StorageJobMigrate && req.DeleteSource {
 		if aerr := storagemigrate.AuthorizeSourceDelete(req.DeleteSource, req.VerifyMode, &report, configSettled); aerr != nil {
-			s.fail(aerr.Error())
+			s.failSourceIntact(aerr.Error())
 			return
 		}
 		s.update(func(j *StorageMigrationJob) {
 			j.Phase = StoragePhaseDeleting
 			j.ObjectsDone, j.BytesDone = 0, 0
-			j.appendLog("Verification passed, the config is settled and the delete was opted in. Removing the source objects. This phase is not cancellable.")
+			j.appendLog("Verification passed, the config is settled and the delete was opted in. Removing the objects named in the manifest from the source. This phase is not cancellable.")
 		})
-		if _, derr := storagemigrate.DeleteSource(ctx, src, entries, storagemigrate.DeleteOptions{
+		// The partial result is CAPTURED, not discarded. DeleteSource returns on
+		// the first error with everything before it already gone, so a failure
+		// here is the one failure that happens after the engine destroyed data.
+		// Reporting it through failSourceIntact would tell the operator the
+		// source is good and the target suspect, which is exactly backwards.
+		delRes, derr := storagemigrate.DeleteSource(ctx, src, entries, storagemigrate.DeleteOptions{
 			Log: logLine,
 			Progress: func(done, _, total, bytesDone, bytesTotal int64, key string) {
 				s.update(func(j *StorageMigrationJob) {
@@ -705,8 +761,11 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 					j.CurrentKey = key
 				})
 			},
-		}); derr != nil {
-			s.fail("delete source: " + derr.Error())
+		})
+		if derr != nil {
+			s.failWithNote("delete source: "+derr.Error(), fmt.Sprintf(
+				"The source is PARTIALLY DELETED: %d of %d object(s) named in the manifest (%d bytes) had already been removed when the delete failed. Do not treat the source as a usable copy. The verified copy is on the target, and the active config already points at it. Re-running with the same manifest resumes the delete; a missing key is not an error.",
+				delRes.ObjectsDeleted, len(entries), delRes.BytesFreed))
 			return
 		}
 	}
@@ -732,7 +791,15 @@ func finishMessage(req StorageMigrationRequest, report storagemigrate.StorageVer
 	// that is exactly the ordering the delete gate exists to prevent, and an
 	// arm here claiming it happened would advertise a path that cannot run.
 	case req.DeleteSource:
-		return "Migration complete: verified in full, the active config now points at the target, and the old copy has been removed."
+		// NOT "the old copy has been removed". finish() appends this LAST and
+		// the panel renders the last line as the outcome, so it displaces the
+		// hedged wording DeleteSource itself logged - at the exact moment the
+		// operator decides whether to tear the old bucket down. DeleteSource
+		// removes precisely the manifest's keys: writes that landed after the
+		// capture survive, and for a modpack-shaped data set storage objects no
+		// database row references were never enumerated at all. "The old copy is
+		// gone" is not something this engine can observe.
+		return "Migration complete: verified in full, the active config now points at the target, and the objects named in the manifest were deleted from the source. Anything written to the source after the manifest was captured is untouched, and for modpacks so is any storage object no database row references."
 	case req.TargetConfig != nil && report.Mode == storagemigrate.VerifyModeSample:
 		return fmt.Sprintf("Copy complete and the active config now points at the target. SAMPLE PASS over %.1f%% of objects; the old copy was left in place. Remove it yourself once you are satisfied - a sampled verification can never authorize that automatically.", report.CheckedFraction*100)
 	case req.TargetConfig != nil:
@@ -755,7 +822,34 @@ func (s *StorageMigrationService) finish(msg string) {
 	log.Printf("storage-migration: job %s finished", s.jobID())
 }
 
+// sourceIntactNote is the recovery advice for a failure that happened BEFORE
+// anything could write to the source.
+//
+// It is NOT appended by fail() itself. It used to be, unconditionally, which
+// made a delete-phase failure - the one failure that can only occur AFTER
+// objects were destroyed - report the source as untouched, inverting the
+// operator's recovery model at the worst possible moment. Only a call site
+// that can prove the claim may make it, which is what failSourceIntact is for.
+const sourceIntactNote = "The source was NOT modified. Re-running with the same manifest resumes where this left off."
+
+// failSourceIntact fails the job and states that the source is untouched. Use
+// it ONLY from a point the runner has not yet reached deleting_source:
+// manifesting, copying and verifying read the source and never write to it,
+// and DeleteSource is the engine's one and only writer to the source.
+func (s *StorageMigrationService) failSourceIntact(msg string) {
+	s.failWithNote(msg, sourceIntactNote)
+}
+
+// fail records a terminal failure without asserting anything about the state
+// of the source. Use it wherever this call site cannot observe that state.
 func (s *StorageMigrationService) fail(msg string) {
+	s.failWithNote(msg, "")
+}
+
+// failWithNote records a terminal failure plus an optional recovery line. The
+// note is the LAST log line, which is the one the panel renders as the
+// outcome, so it must describe what this run actually did.
+func (s *StorageMigrationService) failWithNote(msg, note string) {
 	log.Printf("storage-migration: FAILED: %s", msg)
 	finished := time.Now()
 	s.update(func(j *StorageMigrationJob) {
@@ -764,7 +858,9 @@ func (s *StorageMigrationService) fail(msg string) {
 		j.FinishedAt = &finished
 		j.CurrentKey = ""
 		j.appendLog("FAILED: " + msg)
-		j.appendLog("The source was NOT modified. Re-running with the same manifest resumes where this left off.")
+		if note != "" {
+			j.appendLog(note)
+		}
 	})
 }
 

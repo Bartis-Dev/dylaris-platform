@@ -34,7 +34,9 @@ type CaptureOptions struct {
 	// SanitizeBackendLabel rather than concatenating the raw endpoint itself,
 	// because an s3 endpoint can carry embedded userinfo
 	// (https://AKIA...:secret@host) that would otherwise land in Postgres,
-	// the panel's manifest list, and the manifest CSV export.
+	// the panel's manifest list, and the manifest CSV export. The production
+	// builders - handlers.coreStorageBackendLabel and
+	// StorageDataSetResolver.modpackBackendLabel - do exactly that.
 	BackendLabel string
 	CreatedBy    string
 	Progress     CaptureProgress
@@ -235,7 +237,10 @@ func EntriesByKey(entries []models.StorageManifestEntry) map[string]models.Stora
 
 // SanitizeBackendLabel builds the backend_label persisted with a manifest for
 // an s3-backed data set: "s3:" + endpoint + "/" + bucket + "/" + prefix. It is
-// the ONE place in the codebase allowed to build that string.
+// the ONE place in the codebase allowed to build that string, and the
+// production builders route through it: handlers.coreStorageBackendLabel and
+// StorageDataSetResolver.modpackBackendLabel both call it rather than
+// concatenating an endpoint themselves.
 //
 // Why this exists (Task 7 review carry-forward, security): an operator can
 // configure an S3-compatible endpoint with embedded userinfo
@@ -244,6 +249,8 @@ func EntriesByKey(entries []models.StorageManifestEntry) map[string]models.Stora
 // list, and exports it in the manifest CSV. This function parses endpoint
 // with net/url and strips any userinfo before formatting, so any caller that
 // builds an s3 BackendLabel through here cannot leak a credential that way.
+// handlers.validateS3Endpoint is the other half: it refuses such an endpoint
+// at the settings boundary, so the credential never reaches the config either.
 //
 // endpoint is tried two ways: first as given (covers the normal
 // "scheme://user:pass@host" shape, where net/url populates URL.User

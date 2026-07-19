@@ -37,7 +37,7 @@ func TestSwitchFailureReport_NamesBothPlacesAndTheActiveConfig(t *testing.T) {
 	// A failed switch is the one outcome where the operator MUST be told the
 	// system is duplicated rather than broken, and which side is live. A vague
 	// "switch failed" would invite them to delete something.
-	msg := SwitchFailureReport("path:/mnt/old/library", "s3:https://new.example.com/bucket/library")
+	msg := SwitchFailureReport("path:/mnt/old/library", "s3:https://new.example.com/bucket/library", VerifyModeFull)
 	for _, want := range []string{"path:/mnt/old/library", "s3:https://new.example.com/bucket/library"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("report %q does not name %q", msg, want)
@@ -47,5 +47,55 @@ func TestSwitchFailureReport_NamesBothPlacesAndTheActiveConfig(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("report %q is missing the phrase %q", msg, want)
 		}
+	}
+}
+
+// TestSwitchFailureReport_StatesTheVerificationScope pins the claim this
+// message is allowed to make about verification. AuthorizeConfigSwitch
+// deliberately accepts a SAMPLE report (a switch is reversible), so this phase
+// is reachable after a run that never content-checked most objects. Saying a
+// flat "and verified" there overstates what happened - on the one message whose
+// whole purpose is to stop an operator deleting data.
+func TestSwitchFailureReport_StatesTheVerificationScope(t *testing.T) {
+	cases := []struct {
+		name       string
+		verifyMode string
+		wantSubstr []string
+		notSubstr  []string
+	}{
+		{
+			name:       "full",
+			verifyMode: VerifyModeFull,
+			wantSubstr: []string{"FULL verification", "every object in the manifest was hashed"},
+			notSubstr:  []string{"SAMPLE"},
+		},
+		{
+			name:       "sample",
+			verifyMode: VerifyModeSample,
+			wantSubstr: []string{"SAMPLE verification", "bounded subset", "never content-checked"},
+			notSubstr:  []string{"FULL verification"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := SwitchFailureReport("path:/old", "path:/new", c.verifyMode)
+			for _, want := range c.wantSubstr {
+				if !strings.Contains(msg, want) {
+					t.Errorf("report %q is missing %q", msg, want)
+				}
+			}
+			for _, bad := range c.notSubstr {
+				if strings.Contains(msg, bad) {
+					t.Errorf("report %q must not contain %q for mode %q", msg, bad, c.verifyMode)
+				}
+			}
+			// Invariant across both modes: the operator must still be told
+			// nothing was deleted and which side is live.
+			for _, want := range []string{"Nothing was deleted", "still active"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("report %q is missing %q", msg, want)
+				}
+			}
+		})
 	}
 }

@@ -42,6 +42,12 @@ type smDataSet struct {
 	// block, when non-nil, makes Open wait until it is closed - used to hold
 	// a job inside a phase while the test cancels it.
 	block chan struct{}
+	// deleteFailAfter, when > 0, makes Delete succeed for that many keys and
+	// then fail. It models the real DeleteSource failure shape: the loop
+	// returns on the FIRST error with everything before it already destroyed.
+	deleteFailAfter int
+	deleteErr       error
+	deleteCalls     int
 }
 
 func newSMDataSet(id, label string) *smDataSet {
@@ -105,6 +111,10 @@ func (d *smDataSet) Write(_ context.Context, key string, r io.Reader, _ int64) e
 func (d *smDataSet) Delete(_ context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.deleteCalls++
+	if d.deleteErr != nil && d.deleteCalls > d.deleteFailAfter {
+		return d.deleteErr
+	}
 	delete(d.objects, key)
 	return nil
 }
@@ -127,6 +137,11 @@ type smResolver struct {
 	adHocLabel string
 	resolveErr error
 	switchErr  error
+	// distinctErr is what EnsureDistinctDataSetLocations returns, i.e. the
+	// row-to-row same-location refusal the real resolver computes from the two
+	// data sets' physical locations.
+	distinctErr    error
+	distinctCalled int
 
 	mu           sync.Mutex
 	switched     bool
@@ -172,6 +187,19 @@ func (r *smResolver) ResolveTarget(_ context.Context, _ string, cfg StorageTarge
 		label = "s3:" + cfg.S3Endpoint + "/" + cfg.S3Bucket
 	}
 	return r.adHoc, label, nil
+}
+
+func (r *smResolver) EnsureDistinctDataSetLocations(_ context.Context, _, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.distinctCalled++
+	return r.distinctErr
+}
+
+func (r *smResolver) distinctChecks() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.distinctCalled
 }
 
 func (r *smResolver) SwitchConfig(_ context.Context, _ string, cfg StorageTargetConfig) error {
@@ -638,6 +666,297 @@ func TestStorageMigration_AFailedConfigSwitchDeletesNothingAndLeavesBothCopies(t
 	for _, want := range []string{"both", "Nothing was deleted", "path:/mnt/old/library", "s3:https://new.example.com/dylaris-new/prod/library"} {
 		if !strings.Contains(done.Error, want) {
 			t.Errorf("job error %q is missing %q", done.Error, want)
+		}
+	}
+}
+
+// TestStorageMigration_AFailedDeleteNeverClaimsTheSourceIsIntact drives a
+// delete-phase failure all the way through the runner.
+//
+// fail() used to append "The source was NOT modified" unconditionally, and the
+// delete phase is the ONE failure that can only happen after objects were
+// destroyed: DeleteSource returns on the first error with everything before it
+// already gone, and the runner discarded the partial result. A failure on
+// object 40,000 of 50,000 therefore produced a panel stating the source was
+// intact while 39,999 objects were permanently gone - the operator's recovery
+// model exactly inverted. No test drove this path, which is why every
+// task-scoped review saw that line in a context where it was true.
+func TestStorageMigration_AFailedDeleteNeverClaimsTheSourceIsIntact(t *testing.T) {
+	cases := []struct {
+		name string
+		// objects in the source; the delete fails after failAfter successes.
+		objects   int
+		failAfter int
+		// wantDeleted is how many objects the report must own up to.
+		wantDeleted int
+	}{
+		{name: "fails on the very first object", objects: 4, failAfter: 0, wantDeleted: 0},
+		{name: "fails midway", objects: 4, failAfter: 2, wantDeleted: 2},
+		{name: "fails on the last object", objects: 4, failAfter: 3, wantDeleted: 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newStorageMigrationTestRedis(t)
+			src := newSMDataSet("library", "Library (source)")
+			for i := 0; i < c.objects; i++ {
+				src.put(fmt.Sprintf("f%02d.jar", i), strings.Repeat("x", i+1))
+			}
+			src.deleteFailAfter = c.failAfter
+			src.deleteErr = errors.New("backend threw 503 SlowDown")
+			target := newSMDataSet("library", "Library (ad-hoc target)")
+			res := &smResolver{
+				sets:       map[string]*smDataSet{"library": src},
+				labels:     map[string]string{"library": "path:/mnt/old/library"},
+				adHoc:      target,
+				adHocLabel: "s3:https://new.example.com/dylaris-new/prod/library",
+			}
+			svc := NewStorageMigrationService(rdb, newSMStore(), res)
+
+			if _, err := svc.Start(context.Background(), StorageMigrationRequest{
+				Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full", DeleteSource: true,
+				TargetConfig: adHocTargetConfig(),
+			}, "admin", "root"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			done := waitForPhase(t, svc, StoragePhaseFailed, StoragePhaseDone)
+			if done.Phase != StoragePhaseFailed {
+				t.Fatalf("phase = %q, want failed: the delete errored", done.Phase)
+			}
+
+			all := strings.Join(done.Log, "\n")
+			// 1. The lie. This is the whole finding: the run destroyed objects,
+			//    so nothing in the record may say otherwise.
+			if strings.Contains(all, "The source was NOT modified") {
+				t.Fatalf("a failed DELETE claimed the source was untouched; %d object(s) were already destroyed.\nlog:\n%s", c.wantDeleted, all)
+			}
+			// 2. The truth it must state instead: the source is partial, and by
+			//    how much.
+			if !strings.Contains(all, "PARTIALLY DELETED") {
+				t.Errorf("the job never told the operator the source is partially deleted.\nlog:\n%s", all)
+			}
+			if !strings.Contains(all, fmt.Sprintf("%d of %d object(s)", c.wantDeleted, c.objects)) {
+				t.Errorf("the job does not surface the partial count %d of %d.\nlog:\n%s", c.wantDeleted, c.objects, all)
+			}
+			// 3. Observed, not just asserted: the source really did lose exactly
+			//    that many objects, so the reported count is the real one.
+			if got := len(src.snapshot()); got != c.objects-c.wantDeleted {
+				t.Errorf("source holds %d object(s), want %d: the reported partial count and reality disagree", got, c.objects-c.wantDeleted)
+			}
+		})
+	}
+}
+
+// TestStorageMigration_FailuresBeforeTheDeleteStillPromiseAnIntactSource is the
+// positive control for the test above: splitting fail() must not silently drop
+// the reassurance from the phases that genuinely never write to the source.
+func TestStorageMigration_FailuresBeforeTheDeleteStillPromiseAnIntactSource(t *testing.T) {
+	rdb := newStorageMigrationTestRedis(t)
+	src := newSMDataSet("library", "Library (source)")
+	src.put("a.jar", "aaa")
+	target := newSMDataSet("library", "Library (ad-hoc target)")
+	res := &smResolver{
+		sets:       map[string]*smDataSet{"library": src},
+		labels:     map[string]string{"library": "path:/mnt/old/library"},
+		adHoc:      target,
+		adHocLabel: "path:/new",
+	}
+	svc := NewStorageMigrationService(rdb, newSMStore(), res)
+
+	// A verify against a manifest id that does not exist fails in a phase that
+	// has only ever read.
+	if _, err := svc.Start(context.Background(), StorageMigrationRequest{
+		Kind: StorageJobVerify, DataSet: "library", VerifyMode: "full", ManifestID: 4242,
+	}, "admin", "root"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	done := waitForPhase(t, svc, StoragePhaseFailed, StoragePhaseDone)
+	if done.Phase != StoragePhaseFailed {
+		t.Fatalf("phase = %q, want failed", done.Phase)
+	}
+	if !strings.Contains(strings.Join(done.Log, "\n"), "The source was NOT modified") {
+		t.Errorf("a pre-delete failure no longer states the source is intact; the split dropped a true and useful claim.\nlog:\n%s", strings.Join(done.Log, "\n"))
+	}
+	if len(src.snapshot()) != 1 {
+		t.Errorf("source = %v, want it untouched", src.snapshot())
+	}
+}
+
+func TestStorageMigration_ARowToRowPairResolvingToOneLocationIsRefused(t *testing.T) {
+	// Two DIFFERENT data-set ids can name ONE physical location: several data
+	// sets are namespaces inside a single settings-configured backend. Without
+	// this refusal the copy skips every object as already identical, the
+	// verification compares the location against its own manifest and returns a
+	// trivial 100% PASS, and the finish message tells the operator the source
+	// may be removed - it is the same directory.
+	rdb := newStorageMigrationTestRedis(t)
+	src := newSMDataSet("modpacks", "Modpacks")
+	src.put("a.mrpack", "aaa")
+	tgt := newSMDataSet("modpacks@core-storage", "Modpacks on Core file storage")
+	res := &smResolver{
+		sets:        map[string]*smDataSet{"modpacks": src, "modpacks@core-storage": tgt},
+		labels:      map[string]string{"modpacks": "path:/mnt/shared/modpacks", "modpacks@core-storage": "path:/mnt/shared/modpacks"},
+		distinctErr: errors.New("core storage: the target resolves to the same location as the source: data sets \"modpacks\" and \"modpacks@core-storage\" are different names for one physical location"),
+	}
+	svc := NewStorageMigrationService(rdb, newSMStore(), res)
+
+	_, err := svc.Start(context.Background(), StorageMigrationRequest{
+		Kind: StorageJobMigrate, DataSet: "modpacks", TargetDataSet: "modpacks@core-storage", VerifyMode: "full",
+	}, "admin", "root")
+	if err == nil {
+		t.Fatal("Start err = nil, want the row-to-row same-location refusal surfaced")
+	}
+	if !strings.Contains(err.Error(), "same location") {
+		t.Errorf("Start err = %v, want it to name the same-location refusal", err)
+	}
+	if res.distinctChecks() != 1 {
+		t.Errorf("EnsureDistinctDataSetLocations called %d time(s), want exactly 1", res.distinctChecks())
+	}
+	if len(src.snapshot()) != 1 {
+		t.Errorf("source = %v, want it untouched by a refused start", src.snapshot())
+	}
+	// A refused start is not a running job.
+	if _, err := rdb.Get(context.Background(), storageMigrationLockKey).Result(); err != redis.Nil {
+		t.Errorf("the migration lock was left held after a refused start (err = %v)", err)
+	}
+}
+
+func TestStorageMigration_TheLocationCheckRunsOnlyOnTheRowToRowPath(t *testing.T) {
+	// ResolveTarget already owns the refusal for the ad-hoc-config path, so
+	// running the row-to-row check there too would ask the resolver a question
+	// it has no target data-set id for. Manifest and verify jobs have no target
+	// pairing at all.
+	cases := []struct {
+		name      string
+		req       StorageMigrationRequest
+		wantCalls int
+	}{
+		{
+			name:      "row to row",
+			req:       StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "library-target", VerifyMode: "full"},
+			wantCalls: 1,
+		},
+		{
+			name:      "ad-hoc target config",
+			req:       StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full", TargetConfig: adHocTargetConfig()},
+			wantCalls: 0,
+		},
+		{
+			name:      "manifest only",
+			req:       StorageMigrationRequest{Kind: StorageJobManifest, DataSet: "library"},
+			wantCalls: 0,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newStorageMigrationTestRedis(t)
+			src := newSMDataSet("library", "Library")
+			src.put("a.jar", "aaa")
+			res := &smResolver{
+				sets:       map[string]*smDataSet{"library": src, "library-target": newSMDataSet("library-target", "Target")},
+				labels:     map[string]string{"library": "path:/old", "library-target": "path:/new"},
+				adHoc:      newSMDataSet("library", "Ad-hoc target"),
+				adHocLabel: "path:/adhoc",
+			}
+			svc := NewStorageMigrationService(rdb, newSMStore(), res)
+			if _, err := svc.Start(context.Background(), c.req, "admin", "root"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			waitForPhase(t, svc, StoragePhaseDone, StoragePhaseFailed)
+			if got := res.distinctChecks(); got != c.wantCalls {
+				t.Errorf("EnsureDistinctDataSetLocations called %d time(s), want %d", got, c.wantCalls)
+			}
+		})
+	}
+}
+
+func TestStorageMigration_TheOrderMessageMatchesTheJobShape(t *testing.T) {
+	// The "Order:" line promised a config switch and a delete unconditionally.
+	// A row-to-row migrate never enters switching_config and Validate makes
+	// deleteSource unrepresentable for it, so both promised steps described
+	// machinery that cannot run on that job.
+	cases := []struct {
+		name       string
+		req        StorageMigrationRequest
+		wantSubstr []string
+		notSubstr  []string
+	}{
+		{
+			name:       "ad-hoc target config: the switch and the delete are both real",
+			req:        StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full", TargetConfig: adHocTargetConfig()},
+			wantSubstr: []string{"switch the active config to the target"},
+		},
+		{
+			name:       "row to row: neither exists",
+			req:        StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", TargetDataSet: "library-target", VerifyMode: "full"},
+			wantSubstr: []string{"repoints no config and deletes nothing"},
+			notSubstr:  []string{"switch the active config to the target"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newStorageMigrationTestRedis(t)
+			src := newSMDataSet("library", "Library")
+			src.put("a.jar", "aaa")
+			res := &smResolver{
+				sets:       map[string]*smDataSet{"library": src, "library-target": newSMDataSet("library-target", "Target")},
+				labels:     map[string]string{"library": "path:/old", "library-target": "path:/new"},
+				adHoc:      newSMDataSet("library", "Ad-hoc target"),
+				adHocLabel: "path:/adhoc",
+			}
+			svc := NewStorageMigrationService(rdb, newSMStore(), res)
+			job, err := svc.Start(context.Background(), c.req, "admin", "root")
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			all := strings.Join(job.Log, "\n")
+			for _, want := range c.wantSubstr {
+				if !strings.Contains(all, want) {
+					t.Errorf("start log is missing %q:\n%s", want, all)
+				}
+			}
+			for _, bad := range c.notSubstr {
+				if strings.Contains(all, bad) {
+					t.Errorf("start log promises %q, which cannot run on this job shape:\n%s", bad, all)
+				}
+			}
+		})
+	}
+}
+
+func TestStorageMigration_ADeleteRunNeverClaimsTheOldCopyIsGone(t *testing.T) {
+	// finish() appends the finish message LAST, and the panel renders the last
+	// log line as THE outcome sentence - displacing DeleteSource's own carefully
+	// hedged wording at the exact moment the operator decides whether to tear
+	// the old bucket down. DeleteSource removes exactly the manifest's keys, so
+	// "the old copy has been removed" is not something the engine can observe.
+	rdb := newStorageMigrationTestRedis(t)
+	src := newSMDataSet("library", "Library (source)")
+	src.put("a.jar", "aaa")
+	target := newSMDataSet("library", "Library (ad-hoc target)")
+	res := &smResolver{
+		sets:       map[string]*smDataSet{"library": src},
+		labels:     map[string]string{"library": "path:/mnt/old/library"},
+		adHoc:      target,
+		adHocLabel: "path:/new",
+	}
+	svc := NewStorageMigrationService(rdb, newSMStore(), res)
+	if _, err := svc.Start(context.Background(), StorageMigrationRequest{
+		Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full", DeleteSource: true,
+		TargetConfig: adHocTargetConfig(),
+	}, "admin", "root"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	done := waitForPhase(t, svc, StoragePhaseDone, StoragePhaseFailed)
+	if done.Phase != StoragePhaseDone {
+		t.Fatalf("phase = %q (error %q), want done", done.Phase, done.Error)
+	}
+	last := done.Log[len(done.Log)-1]
+	if strings.Contains(last, "the old copy has been removed") {
+		t.Errorf("the outcome sentence claims a whole-location emptiness the engine cannot observe: %q", last)
+	}
+	for _, want := range []string{"objects named in the manifest were deleted from the source", "after the manifest was captured is untouched"} {
+		if !strings.Contains(last, want) {
+			t.Errorf("outcome sentence %q is missing %q", last, want)
 		}
 	}
 }

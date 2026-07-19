@@ -51,14 +51,28 @@ const CoreStorageDataSetID = "core-storage"
 // backupStorageLabel. An empty subPrefix means the Core storage root itself.
 func coreStorageBackendLabel(cfg CoreStorageConfig, subPrefix string) string {
 	if cfg.Backend == "s3" {
-		parts := []string{cfg.S3Bucket}
+		var parts []string
 		if cfg.S3Prefix != "" {
 			parts = append(parts, strings.Trim(cfg.S3Prefix, "/"))
 		}
 		if subPrefix != "" {
 			parts = append(parts, subPrefix)
 		}
-		return "s3:" + strings.TrimSuffix(cfg.S3Endpoint, "/") + "/" + strings.Join(parts, "/")
+		// Through the sanitizer, NOT a raw concatenation. An s3 endpoint can
+		// carry embedded userinfo (https://AKIA...:secret@minio.internal), and
+		// this label is persisted into storage_manifests.backend_label, the
+		// Redis job record, the panel job log and the manifest CSV export.
+		// validateCoreStorageConfig rejects such an endpoint at the boundary;
+		// this is the second half, so the guarantee holds for any config that
+		// predates or bypasses that check rather than resting on it.
+		//
+		// TrimSuffix before the call preserves the historic rendering of an
+		// endpoint written with a trailing slash; it cannot introduce userinfo.
+		// TrimSuffix after it drops the empty trailing prefix segment for a
+		// data set that has neither a configured prefix nor a sub-prefix.
+		return strings.TrimSuffix(
+			storagemigrate.SanitizeBackendLabel(strings.TrimSuffix(cfg.S3Endpoint, "/"), cfg.S3Bucket, strings.Join(parts, "/")),
+			"/")
 	}
 	root := strings.TrimSuffix(cfg.Path, "/")
 	if subPrefix == "" {
@@ -90,7 +104,11 @@ func NewStorageDataSetResolver(state *AppState) *StorageDataSetResolver {
 // (today: modpacks, and the whole Core file storage) names a migrate target.
 // Its SAVED config says where it lives now, so it cannot also be the
 // destination; the destination is supplied inline instead.
-const adHocTargetNote = "Migrating this data set means naming a new storage config (another S3, or a mounted path) in the wizard. The copy is verified, the active config is switched to the target only after that verification passes, and the old copy is deleted only if you opt in. The manual flow (capture a manifest, move the data yourself, reconfigure, verify) is still available."
+// The delete wording is deliberately scoped to the manifest rather than to
+// "the old copy": the engine deletes exactly the keys the manifest names, so
+// post-capture writes survive and, for modpacks, storage objects no database
+// row references were never enumerated in the first place.
+const adHocTargetNote = "Migrating this data set means naming a new storage config (another S3, or a mounted path) in the wizard. The copy is verified, the active config is switched to the target only after that verification passes, and the objects named in the manifest are deleted from the source only if you opt in. The manual flow (capture a manifest, move the data yourself, reconfigure, verify) is still available."
 
 // combinedCoreStorageNote describes what the whole-Core-file-storage data set
 // covers and why it is the one that owns the config switch.
@@ -178,7 +196,12 @@ func (r *StorageDataSetResolver) modpackBackendLabel() string {
 	}
 	switch get("modpack_storage_provider") {
 	case "s3":
-		return "s3:" + strings.TrimSuffix(get("modpack_storage_s3_endpoint"), "/") + "/" + get("modpack_storage_s3_bucket")
+		// Same sanitizer as coreStorageBackendLabel: the modpack s3 endpoint is
+		// operator-supplied too, and this label reaches the same manifest rows,
+		// job records and CSV exports.
+		return strings.TrimSuffix(
+			storagemigrate.SanitizeBackendLabel(strings.TrimSuffix(get("modpack_storage_s3_endpoint"), "/"), get("modpack_storage_s3_bucket"), ""),
+			"/")
 	case "core-storage":
 		return coreStorageBackendLabel(r.state.LoadCoreStorageConfig(), CoreStoragePrefixModpacks)
 	default:
@@ -368,6 +391,110 @@ func (r *StorageDataSetResolver) modpackSourceConfig() CoreStorageConfig {
 		}
 		return CoreStorageConfig{Backend: "path", Path: path, PathConfirmed: true}
 	}
+}
+
+// coreStorageDataSetLocation is where ONE data set's objects physically live
+// today, expressed in Core-file-storage terms so sameCoreStorageLocation can
+// compare two of them.
+//
+// Unlike storageSourceLocation it carries a single sub-prefix, because both
+// sides of a row-to-row comparison are "where this data set lives NOW". The
+// source/target prefix split only exists for the ad-hoc-config path, where the
+// target is a Core-storage-SHAPED destination that may nest differently from
+// the source's own backend.
+type coreStorageDataSetLocation struct {
+	cfg       CoreStorageConfig
+	subPrefix string
+}
+
+// dataSetLocation maps ANY data-set id to the physical location its objects
+// occupy today, or reports that the id is not location-determinable.
+//
+// It is a deliberate SIBLING of sourceCoreStorageConfigFor rather than a reuse
+// of it, because the two answer different questions. That one answers "may this
+// id own a config switch?", so it REFUSES library, ticket-attachments,
+// ticket-backups and modpacks@core-storage - which are exactly the ids this one
+// must be able to locate. Conflating them is what left the row-to-row path with
+// no same-location refusal at all.
+//
+// ok == false means "this id's location cannot be determined from here", not
+// "this id is distinct from everything". Callers must treat unknown as
+// permissive: a server-backups row's location lives in its provider-specific
+// Config, and refusing every pair we cannot locate would kill
+// server-backups:a -> server-backups:b, a documented legitimate flow.
+func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetLocation, bool) {
+	switch id {
+	case CoreStorageDataSetID:
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig()}, true
+	case storagemigrate.DataSetLibrary:
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixLibrary}, true
+	case storagemigrate.DataSetAttachments:
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixAttachments}, true
+	case storagemigrate.DataSetTicketBackups:
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixBackups}, true
+	case ModpacksCoreStorageDataSetID:
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixModpacks}, true
+	case storagemigrate.DataSetModpacks:
+		// The modpacks data set follows its OWN settings namespace, which may
+		// point at a local path, an s3 bucket, or back at Core storage - the
+		// last of which makes it the very same location as
+		// modpacks@core-storage.
+		return coreStorageDataSetLocation{cfg: r.modpackSourceConfig(), subPrefix: r.modpackSourceSubPrefix()}, true
+	}
+
+	// A backup_storages row with provider "core-storage" ALWAYS lands under
+	// backup.CoreStorageSubPrefix in the shared Core file storage, whatever its
+	// Config says - Open ignores the Config entirely for that provider. Two such
+	// rows are therefore one location, and this workstream allowlisted
+	// "core-storage" as a backup provider, so creating a second one is trivial.
+	// backupStorageLabel is only "Name (provider)", so their labels differ by
+	// design and no label-based mitigation can catch this.
+	//
+	// Every other provider keeps its location in the row's Config, which this
+	// function does not parse; those stay not-determinable.
+	if storageID, ok := storagemigrate.ParseServerBackupsDataSetID(id); ok {
+		bs, err := r.state.Store.GetBackupStorage(storageID)
+		if err == nil && bs != nil && bs.Provider == "core-storage" {
+			return coreStorageDataSetLocation{
+				cfg:       r.state.LoadCoreStorageConfig(),
+				subPrefix: CoreStoragePrefixServerBackups,
+			}, true
+		}
+	}
+	return coreStorageDataSetLocation{}, false
+}
+
+// EnsureDistinctDataSetLocations refuses a source/target data-set pair that
+// resolves to one physical location. See the interface doc in
+// services.StorageDataSetResolver for why the check has to exist at all.
+//
+// It compares LOCATIONS through sameCoreStorageLocation - the same comparator
+// the ad-hoc-config path uses, which is location-complete (filepath.Clean fast
+// path plus os.SameFile, so a symlink, junction or bind-mount alias is caught;
+// trimmed endpoint + bucket + effective prefix for s3) - and never labels.
+//
+// What it deliberately does NOT refuse:
+//   - a pair where either side is not location-determinable. Inequality is not
+//     proof, and refusing on unknown would kill server-backups:a ->
+//     server-backups:b.
+//   - CONTAINMENT. library -> core-storage and core-storage ->
+//     modpacks@core-storage are nesting, not equality: a different failure mode
+//     with different handling, and folding it in here would be over-refusal.
+func (r *StorageDataSetResolver) EnsureDistinctDataSetLocations(_ context.Context, sourceID, targetID string) error {
+	src, srcOK := r.dataSetLocation(sourceID)
+	tgt, tgtOK := r.dataSetLocation(targetID)
+	if !srcOK || !tgtOK {
+		return nil
+	}
+	same, err := sameCoreStorageLocation(src.cfg, tgt.cfg, src.subPrefix, tgt.subPrefix)
+	if err != nil {
+		return err
+	}
+	if same {
+		return fmt.Errorf("%w: data sets %q and %q are different names for one physical location, so copying between them would rewrite every object onto itself and the verification would compare that location against its own manifest; pick a target that lives somewhere else",
+			ErrTargetSameLocation, sourceID, targetID)
+	}
+	return nil
 }
 
 // ResolveTarget builds the target DataSet from an AD-HOC storage config, i.e.

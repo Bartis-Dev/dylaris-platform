@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,10 +91,44 @@ func validateCoreStorageConfig(c CoreStorageConfig) error {
 		if c.S3AccessKey == "" || c.S3SecretKey == "" {
 			return fmt.Errorf("core storage: s3 access key + secret are required")
 		}
+		if err := validateS3Endpoint(c.S3Endpoint); err != nil {
+			return err
+		}
 		return nil
 	default:
 		return fmt.Errorf("core storage: backend must be \"path\" or \"s3\"")
 	}
+}
+
+// validateS3Endpoint refuses an endpoint that carries a credential in its
+// userinfo component (https://AKIA...:secret@minio.internal).
+//
+// Why this is a VALIDATION rule and not only a rendering concern: the endpoint
+// is persisted verbatim in core_storage_s3_endpoint, and it is the raw material
+// for every backend label the migration engine writes - into
+// storage_manifests.backend_label (durable, in Postgres), the Redis job record
+// (7-day TTL, readable by every settings.read holder), the panel job log and
+// the manifest CSV export. Sanitizing at render time alone leaves the
+// credential sitting in the settings table; refusing it here means it never
+// enters the system. storagemigrate.SanitizeBackendLabel is the second half of
+// the same guarantee, for configs this check never saw.
+//
+// It FAILS CLOSED on "@", exactly as sanitizeEndpoint does: a valid S3 endpoint
+// host cannot contain one, and a password with a space or a control character
+// defeats url.Parse, so "parses cleanly with no userinfo" is not a safe
+// acceptance test. An EMPTY endpoint is allowed - that is the AWS default,
+// where the region alone selects the host.
+func validateS3Endpoint(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	if strings.Contains(endpoint, "@") {
+		return fmt.Errorf("core storage: s3 endpoint must not contain credentials; supply the access key and secret in their own fields, and give the endpoint as scheme://host[:port]")
+	}
+	if _, err := url.Parse(endpoint); err != nil {
+		return fmt.Errorf("core storage: s3 endpoint is not a valid URL: %w", err)
+	}
+	return nil
 }
 
 // LoadCoreStorageConfig reads the persisted config. S3SecretKey is loaded so
