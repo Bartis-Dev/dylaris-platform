@@ -130,24 +130,69 @@ func TestCaptureManifest_PersistsEveryObjectWithItsChecksum(t *testing.T) {
 	}
 }
 
+// lyingSizeDataSet wraps memDataSet and makes List report a fabricated Size
+// for every ref, independent of the object's real length, so a test can
+// prove the manifest records the size actually READ rather than trusting
+// the listing hint. Same wrapper technique as duplicateKeyDataSet above.
+// Local to this file; never redeclared.
+type lyingSizeDataSet struct {
+	*memDataSet
+	lieSize int64
+}
+
+func (l *lyingSizeDataSet) List(ctx context.Context) ([]ObjectRef, error) {
+	refs, err := l.memDataSet.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ObjectRef, len(refs))
+	for i, r := range refs {
+		out[i] = ObjectRef{Key: r.Key, Size: l.lieSize}
+	}
+	return out, nil
+}
+
+var _ DataSet = (*lyingSizeDataSet)(nil)
+
 func TestCaptureManifest_SizeComesFromTheActualRead(t *testing.T) {
 	// List's Size is a hint from the backend listing; the manifest must
 	// record what was actually streamed, so a listing that lies (or a file
-	// that changed between List and Open) is recorded truthfully.
+	// that changed between List and Open) is recorded truthfully. The
+	// listing here is rigged to claim every object is 999 bytes while the
+	// real content is 10 bytes: this test would fail if production code
+	// ever started trusting ref.Size instead of the bytes actually read.
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
-	ds.put("a.jar", "0123456789")
+	inner := newMemDataSet(DataSetLibrary, "Library")
+	inner.put("a.jar", "0123456789")
+	ds := &lyingSizeDataSet{memDataSet: inner, lieSize: 999}
 
+	var lines []string
 	st := newFakeManifestStore()
-	m, entries, err := CaptureManifest(ctx, ds, st, CaptureOptions{BackendLabel: "path:/x"})
+	m, entries, err := CaptureManifest(ctx, ds, st, CaptureOptions{
+		BackendLabel: "path:/x",
+		Log:          func(l string) { lines = append(lines, l) },
+	})
 	if err != nil {
 		t.Fatalf("CaptureManifest: %v", err)
 	}
 	if len(entries) != 1 || entries[0].Size != 10 {
-		t.Fatalf("entries = %+v, want one entry of size 10", entries)
+		t.Fatalf("entries = %+v, want one entry of size 10 (the true read length, not the lying listed 999)", entries)
 	}
 	if m.TotalBytes != 10 {
 		t.Errorf("TotalBytes = %d, want 10", m.TotalBytes)
+	}
+	// The listing/read disagreement is a real signal (the object may have
+	// changed mid-capture) and must not be silently discarded, so it gets
+	// the same warning treatment as the duplicate-key and checksum-hint
+	// anomalies elsewhere in this file.
+	found := false
+	for _, l := range lines {
+		if strings.Contains(l, "a.jar") && strings.Contains(l, "999") && strings.Contains(l, "10") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no warning logged for the listing/read size disagreement; lines = %v", lines)
 	}
 }
 
@@ -222,6 +267,27 @@ func TestCaptureManifest_VanishedObjectAbortsAsNotFoundNotTransient(t *testing.T
 	}
 }
 
+func TestCaptureManifest_PersistFailureIsWrappedAndDiscoverable(t *testing.T) {
+	// fakeManifestStore.createErr existed and was honoured but no test ever
+	// set it, so the "persist: %w" wrap in CaptureManifest was never
+	// actually exercised - a dead fixture.
+	ctx := context.Background()
+	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds.put("a.jar", "aaa")
+
+	st := newFakeManifestStore()
+	boom := errors.New("db unavailable")
+	st.createErr = boom
+
+	_, _, err := CaptureManifest(ctx, ds, st, CaptureOptions{BackendLabel: "path:/x"})
+	if !errors.Is(err, boom) {
+		t.Fatalf("CaptureManifest err = %v, want it to wrap %v", err, boom)
+	}
+	if !strings.Contains(err.Error(), "persist") {
+		t.Errorf("CaptureManifest err = %q, want it to name the persist step", err.Error())
+	}
+}
+
 func TestCaptureManifest_NeverMutatesTheSource(t *testing.T) {
 	ctx := context.Background()
 	ds := newMemDataSet(DataSetLibrary, "Library")
@@ -271,6 +337,17 @@ func TestCaptureManifest_ReportsProgress(t *testing.T) {
 	if len(ticks) != 2 {
 		t.Fatalf("progress ticks = %d, want 2 (one per object)", len(ticks))
 	}
+	// The intermediate tick is what actually distinguishes "bytesTotal is the
+	// listed total" from "bytesTotal is just a copy of the running bytesDone":
+	// at the FINAL tick bytesDone == bytesTotal == 6 either way, since the
+	// listing (List is sorted ascending by Key: a.jar then b.jar) totals 6
+	// bytes and by the last object bytesDone has also reached 6. Only the
+	// first tick (bytesDone=2 after a.jar, listed total still 6) tells the
+	// two implementations apart.
+	first := ticks[0]
+	if first.bytesDone != 2 || first.bytesTotal != 6 {
+		t.Errorf("first tick bytes = %d/%d, want 2/6 (bytes read so far / total bytes listed up front)", first.bytesDone, first.bytesTotal)
+	}
 	last := ticks[len(ticks)-1]
 	if last.done != 2 || last.total != 2 {
 		t.Errorf("final tick objects = %d/%d, want 2/2", last.done, last.total)
@@ -293,7 +370,7 @@ func TestCaptureManifest_HonoursCancellationAtAnObjectBoundary(t *testing.T) {
 		BackendLabel: "path:/x",
 		Cancelled: func() bool {
 			calls++
-			return calls > 2 // let one object through, then cancel
+			return calls > 2 // let two objects through, then cancel
 		},
 	})
 	if !errors.Is(err, ErrCaptureCancelled) {
@@ -533,7 +610,7 @@ func TestSanitizeBackendLabel(t *testing.T) {
 			want:     "s3:minio.internal:9000/b/p",
 		},
 		{
-			name:     "endpoint that fails to parse as a URL falls back to verbatim, no panic",
+			name:     "endpoint that fails to parse as a URL and has no userinfo falls back to verbatim, no panic",
 			endpoint: "https://exa\x7fmple.com", // DEL control char: net/url refuses to parse this
 			bucket:   "b",
 			prefix:   "p",
@@ -545,6 +622,41 @@ func TestSanitizeBackendLabel(t *testing.T) {
 			bucket:   "b",
 			prefix:   "p",
 			want:     "s3:/b/p",
+		},
+		// The four rows below all carry BOTH userinfo and an element that
+		// defeats url.Parse on every attempt, so neither parse in
+		// sanitizeEndpoint can PROVE the endpoint is credential-free. Unlike
+		// the "no userinfo" fallback row above, these must fail CLOSED
+		// (redacted placeholder), never fall back to the raw string, or the
+		// credential leaks into Postgres, the panel manifest list, and the
+		// CSV export.
+		{
+			name:     "userinfo with a space in the password fails closed (space breaks url.Parse userinfo validation on both attempts)",
+			endpoint: "https://AKIAEXAMPLE:super secret@minio.internal",
+			bucket:   "b",
+			prefix:   "p",
+			want:     "s3:" + redactedEndpointPlaceholder + "/b/p",
+		},
+		{
+			name:     "userinfo with a control character in the password fails closed",
+			endpoint: "https://AKIAEXAMPLE:super\x7fsecret@minio.internal",
+			bucket:   "b",
+			prefix:   "p",
+			want:     "s3:" + redactedEndpointPlaceholder + "/b/p",
+		},
+		{
+			name:     "userinfo present but a control character elsewhere in the host fails closed",
+			endpoint: "https://AKIAEXAMPLE:supersecret@exa\x7fmple.com",
+			bucket:   "b",
+			prefix:   "p",
+			want:     "s3:" + redactedEndpointPlaceholder + "/b/p",
+		},
+		{
+			name:     "userinfo present but a malformed bracket host fails closed",
+			endpoint: "https://AKIAEXAMPLE:supersecret@[not a host]",
+			bucket:   "b",
+			prefix:   "p",
+			want:     "s3:" + redactedEndpointPlaceholder + "/b/p",
 		},
 	}
 	for _, tc := range tests {

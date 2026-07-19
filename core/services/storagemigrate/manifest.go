@@ -96,6 +96,14 @@ func CaptureManifest(ctx context.Context, ds DataSet, st ManifestStore, opts Cap
 		if err != nil {
 			return nil, nil, err
 		}
+		if ref.Size != n {
+			// The truthful (stream) size still wins below - never fatal,
+			// capture continues - but a listing/read disagreement is a real
+			// signal the object changed mid-capture, so it gets the same
+			// warning treatment as the duplicate-key and checksum-hint
+			// anomalies above rather than being silently discarded.
+			logf("WARNING: %s: listed size %d does not match the %d bytes actually read; the manifest records the true read size.", ref.Key, ref.Size, n)
+		}
 
 		entries = append(entries, models.StorageManifestEntry{
 			Key:      ref.Key,
@@ -105,7 +113,7 @@ func CaptureManifest(ctx context.Context, ds DataSet, st ManifestStore, opts Cap
 		objectsDone++
 		bytesDone += n
 		if opts.Progress != nil {
-			opts.Progress(objectsDone, total, bytesDone, bytesDone, ref.Key)
+			opts.Progress(objectsDone, total, bytesDone, listedBytes, ref.Key)
 		}
 	}
 
@@ -243,25 +251,50 @@ func EntriesByKey(entries []models.StorageManifestEntry) map[string]models.Stora
 // still contains "@", re-parsed with a "//" prefix (covers a schemeless
 // "user:pass@host[:port]" endpoint, which net/url would otherwise read as an
 // opaque "scheme:opaque" pair with no recognized userinfo at all). An
-// endpoint that does not parse as a URL by either attempt - or has no "@" to
-// begin with - is used verbatim: this function must never panic or drop a
-// valid-but-unusual endpoint, only strip a credential it can actually
-// recognize. (In practice the S3 client here requires a schemed endpoint, so
-// the schemeless case is defense in depth, not the expected input shape.)
+// endpoint with no "@" at all is used verbatim regardless of parse success:
+// this function must never panic or drop a valid-but-unusual endpoint, only
+// strip (or redact) a credential it cannot rule out.
+//
+// FAILS CLOSED: an endpoint that contains "@" but that neither parse attempt
+// can PROVE is free of embedded userinfo (parse error, or a parse that
+// succeeds yet still reports no User for a string that still contains "@")
+// is never returned verbatim - see sanitizeEndpoint's invariant. (In
+// practice the S3 client here requires a schemed endpoint, so the schemeless
+// case is defense in depth, not the expected input shape.)
 func SanitizeBackendLabel(endpoint, bucket, prefix string) string {
 	return "s3:" + sanitizeEndpoint(endpoint) + "/" + bucket + "/" + prefix
 }
 
+// redactedEndpointPlaceholder is what sanitizeEndpoint returns for an
+// endpoint it cannot PROVE is credential-free. See sanitizeEndpoint.
+const redactedEndpointPlaceholder = "[unparseable-endpoint-redacted]"
+
+// sanitizeEndpoint strips embedded userinfo from an s3 endpoint before it is
+// persisted anywhere.
+//
+// INVARIANT: no return path may emit a string that still contains "@"
+// unless that "@" survived a successful url.Parse whose resulting u.User was
+// nil. Concretely: if endpoint contains no "@", it is credential-shaped-safe
+// and passes through verbatim regardless of whether it parses. If it DOES
+// contain "@", this function returns the endpoint with userinfo stripped
+// whenever a parse proves there is userinfo to strip; otherwise - a parse
+// error, or a parse that succeeds but cannot show the "@" is harmless - it
+// fails CLOSED and returns redactedEndpointPlaceholder rather than risk
+// emitting a raw credential. A password containing a space or a control
+// character is enough to defeat both parse attempts, so this is not a
+// hypothetical case: it is the exact shape the Task 9 review demonstrated
+// leaking.
 func sanitizeEndpoint(endpoint string) string {
 	if u, err := url.Parse(endpoint); err == nil && u.User != nil {
 		u.User = nil
 		return u.String()
 	}
-	if strings.Contains(endpoint, "@") {
-		if u, err := url.Parse("//" + endpoint); err == nil && u.User != nil {
-			u.User = nil
-			return strings.TrimPrefix(u.String(), "//")
-		}
+	if !strings.Contains(endpoint, "@") {
+		return endpoint
 	}
-	return endpoint
+	if u, err := url.Parse("//" + endpoint); err == nil && u.User != nil {
+		u.User = nil
+		return strings.TrimPrefix(u.String(), "//")
+	}
+	return redactedEndpointPlaceholder
 }
