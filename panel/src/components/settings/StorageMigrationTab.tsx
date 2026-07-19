@@ -206,7 +206,7 @@ export default function StorageMigrationTab() {
             flash(res.message || 'Could not start the inventory.', false);
             return;
         }
-        flash('Inventory started. Every object is read once and checksummed.');
+        flash('Inventory started. Every object the data set lists is read once and checksummed.');
         load();
     };
 
@@ -266,8 +266,8 @@ export default function StorageMigrationTab() {
                     </h2>
                     <p className="text-xs text-(--base-06) mt-1 max-w-2xl">
                         Inventory, move and verify the blob data sets. Every migration is manifest-based:
-                        the source is read once and checksummed, the copy skips only objects that are already
-                        byte-identical, and verification compares the target against that manifest.
+                        the objects a data set lists are read once and checksummed, the copy skips only objects
+                        that are already byte-identical, and verification compares the target against that manifest.
                         The source is never modified unless you explicitly opt in to deleting it.
                     </p>
                 </div>
@@ -317,8 +317,9 @@ export default function StorageMigrationTab() {
                         <span className="mono-label shrink-0 pt-0.5">1</span>
                         <span>
                             <strong className="text-(--base-09)">Capture a manifest.</strong>{' '}
-                            Use <em>Inventory</em> on the data set below. This reads every object once and
-                            records its SHA-256, so it costs a full pass over the data. Then download the CSV.
+                            Use <em>Inventory</em> on the data set below. This reads every object the data set
+                            lists once and records its SHA-256, so it costs a full pass over what it lists.
+                            Then download the CSV.
                         </span>
                     </li>
                     <li className="flex gap-3">
@@ -334,7 +335,8 @@ export default function StorageMigrationTab() {
                         <span>
                             <strong className="text-(--base-09)">Verify.</strong>{' '}
                             Run <em>Verify (full)</em> against the manifest you captured. A full verification hashes
-                            every object; a sample hashes a bounded subset and can never authorize deleting a source.
+                            every object the manifest lists; a sample hashes a bounded subset and can never
+                            authorize deleting a source.
                         </span>
                     </li>
                 </ol>
@@ -366,11 +368,16 @@ export default function StorageMigrationTab() {
                             <div className="space-y-2">
                                 <div className="mono-label">2. Target</div>
                                 {/* The source's own note is the only place the operator learns
-                                    WHY a namespace inside the shared Core file storage cannot
-                                    name a new backend and should be migrated as "core-storage"
-                                    instead. Rendering it only in the data-set list would put it
-                                    on a screen the operator has already left. */}
-                                {sourceSet?.note && !sourceSet.supportsTargetConfig && (
+                                    this data set's caveat before deciding a target - whether
+                                    that is WHY a namespace inside the shared Core file storage
+                                    cannot name a new backend, or that its verification only
+                                    covers database-referenced objects. Rendered unconditionally:
+                                    gating this on supportsTargetConfig used to hide it from
+                                    exactly core-storage and modpacks, the only two sources for
+                                    which the delete checkbox below is ever offered - so the
+                                    operators most able to opt into a delete never saw the
+                                    caveat that bears on it. */}
+                                {sourceSet?.note && (
                                     <p className="alert alert-info text-xs flex items-start gap-1.5">
                                         <Info size={12} className="mt-0.5 shrink-0" /> {sourceSet.note}
                                     </p>
@@ -430,12 +437,27 @@ export default function StorageMigrationTab() {
                                 )}
                             </div>
 
-                            <p className="alert alert-info text-xs">
-                                Order: copy, verify, switch the active config to the target, then delete the old copy
-                                if you opt in. The switch happens only after a passing verification, and if it fails
-                                nothing is deleted - the data stays in both places and the job panel tells you which
-                                config is live.
-                            </p>
+                            {/* Scoped to the shape it is true for, matching services/storage_migration_job.go's
+                                Start(): only the config-target shape has a config to switch and a
+                                delete gate that can ever open. Rendering the config-shape wording
+                                unconditionally used to promise a switch and a delete on the
+                                row-to-row shape too, where neither step ever runs - and section 4
+                                below already says so, so the wizard was contradicting itself on
+                                the screen where the operator decides. */}
+                            {form.targetKind === 'config' ? (
+                                <p className="alert alert-info text-xs">
+                                    Order: copy, verify, switch the active config to the target, then delete the
+                                    source objects named in the manifest if you opt in. The switch happens only
+                                    after a passing verification, and if it fails nothing is deleted - the data
+                                    stays in both places and the job panel tells you which config is live.
+                                </p>
+                            ) : (
+                                <p className="alert alert-info text-xs">
+                                    Order: copy, then verify. This target is another data set, so the job repoints
+                                    no config and deletes nothing; repoint the consuming subsystem yourself once
+                                    the verification has passed.
+                                </p>
+                            )}
 
                             <div className="space-y-2">
                                 <div className="mono-label">3. Verification scope</div>
@@ -443,7 +465,7 @@ export default function StorageMigrationTab() {
                                     selected={form.verifyMode === 'full'}
                                     onClick={() => setForm(f => ({ ...f, verifyMode: 'full' }))}
                                     title="Full"
-                                    desc="Hash every object on the target and compare it to the manifest. Slower, and the only scope that can authorize deleting the source."
+                                    desc="Hash every object the manifest lists and compare it to the target. Slower, and the only scope that can authorize deleting the source."
                                 />
                                 <ModeOption
                                     selected={form.verifyMode === 'sample'}
@@ -555,10 +577,10 @@ function DataSetRow({
                 </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-                <button onClick={onManifest} className="btn btn-secondary btn-sm" disabled={busy || !ds.migratable} title="Read every object once and record its checksum">
+                <button onClick={onManifest} className="btn btn-secondary btn-sm" disabled={busy || !ds.migratable} title="Read every object this data set lists once and record its checksum">
                     <FileSearch size={12} /> Inventory
                 </button>
-                <button onClick={onVerifyFull} className="btn btn-secondary btn-sm" disabled={busy || !m} title="Hash every object against the last manifest">
+                <button onClick={onVerifyFull} className="btn btn-secondary btn-sm" disabled={busy || !m} title="Hash every object the last manifest lists against the target">
                     Verify (full)
                 </button>
                 <button onClick={onVerifySample} className="btn btn-secondary btn-sm" disabled={busy || !m} title="Hash a bounded sample against the last manifest">
@@ -734,10 +756,17 @@ function VerifyView({ report, dataSet }: { report: StorageVerifyReport; dataSet:
     return (
         <div className="space-y-2">
             <div className={`text-xs ${report.mode === 'sample' ? 'alert alert-info' : 'text-(--base-06)'}`}>
+                {/* "Examined", not "Checked": objectsChecked counts every object the
+                    run attempted, including one reported missing or unreadable, so a
+                    run where every object was unreadable still reaches 100% here while
+                    the verdict is FAIL. Splitting out "successfully read" ties the byte
+                    figure to the objects that actually passed, so the two numbers
+                    explain each other instead of silently contradicting. */}
                 <span className="font-mono uppercase tracking-wide mr-2">{verifyVerdictLabel(report)}</span>
-                Checked {report.objectsChecked.toLocaleString()} of {report.objectsInManifest.toLocaleString()} objects
-                ({formatPercent(report.checkedFraction)}) and {formatBytes(report.bytesChecked)} of {formatBytes(report.bytesInManifest)}
-                {' '}({formatPercent(report.bytesCheckedFraction)}).
+                Examined {report.objectsChecked.toLocaleString()} of {report.objectsInManifest.toLocaleString()} objects
+                ({formatPercent(report.checkedFraction)}); of those, {formatBytes(report.bytesChecked)} of {formatBytes(report.bytesInManifest)}
+                {' '}({formatPercent(report.bytesCheckedFraction)}) were successfully read. A missing or unreadable
+                object counts as examined here but contributes no bytes.
                 {report.mode === 'sample' && ' Missing and extra objects were still detected in full.'}
             </div>
 

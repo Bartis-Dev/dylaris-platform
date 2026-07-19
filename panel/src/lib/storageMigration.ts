@@ -73,7 +73,11 @@ export interface StorageMigrationJob {
   // the target. It stays false for a row-to-row migrate, where Core owns no
   // such config, and after a switch that failed.
   configSwitched: boolean;
-  verifyMode: VerifyMode;
+  // '' is a real value here, not a typing gap: Validate does not require
+  // verifyMode for kind: "manifest" (there is nothing to verify yet), so a
+  // manifest-only job really does serialize verifyMode as "". Only migrate
+  // and verify jobs populate it with 'full' or 'sample'.
+  verifyMode: VerifyMode | '';
   verify?: StorageVerifyReport;
   log: string[];
   error?: string;
