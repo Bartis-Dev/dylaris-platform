@@ -880,7 +880,7 @@ func minNonZeroInt64(a, b int64) int64 {
 // table; this struct only governs which provider rows are usable and how
 // large each server's backup folder is allowed to get on node-local hosts.
 type BackupConfig struct {
-	// Mode is one of "s3", "node-local", or "shared". It picks which
+	// Mode is one of "s3", "node-local", "shared", or "core-storage". It picks which
 	// backup_storages rows (by provider) the UI exposes as creatable, and
 	// — for node-local — turns on the quota fields below.
 	Mode string `json:"mode"`
@@ -905,10 +905,14 @@ var defaultBackupConfig = BackupConfig{
 	ShareQuotaWithServer: false,
 }
 
-// validBackupMode keeps the three accepted modes literal — adding a new
-// one has to be a conscious change here AND in the storage factory.
+// validBackupMode keeps the accepted modes literal - adding a new one has to
+// be a conscious change here AND in the storage factory. "core-storage" was
+// added rather than exposing that provider regardless of Mode: Mode's
+// documented job is to describe what the panel offers, and bypassing it would
+// falsify its own comment. The default stays "shared", so no existing install
+// shifts.
 func validBackupMode(m string) bool {
-	return m == "s3" || m == "node-local" || m == "shared"
+	return m == "s3" || m == "node-local" || m == "shared" || m == "core-storage"
 }
 
 // GetBackupConfig GET /api/settings/backup - PANEL settings.read (RequireCap at the route).
@@ -927,7 +931,7 @@ func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !validBackupMode(req.Mode) {
-		sendJSONError(w, "Invalid backup mode (expected s3, node-local, or shared)", http.StatusBadRequest)
+		sendJSONError(w, "Invalid backup mode (expected s3, node-local, shared, or core-storage)", http.StatusBadRequest)
 		return
 	}
 	if req.QuotaPerServerGB < 0 {

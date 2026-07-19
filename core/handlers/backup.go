@@ -47,6 +47,24 @@ func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "storages": storages})
 }
 
+// validBackupProvider mirrors the switch in storage/backup/factory.go:Open.
+// Adding a provider requires a conscious change in BOTH places. Without this
+// allowlist a typo persists to backup_storages and only fails much later at
+// backup.Open, which is exactly what would make "core-storage" and
+// "corestorage" indistinguishable to an operator.
+//
+// NOTE: this is an input allowlist, not an authorization boundary.
+// BackupConfig.Mode governs what the PANEL offers; the API accepts any
+// allowlisted provider regardless of Mode, exactly as it does today for the
+// existing three.
+func validBackupProvider(p string) bool {
+	switch p {
+	case "local", "shared", "s3", "node-local", "core-storage":
+		return true
+	}
+	return false
+}
+
 // CreateStorage POST /api/backup-storages
 func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 	var req models.BackupStorage
@@ -56,6 +74,10 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" || req.Provider == "" {
 		sendJSONError(w, "name and provider are required", 400)
+		return
+	}
+	if !validBackupProvider(req.Provider) {
+		sendJSONError(w, "invalid provider (expected shared, s3, node-local or core-storage)", 400)
 		return
 	}
 	id, err := h.state.Store.CreateBackupStorage(&req)
@@ -79,6 +101,10 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ID = id
+	if !validBackupProvider(req.Provider) {
+		sendJSONError(w, "invalid provider (expected shared, s3, node-local or core-storage)", 400)
+		return
+	}
 	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
 		sendJSONError(w, err.Error(), 500)
 		return

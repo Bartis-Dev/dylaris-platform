@@ -9,7 +9,7 @@ import (
 type BackupStorage struct {
 	ID        int             `json:"id"`
 	Name      string          `json:"name"`
-	Provider  string          `json:"provider"` // "local" | "s3"
+	Provider  string          `json:"provider"` // "local"|"shared" | "s3" | "node-local" | "core-storage"
 	Config    json.RawMessage `json:"config"`
 	IsDefault bool            `json:"isDefault"`
 	CreatedAt time.Time       `json:"createdAt"`

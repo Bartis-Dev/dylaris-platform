@@ -71,8 +71,10 @@ func TestValidBackupMode(t *testing.T) {
 		{"s3", true},
 		{"node-local", true},
 		{"shared", true},
+		{"core-storage", true},
 		{"local", false},
 		{"", false},
+		{"core storage", false},
 	}
 	for _, c := range cases {
 		t.Run(c.v, func(t *testing.T) {
