@@ -50,10 +50,25 @@ func coreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConf
 	})
 }
 
-// effectiveS3Prefix is the prefix newStorageProviderForConfig will actually
-// hand to the S3 provider for this data set. It is extracted so the
-// same-location comparison and the provider construction cannot disagree about
-// what "where this data set lives" means.
+// effectiveS3Prefix is the prefix the same-location comparison treats as "where
+// this data set lives" in a bucket: the configured prefix joined with the data
+// set's sub-prefix, trimmed of surrounding slashes.
+//
+// It is NOT literally what newStorageProviderForConfig hands the S3 provider,
+// and the two do diverge for a configured prefix with a stray slash:
+// newStorageProviderForConfig concatenates cfg.S3Prefix raw, so "prod/" makes
+// it write under "prod//library" while this reports "prod/library"
+// (normalizeCoreStorageCandidate does not trim S3Prefix, so that config is
+// reachable). Teaching the provider to call this would silently relocate every
+// object of any install whose saved prefix ends in a slash, so it deliberately
+// does not.
+//
+// The divergence is safe because it only ever runs in the OVER-refusal
+// direction: two configs that resolve here to the same string are the same
+// place regardless of slashes, so a real alias is still caught. The worst case
+// is refusing a target that is in fact distinct, which an operator can see and
+// work around; the reverse, accepting a target that is really the source, is
+// what would be destructive, and it cannot happen this way.
 func effectiveS3Prefix(cfg CoreStorageConfig, subPrefix string) string {
 	p := strings.Trim(cfg.S3Prefix, "/")
 	if p == "" {
@@ -93,8 +108,13 @@ func sameCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) (bool
 		return false, nil
 	}
 	if srcS3 {
-		return strings.TrimSuffix(src.S3Endpoint, "/") == strings.TrimSuffix(tgt.S3Endpoint, "/") &&
-			src.S3Bucket == tgt.S3Bucket &&
+		// Trim, not TrimSuffix, and on the bucket too: the error that matters
+		// here is UNDER-refusal. Judging "https://s3.example.com//" and
+		// "https://s3.example.com" to be different locations would accept a
+		// target that really is the source, which is exactly the outcome this
+		// function exists to prevent.
+		return strings.Trim(src.S3Endpoint, "/") == strings.Trim(tgt.S3Endpoint, "/") &&
+			strings.Trim(src.S3Bucket, "/") == strings.Trim(tgt.S3Bucket, "/") &&
 			effectiveS3Prefix(src, subPrefix) == effectiveS3Prefix(tgt, subPrefix), nil
 	}
 
@@ -161,11 +181,19 @@ func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storag
 // switching_config phase. Two copies would drift, and a drifted writer is how
 // an install ends up with a new access key paired to an old secret.
 //
-// writeSecret says whether cfg.S3SecretKey is a NEWLY supplied secret. When it
-// is false the stored secret is left untouched, except that switching the
+// secret is the NEWLY supplied secret to store, and it is passed as a value
+// rather than as a "cfg.S3SecretKey is new" flag on purpose. cfg is routinely a
+// MERGED config whose S3SecretKey is the one already stored (that is what
+// mergeCoreStorageCandidate produces when a request omits the backend), so a
+// flag plus cfg would let a caller mean "write the submitted secret" and get
+// "rewrite the stored one over itself" - a rotation that returns success and
+// changes nothing. With the value passed explicitly, the only secret this can
+// write is the one handed to it.
+//
+// An empty secret leaves the stored one untouched, except that switching the
 // backend away from s3 clears it outright so it does not linger orphaned with
 // S3SecretSet still reporting true.
-func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, writeSecret bool) error {
+func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, secret string) error {
 	pairs := []struct{ k, v string }{
 		{keyCoreStorageBackend, cfg.Backend},
 		{keyCoreStoragePath, cfg.Path},
@@ -177,15 +205,30 @@ func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, writeSecret b
 		{keyCoreStorageS3PathStyle, boolStr(cfg.S3PathStyle)},
 		{keyCoreStorageS3Prefix, cfg.S3Prefix},
 	}
-	if writeSecret && cfg.S3SecretKey != "" {
-		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, cfg.S3SecretKey})
+	if secret != "" {
+		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, secret})
 	} else if cfg.Backend != "s3" {
 		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, ""})
 	}
 	for _, p := range pairs {
 		if err := s.Store.SetSetting(p.k, p.v); err != nil {
-			return fmt.Errorf("save setting %s: %w", p.k, err)
+			return &coreStorageSettingWriteError{Key: p.k, Err: err}
 		}
 	}
 	return nil
 }
+
+// coreStorageSettingWriteError names the settings key whose write failed while
+// still wrapping the underlying store error. The key is carried as a field so
+// an HTTP caller can name it without putting the raw store error text (which
+// can carry DB internals) in a response body.
+type coreStorageSettingWriteError struct {
+	Key string
+	Err error
+}
+
+func (e *coreStorageSettingWriteError) Error() string {
+	return fmt.Sprintf("save setting %s: %v", e.Key, e.Err)
+}
+
+func (e *coreStorageSettingWriteError) Unwrap() error { return e.Err }

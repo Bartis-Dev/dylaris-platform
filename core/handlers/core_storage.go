@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -294,8 +295,21 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.state.persistCoreStorageConfig(effective, req.S3SecretKey != ""); err != nil {
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+	// req.S3SecretKey, not effective.S3SecretKey: the merged config carries the
+	// STORED secret whenever the request omitted the backend, so passing the
+	// merged value would turn a secret-only rotation into a no-op that still
+	// answers 200.
+	if err := h.state.persistCoreStorageConfig(effective, req.S3SecretKey); err != nil {
+		// The wrapped error carries the raw store error; the response names
+		// only the settings key, since settings.write is a delegatable panel
+		// capability and DB error text is not for it.
+		log.Printf("core storage: save config: %v", err)
+		msg := "Failed to save setting"
+		var writeErr *coreStorageSettingWriteError
+		if errors.As(err, &writeErr) {
+			msg = "Failed to save setting: " + writeErr.Key
+		}
+		sendJSONError(w, msg, http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
