@@ -1,6 +1,8 @@
 // Package modpack provides at-rest storage for .mrpack files. Implementations
 // share the ModpackStorageProvider interface. The active provider is built
-// from settings via NewProviderFromSettings.
+// from settings via NewProviderFromSettings, which resolves "local" (mirrored
+// across N filesystem paths), "s3" (a dedicated bucket), or "core-storage"
+// (the shared Core file storage, under the "modpacks" sub-prefix).
 package modpack
 
 import "errors"

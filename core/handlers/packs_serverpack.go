@@ -54,7 +54,7 @@ func hasOversizedZipEntry(zipBytes []byte) bool {
 // server-pack to "server-side content + configs". The operator installs the
 // loader (Fabric/Forge/...) via the normal server-install flow.
 func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.BuildContentEntry) ([]byte, error) {
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil {
 		return nil, err
 	}

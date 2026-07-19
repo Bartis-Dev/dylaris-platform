@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	backupstorage "dylaris-core/storage/backup"
+	"dylaris-core/storage/modpack"
 )
 
 // TestCoreStorageSubPrefixesMatch locks the duplicated sub-prefix literals
@@ -15,6 +16,10 @@ func TestCoreStorageSubPrefixesMatch(t *testing.T) {
 	if backupstorage.CoreStorageSubPrefix != CoreStoragePrefixServerBackups {
 		t.Errorf("backup.CoreStorageSubPrefix = %q, want %q (handlers.CoreStoragePrefixServerBackups)",
 			backupstorage.CoreStorageSubPrefix, CoreStoragePrefixServerBackups)
+	}
+	if modpack.CoreStorageSubPrefix != CoreStoragePrefixModpacks {
+		t.Errorf("modpack.CoreStorageSubPrefix = %q, want %q (handlers.CoreStoragePrefixModpacks)",
+			modpack.CoreStorageSubPrefix, CoreStoragePrefixModpacks)
 	}
 }
 

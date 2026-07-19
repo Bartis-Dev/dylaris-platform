@@ -139,7 +139,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	build.Channel = channel
 	var mrpack []byte
 	if build.Frozen && build.MrpackStorageKey != "" {
-		prov, perr := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+		prov, perr := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 		if perr != nil || prov == nil {
 			sendJSONError(w, "Modpack storage misconfigured; cannot read frozen build", http.StatusInternalServerError)
 			return

@@ -219,7 +219,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	// sha1 of the inner jar drives Modrinth auto-link; for a wrapped jar hash the jar itself.
 	_, innerSha1, innerSha512 := modpack.Hashes(data)
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil || prov == nil {
 		sendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return

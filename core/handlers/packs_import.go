@@ -84,7 +84,7 @@ func (h *PacksHandler) ImportSolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil || prov == nil {
 		sendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return

@@ -50,7 +50,7 @@ func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil || prov == nil {
 		solderJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return

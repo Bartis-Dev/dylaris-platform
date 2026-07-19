@@ -50,7 +50,7 @@ func (h *PacksHandler) EnsureLoader(minecraft, loader, loaderVersion string) {
 		_ = h.state.Store.UpdateLoaderStatus(minecraft, loader, loaderVersion, models.LoaderStatusFailed, msg)
 	}
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil || prov == nil {
 		fail("modpack storage not configured; cannot store loader artifact")
 		return

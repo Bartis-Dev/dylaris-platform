@@ -295,7 +295,7 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil || prov == nil {
 		solderJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return

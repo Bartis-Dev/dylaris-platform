@@ -33,9 +33,9 @@ const (
 // server-backups and modpacks are OPT-IN namespaces: they are only used when
 // an operator explicitly points that subsystem at the "core-storage" backend.
 // CoreStoragePrefixServerBackups is duplicated as storage/backup.CoreStorageSubPrefix
-// (that package must not import this one); TestCoreStorageSubPrefixesMatch
-// locks the two together. CoreStoragePrefixModpacks has no such counterpart
-// yet - storage/modpack does not define one - so it is unchecked for now.
+// and CoreStoragePrefixModpacks is duplicated as storage/modpack.CoreStorageSubPrefix
+// (neither package may import this one); TestCoreStorageSubPrefixesMatch locks
+// both pairs together.
 const (
 	CoreStoragePrefixLibrary       = "library"
 	CoreStoragePrefixAttachments   = "ticket-attachments"
