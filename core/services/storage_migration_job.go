@@ -569,7 +569,7 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 			return
 		}
 		if err != nil {
-			s.failSourceIntact("capture manifest: " + err.Error())
+			s.failSourceIntactNoManifest("capture manifest: " + err.Error())
 			return
 		}
 		s.update(func(j *StorageMigrationJob) {
@@ -589,11 +589,11 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 			return
 		}
 		if manifest == nil {
-			s.failSourceIntact(fmt.Sprintf("manifest #%d does not exist", req.ManifestID))
+			s.failSourceIntactNoManifest(fmt.Sprintf("manifest #%d does not exist", req.ManifestID))
 			return
 		}
 		if manifest.DataSet != req.DataSet {
-			s.failSourceIntact(fmt.Sprintf("manifest #%d was captured for data set %q, not %q", req.ManifestID, manifest.DataSet, req.DataSet))
+			s.failSourceIntactNoManifest(fmt.Sprintf("manifest #%d was captured for data set %q, not %q", req.ManifestID, manifest.DataSet, req.DataSet))
 			return
 		}
 		entries, err = s.store.ListStorageManifestEntries(manifest.ID)
@@ -823,7 +823,8 @@ func (s *StorageMigrationService) finish(msg string) {
 }
 
 // sourceIntactNote is the recovery advice for a failure that happened BEFORE
-// anything could write to the source.
+// anything could write to the source, at a point where a usable manifest
+// already exists for a re-run to pick up from.
 //
 // It is NOT appended by fail() itself. It used to be, unconditionally, which
 // made a delete-phase failure - the one failure that can only occur AFTER
@@ -832,12 +833,28 @@ func (s *StorageMigrationService) finish(msg string) {
 // that can prove the claim may make it, which is what failSourceIntact is for.
 const sourceIntactNote = "The source was NOT modified. Re-running with the same manifest resumes where this left off."
 
+// sourceIntactNoManifestNote carries the same source-intact guarantee for the
+// failures that happen before any usable manifest exists: the capture itself
+// failed, or the manifest a verify job names is missing or belongs to a
+// different data set. "Re-running with the same manifest" is not advice that
+// means anything there - in the capture case none was ever stored, and in the
+// other two the named manifest is precisely what is wrong, so a re-run with it
+// fails identically. Pointing at one anyway is the same over-claiming the
+// delete note had to drop.
+const sourceIntactNoManifestNote = "The source was NOT modified. No usable manifest exists for this run, so there is nothing to resume from; fix the cause and start a new run."
+
 // failSourceIntact fails the job and states that the source is untouched. Use
 // it ONLY from a point the runner has not yet reached deleting_source:
 // manifesting, copying and verifying read the source and never write to it,
 // and DeleteSource is the engine's one and only writer to the source.
 func (s *StorageMigrationService) failSourceIntact(msg string) {
 	s.failWithNote(msg, sourceIntactNote)
+}
+
+// failSourceIntactNoManifest is failSourceIntact for the call sites that have
+// no manifest to point a re-run at. Same source guarantee, no resume promise.
+func (s *StorageMigrationService) failSourceIntactNoManifest(msg string) {
+	s.failWithNote(msg, sourceIntactNoManifestNote)
 }
 
 // fail records a terminal failure without asserting anything about the state

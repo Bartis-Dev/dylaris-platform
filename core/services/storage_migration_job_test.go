@@ -48,6 +48,9 @@ type smDataSet struct {
 	deleteFailAfter int
 	deleteErr       error
 	deleteCalls     int
+	// writeErr, when non-nil, makes every Write fail. Set on a TARGET it models
+	// a backend that refuses writes, which is what fails the copy phase.
+	writeErr error
 }
 
 func newSMDataSet(id, label string) *smDataSet {
@@ -98,6 +101,9 @@ func (d *smDataSet) Open(_ context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (d *smDataSet) Write(_ context.Context, key string, r io.Reader, _ int64) error {
+	if d.writeErr != nil {
+		return d.writeErr
+	}
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -778,6 +784,86 @@ func TestStorageMigration_FailuresBeforeTheDeleteStillPromiseAnIntactSource(t *t
 	}
 	if len(src.snapshot()) != 1 {
 		t.Errorf("source = %v, want it untouched", src.snapshot())
+	}
+}
+
+// TestStorageMigration_OnlyFailuresWithAManifestPromiseAResume splits the
+// source-intact note by what the call site can actually offer.
+//
+// Every pre-delete failure used to end with "Re-running with the same manifest
+// resumes where this left off." That is true once a manifest exists, but three
+// call sites fire before one does: the capture itself failing (none was ever
+// stored), a verify naming a manifest id that does not exist, and a verify
+// naming a manifest captured for another data set. In the latter two the named
+// manifest is exactly what is wrong, so the advice sends the operator into a
+// re-run that fails identically. Same over-claiming class as the delete note.
+func TestStorageMigration_OnlyFailuresWithAManifestPromiseAResume(t *testing.T) {
+	const resumePromise = "Re-running with the same manifest resumes"
+
+	// newRun builds a service whose source holds one object, plus a target.
+	newRun := func(t *testing.T, targetWriteErr error) *StorageMigrationService {
+		t.Helper()
+		rdb := newStorageMigrationTestRedis(t)
+		src := newSMDataSet("library", "Library (source)")
+		src.put("a.jar", "aaa")
+		target := newSMDataSet("library", "Library (ad-hoc target)")
+		target.writeErr = targetWriteErr
+		return NewStorageMigrationService(rdb, newSMStore(), &smResolver{
+			sets:       map[string]*smDataSet{"library": src},
+			labels:     map[string]string{"library": "path:/mnt/old/library"},
+			adHoc:      target,
+			adHocLabel: "path:/new",
+		})
+	}
+
+	cases := []struct {
+		name string
+		req  StorageMigrationRequest
+		// targetWriteErr fails the copy phase, which happens AFTER the manifest
+		// is captured and stored.
+		targetWriteErr    error
+		wantResumePromise bool
+	}{
+		{
+			name:              "verify against a manifest id that does not exist",
+			req:               StorageMigrationRequest{Kind: StorageJobVerify, DataSet: "library", VerifyMode: "full", ManifestID: 4242},
+			wantResumePromise: false,
+		},
+		{
+			// Positive control: the copy phase runs with a stored manifest, so
+			// resuming from it is real advice and must survive the split.
+			name:              "copy failure, which happens after the manifest is stored",
+			req:               StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full", TargetConfig: adHocTargetConfig()},
+			targetWriteErr:    errors.New("backend refused the write"),
+			wantResumePromise: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := newRun(t, c.targetWriteErr)
+			if _, err := svc.Start(context.Background(), c.req, "admin", "root"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			done := waitForPhase(t, svc, StoragePhaseFailed, StoragePhaseDone)
+			if done.Phase != StoragePhaseFailed {
+				t.Fatalf("phase = %q, want failed", done.Phase)
+			}
+			all := strings.Join(done.Log, "\n")
+
+			// The source guarantee itself is true on every one of these paths
+			// and must never be lost by the split.
+			if !strings.Contains(all, "The source was NOT modified") {
+				t.Errorf("a pre-delete failure dropped the source-intact guarantee.\nlog:\n%s", all)
+			}
+			if got := strings.Contains(all, resumePromise); got != c.wantResumePromise {
+				if c.wantResumePromise {
+					t.Errorf("the resume advice was dropped from a failure that HAS a stored manifest to resume from.\nlog:\n%s", all)
+				} else {
+					t.Errorf("the job promised a resume from a manifest that does not exist; a re-run fails identically.\nlog:\n%s", all)
+				}
+			}
+		})
 	}
 }
 
