@@ -37,19 +37,54 @@ func TestChecksum_KnownVectors(t *testing.T) {
 	}
 }
 
-func TestChecksum_LargerThanOneBuffer(t *testing.T) {
-	// Deliberately exceeds checksumBufSize so the multi-read path is covered.
-	body := bytes.Repeat([]byte("dylaris"), (checksumBufSize/7)+1000)
-	want := sha256.Sum256(body)
-	sum, n, err := Checksum(bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("Checksum err = %v", err)
+func TestChecksum_LargeBody(t *testing.T) {
+	// checksumBufSize is 1 MiB; span several buffers plus a remainder so a
+	// chunked copy loop unambiguously needs more than one Read to finish.
+	const bodySize = checksumBufSize*3 + 12345
+	body := bytes.Repeat([]byte("dylaris-"), bodySize/8+1)[:bodySize]
+	wantSum := sha256.Sum256(body)
+	want := hex.EncodeToString(wantSum[:])
+
+	cases := []struct {
+		name string
+		// newReader returns a fresh reader over body each call so the two
+		// subtests do not share read position.
+		newReader  func() io.Reader
+		checkReads bool
+	}{
+		{
+			name:      "bytes.Reader implements io.WriterTo so io.CopyBuffer takes its fast path, bypassing the explicit buffer",
+			newReader: func() io.Reader { return bytes.NewReader(body) },
+		},
+		{
+			name: "onlyReader hides WriteTo so io.CopyBuffer must drive the chunked copy loop through checksumBufSize",
+			newReader: func() io.Reader {
+				return &onlyReader{Reader: bytes.NewReader(body)}
+			},
+			checkReads: true,
+		},
 	}
-	if sum != hex.EncodeToString(want[:]) {
-		t.Errorf("Checksum = %q, want %q", sum, hex.EncodeToString(want[:]))
-	}
-	if n != int64(len(body)) {
-		t.Errorf("byte count = %d, want %d", n, len(body))
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := c.newReader()
+			sum, n, err := Checksum(r)
+			if err != nil {
+				t.Fatalf("Checksum err = %v", err)
+			}
+			if sum != want {
+				t.Errorf("Checksum = %q, want %q", sum, want)
+			}
+			if n != int64(bodySize) {
+				t.Errorf("byte count = %d, want %d", n, bodySize)
+			}
+			if c.checkReads {
+				or := r.(*onlyReader)
+				if or.reads <= 1 {
+					t.Errorf("Read call count = %d, want > 1 (the chunked copy loop must actually iterate)", or.reads)
+				}
+				t.Logf("onlyReader observed %d Read call(s) for a %d-byte body against a %d-byte buffer", or.reads, bodySize, checksumBufSize)
+			}
+		})
 	}
 }
 
@@ -117,5 +152,25 @@ type errWriter struct{ err error }
 
 func (e *errWriter) Write([]byte) (int, error) { return 0, e.err }
 
+// onlyReader wraps a reader and exposes nothing but Read, so io.CopyBuffer
+// cannot take its io.WriterTo fast path (io/io.go:407-416) even when the
+// wrapped reader implements WriteTo (as *bytes.Reader and *strings.Reader
+// do). Embedding the io.Reader INTERFACE, not a concrete reader type, is
+// what hides WriteTo: a struct only promotes the methods declared on its
+// embedded field's static type, and io.Reader declares no WriteTo. This is
+// what lets a test actually drive checksumBufSize-sized reads through
+// Checksum's chunked copy loop instead of a specialized WriteTo. Local to
+// this file; never redeclared.
+type onlyReader struct {
+	io.Reader
+	reads int
+}
+
+func (o *onlyReader) Read(p []byte) (int, error) {
+	o.reads++
+	return o.Reader.Read(p)
+}
+
 var _ io.Reader = (*errReader)(nil)
 var _ io.Writer = (*errWriter)(nil)
+var _ io.Reader = (*onlyReader)(nil)
