@@ -1,0 +1,191 @@
+package handlers
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"dylaris-core/services"
+	"dylaris-core/storage"
+)
+
+// This file holds everything that must be true about an AD-HOC target storage
+// config before a migration may start, plus the single writer that makes one
+// active.
+//
+// Why an ad-hoc config exists at all: library, ticket-attachments,
+// ticket-backups and modpacks are each backed by ONE settings-configured
+// backend. Their saved config describes where they live NOW, so it cannot also
+// be the destination - reading the target from it would make source == target.
+// The operator therefore names the destination inline (another S3, a
+// WebDAV/NFS-mounted path, or back), and the engine builds a provider from it.
+// This is not new machinery: CoreStorageHandler.TestConnection already builds a
+// working provider from an unsaved candidate config through
+// newStorageProviderForConfig. The migration reuses that exact seam.
+
+// ErrTargetSameLocation is returned when a migration target resolves to the
+// same physical location as its source.
+var ErrTargetSameLocation = errors.New("core storage: the target resolves to the same location as the source")
+
+// coreStorageConfigFromTarget converts the transport shape (declared in
+// services, because services cannot import handlers) into the handlers shape.
+// This is the ONLY conversion point between the two, so the field mapping
+// cannot drift. The candidate is normalized on the way through, exactly as
+// SaveConfig and TestConnection normalize theirs, so a clipboard-pasted value
+// with stray whitespace does not become a subtly different location.
+func coreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConfig {
+	return normalizeCoreStorageCandidate(CoreStorageConfig{
+		Backend:       t.Backend,
+		Path:          t.Path,
+		PathConfirmed: t.PathConfirmed,
+		S3Endpoint:    t.S3Endpoint,
+		S3Bucket:      t.S3Bucket,
+		S3Region:      t.S3Region,
+		S3AccessKey:   t.S3AccessKey,
+		S3SecretKey:   t.S3SecretKey,
+		S3PathStyle:   t.S3PathStyle,
+		S3Prefix:      t.S3Prefix,
+	})
+}
+
+// effectiveS3Prefix is the prefix newStorageProviderForConfig will actually
+// hand to the S3 provider for this data set. It is extracted so the
+// same-location comparison and the provider construction cannot disagree about
+// what "where this data set lives" means.
+func effectiveS3Prefix(cfg CoreStorageConfig, subPrefix string) string {
+	p := strings.Trim(cfg.S3Prefix, "/")
+	if p == "" {
+		return subPrefix
+	}
+	return p + "/" + subPrefix
+}
+
+// coreStorageRoot is the path-backend directory this data set lives in.
+func coreStorageRoot(cfg CoreStorageConfig, subPrefix string) string {
+	return filepath.Join(cfg.Path, subPrefix)
+}
+
+// sameCoreStorageLocation reports whether src and tgt name the same physical
+// place for subPrefix.
+//
+// For a path backend this is os.SameFile - device and inode - and NOT a string
+// compare. That distinction is load-bearing: "/mnt/old" and "/mnt/new" are
+// routinely the same directory through a symlink or a Docker bind mount, and
+// accepting such a target would send the copy loop over every source object,
+// rewriting each one onto itself, before verification ever ran. A target
+// directory that does not exist yet cannot alias anything, so it is not the
+// same location (and must not be an error: a first migration onto a fresh
+// mount depends on it).
+//
+// For s3 there is no inode to consult, so identity is endpoint + bucket +
+// effective prefix. Credentials are deliberately NOT part of it: a second key
+// pair pointing at the same bucket and prefix is still the same bucket and
+// prefix. A different prefix in the same bucket IS a distinct location and is
+// allowed.
+//
+// A path backend and an s3 backend are never the same location.
+func sameCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) (bool, error) {
+	srcS3 := src.Backend == "s3"
+	tgtS3 := tgt.Backend == "s3"
+	if srcS3 != tgtS3 {
+		return false, nil
+	}
+	if srcS3 {
+		return strings.TrimSuffix(src.S3Endpoint, "/") == strings.TrimSuffix(tgt.S3Endpoint, "/") &&
+			src.S3Bucket == tgt.S3Bucket &&
+			effectiveS3Prefix(src, subPrefix) == effectiveS3Prefix(tgt, subPrefix), nil
+	}
+
+	// Two configs naming the exact same root are trivially the same location,
+	// whether or not the data set's sub-prefix directory has been created
+	// under it yet (e.g. a brand-new install that has never written to this
+	// data set). This is a fast-path exact-match short-circuit, not a
+	// replacement for the os.SameFile check below: it can only ever add a
+	// TRUE positive for a literally-identical path, and does nothing for the
+	// harder case of two DIFFERENT path strings aliasing the same directory
+	// through a symlink or a bind mount, which os.SameFile below still has to
+	// catch.
+	if filepath.Clean(src.Path) == filepath.Clean(tgt.Path) {
+		return true, nil
+	}
+
+	srcInfo, err := os.Stat(coreStorageRoot(src, subPrefix))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat source root: %w", err)
+	}
+	tgtInfo, err := os.Stat(coreStorageRoot(tgt, subPrefix))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat target root: %w", err)
+	}
+	return os.SameFile(srcInfo, tgtInfo), nil
+}
+
+// ensureDistinctCoreStorageLocation refuses a same-location target. It runs at
+// Start, before any object is read: discovering this mid-copy would mean the
+// engine had already overwritten source objects with themselves.
+func ensureDistinctCoreStorageLocation(src, tgt CoreStorageConfig, subPrefix string) error {
+	same, err := sameCoreStorageLocation(src, tgt, subPrefix)
+	if err != nil {
+		return err
+	}
+	if same {
+		return fmt.Errorf("%w: pick a different bucket, prefix or path (note that two paths can be the same directory through a symlink or a bind mount)", ErrTargetSameLocation)
+	}
+	return nil
+}
+
+// buildTargetStorageProvider validates cfg and builds a provider scoped to
+// subPrefix. Validation reuses validateCoreStorageConfig - the same predicate
+// the settings form enforces - rather than a second copy of the rules.
+func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storage.StorageProvider, error) {
+	if err := validateCoreStorageConfig(cfg); err != nil {
+		return nil, fmt.Errorf("target storage config: %w", err)
+	}
+	prov, err := newStorageProviderForConfig(cfg, subPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("target storage: %w", err)
+	}
+	return prov, nil
+}
+
+// persistCoreStorageConfig writes cfg to the settings store. It is the ONE
+// writer of these keys: SaveConfig calls it, and so does the migration's
+// switching_config phase. Two copies would drift, and a drifted writer is how
+// an install ends up with a new access key paired to an old secret.
+//
+// writeSecret says whether cfg.S3SecretKey is a NEWLY supplied secret. When it
+// is false the stored secret is left untouched, except that switching the
+// backend away from s3 clears it outright so it does not linger orphaned with
+// S3SecretSet still reporting true.
+func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, writeSecret bool) error {
+	pairs := []struct{ k, v string }{
+		{keyCoreStorageBackend, cfg.Backend},
+		{keyCoreStoragePath, cfg.Path},
+		{keyCoreStoragePathConfirm, boolStr(cfg.PathConfirmed)},
+		{keyCoreStorageS3Endpoint, cfg.S3Endpoint},
+		{keyCoreStorageS3Bucket, cfg.S3Bucket},
+		{keyCoreStorageS3Region, cfg.S3Region},
+		{keyCoreStorageS3AccessKey, cfg.S3AccessKey},
+		{keyCoreStorageS3PathStyle, boolStr(cfg.S3PathStyle)},
+		{keyCoreStorageS3Prefix, cfg.S3Prefix},
+	}
+	if writeSecret && cfg.S3SecretKey != "" {
+		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, cfg.S3SecretKey})
+	} else if cfg.Backend != "s3" {
+		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, ""})
+	}
+	for _, p := range pairs {
+		if err := s.Store.SetSetting(p.k, p.v); err != nil {
+			return fmt.Errorf("save setting %s: %w", p.k, err)
+		}
+	}
+	return nil
+}

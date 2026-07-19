@@ -294,33 +294,9 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	pairs := []struct{ k, v string }{
-		{keyCoreStorageBackend, effective.Backend},
-		{keyCoreStoragePath, effective.Path},
-		{keyCoreStoragePathConfirm, boolStr(effective.PathConfirmed)},
-		{keyCoreStorageS3Endpoint, effective.S3Endpoint},
-		{keyCoreStorageS3Bucket, effective.S3Bucket},
-		{keyCoreStorageS3Region, effective.S3Region},
-		{keyCoreStorageS3AccessKey, effective.S3AccessKey},
-		{keyCoreStorageS3PathStyle, boolStr(effective.S3PathStyle)},
-		{keyCoreStorageS3Prefix, effective.S3Prefix},
-	}
-	// Only touch the stored secret when the request actually submitted a new
-	// one; a blank incoming secret must never overwrite what's already saved.
-	// The one exception: switching the backend away from s3 clears the
-	// stored secret outright, so it doesn't linger orphaned (with
-	// S3SecretSet still reporting true) once the s3 config it belongs to is
-	// no longer in use.
-	if req.S3SecretKey != "" {
-		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, req.S3SecretKey})
-	} else if effective.Backend != "s3" {
-		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, ""})
-	}
-	for _, p := range pairs {
-		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
-			return
-		}
+	if err := h.state.persistCoreStorageConfig(effective, req.S3SecretKey != ""); err != nil {
+		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
