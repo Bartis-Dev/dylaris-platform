@@ -515,3 +515,243 @@ func TestVerify_AuthorizesSourceDeleteOnlyForAPassingFullRun(t *testing.T) {
 		t.Fatal("a full verify report with problems must not authorize a source delete")
 	}
 }
+
+// --- Fix pass 1: closing test gaps found by review (see task-11-report.md,
+// "## Fix pass 1"). ---
+
+// sampleFixture builds n manifest entries whose declared Size is just over
+// the small/large threshold, so SelectSample treats every one of them as
+// "large" and subjects them to the bounded, randomized draw. Every entry's
+// REAL content is a short, fixed-width string (always the same length,
+// regardless of n), deliberately divorced from the declared Size.
+//
+// This is safe, not sloppy: Verify's checksum-first classification (see its
+// doc comment, and TestVerify_ChecksumIsAuthoritativeOverACorruptManifestSizeField)
+// means a manifest Size that disagrees with the real content never fails
+// verification as long as the checksum matches what's really there. Relying
+// on that here is what makes a 200+ object fixture - required before
+// sampleLargeCount excludes anything at all, see TestSampleLargeCount -
+// cheap to build and hash instead of requiring literal multi-hundred-MB
+// payloads.
+func sampleFixture(t *testing.T, n int) (entries []models.StorageManifestEntry, bodies map[string]string) {
+	t.Helper()
+	bodies = make(map[string]string, n)
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("large%04d", i)
+		body := fmt.Sprintf("body%04d", i) // fixed width: always 8 bytes
+		sum, _, err := Checksum(strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("Checksum: %v", err)
+		}
+		entries = append(entries, models.StorageManifestEntry{
+			Key:      key,
+			Size:     sampleSmallObjectBytes + 1,
+			Checksum: sum,
+		})
+		bodies[key] = body
+	}
+	return entries, bodies
+}
+
+// TestVerify_SampleReportsUndrawnEntryAsMissing is the direct test for
+// verify.go's "presence is never sampled" block: a manifest key that was
+// neither drawn into the sample NOR present at the target must still be
+// reported missing. Every prior sample-mode test (including
+// TestVerify_PresenceIsNeverSampled) used objects small enough that
+// SelectSample draws all of them, so a missing key was always caught
+// earlier, by the target.Open fs.ErrNotExist branch - never by this block.
+// Deleting the block left the whole suite green.
+//
+// Entries here are large enough, and numerous enough (sampleFixture, n=300),
+// that SelectSample genuinely excludes some (see TestSampleLargeCount: it
+// takes more than 200 large objects before any get excluded). Which key ends
+// up undrawn is never hard-coded: it is discovered by calling SelectSample
+// with the same seed Verify itself will use, so the test does not depend on
+// - and cannot accidentally pin - the randomized draw's specific outcome.
+func TestVerify_SampleReportsUndrawnEntryAsMissing(t *testing.T) {
+	const n = 300
+	const seed = 42
+	entries, bodies := sampleFixture(t, n)
+
+	drawn := SelectSample(entries, rand.New(rand.NewSource(seed)))
+	drawnKeys := EntriesByKey(drawn)
+	var missingKey string
+	for _, e := range entries {
+		if _, ok := drawnKeys[e.Key]; !ok {
+			missingKey = e.Key
+			break
+		}
+	}
+	if missingKey == "" {
+		t.Fatalf("setup: SelectSample drew every one of %d entries; want it to exclude at least one (sampleLargeCount(%d) = %d)", n, n, sampleLargeCount(n))
+	}
+
+	target := newMemDataSet(DataSetLibrary, "target")
+	for _, e := range entries {
+		if e.Key == missingKey {
+			continue // deliberately absent: undrawn from the sample AND missing from the target
+		}
+		target.put(e.Key, bodies[e.Key])
+	}
+
+	rep, err := Verify(context.Background(), target, manifestHeader(1, entries), entries, VerifyModeSample, VerifyOptions{
+		Rand: rand.New(rand.NewSource(seed)),
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got := statusOf(rep, missingKey); got != VerifyMissing {
+		t.Errorf("%s status = %q, want missing (it was never drawn into the sample and is absent from the target)", missingKey, got)
+	}
+	if rep.OK {
+		t.Error("OK = true despite a missing manifest key")
+	}
+}
+
+// TestVerify_SampleFractionsDropBelowOneWhenObjectsAreSkipped is the
+// non-vacuous counterpart to TestVerify_SampleReportsTheCheckedFraction,
+// whose own comment concedes it only proves the arithmetic is right when
+// nothing is actually skipped (3 small objects, all drawn). This test drives
+// Verify over a data set large enough that SelectSample genuinely excludes
+// some large objects, and pins both fractions at their real,
+// less-than-one values - so nothing can compute either fraction over the
+// SAMPLE (which would read 1) instead of the FULL manifest and still pass.
+func TestVerify_SampleFractionsDropBelowOneWhenObjectsAreSkipped(t *testing.T) {
+	const n = 300
+	var bodyLen = int64(len("body0000")) // every fixture body is 8 bytes
+	entries, bodies := sampleFixture(t, n)
+
+	target := newMemDataSet(DataSetLibrary, "target")
+	for _, e := range entries {
+		target.put(e.Key, bodies[e.Key])
+	}
+
+	rep, err := Verify(context.Background(), target, manifestHeader(1, entries), entries, VerifyModeSample, VerifyOptions{
+		Rand: rand.New(rand.NewSource(7)),
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !rep.OK {
+		t.Fatalf("OK = false, problems = %+v", rep.Problems)
+	}
+
+	wantChecked := int64(sampleLargeCount(n))
+	if rep.ObjectsChecked != wantChecked {
+		t.Fatalf("ObjectsChecked = %d, want %d (sampleLargeCount(%d))", rep.ObjectsChecked, wantChecked, n)
+	}
+	if rep.ObjectsInManifest != int64(n) {
+		t.Fatalf("ObjectsInManifest = %d, want %d", rep.ObjectsInManifest, n)
+	}
+
+	wantCheckedFraction := float64(wantChecked) / float64(n)
+	if math.Abs(rep.CheckedFraction-wantCheckedFraction) > 1e-9 {
+		t.Errorf("CheckedFraction = %v, want %v", rep.CheckedFraction, wantCheckedFraction)
+	}
+	if rep.CheckedFraction >= 1 {
+		t.Errorf("CheckedFraction = %v, want < 1 (the sample excluded %d of %d objects)", rep.CheckedFraction, int64(n)-wantChecked, n)
+	}
+
+	wantBytesChecked := wantChecked * bodyLen
+	if rep.BytesChecked != wantBytesChecked {
+		t.Fatalf("BytesChecked = %d, want %d (%d objects hashed x %d real bytes each)", rep.BytesChecked, wantBytesChecked, wantChecked, bodyLen)
+	}
+	wantBytesInManifest := int64(n) * (sampleSmallObjectBytes + 1)
+	if rep.BytesInManifest != wantBytesInManifest {
+		t.Fatalf("BytesInManifest = %d, want %d", rep.BytesInManifest, wantBytesInManifest)
+	}
+	wantBytesFraction := float64(wantBytesChecked) / float64(wantBytesInManifest)
+	if math.Abs(rep.BytesFraction-wantBytesFraction) > 1e-9 {
+		t.Errorf("BytesFraction = %v, want %v", rep.BytesFraction, wantBytesFraction)
+	}
+	if rep.BytesFraction >= 1 {
+		t.Errorf("BytesFraction = %v, want < 1", rep.BytesFraction)
+	}
+}
+
+// TestVerify_SampleReportsProgressOverTheSamplePopulation proves Progress's
+// objectsTotal and bytesTotal describe the SAME population in sample mode.
+// Progress is invoked only from inside the content-hashing loop, which in
+// sample mode iterates over the SAMPLE, not the full manifest (see Verify's
+// doc comment: "sample only ever reduces how many objects get their
+// CONTENTS hashed"). Pairing the sample's object count with the full
+// manifest's byte count - what the code did before this fix - would make a
+// panel progress bar show objects reading 100% while bytes sit at a fraction
+// of that. objectsSkipped must likewise be truthful: the count of manifest
+// entries this loop will never visit because sampling excluded them, not a
+// hard-coded 0. Progress was previously never invoked by any test at all.
+//
+// One of the DRAWN entries is deliberately left absent from the target, so
+// this also drives the Open() fs.ErrNotExist branch's Progress call (the
+// loop's other call site, which shares the exact same objectsSkipped/
+// hashBytesTotal values) - not just the success-path call site - so a bug
+// confined to only one of the two identical call sites cannot slip past this
+// test the same way the block in finding 1 slipped past every prior test.
+func TestVerify_SampleReportsProgressOverTheSamplePopulation(t *testing.T) {
+	const n = 300
+	const seed = 7
+	var bodyLen = int64(len("body0000"))
+	entries, bodies := sampleFixture(t, n)
+
+	drawn := SelectSample(entries, rand.New(rand.NewSource(seed)))
+	if len(drawn) == 0 {
+		t.Fatal("setup: SelectSample drew nothing")
+	}
+	missingDrawnKey := drawn[0].Key
+
+	target := newMemDataSet(DataSetLibrary, "target")
+	for _, e := range entries {
+		if e.Key == missingDrawnKey {
+			continue // drawn, but absent: exercises the Open() not-found Progress call site too
+		}
+		target.put(e.Key, bodies[e.Key])
+	}
+
+	type tick struct {
+		objectsDone, objectsSkipped, objectsTotal, bytesDone, bytesTotal int64
+	}
+	var ticks []tick
+	_, err := Verify(context.Background(), target, manifestHeader(1, entries), entries, VerifyModeSample, VerifyOptions{
+		Rand: rand.New(rand.NewSource(seed)),
+		Progress: func(objectsDone, objectsSkipped, objectsTotal, bytesDone, bytesTotal int64, _ string) {
+			ticks = append(ticks, tick{objectsDone, objectsSkipped, objectsTotal, bytesDone, bytesTotal})
+		},
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	wantSample := int64(sampleLargeCount(n))
+	if int64(len(ticks)) != wantSample {
+		t.Fatalf("progress ticks = %d, want %d (one per hashed object)", len(ticks), wantSample)
+	}
+
+	wantSkipped := int64(n) - wantSample
+	wantBytesTotal := wantSample * (sampleSmallObjectBytes + 1)
+
+	first := ticks[0]
+	if first.objectsTotal != wantSample {
+		t.Errorf("first tick objectsTotal = %d, want %d (the SAMPLE size - the population this loop actually iterates)", first.objectsTotal, wantSample)
+	}
+	if first.objectsSkipped != wantSkipped {
+		t.Errorf("first tick objectsSkipped = %d, want %d (manifest entries excluded from the sample)", first.objectsSkipped, wantSkipped)
+	}
+	if first.bytesTotal != wantBytesTotal {
+		t.Errorf("first tick bytesTotal = %d, want %d (declared Size summed over the SAME sample population as objectsTotal, not the full manifest)", first.bytesTotal, wantBytesTotal)
+	}
+
+	last := ticks[len(ticks)-1]
+	if last.objectsDone != wantSample || last.objectsTotal != wantSample {
+		t.Errorf("final tick objects = %d/%d, want %d/%d", last.objectsDone, last.objectsTotal, wantSample, wantSample)
+	}
+	// One fewer than wantSample real reads: missingDrawnKey was drawn (so it
+	// still advances objectsDone via the not-found branch) but was never
+	// opened successfully, so it never contributed real bytes.
+	wantBytesDone := (wantSample - 1) * bodyLen
+	if last.bytesDone != wantBytesDone {
+		t.Errorf("final tick bytesDone = %d, want %d (%d hashed objects x %d real bytes each, minus the one drawn-but-missing object)", last.bytesDone, wantBytesDone, wantSample, bodyLen)
+	}
+	if last.bytesTotal != wantBytesTotal {
+		t.Errorf("final tick bytesTotal = %d, want %d", last.bytesTotal, wantBytesTotal)
+	}
+}

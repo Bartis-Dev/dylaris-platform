@@ -274,6 +274,25 @@ func Verify(ctx context.Context, target DataSet, manifest *models.StorageManifes
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
 
 	total := int64(len(sorted))
+	// hashBytesTotal and objectsSkipped describe the SAME population that
+	// objectsTotal (= total, above) already does: the objects this loop
+	// actually hashes - every entry in full mode, only the sample in sample
+	// mode. Pairing "total" here with rep.BytesInManifest (the FULL
+	// manifest) would repeat the exact mixed-denominator bug already fixed
+	// once in CaptureManifest (Task 9): a progress bar whose object count
+	// and byte count describe two differently-sized populations, e.g.
+	// objects reading 100% while bytes sit at 12%. objectsSkipped is 0 in
+	// full mode (sorted == entries, nothing excluded) and, in sample mode,
+	// the true count of manifest entries this loop will never visit at all
+	// because SelectSample did not draw them - reported here instead of a
+	// hard-coded 0 so a sample-mode progress bar can show that count
+	// alongside the bar.
+	var hashBytesTotal int64
+	for _, e := range sorted {
+		hashBytesTotal += e.Size
+	}
+	objectsSkipped := rep.ObjectsInManifest - total
+
 	for _, e := range sorted {
 		if cancelled() {
 			return StorageVerifyReport{}, ErrVerifyCancelled
@@ -296,7 +315,7 @@ func Verify(ctx context.Context, target DataSet, manifest *models.StorageManifes
 			}
 			rep.ObjectsChecked++
 			if opts.Progress != nil {
-				opts.Progress(rep.ObjectsChecked, 0, total, rep.BytesChecked, rep.BytesInManifest, e.Key)
+				opts.Progress(rep.ObjectsChecked, objectsSkipped, total, rep.BytesChecked, hashBytesTotal, e.Key)
 			}
 			continue
 		}
@@ -322,7 +341,7 @@ func Verify(ctx context.Context, target DataSet, manifest *models.StorageManifes
 		rep.ObjectsChecked++
 		rep.BytesChecked += n
 		if opts.Progress != nil {
-			opts.Progress(rep.ObjectsChecked, 0, total, rep.BytesChecked, rep.BytesInManifest, e.Key)
+			opts.Progress(rep.ObjectsChecked, objectsSkipped, total, rep.BytesChecked, hashBytesTotal, e.Key)
 		}
 	}
 
