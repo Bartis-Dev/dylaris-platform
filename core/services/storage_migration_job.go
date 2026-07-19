@@ -18,11 +18,14 @@ import (
 // StorageMigrationPhase tracks where a storage migration job is in its
 // lifecycle. Sequences:
 //
-//	migrate:  preparing -> manifesting -> copying -> verifying -> switching_config -> [deleting_source] -> done
+//	migrate:  preparing -> manifesting -> copying -> verifying -> [switching_config] -> [deleting_source] -> done
 //	manifest: preparing -> manifesting -> done
 //	verify:   preparing -> verifying -> done
 //
-// failed and cancelled are terminal from any phase.
+// failed and cancelled are terminal from any phase. Both bracketed phases are
+// conditional: a data-set-to-data-set migrate has no config to repoint and so
+// goes verifying -> done without ever entering switching_config. A consumer
+// waiting for that phase to arrive would wait forever.
 //
 // The migrate order is a SAFETY REQUIREMENT, not a convention:
 //   - switching_config runs only after a verification that passed
@@ -105,8 +108,14 @@ type StorageMigrationJob struct {
 	DeleteSource bool `json:"deleteSource"`
 	// ConfigSwitched reports whether the switching_config phase actually
 	// repointed a Core-managed config at the target. It is false for a
-	// data-set-to-data-set migrate, where there is no such config, and false
-	// after a switch that failed.
+	// data-set-to-data-set migrate, where the engine has no config to repoint,
+	// and false after a switch that failed.
+	//
+	// Read it as "the engine repointed something", never as "nothing points at
+	// the source any more". Whether some other config still references the
+	// source is not knowable from here, which is why Validate refuses
+	// deleteSource on the data-set-to-data-set shape rather than inferring
+	// safety from this flag being false.
 	//
 	// NOTE what is deliberately ABSENT from this struct: the ad-hoc
 	// StorageTargetConfig. It may hold a live S3 secret, and this struct is
