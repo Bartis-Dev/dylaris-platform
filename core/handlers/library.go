@@ -32,7 +32,7 @@ func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Reques
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -180,7 +180,7 @@ func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Req
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 	if err := prov.DeletePath(r.Context(), req.Path); err != nil {
@@ -206,7 +206,7 @@ func (h *LibraryHandler) MkdirLibraryHandler(w http.ResponseWriter, r *http.Requ
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 	if err := prov.CreateDir(r.Context(), req.Path); err != nil {
@@ -240,7 +240,7 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -296,7 +296,7 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 

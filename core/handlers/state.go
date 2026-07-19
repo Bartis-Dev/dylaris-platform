@@ -7,6 +7,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/storage"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -62,6 +63,13 @@ type AppState struct {
 	// CPUPinning reads node CPU topology (published to Redis by each node) and
 	// computes auto cpusets for per-server CPU pinning.
 	CPUPinning *services.CPUPinningService
+
+	// StorageGate is the watchdog for the configured host-path core storage.
+	// SyncStorageGate points it at the current path (or stops it when the
+	// backend is s3), and every per-request provider build consults it. Every
+	// Gate method is nil-safe, so an AppState built without one - which is
+	// only ever a test - simply never gates.
+	StorageGate *storage.Gate
 
 	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
 	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the

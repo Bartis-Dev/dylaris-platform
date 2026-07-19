@@ -172,6 +172,22 @@ func (s *AppState) CoreStorageConfigured() bool {
 	return validateCoreStorageConfig(s.LoadCoreStorageConfig()) == nil
 }
 
+// SyncStorageGate points the storage watchdog at the currently configured host
+// path, or stops it when the backend is not a host path.
+//
+// It is called at boot and from persistCoreStorageConfig, which is the single
+// writer of these settings keys and therefore the only thing that can change
+// the answer. Watch is idempotent, so calling it on a config write that left
+// the path alone costs nothing.
+func (s *AppState) SyncStorageGate() {
+	cfg := s.LoadCoreStorageConfig()
+	if (cfg.Backend == "path" || cfg.Backend == "local") && cfg.Path != "" {
+		s.StorageGate.Watch(cfg.Path)
+		return
+	}
+	s.StorageGate.Stop()
+}
+
 // buildCoreStorageProvider returns a provider SCOPED to subPrefix, built
 // strictly from the persisted Core file storage config. There is no
 // legacy-directory fallback: the owner has confirmed there are no pre-
@@ -188,9 +204,16 @@ func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StoragePr
 	if err := validateCoreStorageConfig(cfg); err != nil {
 		return nil, err
 	}
-	prov, err := newStorageProviderForConfig(cfg, subPrefix)
+	prov, err := newStorageProviderForConfig(cfg, subPrefix, s.StorageGate)
 	if err != nil {
-		log.Printf("core storage: failed to build %s provider: %v", subPrefix, err)
+		// An unreachable host path is not logged here. It is a per-REQUEST
+		// build, so a wedged mount would write one line per request for as
+		// long as the outage lasts, drowning the log at exactly the moment it
+		// is being read. The gate's own transition is the signal for that
+		// case; this line stays for the failures nothing else reports.
+		if !errors.Is(err, storage.ErrBackendUnreachable) {
+			log.Printf("core storage: failed to build %s provider: %v", subPrefix, err)
+		}
 		return nil, err
 	}
 	return prov, nil
@@ -210,13 +233,29 @@ func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StoragePr
 // body - including READ handlers, which the gate never wraps - so keeping
 // the two responses distinguishable preserves that route-coverage invariant
 // instead of muddying it.
-func coreStorageUnavailableResponse(w http.ResponseWriter) {
+//
+// err splits the two ways a per-request build fails, because they call for
+// opposite actions from the operator. "Not configured" means go and configure
+// it. UNREACHABLE means the config is fine and Core cannot see the storage
+// right now, so there is nothing to fix in the settings form. Reporting the
+// second as the first sends the operator to rewrite a working config; a plain
+// 500 tells them nothing; and a 404 would be an outright lie, claiming the
+// file is gone when the truth is that Core cannot see the mount. Both keep the
+// shape this response already had, so the distinction from featureDisabledResponse
+// described above is unaffected.
+func coreStorageUnavailableResponse(w http.ResponseWriter, err error) {
+	code := "core_storage_unavailable"
+	msg := "Core file storage is not configured. Configure it under Settings -> Core file storage."
+	if errors.Is(err, storage.ErrBackendUnreachable) {
+		code = "core_storage_unreachable"
+		msg = "Core file storage is UNREACHABLE: the configured path is not answering. The configuration itself is unchanged; check that the mount is still up on the Core host."
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": false,
-		"error":   "core_storage_unavailable",
-		"message": "Core file storage is not configured. Configure it under Settings -> Core file storage.",
+		"error":   code,
+		"message": msg,
 	})
 }
 
@@ -225,7 +264,13 @@ func coreStorageUnavailableResponse(w http.ResponseWriter) {
 // buildCoreStorageProvider (which loads the persisted config first) and by
 // TestConnection (which validates a candidate config that may not be saved
 // yet), so provider construction lives in exactly one place either way.
-func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string) (storage.StorageProvider, error) {
+//
+// gate is the watchdog for the LIVE configured host path, and it is passed in
+// rather than read from AppState because not every caller is building against
+// that path: the migration target and the connection test both hand this
+// function a candidate config the gate knows nothing about. Those pass nil,
+// which disables gating for that build. The gate never applies to s3.
+func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *storage.Gate) (storage.StorageProvider, error) {
 	if cfg.Backend == "s3" {
 		prefix := subPrefix
 		if cfg.S3Prefix != "" {
@@ -242,8 +287,20 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string) (stora
 		})
 	}
 	root := filepath.Join(cfg.Path, subPrefix)
+	// BEFORE the MkdirAll, and that ordering is the whole point. This function
+	// runs on every provider build and providers are built per request, so on
+	// a mount that has stopped answering this MkdirAll is itself the call that
+	// blocks - before any provider method is ever reached. Checking after it
+	// would gate nothing that matters.
+	if err := storage.GatedProviderBlocked(gate); err != nil {
+		return nil, err
+	}
 	_ = os.MkdirAll(root, 0755)
-	return storage.NewProvider("path", root, nil)
+	prov, err := storage.NewProvider("path", root, nil)
+	if err != nil {
+		return nil, err
+	}
+	return storage.NewGatedProvider(prov, gate), nil
 }
 
 // --- Admin HTTP surface: config CRUD + test-connection ---
@@ -391,7 +448,11 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		respond(false, err.Error())
 		return
 	}
-	prov, err := newStorageProviderForConfig(effective, "_probe")
+	// nil gate: the candidate may name a completely different path from the
+	// live one, so the live gate's verdict says nothing about it. An operator
+	// who asks to test a path is also entitled to have it actually tested
+	// rather than answered from a cached verdict.
+	prov, err := newStorageProviderForConfig(effective, "_probe", nil)
 	if err != nil {
 		respond(false, "Could not build provider: "+err.Error())
 		return

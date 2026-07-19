@@ -22,6 +22,7 @@ import (
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/storage"
 	"dylaris-core/store"
 	beamauth "dylaris-pkg/beam/auth"
 
@@ -208,6 +209,11 @@ func main() {
 
 	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.
 	appState.CPUPinning = services.NewCPUPinningService(redisClient, pgStore)
+
+	// Host-path storage watchdog. Started here and re-pointed by every write of
+	// the core-storage config; it idles when the backend is s3.
+	appState.StorageGate = storage.NewGate()
+	appState.SyncStorageGate()
 
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a

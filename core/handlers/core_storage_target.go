@@ -184,7 +184,10 @@ func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storag
 	if err := validateCoreStorageConfig(cfg); err != nil {
 		return nil, fmt.Errorf("target storage config: %w", err)
 	}
-	prov, err := newStorageProviderForConfig(cfg, subPrefix)
+	// nil gate: cfg is a MIGRATION TARGET, a different location from the live
+	// one by definition (ensureDistinctCoreStorageLocation enforces it), so
+	// the live path's watchdog has no verdict to offer about it.
+	prov, err := newStorageProviderForConfig(cfg, subPrefix, nil)
 	if err != nil {
 		return nil, fmt.Errorf("target storage: %w", err)
 	}
@@ -230,6 +233,10 @@ func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, secret string
 			return &coreStorageSettingWriteError{Key: p.k, Err: err}
 		}
 	}
+	// The watched root follows the config. Being the one writer is exactly why
+	// this belongs here: a second writer would leave the watchdog probing a
+	// path the platform no longer uses.
+	s.SyncStorageGate()
 	return nil
 }
 

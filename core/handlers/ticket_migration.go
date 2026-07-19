@@ -229,7 +229,7 @@ type backupSummary struct {
 func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Request) {
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -298,7 +298,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Request) {
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 	files, err := prov.ListFiles(r.Context(), "/")
@@ -331,7 +331,7 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -365,7 +365,7 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 	}
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 	if err := prov.DeletePath(r.Context(), name); err != nil {
@@ -408,7 +408,7 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 	}
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 	if rc, err := prov.GetFile(r.Context(), name); err != nil {
@@ -510,7 +510,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 

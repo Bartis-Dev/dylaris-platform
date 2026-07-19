@@ -182,9 +182,14 @@ func TestBuildCoreStorageProvider_ConfiguredPathBackendScopesBySubPrefix(t *test
 			if err != nil {
 				t.Fatalf("buildCoreStorageProvider(%q): %v", prefix, err)
 			}
-			lp, ok := p.(*storage.LocalProvider)
+			// The path backend is handed back wrapped in the storage-gate
+			// wrapper, so unwrap before inspecting the concrete backend.
+			if _, wrapped := p.(*storage.LocalProvider); wrapped {
+				t.Fatalf("buildCoreStorageProvider(%q) returned a bare *storage.LocalProvider, want it wrapped by the storage gate", prefix)
+			}
+			lp, ok := storage.UnwrapGated(p).(*storage.LocalProvider)
 			if !ok {
-				t.Fatalf("buildCoreStorageProvider(%q) = %T, want *storage.LocalProvider", prefix, p)
+				t.Fatalf("buildCoreStorageProvider(%q) = %T, want *storage.LocalProvider under the gate wrapper", prefix, storage.UnwrapGated(p))
 			}
 			want := filepath.Join(cfgPath, prefix)
 			if lp.BasePath != want {

@@ -479,7 +479,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -595,7 +595,7 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
 	if err != nil {
-		coreStorageUnavailableResponse(w)
+		coreStorageUnavailableResponse(w, err)
 		return
 	}
 
