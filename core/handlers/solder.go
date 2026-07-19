@@ -300,7 +300,7 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return
 	}
-	manifestJSON, err := prov.Get(solderManifestKey(p.OwnerID, p.SolderSlug, b.VersionString))
+	manifestJSON, err := prov.Get(r.Context(), solderManifestKey(p.OwnerID, p.SolderSlug, b.VersionString))
 	if err != nil {
 		solderJSONError(w, "Build does not exist", http.StatusNotFound)
 		return

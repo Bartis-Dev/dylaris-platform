@@ -342,10 +342,10 @@ func TestModpackDataSet_IDIsTheCallersNotAConstant(t *testing.T) {
 func TestModpackDataSet_ListComesFromTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
-	if err := prov.Put("a/pack.mrpack", []byte("aaa")); err != nil {
+	if err := prov.Put(ctx, "a/pack.mrpack", []byte("aaa")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := prov.Put("orphan.mrpack", []byte("zz")); err != nil {
+	if err := prov.Put(ctx, "orphan.mrpack", []byte("zz")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -374,7 +374,7 @@ func TestModpackDataSet_ListComesFromTheDatabase(t *testing.T) {
 func TestModpackDataSet_ListNormalizesLeadingSlash(t *testing.T) {
 	ctx := context.Background()
 	prov := modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()})
-	if err := prov.Put("a/pack.mrpack", []byte("aaa")); err != nil {
+	if err := prov.Put(ctx, "a/pack.mrpack", []byte("aaa")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 

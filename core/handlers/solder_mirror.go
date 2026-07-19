@@ -55,7 +55,7 @@ func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return
 	}
-	data, err := prov.Get(key)
+	data, err := prov.Get(r.Context(), key)
 	if err != nil {
 		solderJSONError(w, "Not found", http.StatusNotFound)
 		return

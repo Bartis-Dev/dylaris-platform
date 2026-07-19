@@ -110,7 +110,7 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	}
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
 	newKey := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + v.VersionNum + ".zip"
-	if err := prov.Put(newKey, zipBytes); err != nil {
+	if err := prov.Put(ctx, newKey, zipBytes); err != nil {
 		return fmt.Errorf("storage put failed: %w", err)
 	}
 	oldKey := mv.StorageKey
@@ -135,7 +135,7 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 		return fmt.Errorf("failed to update content: %w", err)
 	}
 	if oldKey != "" && oldKey != newKey {
-		_ = prov.Delete(oldKey) // best-effort; the DB no longer references it
+		_ = prov.Delete(ctx, oldKey) // best-effort; the DB no longer references it
 	}
 	return nil
 }

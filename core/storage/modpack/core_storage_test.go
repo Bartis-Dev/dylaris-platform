@@ -1,6 +1,7 @@
 package modpack
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -21,10 +22,10 @@ func TestModpackCoreStorageProvider_PutGetStatDeleteRoundTrip(t *testing.T) {
 	p := newModpackAdapterOnTempDir(t)
 	key := "user-uuid/my-pack/1.0.0/pack.mrpack"
 
-	if err := p.Put(key, []byte("mrpack-bytes")); err != nil {
+	if err := p.Put(context.Background(), key, []byte("mrpack-bytes")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, err := p.Get(key)
+	got, err := p.Get(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -32,7 +33,7 @@ func TestModpackCoreStorageProvider_PutGetStatDeleteRoundTrip(t *testing.T) {
 		t.Errorf("Get = %q, want mrpack-bytes", got)
 	}
 
-	size, exists, err := p.Stat(key)
+	size, exists, err := p.Stat(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
@@ -43,10 +44,10 @@ func TestModpackCoreStorageProvider_PutGetStatDeleteRoundTrip(t *testing.T) {
 		t.Errorf("Stat size = %d, want 12", size)
 	}
 
-	if err := p.Delete(key); err != nil {
+	if err := p.Delete(context.Background(), key); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, exists, _ := p.Stat(key); exists {
+	if _, exists, _ := p.Stat(context.Background(), key); exists {
 		t.Error("Stat exists = true after Delete")
 	}
 }
@@ -55,7 +56,7 @@ func TestModpackCoreStorageProvider_GetMissingReturnsErrNotFound(t *testing.T) {
 	// The rest of the modpack code branches on modpack.ErrNotFound, NOT on a
 	// raw fs.ErrNotExist, so the adapter must translate.
 	p := newModpackAdapterOnTempDir(t)
-	_, err := p.Get("nope/pack.mrpack")
+	_, err := p.Get(context.Background(), "nope/pack.mrpack")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get(missing) err = %v, want ErrNotFound", err)
 	}
@@ -64,7 +65,7 @@ func TestModpackCoreStorageProvider_GetMissingReturnsErrNotFound(t *testing.T) {
 func TestModpackCoreStorageProvider_StatMissingIsNotAnError(t *testing.T) {
 	// Mirrors LocalProvider/S3Provider modpack semantics: (0, false, nil).
 	p := newModpackAdapterOnTempDir(t)
-	size, exists, err := p.Stat("nope/pack.mrpack")
+	size, exists, err := p.Stat(context.Background(), "nope/pack.mrpack")
 	if err != nil {
 		t.Fatalf("Stat(missing) err = %v, want nil", err)
 	}
@@ -75,17 +76,17 @@ func TestModpackCoreStorageProvider_StatMissingIsNotAnError(t *testing.T) {
 
 func TestModpackCoreStorageProvider_DeleteIsIdempotent(t *testing.T) {
 	p := newModpackAdapterOnTempDir(t)
-	if err := p.Delete("never/existed.mrpack"); err != nil {
+	if err := p.Delete(context.Background(), "never/existed.mrpack"); err != nil {
 		t.Fatalf("Delete(missing) = %v, want nil", err)
 	}
 }
 
 func TestModpackCoreStorageProvider_StatOnTopLevelKey(t *testing.T) {
 	p := newModpackAdapterOnTempDir(t)
-	if err := p.Put("pack.mrpack", []byte("abc")); err != nil {
+	if err := p.Put(context.Background(), "pack.mrpack", []byte("abc")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	size, exists, err := p.Stat("pack.mrpack")
+	size, exists, err := p.Stat(context.Background(), "pack.mrpack")
 	if err != nil || !exists || size != 3 {
 		t.Fatalf("Stat(top-level) = (%d, %v, %v), want (3, true, nil)", size, exists, err)
 	}

@@ -73,7 +73,7 @@ func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.Bu
 			if e.StorageKey == "" {
 				return nil, fmt.Errorf("upload content %q missing storage key", e.ModSlug)
 			}
-			raw, err := prov.Get(e.StorageKey)
+			raw, err := prov.Get(ctx, e.StorageKey)
 			if err != nil {
 				return nil, fmt.Errorf("read stored content %q: %w", e.ModSlug, err)
 			}

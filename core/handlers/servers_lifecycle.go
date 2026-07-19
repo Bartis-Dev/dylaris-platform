@@ -330,7 +330,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			snapshotBuild = build
 
 			ph := NewPacksHandler(h.state)
-			key, err := ph.ensureInstallMrpack(pack, build)
+			key, err := ph.ensureInstallMrpack(r.Context(), pack, build)
 			if err != nil {
 				log.Printf("ensureInstallMrpack failed for pack %d build %d: %v", pack.ID, build.ID, err)
 				sendJSONError(w, "Failed to prepare pack for install", 500)

@@ -3,6 +3,7 @@ package handlers
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -126,11 +127,11 @@ func modrinthCDNURL(e models.BuildContentEntry) string {
 // map[string][]byte means a bomb split across many small files within one
 // stored zip fails the moment the aggregate crosses the cap, instead of
 // only being caught after the whole entry was already buffered in RAM.
-func (h *PacksHandler) overrideEntriesFromStoredZip(zw *zip.Writer, prov modpack.ModpackStorageProvider, e models.BuildContentEntry, total *int64) error {
+func (h *PacksHandler) overrideEntriesFromStoredZip(ctx context.Context, zw *zip.Writer, prov modpack.ModpackStorageProvider, e models.BuildContentEntry, total *int64) error {
 	if e.StorageKey == "" {
 		return nil
 	}
-	raw, err := prov.Get(e.StorageKey)
+	raw, err := prov.Get(ctx, e.StorageKey)
 	if err != nil {
 		return fmt.Errorf("override read %s: %w", e.StorageKey, err)
 	}
@@ -173,7 +174,7 @@ func (h *PacksHandler) overrideEntriesFromStoredZip(zw *zip.Writer, prov modpack
 }
 
 // writeMrpackZip writes modrinth.index.json + all overrides into zw.
-func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry, prov modpack.ModpackStorageProvider) error {
+func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry, prov modpack.ModpackStorageProvider) error {
 	idx := buildMrpackIndex(pack, build, content)
 	indexBytes, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
@@ -199,7 +200,7 @@ func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *
 		if prov == nil {
 			continue // no storage configured; skip embedding
 		}
-		if err := h.overrideEntriesFromStoredZip(zw, prov, e, &total); err != nil {
+		if err := h.overrideEntriesFromStoredZip(ctx, zw, prov, e, &total); err != nil {
 			return err
 		}
 	}
@@ -207,11 +208,11 @@ func (h *PacksHandler) writeMrpackZip(zw *zip.Writer, pack *models.Pack, build *
 }
 
 // renderMrpack returns the full .mrpack bytes for a build.
-func (h *PacksHandler) renderMrpack(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
+func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
 	prov, _ := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	if err := h.writeMrpackZip(zw, pack, build, content, prov); err != nil {
+	if err := h.writeMrpackZip(ctx, zw, pack, build, content, prov); err != nil {
 		zw.Close()
 		return nil, err
 	}
@@ -228,8 +229,8 @@ func mrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
 
 // persistMrpackForBuild renders + (for beta/release) persists the mrpack to
 // storage and freezes the build. Drafts are rendered fresh, never persisted.
-func (h *PacksHandler) persistMrpackForBuild(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
-	data, err := h.renderMrpack(pack, build, content)
+func (h *PacksHandler) persistMrpackForBuild(ctx context.Context, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
+	data, err := h.renderMrpack(ctx, pack, build, content)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +245,7 @@ func (h *PacksHandler) persistMrpackForBuild(pack *models.Pack, build *models.Pa
 		return nil, fmt.Errorf("no modpack storage configured (Settings -> Modpacks)")
 	}
 	key := mrpackStorageKey(pack, build)
-	if err := prov.Put(key, data); err != nil {
+	if err := prov.Put(ctx, key, data); err != nil {
 		return nil, fmt.Errorf("mrpack storage put: %w", err)
 	}
 	sum := sha256.Sum256(data)
@@ -262,7 +263,7 @@ func (h *PacksHandler) persistMrpackForBuild(pack *models.Pack, build *models.Pa
 // it reuses that. Otherwise it renders the build's mrpack on the fly and stores it
 // under the deterministic key WITHOUT mutating the build record or freezing it —
 // so draft builds stay installable and editable (owner decision, Phase 5).
-func (h *PacksHandler) ensureInstallMrpack(pack *models.Pack, build *models.PackBuild) (string, error) {
+func (h *PacksHandler) ensureInstallMrpack(ctx context.Context, pack *models.Pack, build *models.PackBuild) (string, error) {
 	if build.MrpackStorageKey != "" {
 		return build.MrpackStorageKey, nil
 	}
@@ -270,7 +271,7 @@ func (h *PacksHandler) ensureInstallMrpack(pack *models.Pack, build *models.Pack
 	if err != nil {
 		return "", err
 	}
-	data, err := h.renderMrpack(pack, build, content)
+	data, err := h.renderMrpack(ctx, pack, build, content)
 	if err != nil {
 		return "", err
 	}
@@ -282,7 +283,7 @@ func (h *PacksHandler) ensureInstallMrpack(pack *models.Pack, build *models.Pack
 		return "", fmt.Errorf("modpack storage not configured")
 	}
 	key := mrpackStorageKey(pack, build)
-	if err := prov.Put(key, data); err != nil {
+	if err := prov.Put(ctx, key, data); err != nil {
 		return "", err
 	}
 	return key, nil
@@ -307,7 +308,7 @@ func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to load content", http.StatusInternalServerError)
 		return
 	}
-	data, err := h.renderMrpack(p, build, content)
+	data, err := h.renderMrpack(r.Context(), p, build, content)
 	if err != nil {
 		sendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
 		return

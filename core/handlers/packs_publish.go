@@ -144,13 +144,13 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Modpack storage misconfigured; cannot read frozen build", http.StatusInternalServerError)
 			return
 		}
-		mrpack, err = prov.Get(build.MrpackStorageKey)
+		mrpack, err = prov.Get(r.Context(), build.MrpackStorageKey)
 		if err != nil {
 			sendJSONError(w, "Failed to read stored .mrpack: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	} else {
-		mrpack, err = h.persistMrpackForBuild(pack, build, content)
+		mrpack, err = h.persistMrpackForBuild(r.Context(), pack, build, content)
 		if err != nil {
 			sendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
 			return

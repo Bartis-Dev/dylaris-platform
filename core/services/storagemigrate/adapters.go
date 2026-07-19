@@ -265,7 +265,7 @@ func (d *modpackDataSet) Label() string { return d.label }
 // REFERENCED objects only. An orphan in storage that no DB row points at is
 // invisible to both the manifest and the "extra" check. That is a genuine
 // limitation of the current schema, not a shortcut.
-func (d *modpackDataSet) List(_ context.Context) ([]ObjectRef, error) {
+func (d *modpackDataSet) List(ctx context.Context) ([]ObjectRef, error) {
 	keys, err := d.keys.ListModpackStorageKeys()
 	if err != nil {
 		return nil, fmt.Errorf("storagemigrate: list %s: %w", d.id, err)
@@ -282,7 +282,7 @@ func (d *modpackDataSet) List(_ context.Context) ([]ObjectRef, error) {
 			continue
 		}
 		seen[k] = true
-		size, exists, err := d.prov.Stat(k)
+		size, exists, err := d.prov.Stat(ctx, k)
 		if err != nil {
 			return nil, fmt.Errorf("storagemigrate: stat %s: %w", k, err)
 		}
@@ -298,8 +298,8 @@ func (d *modpackDataSet) List(_ context.Context) ([]ObjectRef, error) {
 // Open buffers, because ModpackStorageProvider is []byte-shaped end to end.
 // No regression: the existing s3 modpack backend already does io.ReadAll on
 // Get. Reshaping that interface to stream is explicitly out of scope.
-func (d *modpackDataSet) Open(_ context.Context, key string) (io.ReadCloser, error) {
-	data, err := d.prov.Get(key)
+func (d *modpackDataSet) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	data, err := d.prov.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, modpack.ErrNotFound) {
 			return nil, fmt.Errorf("modpack get %s: %w", key, fs.ErrNotExist)
@@ -309,16 +309,16 @@ func (d *modpackDataSet) Open(_ context.Context, key string) (io.ReadCloser, err
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-func (d *modpackDataSet) Write(_ context.Context, key string, r io.Reader, _ int64) error {
+func (d *modpackDataSet) Write(ctx context.Context, key string, r io.Reader, _ int64) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return fmt.Errorf("storagemigrate: buffer %s: %w", key, err)
 	}
-	return d.prov.Put(key, data)
+	return d.prov.Put(ctx, key, data)
 }
 
-func (d *modpackDataSet) Delete(_ context.Context, key string) error {
-	return d.prov.Delete(key)
+func (d *modpackDataSet) Delete(ctx context.Context, key string) error {
+	return d.prov.Delete(ctx, key)
 }
 
 // ChecksumHint returns the Modrinth/Solder-supplied SHA-512 already recorded

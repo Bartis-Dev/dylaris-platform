@@ -258,7 +258,7 @@ func (h *PacksHandler) importOneSolderMod(ctx context.Context, prov modpack.Modp
 		version = keyVersion
 	}
 	key := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + keyVersion + ".zip"
-	if err := prov.Put(key, zipBytes); err != nil {
+	if err := prov.Put(ctx, key, zipBytes); err != nil {
 		return 0, 0, fmt.Errorf("storage put failed")
 	}
 

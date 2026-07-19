@@ -70,7 +70,7 @@ func (h *PacksHandler) EnsureLoader(minecraft, loader, loaderVersion string) {
 	}
 
 	key := "loaders/" + loader + "/" + minecraft + "/" + resolved + "/loader.zip"
-	if err := prov.Put(key, zipBytes); err != nil {
+	if err := prov.Put(ctx, key, zipBytes); err != nil {
 		fail("loader storage put failed: " + err.Error())
 		return
 	}

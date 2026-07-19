@@ -52,8 +52,8 @@ func NewS3(endpoint, region, bucket, accessKey, secretKey string) (*S3Provider, 
 	return &S3Provider{client: client, bucket: bucket}, nil
 }
 
-func (s *S3Provider) Put(key string, data []byte) error {
-	_, err := s.client.PutObject(context.Background(), &s3.PutObjectInput{
+func (s *S3Provider) Put(ctx context.Context, key string, data []byte) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
 		Body:          bytes.NewReader(data),
@@ -65,8 +65,8 @@ func (s *S3Provider) Put(key string, data []byte) error {
 	return nil
 }
 
-func (s *S3Provider) Get(key string) ([]byte, error) {
-	out, err := s.client.GetObject(context.Background(), &s3.GetObjectInput{
+func (s *S3Provider) Get(ctx context.Context, key string) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -85,8 +85,8 @@ func (s *S3Provider) Get(key string) ([]byte, error) {
 	return data, nil
 }
 
-func (s *S3Provider) Delete(key string) error {
-	_, err := s.client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+func (s *S3Provider) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -99,8 +99,8 @@ func (s *S3Provider) Delete(key string) error {
 	return nil
 }
 
-func (s *S3Provider) Stat(key string) (int64, bool, error) {
-	head, err := s.client.HeadObject(context.Background(), &s3.HeadObjectInput{
+func (s *S3Provider) Stat(ctx context.Context, key string) (int64, bool, error) {
+	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})

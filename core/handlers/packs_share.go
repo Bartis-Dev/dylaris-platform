@@ -125,7 +125,7 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 
 	switch link.Kind {
 	case models.ShareLinkClientMrpack:
-		key, err := h.ensureInstallMrpack(pack, build)
+		key, err := h.ensureInstallMrpack(r.Context(), pack, build)
 		if err != nil {
 			sendJSONError(w, "Failed to render pack", http.StatusInternalServerError)
 			return
@@ -135,7 +135,7 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Storage unavailable", http.StatusInternalServerError)
 			return
 		}
-		data, err := prov.Get(key)
+		data, err := prov.Get(r.Context(), key)
 		if err != nil {
 			sendJSONError(w, "Failed to read pack", http.StatusInternalServerError)
 			return

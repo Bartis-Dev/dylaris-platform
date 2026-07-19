@@ -99,11 +99,11 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 			if e.StorageKey == "" || e.MD5 == "" {
 				return fmt.Errorf("upload content %q missing storage key or md5", e.ModSlug)
 			}
-			bytesData, err := prov.Get(e.StorageKey)
+			bytesData, err := prov.Get(ctx, e.StorageKey)
 			if err != nil {
 				return fmt.Errorf("read stored content %q: %w", e.ModSlug, err)
 			}
-			if err := prov.Put(solderKey, bytesData); err != nil {
+			if err := prov.Put(ctx, solderKey, bytesData); err != nil {
 				return fmt.Errorf("publish content %q: %w", e.ModSlug, err)
 			}
 			md5hex = e.MD5
@@ -131,7 +131,7 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 			if err != nil {
 				return fmt.Errorf("wrap %q: %w", e.ModSlug, err)
 			}
-			if err := prov.Put(solderKey, zipBytes); err != nil {
+			if err := prov.Put(ctx, solderKey, zipBytes); err != nil {
 				return fmt.Errorf("publish content %q: %w", e.ModSlug, err)
 			}
 			md5hex, _, _ = modpack.Hashes(zipBytes)
@@ -199,7 +199,7 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 		return fmt.Errorf("build version %q has path characters not allowed in a Solder key", build.VersionString)
 	}
 	manifestKey := solderManifestKey(pack.OwnerID, pack.SolderSlug, build.VersionString)
-	if err := prov.Put(manifestKey, manifestJSON); err != nil {
+	if err := prov.Put(ctx, manifestKey, manifestJSON); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 

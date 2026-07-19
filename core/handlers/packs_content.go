@@ -227,7 +227,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
 	version := "u-" + sha1hex[:8]
 	key := "packs/" + userID + "/mods/" + slug + "/" + slug + "-" + version + ".zip"
-	if err := prov.Put(key, zipBytes); err != nil {
+	if err := prov.Put(r.Context(), key, zipBytes); err != nil {
 		sendJSONError(w, "Storage put failed", http.StatusInternalServerError)
 		return
 	}

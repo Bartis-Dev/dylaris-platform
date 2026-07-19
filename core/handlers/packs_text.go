@@ -52,7 +52,7 @@ func (h *PacksHandler) GetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
 		return
 	}
-	raw, err := prov.Get(mv.StorageKey)
+	raw, err := prov.Get(r.Context(), mv.StorageKey)
 	if err != nil {
 		sendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return
@@ -91,7 +91,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
 		return
 	}
-	curRaw, err := prov.Get(mv.StorageKey)
+	curRaw, err := prov.Get(r.Context(), mv.StorageKey)
 	if err != nil {
 		sendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return
@@ -121,7 +121,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to wrap content", http.StatusInternalServerError)
 		return
 	}
-	if err := prov.Put(mv.StorageKey, zipBytes); err != nil {
+	if err := prov.Put(r.Context(), mv.StorageKey, zipBytes); err != nil {
 		sendJSONError(w, "Storage put failed", http.StatusInternalServerError)
 		return
 	}
