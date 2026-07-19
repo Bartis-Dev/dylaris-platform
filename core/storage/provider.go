@@ -95,6 +95,11 @@ func (p *LocalProvider) ListFiles(path string) ([]FileInfo, error) {
 
 	var files []FileInfo
 	for _, e := range entries {
+		// Orphaned upload staging files (see WriteFile). Listing them would
+		// offer a partial file for download and let a user delete or copy it.
+		if strings.HasPrefix(e.Name(), uploadTempPrefix) {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -136,21 +141,74 @@ func (p *LocalProvider) CreateDir(path string) error {
 	return os.MkdirAll(safePath, 0755)
 }
 
+// uploadTempPrefix marks the half-written files WriteFile leaves behind when a
+// transfer dies between the copy and the rename. It is deliberately a fixed,
+// recognisable prefix so those orphans can be swept and so ListFiles can hide
+// them: a caller must never be handed a partial upload as if it were a file.
+const uploadTempPrefix = ".dylaris-upload-"
+
+// WriteFile stages the upload next to its destination and renames it into
+// place, so the destination name only ever refers to a complete file.
+//
+// Writing straight into the destination meant a transfer that died halfway -
+// a dropped client, or a mounted share going away mid-copy - left a TRUNCATED
+// file under the real name, which the next read served as if it were valid.
+// Silent corruption; this is the fix.
+//
+// The temp file is created in the destination directory because rename cannot
+// cross filesystems, and the destination directory is the only place
+// guaranteed to be on the same one.
+//
+// Caveat worth knowing: rename is atomic on local filesystems, but neither
+// CIFS nor NFS guarantees it. On those this is a large improvement over
+// truncate-in-place, not a guarantee.
 func (p *LocalProvider) WriteFile(path string, content io.Reader) error {
 	safePath, err := p.validatePath(path)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(safePath), 0755); err != nil {
+	dir := filepath.Dir(safePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	f, err := os.Create(safePath)
+
+	tmp, err := os.CreateTemp(dir, uploadTempPrefix+"*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, content)
-	return err
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	// CreateTemp is 0600. The previous implementation used os.Create (0666
+	// before umask), and files here are read by other processes when the base
+	// path is a share, so keep the old mode rather than silently tightening it.
+	if err := tmp.Chmod(0644); err != nil {
+		return err
+	}
+	if _, err := io.Copy(tmp, content); err != nil {
+		return err
+	}
+	// Sync before rename, not for crash durability but for error reporting: on
+	// a network filesystem a buffered write can be accepted here and fail on
+	// flush. Without this the rename would publish a file whose tail never
+	// landed.
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, safePath); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (p *LocalProvider) CopyToLocal(srcPath, destPath string) error {
