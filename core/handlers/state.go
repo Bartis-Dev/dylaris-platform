@@ -51,6 +51,12 @@ type AppState struct {
 	// Redis so every admin sees the same live status.
 	DBMigration *services.DBMigrationService
 
+	// StorageMigration drives the in-panel blob storage migration (inventory,
+	// copy, verify, optionally delete the source) for all five blob data
+	// sets. Shared job state lives in Redis so every admin sees the same live
+	// status. Nil when Redis is unavailable at boot.
+	StorageMigration *services.StorageMigrationService
+
 	// CPUPinning reads node CPU topology (published to Redis by each node) and
 	// computes auto cpusets for per-server CPU pinning.
 	CPUPinning *services.CPUPinningService

@@ -198,6 +198,14 @@ func main() {
 		DBType:   cfg.DBType,
 	})
 
+	// In-panel blob storage migration (library, ticket-attachments,
+	// ticket-backups, modpacks, server-backups rows). The resolver owns the
+	// Core file storage config, the modpack settings and the backup_storages
+	// rows, so it is wired from appState after appState.Store etc. are set.
+	appState.StorageMigration = services.NewStorageMigrationService(
+		redisClient, pgStore, handlers.NewStorageDataSetResolver(appState),
+	)
+
 	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.
 	appState.CPUPinning = services.NewCPUPinningService(redisClient, pgStore)
 

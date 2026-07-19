@@ -1,0 +1,624 @@
+package handlers
+
+import (
+	"context"
+	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"dylaris-core/models"
+	"dylaris-core/services"
+	"dylaris-core/services/storagemigrate"
+	"dylaris-core/storage"
+	backupstorage "dylaris-core/storage/backup"
+	"dylaris-core/storage/modpack"
+
+	"github.com/gorilla/mux"
+)
+
+// ModpacksCoreStorageDataSetID names the modpacks namespace INSIDE the shared
+// Core file storage, as distinct from "modpacks", which is whatever the
+// modpack_storage_* settings currently point at. The pair is what makes an
+// automated modpacks migration expressible: source "modpacks", target
+// "modpacks@core-storage".
+const ModpacksCoreStorageDataSetID = "modpacks@core-storage"
+
+// coreStorageBackendLabel renders a CREDENTIAL-FREE description of where a
+// Core-file-storage-scoped data set lives. Safety invariant 6: labels are
+// endpoint + bucket + prefix at most, never keys. Every label that reaches a
+// manifest, a job record, a log line or a CSV export comes from here or from
+// backupStorageLabel.
+func coreStorageBackendLabel(cfg CoreStorageConfig, subPrefix string) string {
+	if cfg.Backend == "s3" {
+		parts := []string{cfg.S3Bucket}
+		if cfg.S3Prefix != "" {
+			parts = append(parts, strings.Trim(cfg.S3Prefix, "/"))
+		}
+		parts = append(parts, subPrefix)
+		return "s3:" + strings.TrimSuffix(cfg.S3Endpoint, "/") + "/" + strings.Join(parts, "/")
+	}
+	return "path:" + strings.TrimSuffix(cfg.Path, "/") + "/" + subPrefix
+}
+
+// backupStorageLabel renders a credential-free description of a
+// backup_storages row. The row's Config is NEVER included: it holds bucket
+// credentials for the s3 provider.
+func backupStorageLabel(bs models.BackupStorage) string {
+	return fmt.Sprintf("%s (%s)", bs.Name, bs.Provider)
+}
+
+// StorageDataSetResolver turns a data-set id into a live DataSet plus its
+// label. It lives in handlers because it needs the Core file storage config,
+// the modpack settings and the backup_storages rows - all of which handlers
+// already owns.
+type StorageDataSetResolver struct {
+	state *AppState
+}
+
+func NewStorageDataSetResolver(state *AppState) *StorageDataSetResolver {
+	return &StorageDataSetResolver{state: state}
+}
+
+// adHocTargetNote tells the operator how library / ticket-attachments /
+// ticket-backups / modpacks name a migrate target. Their SAVED config says
+// where they live now, so it cannot also be the destination; the destination is
+// supplied inline instead.
+const adHocTargetNote = "Migrating this data set means naming a new storage config (another S3, or a mounted path) in the wizard. The copy is verified, the active config is switched to the target only after that verification passes, and the old copy is deleted only if you opt in. The manual flow (capture a manifest, move the data yourself, reconfigure, verify) is still available."
+
+// nodeLocalNote explains why node-local backup rows are excluded.
+const nodeLocalNote = "Node-local archives live on Node disks and are reachable only through the gRPC mesh, so they are not migratable here."
+
+// modpackOrphanNote is surfaced next to every modpacks verdict.
+const modpackOrphanNote = "Modpack keys are enumerated from the database, so verification covers database-referenced objects only. An object in storage that no row points at is invisible to this check."
+
+// List describes every data set for the overview.
+func (r *StorageDataSetResolver) List(_ context.Context) ([]services.StorageDataSetInfo, error) {
+	cfg := r.state.LoadCoreStorageConfig()
+	out := []services.StorageDataSetInfo{
+		{ID: storagemigrate.DataSetLibrary, Label: "Library", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixLibrary), Migratable: true, SupportsTargetConfig: true, Note: adHocTargetNote},
+		{ID: storagemigrate.DataSetAttachments, Label: "Ticket attachments", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixAttachments), Migratable: true, SupportsTargetConfig: true, Note: adHocTargetNote},
+		{ID: storagemigrate.DataSetTicketBackups, Label: "Ticket backups", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixBackups), Migratable: true, SupportsTargetConfig: true, Note: adHocTargetNote},
+		{ID: storagemigrate.DataSetModpacks, Label: "Modpacks", BackendLabel: r.modpackBackendLabel(), Migratable: true, SupportsTargetConfig: true, Note: modpackOrphanNote},
+		{ID: ModpacksCoreStorageDataSetID, Label: "Modpacks on Core file storage", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixModpacks), Migratable: true, SupportsTargetConfig: true, Note: modpackOrphanNote},
+	}
+
+	storages, err := r.state.Store.ListBackupStorages()
+	if err != nil {
+		return nil, fmt.Errorf("list backup storages: %w", err)
+	}
+	for _, bs := range storages {
+		info := services.StorageDataSetInfo{
+			ID:           storagemigrate.ServerBackupsDataSetID(bs.ID),
+			Label:        "Server backups: " + bs.Name,
+			BackendLabel: backupStorageLabel(bs),
+			Migratable:   bs.Provider != "node-local",
+			// Backups are multi-storage by design (backup_storages rows +
+			// BackupJob.StorageID), which is strictly richer than one global
+			// config, so their target stays another ROW rather than an ad-hoc
+			// config. That model is untouched by this workstream.
+			SupportsTargetConfig: false,
+		}
+		if bs.Provider == "node-local" {
+			info.Note = nodeLocalNote
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// modpackConfiguredPaths parses the modpack_storage_paths setting. It is a
+// JSON array (see storage/modpack.NewProviderFromSettings and
+// ModpackSettingsHandler.Set, which writes json.Marshal(cleaned)), NOT a
+// comma-separated list, so this must go through json.Unmarshal rather than
+// strings.Split - a comma-split would hand back the literal bracketed/quoted
+// JSON text as a "path", which would never match a real root and would
+// silently defeat sameCoreStorageLocation's same-location refusal for the
+// modpacks data set (a garbled source path can never compare equal to any
+// real target, so a genuine alias would sail through the check instead of
+// being refused).
+func (r *StorageDataSetResolver) modpackConfiguredPaths() []string {
+	raw, _ := r.state.Store.GetSetting("modpack_storage_paths")
+	var paths []string
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &paths)
+	}
+	return paths
+}
+
+// modpackBackendLabel describes the CURRENT modpack backend without touching
+// its credentials.
+func (r *StorageDataSetResolver) modpackBackendLabel() string {
+	get := func(k string) string {
+		v, _ := r.state.Store.GetSetting(k)
+		return v
+	}
+	switch get("modpack_storage_provider") {
+	case "s3":
+		return "s3:" + strings.TrimSuffix(get("modpack_storage_s3_endpoint"), "/") + "/" + get("modpack_storage_s3_bucket")
+	case "core-storage":
+		return coreStorageBackendLabel(r.state.LoadCoreStorageConfig(), CoreStoragePrefixModpacks)
+	default:
+		return "path:" + strings.Join(r.modpackConfiguredPaths(), ",")
+	}
+}
+
+// Resolve builds a live DataSet. Providers resolve PER CALL, never cached.
+func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storagemigrate.DataSet, string, error) {
+	cfg := r.state.LoadCoreStorageConfig()
+
+	providerSet := func(subPrefix, label string) (storagemigrate.DataSet, string, error) {
+		prov, err := r.state.buildCoreStorageProvider(subPrefix)
+		if err != nil {
+			return nil, "", err
+		}
+		return storagemigrate.NewProviderDataSet(id, label, prov), coreStorageBackendLabel(cfg, subPrefix), nil
+	}
+
+	switch id {
+	case storagemigrate.DataSetLibrary:
+		return providerSet(CoreStoragePrefixLibrary, "Library")
+	case storagemigrate.DataSetAttachments:
+		return providerSet(CoreStoragePrefixAttachments, "Ticket attachments")
+	case storagemigrate.DataSetTicketBackups:
+		return providerSet(CoreStoragePrefixBackups, "Ticket backups")
+
+	case storagemigrate.DataSetModpacks:
+		prov, err := modpack.NewProviderFromSettings(r.state.Store.GetSetting, r.state.buildCoreStorageProvider)
+		if err != nil {
+			return nil, "", fmt.Errorf("modpack storage: %w", err)
+		}
+		if prov == nil {
+			return nil, "", errors.New("modpack storage is not configured")
+		}
+		return storagemigrate.NewModpackDataSet("Modpacks", prov, r.state.Store), r.modpackBackendLabel(), nil
+
+	case ModpacksCoreStorageDataSetID:
+		p, err := r.state.buildCoreStorageProvider(CoreStoragePrefixModpacks)
+		if err != nil {
+			return nil, "", err
+		}
+		return storagemigrate.NewModpackDataSet("Modpacks on Core file storage", modpack.NewCoreStorageProvider(p), r.state.Store),
+			coreStorageBackendLabel(cfg, CoreStoragePrefixModpacks), nil
+	}
+
+	if storageID, ok := storagemigrate.ParseServerBackupsDataSetID(id); ok {
+		bs, err := r.state.Store.GetBackupStorage(storageID)
+		if err != nil || bs == nil {
+			return nil, "", fmt.Errorf("backup storage %d not found", storageID)
+		}
+		if bs.Provider == "node-local" {
+			return nil, "", errors.New(nodeLocalNote)
+		}
+		st, err := backupstorage.Open(ctx, bs, r.backupDeps())
+		if err != nil {
+			return nil, "", fmt.Errorf("open backup storage %d: %w", storageID, err)
+		}
+		ds, err := storagemigrate.NewBackupDataSet(id, "Server backups: "+bs.Name, st)
+		if err != nil {
+			return nil, "", err
+		}
+		return ds, backupStorageLabel(*bs), nil
+	}
+	return nil, "", fmt.Errorf("unknown data set %q", id)
+}
+
+// sourceCoreStorageConfigFor returns the SOURCE data set's effective config
+// and its sub-prefix, for the same-location comparison and the labels.
+//
+// For the three provider data sets that is simply the saved Core file storage
+// config. For modpacks it is a CoreStorageConfig-SHAPED VIEW of the
+// modpack_storage_* settings: modpacks have their own backend, and comparing a
+// target against the Core file storage config would be comparing against the
+// wrong place. That view is built for the comparison and the label only; it is
+// never persisted, and SwitchConfig for modpacks writes the modpack settings,
+// not the Core file storage ones.
+//
+// A data set that is not backed by a single settings-configured backend (any
+// server-backups row) returns an error: those name a target ROW, not a config.
+func (r *StorageDataSetResolver) sourceCoreStorageConfigFor(id string) (CoreStorageConfig, string, error) {
+	switch id {
+	case storagemigrate.DataSetLibrary:
+		return r.state.LoadCoreStorageConfig(), CoreStoragePrefixLibrary, nil
+	case storagemigrate.DataSetAttachments:
+		return r.state.LoadCoreStorageConfig(), CoreStoragePrefixAttachments, nil
+	case storagemigrate.DataSetTicketBackups:
+		return r.state.LoadCoreStorageConfig(), CoreStoragePrefixBackups, nil
+	case ModpacksCoreStorageDataSetID:
+		return r.state.LoadCoreStorageConfig(), CoreStoragePrefixModpacks, nil
+	case storagemigrate.DataSetModpacks:
+		return r.modpackSourceConfig(), CoreStoragePrefixModpacks, nil
+	}
+	return CoreStorageConfig{}, "", fmt.Errorf("data set %q does not take a storage config as its target; pick another data set instead", id)
+}
+
+// modpackSourceConfig renders the modpack_storage_* settings in
+// CoreStorageConfig shape, purely so sourceCoreStorageConfigFor can compare
+// against them. Never persisted, never validated as a Core file storage config.
+func (r *StorageDataSetResolver) modpackSourceConfig() CoreStorageConfig {
+	get := func(k string) string {
+		v, _ := r.state.Store.GetSetting(k)
+		return v
+	}
+	switch get("modpack_storage_provider") {
+	case "s3":
+		return CoreStorageConfig{
+			Backend:    "s3",
+			S3Endpoint: get("modpack_storage_s3_endpoint"),
+			S3Bucket:   get("modpack_storage_s3_bucket"),
+		}
+	case "core-storage":
+		return r.state.LoadCoreStorageConfig()
+	default:
+		// modpack_storage_paths may list several mirrored roots; the first is
+		// the one a same-location check can meaningfully compare against.
+		paths := r.modpackConfiguredPaths()
+		path := ""
+		if len(paths) > 0 {
+			path = strings.TrimSpace(paths[0])
+		}
+		return CoreStorageConfig{Backend: "path", Path: path, PathConfirmed: true}
+	}
+}
+
+// ResolveTarget builds the target DataSet from an AD-HOC storage config, i.e.
+// one supplied in the start request and never saved. This is what makes the
+// Core-file-storage data sets migratable at all: their saved config says where
+// they live now, so the destination has to be named separately.
+//
+// Order matters. Validate, then refuse a same-location target, and only then
+// build a provider. The refusal has to land HERE, at Start, because by the time
+// the copy loop noticed it would already have rewritten source objects onto
+// themselves.
+func (r *StorageDataSetResolver) ResolveTarget(_ context.Context, sourceID string, tc services.StorageTargetConfig) (storagemigrate.DataSet, string, error) {
+	srcCfg, subPrefix, err := r.sourceCoreStorageConfigFor(sourceID)
+	if err != nil {
+		return nil, "", err
+	}
+	tgtCfg := coreStorageConfigFromTarget(tc)
+	if err := validateCoreStorageConfig(tgtCfg); err != nil {
+		return nil, "", fmt.Errorf("target storage config: %w", err)
+	}
+	if err := ensureDistinctCoreStorageLocation(srcCfg, tgtCfg, subPrefix); err != nil {
+		return nil, "", err
+	}
+	prov, err := buildTargetStorageProvider(tgtCfg, subPrefix)
+	if err != nil {
+		return nil, "", err
+	}
+	// The label is credential-free by construction; it is the ONLY thing about
+	// this config that reaches the job record, the logs or the audit.
+	label := coreStorageBackendLabel(tgtCfg, subPrefix)
+
+	if sourceID == storagemigrate.DataSetModpacks || sourceID == ModpacksCoreStorageDataSetID {
+		return storagemigrate.NewModpackDataSet("Migration target", modpack.NewCoreStorageProvider(prov), r.state.Store), label, nil
+	}
+	return storagemigrate.NewProviderDataSet(sourceID, "Migration target", prov), label, nil
+}
+
+// SwitchConfig makes the target config the ACTIVE one for sourceID. Called only
+// from the job's switching_config phase, only after a passing verification, and
+// it is the one and only place the target's S3 secret is persisted.
+//
+// It writes through persistCoreStorageConfig, the same writer SaveConfig uses,
+// so the settings form and the migration cannot drift apart.
+func (r *StorageDataSetResolver) SwitchConfig(_ context.Context, sourceID string, tc services.StorageTargetConfig) error {
+	if _, _, err := r.sourceCoreStorageConfigFor(sourceID); err != nil {
+		return err
+	}
+	cfg := coreStorageConfigFromTarget(tc)
+	if err := validateCoreStorageConfig(cfg); err != nil {
+		return fmt.Errorf("target storage config: %w", err)
+	}
+	if sourceID == storagemigrate.DataSetModpacks {
+		// Modpacks have their own settings namespace; point THOSE at the
+		// target rather than repointing the shared Core file storage, which
+		// three other data sets also read.
+		return r.switchModpackConfig(cfg)
+	}
+	// cfg.S3SecretKey, not a "was a secret submitted" flag: persistCoreStorageConfig
+	// takes the secret VALUE so the only thing it can ever write is the one
+	// handed to it (see its doc comment - a boolean form let a secret-only
+	// rotation silently no-op in an earlier review).
+	return r.state.persistCoreStorageConfig(cfg, cfg.S3SecretKey)
+}
+
+// switchModpackConfig repoints the modpack_storage_* settings at cfg.
+func (r *StorageDataSetResolver) switchModpackConfig(cfg CoreStorageConfig) error {
+	set := func(k, v string) error {
+		if err := r.state.Store.SetSetting(k, v); err != nil {
+			return fmt.Errorf("save setting %s: %w", k, err)
+		}
+		return nil
+	}
+	if cfg.Backend == "s3" {
+		for _, p := range []struct{ k, v string }{
+			{"modpack_storage_provider", "s3"},
+			{"modpack_storage_s3_endpoint", cfg.S3Endpoint},
+			{"modpack_storage_s3_bucket", cfg.S3Bucket},
+			{"modpack_storage_s3_region", cfg.S3Region},
+			{"modpack_storage_s3_access_key", cfg.S3AccessKey},
+			{"modpack_storage_s3_secret_key", cfg.S3SecretKey},
+		} {
+			if err := set(p.k, p.v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := set("modpack_storage_provider", "local"); err != nil {
+		return err
+	}
+	pathsJSON, _ := json.Marshal([]string{coreStorageRoot(cfg, CoreStoragePrefixModpacks)})
+	return set("modpack_storage_paths", string(pathsJSON))
+}
+
+// storageMigrationAuditPayload builds the audit detail for a start request.
+// The target config is reduced to its credential-free label: an audit row is
+// long-lived and widely readable, so a secret landing there would outlive and
+// out-share the request that carried it.
+func storageMigrationAuditPayload(req services.StorageMigrationRequest, jobID string) map[string]interface{} {
+	target := req.TargetDataSet
+	if req.TargetConfig != nil {
+		target = coreStorageBackendLabel(coreStorageConfigFromTarget(*req.TargetConfig), req.DataSet)
+	}
+	return map[string]interface{}{
+		"action":       "storage_migration_start",
+		"kind":         string(req.Kind),
+		"dataSet":      req.DataSet,
+		"target":       target,
+		"verifyMode":   req.VerifyMode,
+		"deleteSource": req.DeleteSource,
+		"jobId":        jobID,
+	}
+}
+
+// backupDeps mirrors BackupHandler.backupDeps so the resolver can open a
+// core-storage backup row too.
+func (r *StorageDataSetResolver) backupDeps() backupstorage.Deps {
+	return backupstorage.Deps{
+		Registry:  r.state.GRPCRegistry,
+		NodeStore: r.state.Store,
+		CoreStorage: func(subPrefix string) (backupstorage.Storage, error) {
+			prov, err := r.state.buildCoreStorageProvider(subPrefix)
+			if err != nil {
+				return nil, err
+			}
+			return storage.NewCoreStorageBackupAdapter(prov), nil
+		},
+	}
+}
+
+// --- HTTP surface ---
+
+// StorageMigrationHandler exposes the in-panel blob storage migration. All
+// endpoints are gated at the route by AuthMiddleware + RequireCap
+// (settings.read for reads, settings.write for mutations), matching the
+// db-migration and core-storage precedent exactly.
+type StorageMigrationHandler struct {
+	state *AppState
+}
+
+func NewStorageMigrationHandler(state *AppState) *StorageMigrationHandler {
+	return &StorageMigrationHandler{state: state}
+}
+
+// Overview GET /api/admin/storage/overview - PANEL settings.read.
+func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Request) {
+	sets, err := NewStorageDataSetResolver(h.state).List(r.Context())
+	if err != nil {
+		sendJSONError(w, "Failed to describe storage: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type overviewEntry struct {
+		services.StorageDataSetInfo
+		LatestManifest *models.StorageManifest `json:"latestManifest"`
+	}
+	out := make([]overviewEntry, 0, len(sets))
+	for _, s := range sets {
+		e := overviewEntry{StorageDataSetInfo: s}
+		if ms, err := h.state.Store.ListStorageManifests(s.ID, 1); err == nil && len(ms) > 0 {
+			e.LatestManifest = &ms[0]
+		}
+		out = append(out, e)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "dataSets": out})
+}
+
+// GetJob GET /api/admin/storage/migration - PANEL settings.read.
+func (h *StorageMigrationHandler) GetJob(w http.ResponseWriter, r *http.Request) {
+	if h.state.StorageMigration == nil {
+		sendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		return
+	}
+	job, ok, err := h.state.StorageMigration.GetJob(r.Context())
+	if err != nil {
+		sendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp := map[string]interface{}{"success": true, "hasJob": ok}
+	if ok {
+		resp["job"] = job
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// Start POST /api/admin/storage/migration - PANEL settings.write. Returns 202
+// with the initial job; 409 when one is already running; 400 on a bad request.
+func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) {
+	var req services.StorageMigrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// Validate BEFORE the service-availability check, so a request that
+	// violates safety invariant 2 is rejected as 400 regardless of whether
+	// Redis happens to be up.
+	if err := req.Validate(); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.state.StorageMigration == nil {
+		sendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	actorName := h.resolveUsername(actorID)
+
+	job, err := h.state.StorageMigration.Start(r.Context(), req, actorID, actorName)
+	if err != nil {
+		if errors.Is(err, services.ErrStorageMigrationRunning) {
+			sendJSONError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", storageMigrationAuditPayload(req, job.ID))
+	if h.state.Events != nil {
+		h.state.Events.Publish(r.Context(), "storagemigration.changed", nil)
+	}
+
+	// The response carries the JOB, never the request: StorageMigrationJob has
+	// no target-config field at all (Task 13), so the target's S3 secret cannot
+	// be echoed back to the caller.
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "job": job})
+}
+
+// Cancel POST /api/admin/storage/migration/cancel - PANEL settings.write.
+func (h *StorageMigrationHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	if h.state.StorageMigration == nil {
+		sendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := h.state.StorageMigration.Cancel(r.Context()); err != nil {
+		if errors.Is(err, services.ErrNoStorageMigrationJob) {
+			sendJSONError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		sendJSONError(w, err.Error(), http.StatusConflict)
+		return
+	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+		"action": "storage_migration_cancel",
+	})
+	if h.state.Events != nil {
+		h.state.Events.Publish(r.Context(), "storagemigration.changed", nil)
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// ListManifests GET /api/admin/storage/manifests - PANEL settings.read.
+// Optional ?dataSet= filter and ?limit=.
+func (h *StorageMigrationHandler) ListManifests(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	ms, err := h.state.Store.ListStorageManifests(r.URL.Query().Get("dataSet"), limit)
+	if err != nil {
+		sendJSONError(w, "Failed to list manifests: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ms == nil {
+		ms = []models.StorageManifest{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "manifests": ms})
+}
+
+// ExportManifest GET /api/admin/storage/manifests/{id}/export - PANEL
+// settings.read. Streams CSV (key,size,sha256), not JSON: a 100k-entry
+// manifest as one JSON blob is hostile to both the browser and whatever
+// out-of-band tooling the admin uses to move the data. encoding/csv handles
+// quoting, so a key containing a comma or a quote survives the round trip.
+func (h *StorageMigrationHandler) ExportManifest(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+	m, err := h.state.Store.GetStorageManifest(id)
+	if err != nil {
+		sendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if m == nil {
+		sendJSONError(w, "Manifest not found", http.StatusNotFound)
+		return
+	}
+	entries, err := h.state.Store.ListStorageManifestEntries(id)
+	if err != nil {
+		sendJSONError(w, "Failed to load manifest entries: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	filename := fmt.Sprintf("dylaris-manifest-%d-%s.csv", m.ID, safeFilenamePart(m.DataSet))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{"key", "size", ChecksumColumnName(m.Algo)})
+	for _, e := range entries {
+		_ = cw.Write([]string{e.Key, strconv.FormatInt(e.Size, 10), e.Checksum})
+	}
+}
+
+// ChecksumColumnName names the CSV checksum column after the manifest's algo,
+// so an export is self-describing.
+func ChecksumColumnName(algo string) string {
+	if algo == "" {
+		return storagemigrate.ChecksumAlgo
+	}
+	return algo
+}
+
+// safeFilenamePart strips anything that would need quoting in a
+// Content-Disposition filename.
+func safeFilenamePart(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
+
+// DeleteManifest DELETE /api/admin/storage/manifests/{id} - PANEL
+// settings.write. Entries cascade.
+func (h *StorageMigrationHandler) DeleteManifest(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.DeleteStorageManifest(id); err != nil {
+		sendJSONError(w, "Failed to delete manifest: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+		"action":     "storage_manifest_delete",
+		"manifestId": id,
+	})
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// resolveUsername best-effort maps a user UUID to a display name.
+func (h *StorageMigrationHandler) resolveUsername(id string) string {
+	if id == "" {
+		return ""
+	}
+	if u, err := h.state.Store.GetUserByID(id); err == nil && u != nil {
+		return u.Username
+	}
+	return ""
+}

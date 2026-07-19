@@ -274,26 +274,37 @@ var requiredCaps = map[string]string{
 	"/api/admin/db/migration/verify":                   "settings.write",
 	"/api/admin/db/hypertable":                         "settings.read",
 	"/api/admin/db/hypertable/convert":                 "settings.write",
-	"/api/admin/settings/telemetry":                    "settings.read",
-	"/api/admin/maintenance":                           "settings.write",
-	"/api/admin/settings/audit":                        "settings.read",
-	"/api/admin/xdp/config":                            "settings.read",
-	"/api/settings/core-storage":                       "settings.read",
-	"/api/settings/core-storage/test":                  "settings.write",
-	"/api/settings/filemanager":                        "settings.read",
-	"/api/settings/gateway":                            "settings.read",
-	"/api/settings/gateway/hub-redis-admin":            "settings.read",
-	"/api/settings/gateway/hub-redis-admin/roll":       "settings.write",
-	"/api/settings/placement":                          "settings.read",
-	"/api/admin/servers/{id:[0-9]+}/demo":              "settings.write",
-	"/api/admin/settings/demo-account":                 "settings.read",
-	"/api/settings/servers":                            "settings.read",
-	"/api/settings/backup":                             "settings.read",
-	"/api/settings/warp-firewall":                      "settings.read",
-	"/api/admin/settings/security-questions-pool":      "settings.read",
-	"/api/admin/settings/auth":                         "settings.read",
-	"/api/admin/settings/smtp":                         "settings.read",
-	"/api/admin/settings/smtp/test":                    "settings.write",
+	// Blob storage migration (Task 15). /api/admin/storage/migration is one
+	// template shared by GET (job status) and POST (start): the manifest's
+	// documented convention records the representative .read cap here and the
+	// per-method cap lives at the RequireCap call, same as
+	// /api/admin/db/migration above. That is why 7 routes yield 6 entries.
+	"/api/admin/storage/overview":                     "settings.read",
+	"/api/admin/storage/migration":                    "settings.read",
+	"/api/admin/storage/migration/cancel":             "settings.write",
+	"/api/admin/storage/manifests":                    "settings.read",
+	"/api/admin/storage/manifests/{id:[0-9]+}":        "settings.write",
+	"/api/admin/storage/manifests/{id:[0-9]+}/export": "settings.read",
+	"/api/admin/settings/telemetry":                   "settings.read",
+	"/api/admin/maintenance":                          "settings.write",
+	"/api/admin/settings/audit":                       "settings.read",
+	"/api/admin/xdp/config":                           "settings.read",
+	"/api/settings/core-storage":                      "settings.read",
+	"/api/settings/core-storage/test":                 "settings.write",
+	"/api/settings/filemanager":                       "settings.read",
+	"/api/settings/gateway":                           "settings.read",
+	"/api/settings/gateway/hub-redis-admin":           "settings.read",
+	"/api/settings/gateway/hub-redis-admin/roll":      "settings.write",
+	"/api/settings/placement":                         "settings.read",
+	"/api/admin/servers/{id:[0-9]+}/demo":             "settings.write",
+	"/api/admin/settings/demo-account":                "settings.read",
+	"/api/settings/servers":                           "settings.read",
+	"/api/settings/backup":                            "settings.read",
+	"/api/settings/warp-firewall":                     "settings.read",
+	"/api/admin/settings/security-questions-pool":     "settings.read",
+	"/api/admin/settings/auth":                        "settings.read",
+	"/api/admin/settings/smtp":                        "settings.read",
+	"/api/admin/settings/smtp/test":                   "settings.write",
 
 	// Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight
 	// (PANEL topology.*). /api/warp/enroll, /api/warp/link-boot (warp API-key
@@ -494,6 +505,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
+	storageMigrationHandler := handlers.NewStorageMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
@@ -807,6 +819,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// In-place hypertable upgrade + TimescaleDB recommendation (same database).
 	api.HandleFunc("/admin/db/hypertable", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dbMigrationHandler.HypertableStatus))).Methods("GET")
 	api.HandleFunc("/admin/db/hypertable/convert", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dbMigrationHandler.ConvertHypertable))).Methods("POST")
+	// Blob storage migration: inventory, copy, verify, optional source delete.
+	// Admin-gated exactly like the DB migration (settings.read / settings.write).
+	api.HandleFunc("/admin/storage/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageMigrationHandler.Overview))).Methods("GET")
+	api.HandleFunc("/admin/storage/migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageMigrationHandler.GetJob))).Methods("GET")
+	api.HandleFunc("/admin/storage/migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageMigrationHandler.Start))).Methods("POST")
+	api.HandleFunc("/admin/storage/migration/cancel", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageMigrationHandler.Cancel))).Methods("POST")
+	api.HandleFunc("/admin/storage/manifests", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageMigrationHandler.ListManifests))).Methods("GET")
+	api.HandleFunc("/admin/storage/manifests/{id:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageMigrationHandler.ExportManifest))).Methods("GET")
+	api.HandleFunc("/admin/storage/manifests/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageMigrationHandler.DeleteManifest))).Methods("DELETE")
 	// --- Telemetry settings (PANEL settings.*) ---
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(telemetrySettingsHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(telemetrySettingsHandler.Set))).Methods("PUT")
