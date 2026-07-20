@@ -43,6 +43,35 @@ const (
 	// waiting before its original error is handed to the caller. It bounds the
 	// caller's wait; it says nothing about recovery.
 	defaultS3RetryBudget = 10 * time.Minute
+
+	// defaultS3ProbeTimeout bounds ONE probe call. The probe runs inline in the
+	// loop, so a probe that outlives this would only delay the next tick, never
+	// pile up: the ticker drops ticks rather than queueing them.
+	defaultS3ProbeTimeout = 10 * time.Second
+)
+
+// ErrS3ProbeUnavailable is what a probe function returns when the probe could
+// not be ATTEMPTED: no s3 backend is configured, or the client could not be
+// built from the current config. It is evidence about the configuration, not
+// about the connection, so the loop records no verdict for it.
+//
+// The distinction is load-bearing. Without it, an owner who breaks the s3
+// config in the middle of an outage would have the resulting build error
+// classified as "not a connection failure", which the loop reads as the store
+// answering, which would clear the reconnecting state on no evidence at all.
+var ErrS3ProbeUnavailable = errors.New("s3 connection probe could not be attempted")
+
+// s3Transition names the three ways this state machine moves, because they are
+// not interchangeable in the log. "Restored" is a claim that the backend came
+// back and must only be made when something observed that; "abandoned" is the
+// state being dropped because the configured backend is no longer this one,
+// which is not evidence about anything.
+type s3Transition int
+
+const (
+	s3Lost s3Transition = iota
+	s3Restored
+	s3Abandoned
 )
 
 // s3ConnectionClass is the classifier, composed from the AWS SDK's own retry
@@ -117,6 +146,10 @@ type S3Resilience struct {
 	interval time.Duration
 	budget   time.Duration
 
+	// probeTimeout bounds one probe call. Same reason as above for being a
+	// field: the suite shrinks it.
+	probeTimeout time.Duration
+
 	// logf is injected so a test can capture the log sink and count lines. It
 	// defaults to log.Printf, which is this module's logging idiom.
 	logf func(format string, args ...any)
@@ -137,10 +170,11 @@ func NewS3Resilience() *S3Resilience {
 
 func newS3Resilience(interval, budget time.Duration) *S3Resilience {
 	r := &S3Resilience{
-		interval: interval,
-		budget:   budget,
-		logf:     log.Printf,
-		now:      time.Now,
+		interval:     interval,
+		budget:       budget,
+		probeTimeout: defaultS3ProbeTimeout,
+		logf:         log.Printf,
+		now:          time.Now,
 	}
 	r.state.Store(&s3State{since: time.Now()})
 	return r
@@ -150,8 +184,8 @@ func newS3Resilience(interval, budget time.Duration) *S3Resilience {
 // subscriber emits one event per state change. It is called with no locks held,
 // so a hook may call back in.
 //
-// Currently unused by design: it is the seam the SSE event and the health
-// endpoints will attach to.
+// services.StorageStatus installs the one production hook, which forwards the
+// transition onto the system-events channel.
 func (r *S3Resilience) SetOnChange(fn func(reconnecting bool, since time.Time, lastErr error)) {
 	if r == nil {
 		return
@@ -180,7 +214,9 @@ func (r *S3Resilience) State() (reconnecting bool, since time.Time, lastErr erro
 // owes, or nil when nothing changed. Splitting the side effects out is what
 // keeps them off the lock and what makes "logged once" a property of the state
 // machine rather than of a flag somebody has to remember to check.
-func (r *S3Resilience) applyState(reconnecting bool, cause error) func() {
+func (r *S3Resilience) applyState(t s3Transition, cause error) func() {
+	reconnecting := t == s3Lost
+
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()
 
@@ -194,10 +230,17 @@ func (r *S3Resilience) applyState(reconnecting bool, cause error) func() {
 	hook, logf := r.onChange, r.logf
 	outage := now.Sub(prev.since)
 	return func() {
-		if reconnecting {
+		switch t {
+		case s3Lost:
 			logf("core storage s3: connection lost, pausing replayable operations and retrying every %s for up to %s: %v", r.interval, r.budget, cause)
-		} else {
+		case s3Restored:
 			logf("core storage s3: connection restored after %s", outage.Round(time.Second))
+		case s3Abandoned:
+			// Deliberately NOT the "restored" line. Nothing observed a
+			// recovery here; the configured backend simply stopped being this
+			// one, and claiming the connection came back would be a log entry
+			// asserting more than the code can see.
+			logf("core storage s3: backend is no longer s3, dropping the reconnecting state after %s", outage.Round(time.Second))
 		}
 		if hook != nil {
 			hook(reconnecting, now, cause)
@@ -218,7 +261,22 @@ func (r *S3Resilience) report(err error) {
 	if r == nil || !isS3ConnectionClass(err) {
 		return
 	}
-	r.fire(r.applyState(true, err))
+	r.fire(r.applyState(s3Lost, err))
+}
+
+// Reset drops the reconnecting state because the configured backend is no
+// longer s3. Called from the same place that starts and stops the host-path
+// watchdog, so exactly one of the two mechanisms is ever live.
+//
+// Without this a Core that was reconnecting when its backend was switched to a
+// host path would report an s3 outage forever: nothing else can clear the state
+// except a successful s3 call, and there will never be another one. That stale
+// verdict reaches the panel banner and both health endpoints.
+func (r *S3Resilience) Reset() {
+	if r == nil {
+		return
+	}
+	r.fire(r.applyState(s3Abandoned, nil))
 }
 
 // recovered records that a call completed, which is the only evidence this
@@ -233,7 +291,77 @@ func (r *S3Resilience) recovered() {
 	if r == nil || !r.state.Load().reconnecting {
 		return
 	}
-	r.fire(r.applyState(false, nil))
+	r.fire(r.applyState(s3Restored, nil))
+}
+
+// StartProbe runs the recovery probe until ctx is done. It spawns its own
+// goroutine and returns immediately.
+//
+// probe must perform ONE cheap, read-only, replayable call against the
+// currently configured s3 backend, and it must NOT go through the resilient
+// wrapper: a probe that did would be caught by s3Retry and sit there for the
+// whole budget instead of reporting a verdict.
+//
+// This is what makes the write path's wait active. Without it the state only
+// returns to ok when some other replayable operation happens to succeed, so a
+// Core doing nothing but uploads would wait out the full budget without ever
+// noticing that the backend came back.
+//
+// Unlike the host-path watchdog, this runs the probe INLINE and relies on a
+// context deadline to bound it. That looks like the opposite of the rule in
+// health.go and is deliberate: the rule there is about filesystem syscalls,
+// which no context can interrupt, so a timeout around one only abandons a
+// goroutine that stays pinned to an OS thread. The AWS SDK is context-aware
+// and genuinely aborts, so here the deadline is a real bound and there is
+// nothing to detach.
+func (r *S3Resilience) StartProbe(ctx context.Context, probe func(context.Context) error) {
+	if r == nil || probe == nil {
+		return
+	}
+	go r.probeLoop(ctx, probe)
+}
+
+func (r *S3Resilience) probeLoop(ctx context.Context, probe func(context.Context) error) {
+	ticker := time.NewTicker(r.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Only probes during an outage. A healthy backend needs no traffic
+			// generated on its behalf, and every real call is already evidence.
+			if !r.state.Load().reconnecting {
+				continue
+			}
+			r.runProbe(ctx, probe)
+		}
+	}
+}
+
+// runProbe performs one probe and records the verdict it justifies.
+func (r *S3Resilience) runProbe(ctx context.Context, probe func(context.Context) error) {
+	pctx, cancel := context.WithTimeout(ctx, r.probeTimeout)
+	defer cancel()
+	err := probe(pctx)
+
+	// Checked on pctx rather than by classifying err, and that is load-bearing.
+	// isS3ConnectionClass returns false for a context deadline, so a probe that
+	// merely ran out of time would fall through to the branch below and be read
+	// as the store answering, clearing the outage on no evidence whatsoever.
+	// Asking the context directly is also immune to how the SDK wrapped it.
+	if pctx.Err() != nil {
+		return
+	}
+	if errors.Is(err, ErrS3ProbeUnavailable) {
+		return
+	}
+	if err == nil || !isS3ConnectionClass(err) {
+		// Either the call succeeded, or the store answered with a refusal
+		// (403, NoSuchKey). Both mean the transport works, which is the only
+		// thing this state tracks. s3Retry treats a refusal the same way.
+		r.recovered()
+	}
 }
 
 // waitUntilOK blocks while the backend is reconnecting and returns once it is
@@ -244,11 +372,10 @@ func (r *S3Resilience) recovered() {
 // reader is touched, which is what makes it safe for an operation that must
 // never be re-run.
 //
-// The limitation worth being explicit about: this wait is PASSIVE. Nothing here
-// probes S3, so the state only returns to ok when some other, replayable
-// operation's retry loop succeeds. A Core doing nothing but uploads will
-// therefore wait out the full budget without noticing that the backend came
-// back. Fixing that needs a probe, which this step does not build.
+// This wait is passive on its own: it never probes. What makes it terminate on
+// recovery rather than on the budget is StartProbe running alongside it, which
+// is the only thing that clears the state for a Core whose sole storage traffic
+// is uploads. Without that loop wired up, this waits out the full budget.
 func (r *S3Resilience) waitUntilOK(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -307,7 +434,7 @@ func s3Retry[T any](r *S3Resilience, ctx context.Context, fn func() (T, error)) 
 	}
 
 	first := err
-	r.fire(r.applyState(true, first))
+	r.fire(r.applyState(s3Lost, first))
 	deadline := r.now().Add(r.budget)
 	for {
 		if werr := sleepCtx(ctx, r.interval); werr != nil {

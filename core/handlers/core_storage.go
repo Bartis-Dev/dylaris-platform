@@ -172,20 +172,63 @@ func (s *AppState) CoreStorageConfigured() bool {
 	return validateCoreStorageConfig(s.LoadCoreStorageConfig()) == nil
 }
 
-// SyncStorageGate points the storage watchdog at the currently configured host
-// path, or stops it when the backend is not a host path.
+// SyncStorageGate points the two storage connection mechanisms at whichever
+// backend is currently configured: the watchdog watches the host path, or is
+// stopped, and the s3 state is dropped when the backend is not s3.
+//
+// Both halves matter, because each mechanism can otherwise outlive the backend
+// it describes. A gate left watching an abandoned path would keep refusing
+// requests that no longer go there; an s3 state left reconnecting after a
+// switch to a host path would report an outage forever, since the only thing
+// that can clear it is a successful s3 call that will never happen.
 //
 // It is called at boot and from persistCoreStorageConfig, which is the single
 // writer of these settings keys and therefore the only thing that can change
-// the answer. Watch is idempotent, so calling it on a config write that left
-// the path alone costs nothing.
+// the answer. Watch, Stop and Reset are all idempotent, so calling this on a
+// config write that changed something else costs nothing.
 func (s *AppState) SyncStorageGate() {
 	cfg := s.LoadCoreStorageConfig()
 	if (cfg.Backend == "path" || cfg.Backend == "local") && cfg.Path != "" {
 		s.StorageGate.Watch(cfg.Path)
-		return
+	} else {
+		s.StorageGate.Stop()
 	}
-	s.StorageGate.Stop()
+	if cfg.Backend != "s3" {
+		s.StorageS3.Reset()
+	}
+}
+
+// ProbeS3Connection performs one cheap, read-only call against the configured
+// s3 backend. It is the probe storage.S3Resilience.StartProbe runs while the
+// backend is reconnecting, and the only thing that lets an upload-only Core
+// notice that the object store came back.
+//
+// It deliberately builds a RAW provider (nil gate, nil resilience). Going
+// through the resilient wrapper would put the probe inside s3Retry, where it
+// would pause and retry for the whole budget instead of returning a verdict.
+//
+// ListFiles, not the write/read/delete probe TestConnection uses: this runs
+// every interval for as long as an outage lasts, so it must not generate
+// writes, and the state it is clearing is about the transport rather than
+// about permissions. A backend that answers a list but refuses a write is
+// reachable, which is exactly what the reconnecting state asks about.
+func (s *AppState) ProbeS3Connection(ctx context.Context) error {
+	cfg := s.LoadCoreStorageConfig()
+	if cfg.Backend != "s3" {
+		return storage.ErrS3ProbeUnavailable
+	}
+	if err := validateCoreStorageConfig(cfg); err != nil {
+		return fmt.Errorf("%w: %v", storage.ErrS3ProbeUnavailable, err)
+	}
+	prov, err := newStorageProviderForConfig(cfg, "_probe", nil, nil)
+	if err != nil {
+		// A client that cannot be built says the config is wrong, not that the
+		// connection failed. Reporting it as a verdict would clear a real
+		// outage the moment somebody mistyped an endpoint.
+		return fmt.Errorf("%w: %v", storage.ErrS3ProbeUnavailable, err)
+	}
+	_, err = prov.ListFiles(ctx, "")
+	return err
 }
 
 // buildCoreStorageProvider returns a provider SCOPED to subPrefix, built

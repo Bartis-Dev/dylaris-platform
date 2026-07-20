@@ -210,15 +210,21 @@ func main() {
 	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.
 	appState.CPUPinning = services.NewCPUPinningService(redisClient, pgStore)
 
-	// Host-path storage watchdog. Started here and re-pointed by every write of
-	// the core-storage config; it idles when the backend is s3.
+	// The two core-storage connection mechanisms. Exactly one of them is live
+	// at a time, decided by which backend the config names.
+	//
+	// Both are constructed BEFORE SyncStorageGate, which points the watchdog at
+	// the configured path and drops any stale s3 state. It touches both, so
+	// creating either one after it would leave that half silently unsynced.
 	appState.StorageGate = storage.NewGate()
+	appState.StorageS3 = storage.NewS3Resilience()
 	appState.SyncStorageGate()
 
-	// S3 connection state. Unlike the gate it has nothing to start or point at:
-	// it reacts to what the SDK reports about calls that already happened, and
-	// idles when the backend is a host path.
-	appState.StorageS3 = storage.NewS3Resilience()
+	// The s3 recovery probe. It idles unless the backend is actually
+	// reconnecting, and it is what lets a Core whose only storage traffic is
+	// uploads notice that the object store came back instead of waiting out
+	// the full retry budget.
+	appState.StorageS3.StartProbe(context.Background(), appState.ProbeS3Connection)
 
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a

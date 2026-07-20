@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -409,5 +410,156 @@ func TestS3Resilience_NilIsSafeAndNeverPauses(t *testing.T) {
 	}
 	if fos.attempts["List"] != 1 {
 		t.Errorf("List attempts = %d, want exactly 1 with no resilience wired", fos.attempts["List"])
+	}
+}
+
+// --- Recovery probe and Reset -------------------------------------------
+//
+// These cover the loop that makes the write path's wait terminate on recovery
+// instead of on the budget, and the state drop that happens when the backend
+// stops being s3 at all.
+
+// tripped returns an instance already in the reconnecting state, which is the
+// only state the probe does anything in.
+func tripped(t *testing.T) (*S3Resilience, *logSink) {
+	t.Helper()
+	r, sink := newTestRes(time.Millisecond, time.Minute)
+	r.probeTimeout = 20 * time.Millisecond
+	r.report(connErr())
+	if reconnecting, _, _ := r.State(); !reconnecting {
+		t.Fatal("setup: expected the instance to be reconnecting")
+	}
+	return r, sink
+}
+
+func TestS3Probe_VerdictPerOutcome(t *testing.T) {
+	tests := []struct {
+		name string
+		// probe is the injected probe's result. A nil error means it succeeded.
+		probe func(ctx context.Context) error
+		// wantReconnecting is the state AFTER one probe.
+		wantReconnecting bool
+		why              string
+	}{
+		{
+			name:             "success clears the outage",
+			probe:            func(context.Context) error { return nil },
+			wantReconnecting: false,
+			why:              "a completed call is the evidence this state waits for",
+		},
+		{
+			name:             "a refusal also clears it",
+			probe:            func(context.Context) error { return accessDenied() },
+			wantReconnecting: false,
+			why:              "the store answered, so the transport works; this state tracks the transport, not permissions",
+		},
+		{
+			name:             "a transport failure keeps it",
+			probe:            func(context.Context) error { return connErr() },
+			wantReconnecting: true,
+			why:              "still no answer from the store",
+		},
+		{
+			name:             "unavailable is no verdict",
+			probe:            func(context.Context) error { return fmt.Errorf("%w: bad endpoint", ErrS3ProbeUnavailable) },
+			wantReconnecting: true,
+			why:              "the probe could not be attempted, which says nothing about the connection; clearing here would let a mistyped endpoint dismiss a real outage",
+		},
+		{
+			name: "a probe that outruns its own deadline is no verdict",
+			probe: func(ctx context.Context) error {
+				<-ctx.Done()
+				// Returns nil on purpose: this is the dangerous shape. Without
+				// the pctx check, err == nil would be read as a completed call
+				// and would clear a live outage.
+				return nil
+			},
+			wantReconnecting: true,
+			why:              "our own timeout fired; that is evidence about this probe, not about the backend",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := tripped(t)
+			r.runProbe(context.Background(), tc.probe)
+
+			got, _, _ := r.State()
+			if got != tc.wantReconnecting {
+				t.Fatalf("reconnecting = %v, want %v: %s", got, tc.wantReconnecting, tc.why)
+			}
+		})
+	}
+}
+
+func TestS3Probe_OnlyRunsWhileReconnecting(t *testing.T) {
+	r, _ := newTestRes(time.Millisecond, time.Minute)
+
+	var calls atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.StartProbe(ctx, func(context.Context) error {
+		calls.Add(1)
+		return nil
+	})
+
+	// Many intervals pass with the backend healthy.
+	time.Sleep(50 * time.Millisecond)
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("probe ran %d times on a healthy backend, want 0: a backend nothing has complained about must not have traffic generated on its behalf", n)
+	}
+
+	// Trip it, and the loop must start probing and then clear the state.
+	r.report(connErr())
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if reconnecting, _, _ := r.State(); !reconnecting {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("still reconnecting after the probe loop should have cleared it (probe ran %d times)", calls.Load())
+}
+
+func TestS3Reset_DropsTheStateWithoutClaimingRecovery(t *testing.T) {
+	r, sink := tripped(t)
+
+	var hookReconnecting bool
+	var hookCalls int
+	r.SetOnChange(func(reconnecting bool, _ time.Time, _ error) {
+		hookCalls++
+		hookReconnecting = reconnecting
+	})
+
+	r.Reset()
+
+	if reconnecting, _, _ := r.State(); reconnecting {
+		t.Fatal("Reset left the instance reconnecting; a state about an abandoned backend can never be cleared by anything else")
+	}
+	if hookCalls != 1 || hookReconnecting {
+		t.Fatalf("hook calls = %d, reconnecting = %v, want exactly one call reporting ok", hookCalls, hookReconnecting)
+	}
+
+	// The log must not claim a recovery nobody observed.
+	for _, line := range sink.all() {
+		if strings.Contains(line, "connection restored") {
+			t.Fatalf("Reset logged a recovery it did not observe: %q", line)
+		}
+	}
+	if sink.countContaining("no longer s3") != 1 {
+		t.Fatalf("Reset logged no line explaining the state drop, lines: %v", sink.all())
+	}
+}
+
+func TestS3Reset_OnAHealthyInstanceIsSilent(t *testing.T) {
+	r, sink := newTestRes(time.Millisecond, time.Minute)
+	r.SetOnChange(func(bool, time.Time, error) {
+		t.Fatal("Reset fired a transition hook on an instance that was already ok")
+	})
+
+	r.Reset()
+
+	if n := len(sink.all()); n != 0 {
+		t.Fatalf("Reset wrote %d log lines on an already-ok instance, want 0: SyncStorageGate calls this on every config write", n)
 	}
 }

@@ -11,10 +11,16 @@ import (
 )
 
 // HealthHandler powers the admin Status page. It runs a set of on-demand
-// component checks (DB, metrics extension, Redis, nodes, gateway) and reports
-// each as up / degraded / down / disabled with a human-readable reason. It does
-// no background work — every check runs per request behind a short timeout so a
-// hung dependency can't block the response.
+// component checks (DB, metrics extension, Redis, nodes, gateway, storage) and
+// reports each as up / degraded / down / disabled with a human-readable reason.
+// It does no background work of its own.
+//
+// Most checks run per request behind healthCheckTimeout so a hung dependency
+// cannot block the response. Two do not, and saying "every check" here was
+// wrong: nodesComponent calls Store.ListNodes, which takes no context at all,
+// so a wedged database blocks it for as long as the driver allows; and
+// storageComponent takes no timeout because it needs none, reading only
+// atomics that the storage layer's own background watchers maintain.
 type HealthHandler struct {
 	state *AppState
 }
@@ -64,6 +70,7 @@ func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	components = append(components, h.redisComponent(r.Context(), &redisUp))
 	components = append(components, h.nodesComponent())
 	components = append(components, h.gatewayComponent(r.Context()))
+	components = append(components, h.storageComponent())
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -273,6 +280,74 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	return comp
 }
 
+// storageComponent reports the connection state of the configured core-storage
+// backend: the host-path watchdog's verdict, or the s3 wrapper's.
+//
+// It reads atomics only and touches neither the filesystem nor the network.
+// That is a requirement, not an optimisation. Statting a wedged network mount
+// here would block inside a syscall no context can interrupt, so the status
+// page would hang on exactly the outage it exists to report, and a timeout
+// around it would abandon a goroutine pinned to an OS thread on every request.
+// The reading it hands back can therefore be up to one probe interval stale.
+//
+// "up" means no evidence of a problem, NOT verified reachable. Neither backend
+// proves reachability: the watchdog's verdict lags its probe, and s3 is only
+// observed through calls something else made.
+//
+// A storage outage is degraded, never down. "down" is reserved for the
+// dependencies Core cannot run without at all (see overallStatus); with storage
+// unreachable the panel still serves, the API still answers and running servers
+// keep running. Only the features that touch stored files fail.
+//
+// Unlike the SSE payload and GET /api/storage/connection, this may carry the
+// cause: the route behind it requires the settings.read capability, so the host
+// path, the errno and the endpoint are visible to an operator rather than to
+// every authenticated user.
+func (h *HealthHandler) storageComponent() healthComponent {
+	comp := healthComponent{Key: "storage", Name: "Core storage"}
+	cfg := h.state.LoadCoreStorageConfig()
+
+	switch cfg.Backend {
+	case "s3":
+		reconnecting, since, lastErr := h.state.StorageS3.State()
+		if !reconnecting {
+			comp.Status = "up"
+			comp.Detail = "S3 backend, no connection failure reported"
+			return comp
+		}
+		comp.Status = "degraded"
+		comp.Detail = "S3 backend reconnecting since " + since.UTC().Format(time.RFC3339)
+		comp.Reason = "the object store stopped answering; replayable operations are paused and retried, uploads wait before they start, and both fail once the retry budget runs out"
+		if lastErr != nil {
+			comp.Reason += ": " + lastErr.Error()
+		}
+		return comp
+
+	case "path", "local":
+		healthy, cause := h.state.StorageGate.Healthy()
+		if healthy {
+			comp.Status = "up"
+			comp.Detail = "Host path, no connection failure observed"
+			return comp
+		}
+		comp.Status = "degraded"
+		comp.Detail = "Host path not answering"
+		comp.Reason = "the configured storage path stopped answering, so requests that touch stored files are failed immediately rather than piling up against it"
+		if cause != nil {
+			comp.Reason += ": " + cause.Error()
+		}
+		return comp
+
+	default:
+		// Neither mechanism applies because no backend is configured yet. That
+		// is the fresh-install state, not a fault.
+		comp.Status = "disabled"
+		comp.Detail = "Not configured"
+		comp.Reason = "core file storage has not been configured; features that store files are unavailable until it is"
+		return comp
+	}
+}
+
 // countStatus maps an online/total pair to a component status. Zero total means
 // nothing of that kind is registered yet, which is neutral ("disabled") rather
 // than a fault.
@@ -298,6 +373,18 @@ func countStatus(online, total int) string {
 // AuthMiddleware AND outside the /api setup-lock + maintenance middleware
 // (see core/main.go), so it keeps answering during Fresh-Install/Lost-Admin
 // setup states and while maintenance mode is active.
+// Storage is REPORTED here but deliberately does NOT affect the status code.
+// This endpoint is what Docker and Swarm consume to decide whether to kill and
+// restart the container, and restarting Core cannot make an unreachable NAS or
+// object store reachable. Gating on it would turn a storage blip into a restart
+// loop that takes the panel and every running server's supervision down with
+// it, converting a partial outage into a total one. The flag is there so an
+// operator's own monitoring can see the state; the orchestrator ignores it.
+//
+// The flag is coarse on purpose. This route is unauthenticated, so it must not
+// carry the path, the bucket or the errno the admin endpoint reports. It is
+// read from atomics only, adding no query to a path that runs on every health
+// check and cannot be allowed to hang.
 func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 	defer cancel()
@@ -305,21 +392,35 @@ func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	dbErr := h.state.Store.Ping(ctx)
 	redisErr := h.state.Redis.Ping(ctx).Err()
 
+	// Checked without consulting which backend is configured, which would cost
+	// a settings read. The idle mechanism reports ok: the watchdog is stopped
+	// when the backend is not a host path, and the s3 state is reset when it is
+	// not s3, so at most one of these can be false at a time.
+	storageOK := true
+	if healthy, _ := h.state.StorageGate.Healthy(); !healthy {
+		storageOK = false
+	}
+	if reconnecting, _, _ := h.state.StorageS3.State(); reconnecting {
+		storageOK = false
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if dbErr != nil || redisErr != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "not ready",
-			"db":     dbErr == nil,
-			"redis":  redisErr == nil,
+			"status":  "not ready",
+			"db":      dbErr == nil,
+			"redis":   redisErr == nil,
+			"storage": storageOK,
 		})
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ready",
-		"db":     true,
-		"redis":  true,
+		"status":  "ready",
+		"db":      true,
+		"redis":   true,
+		"storage": storageOK,
 	})
 }
