@@ -169,7 +169,8 @@ export default function CoreStorageTab() {
           <p id="core-storage-host-path-blocked" className="text-xs text-(--base-06) mt-2">
             The filesystem backend is unavailable because {onlineCores} Core instances are online. It stores
             files on a single machine&apos;s disk, so each Core would only serve what it wrote itself. Use S3, or
-            scale down to one Core. A Core that was just restarted can still be counted for up to 30 seconds.
+            scale down to one Core. A Core that was killed rather than shut down cleanly can still be counted
+            for up to 30 seconds.
           </p>
         )}
       </div>

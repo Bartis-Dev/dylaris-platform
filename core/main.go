@@ -210,6 +210,17 @@ func main() {
 	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.
 	appState.CPUPinning = services.NewCPUPinningService(redisClient, pgStore)
 
+	// One cancellable context for every long-lived background loop below, so
+	// shutdown can tell them to stop instead of relying on process exit. It is
+	// cancelled after both HTTP listeners have drained, so a request that is
+	// still in flight never loses a service it depends on mid-response.
+	//
+	// Deliberately NOT used for one-shot boot calls (a single Redis Set, the
+	// host-path warning): those complete during boot, where this context is
+	// never cancelled, so passing it would only suggest a lifecycle they do
+	// not have.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+
 	// The two core-storage connection mechanisms. Exactly one of them is live
 	// at a time, decided by which backend the config names.
 	//
@@ -224,7 +235,7 @@ func main() {
 	// reconnecting, and it is what lets a Core whose only storage traffic is
 	// uploads notice that the object store came back instead of waiting out
 	// the full retry budget.
-	appState.StorageS3.StartProbe(context.Background(), appState.ProbeS3Connection)
+	appState.StorageS3.StartProbe(bgCtx, appState.ProbeS3Connection)
 
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a
@@ -237,7 +248,7 @@ func main() {
 	// publisher above, because it captures it. Start before Attach so the
 	// forwarder is already draining when the first transition can fire.
 	appState.StorageStatus = services.NewStorageStatus(appState.Events, appState.StorageGate, appState.StorageS3)
-	appState.StorageStatus.Start(context.Background())
+	appState.StorageStatus.Start(bgCtx)
 	appState.StorageStatus.Attach()
 
 	// Leader election: a single Redis lease named for the
@@ -247,7 +258,7 @@ func main() {
 	// always wins the election so behavior is unchanged for dev. Multi-
 	// instance Core safely converges on exactly one active leader.
 	coreLeader := leader.New(redisClient, "dylaris:core:leader", cfg.CoreID)
-	coreLeader.Start(context.Background())
+	coreLeader.Start(bgCtx)
 
 	discovery := services.NewDiscoveryService(pgStore, redisClient, cfg.ClusterSecret)
 	discovery.SetLeader(coreLeader)
@@ -272,7 +283,7 @@ func main() {
 	// traffic_usage. No-op in solo/hoster mode (feature_byon_enabled off).
 	trafficAggregator := services.NewTrafficAggregator(pgStore, redisClient, appState.FeatureFlags)
 	trafficAggregator.SetLeader(coreLeader)
-	trafficAggregator.Start(context.Background())
+	trafficAggregator.Start(bgCtx)
 
 	// Billing lifecycle — leader-gated. Progresses past_due tenants whose grace
 	// window has elapsed into suspended (hard cutoff deferred to SuspendGrace
@@ -290,7 +301,7 @@ func main() {
 		if provider := services.NewCloudflareProvider(cfg.CFAPIToken, cfg.CFZoneID); provider != nil {
 			dnsReconciler := services.NewDNSReconciler(redisClient, provider)
 			dnsReconciler.SetLeader(coreLeader)
-			dnsReconciler.Start(context.Background())
+			dnsReconciler.Start(bgCtx)
 		} else {
 			log.Println("DNS updater enabled but Cloudflare credentials missing (CF_API_TOKEN / CF_ZONE_ID) — skipping")
 		}
@@ -302,26 +313,26 @@ func main() {
 	// it under multi-instance.
 	autoDelete := services.NewAutoDeleteService(pgStore, cfg.FrontendURL)
 	autoDelete.SetLeader(coreLeader)
-	autoDelete.Start(context.Background())
+	autoDelete.Start(bgCtx)
 
 	// Ticket auto-close — daily ticker, leader-gated. No-op until
 	// the operator turns it on via Settings → Ticket Settings.
 	ticketAutoClose := services.NewTicketAutoCloseService(pgStore)
 	ticketAutoClose.SetLeader(coreLeader)
-	ticketAutoClose.Start(context.Background())
+	ticketAutoClose.Start(bgCtx)
 
 	// Server-audit retention sweep — daily, leader-gated. No-op
 	// when audit.server_retention_days is 0 (keep forever).
 	serverAuditRetention := services.NewServerAuditRetentionService(pgStore)
 	serverAuditRetention.SetLeader(coreLeader)
-	serverAuditRetention.Start(context.Background())
+	serverAuditRetention.Start(bgCtx)
 
 	// Modpack auto-update checker — hourly, leader-gated. Pauses when the
 	// modpacks feature is off; per-row staleness governed by the admin cadence
 	// setting (modpack_update_check_interval_hours, default 24h).
 	modpackUpdateChecker := services.NewModpackUpdateChecker(pgStore, appState.FeatureFlags)
 	modpackUpdateChecker.SetLeader(coreLeader)
-	modpackUpdateChecker.Start(context.Background())
+	modpackUpdateChecker.Start(bgCtx)
 
 	// Fallback cleanup if TimescaleDB retention policy is not active.
 	// Leader-gated so under multi-Core only one instance
@@ -347,7 +358,7 @@ func main() {
 	// AppState so the manual-move endpoint can EnqueueMigration.
 	migrationOrchestrator := services.NewMigrationOrchestrator(pgStore, redisClient, appState.Queue, appState.Gateway, cfg.ClusterSecret)
 	migrationOrchestrator.SetLeader(coreLeader)
-	migrationOrchestrator.Start(context.Background())
+	migrationOrchestrator.Start(bgCtx)
 	appState.Migration = migrationOrchestrator
 	migrationOrchestrator.SetCPUPinning(appState.CPUPinning)
 
@@ -356,7 +367,7 @@ func main() {
 	// No-op unless auto-move is enabled AND gateway routing is active.
 	rebalanceWorker := services.NewRebalanceWorker(pgStore, redisClient, migrationOrchestrator, appState.FeatureFlags)
 	rebalanceWorker.SetLeader(coreLeader)
-	rebalanceWorker.Start(context.Background())
+	rebalanceWorker.Start(bgCtx)
 
 	// Publish routing modes to Redis on startup so Nodes pick them up immediately.
 	// Always write (even defaults) so stale Redis values from a previous install don't persist.
@@ -441,11 +452,11 @@ func main() {
 	// running services re-auth transparently on their next command.
 	aclReconciler := services.NewACLReconciler(pgStore, aclProvisioner, redisClient, cfg.ClusterSecret, cfg.SuspendGrace)
 	aclReconciler.SetLeader(coreLeader)
-	aclReconciler.Start(context.Background())
+	aclReconciler.Start(bgCtx)
 	// The billing lifecycle drops/restores route-only link tunnels on
 	// suspend/reactivate; give it the same provisioner, gateway and cluster secret.
 	appState.Billing.SetLinkACL(appState.Gateway, redisClient, aclProvisioner, cfg.ClusterSecret)
-	appState.Billing.Start(context.Background())
+	appState.Billing.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
 		aclProvisioner,
@@ -457,11 +468,13 @@ func main() {
 	// server-placement command, closing the window where a freshly created
 	// server's keys are NOPERM for the node until its next reconnect. nil-safe.
 	appState.Queue.SetACL(aclHandshake)
-	go func() {
-		if err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, pgStore, cfg.GRPCTLSEnabled, cfg.ClusterSecret); err != nil {
-			log.Fatalf("gRPC server error: %v", err)
-		}
-	}()
+	// Serves in its own goroutine; the handle comes back so shutdown can drain
+	// node streams instead of severing them. A bind failure surfaces here,
+	// synchronously, rather than from inside a goroutine after boot continued.
+	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, pgStore, cfg.GRPCTLSEnabled, cfg.ClusterSecret)
+	if err != nil {
+		log.Fatalf("gRPC server error: %v", err)
+	}
 
 	// Core Heartbeat in Redis (so Nodes can discover this Core)
 	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.Region, cfg.GRPCPort)
@@ -484,26 +497,26 @@ func main() {
 	backupScheduler := services.NewBackupScheduler(pgStore, redisClient, appState.Queue)
 	backupScheduler.SetRegistry(grpcRegistry)
 	backupScheduler.SetLeader(coreLeader)
-	backupScheduler.Start(context.Background())
+	backupScheduler.Start(bgCtx)
 
 	// Scheduled-tasks executor — per-server cron jobs (restart, say).
 	// Leader-gated, 30s tick. Publishes scheduled_tasks.changed via the SSE
 	// channel after each dispatch so the panel updates last-run/next-run.
 	scheduledTasksService := services.NewScheduledTaskService(pgStore, redisClient, appState.Queue, appState.Events)
 	scheduledTasksService.SetLeader(coreLeader)
-	scheduledTasksService.Start(context.Background())
+	scheduledTasksService.Start(bgCtx)
 
 	// Telemetry heartbeat. Posts anonymous platform stats to
 	// dylaris.dev every 10min for the live counter on the website.
 	// Leader-gated so multi-Core deployments don't double-count.
 	telemetryHeartbeat := services.NewTelemetryHeartbeat(pgStore, cfg.ClusterSecret, cfg.Region)
 	telemetryHeartbeat.SetLeader(coreLeader)
-	telemetryHeartbeat.Start(context.Background())
+	telemetryHeartbeat.Start(bgCtx)
 
 	// Recovery-token printer. Background loop that logs either the
 	// Fresh-Install hint or the Lost-Admin token + URL every 30s as long as
 	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.
-	services.StartSetupRecoveryLoop(context.Background(), pgStore, cfg.FrontendURL)
+	services.StartSetupRecoveryLoop(bgCtx, pgStore, cfg.FrontendURL)
 
 	// allowedOrigin gates CORS. Beyond the configured Panel and the
 	// local dev origin, the Beam Desktop App is allowed through: it
@@ -597,10 +610,28 @@ func main() {
 	<-stop
 	log.Println("Shutting down Core gracefully...")
 
+	// Teardown order is load-bearing and runs outside-in: stop taking work,
+	// then stop doing work, then drop the connections both needed.
+	//
+	//  1. Drain the HTTP listeners. Requests in flight still have every
+	//     background service and both Redis and Postgres under them.
+	//  2. Drain node gRPC streams, which HTTP requests drive (file transfers,
+	//     the tab-proxy bridge), so they cannot be cut from under a request.
+	//  3. Cancel the background loops.
+	//  4. Give up this Core's identity in Redis: delete the heartbeat, release
+	//     the leader lease. Both write to Redis, so both must precede its close.
+	//  5. Close Redis last.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Core graceful shutdown error: %v", err)
+		// Shutdown waits for active connections and gives up when the context
+		// expires; it does not hang up on the stragglers. Close does, and
+		// without it they are cut by process exit anyway - a beat later and
+		// without their connection being closed.
+		log.Printf("Core graceful shutdown error, closing remaining connections: %v", err)
+		if cerr := srv.Close(); cerr != nil {
+			log.Printf("Core listener close error: %v", cerr)
+		}
 	}
 	if tabProxySrv != nil {
 		// Own fresh timeout: the main server's Shutdown above may have already
@@ -610,7 +641,49 @@ func main() {
 		tpCtx, tpCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer tpCancel()
 		if err := tabProxySrv.Shutdown(tpCtx); err != nil {
-			log.Printf("Core tab-proxy graceful shutdown error: %v", err)
+			log.Printf("Core tab-proxy graceful shutdown error, closing remaining connections: %v", err)
+			if cerr := tabProxySrv.Close(); cerr != nil {
+				log.Printf("Core tab-proxy listener close error: %v", cerr)
+			}
 		}
 	}
+
+	// GracefulStop sends GOAWAY and then waits for every pending RPC. A node
+	// stream is a long-lived RPC, so a node that has gone silent rather than
+	// disconnected keeps this waiting until server keepalive tears its
+	// transport down (Time 30s / Timeout 10s). Bound it and fall back to Stop,
+	// which closes the transports outright; that also releases a GracefulStop
+	// still blocked on them, which is why the goroutine is joined afterwards
+	// instead of abandoned.
+	grpcStopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(grpcStopped)
+	}()
+	select {
+	case <-grpcStopped:
+	case <-time.After(10 * time.Second):
+		log.Println("gRPC: node streams did not drain in 10s, closing them")
+		grpcServer.Stop()
+		<-grpcStopped
+	}
+
+	// Background loops stop here rather than earlier: until this point a
+	// request being drained above could still depend on one of them.
+	bgCancel()
+
+	// Stop being discoverable before Redis goes away. The heartbeat key carries
+	// a 30s TTL and the leader lease a 30s TTL, so skipping either leaves this
+	// instance counted as online, and its lease unavailable to a successor, for
+	// that long after the process is gone.
+	heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	coreHeartbeat.Stop(heartbeatCtx)
+	heartbeatCancel()
+	coreLeader.Stop()
+
+	if err := redisClient.Close(); err != nil {
+		log.Printf("Redis close error: %v", err)
+	}
+
+	log.Println("Core shutdown complete")
 }

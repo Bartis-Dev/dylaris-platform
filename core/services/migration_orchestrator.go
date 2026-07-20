@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -162,6 +163,7 @@ func (o *MigrationOrchestrator) consume(ctx context.Context) {
 		return nil // ack: Migrate records its own status/rollback
 	}
 
+	backoff := time.Duration(0)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -178,9 +180,64 @@ func (o *MigrationOrchestrator) consume(ctx context.Context) {
 		// Run until this Core loses leadership (leaderCtx cancelled) or shutdown.
 		leaderCtx, cancel := context.WithCancel(ctx)
 		go o.watchLeadership(leaderCtx, cancel)
-		_ = consumer.Run(leaderCtx, handler)
+		err := consumer.Run(leaderCtx, handler)
 		cancel()
+
+		// Run never returns nil: it returns either a setup failure or the
+		// context error it stopped on. A cancellation is this loop working as
+		// designed - shutdown, or leadership handed over - so it resets the
+		// backoff and goes straight back round, where the leader check parks it.
+		if isContextError(err) {
+			backoff = 0
+			continue
+		}
+
+		// Anything else means Run could not get as far as its own read loop,
+		// which in practice means EnsureGroup could not reach Redis. That
+		// returns immediately, and without a delay here the loop simply went
+		// straight back round, spawning a watchLeadership goroutine per turn
+		// and never widening the gap however long the outage lasted.
+		//
+		// Worth being accurate about the severity: this was not a CPU-burning
+		// spin. A refused dial costs about 2.1s against the configured client,
+		// because go-redis retries it internally before returning (measured,
+		// not assumed), so the loop turned every couple of seconds. The reason
+		// to fix it is the unbounded retry rate and the goroutine per turn,
+		// not a pegged core.
+		backoff = nextMigrationBackoff(backoff)
+		log.Printf("migration: queue consumer stopped (%v), retrying in %s", err, backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
 	}
+}
+
+// Migration consumer retry bounds. The ceiling is well under the per-server
+// migration lock TTL (10m), so a Redis outage that outlasts the backoff still
+// leaves the queue picked up long before an interrupted migration's lock expires.
+const (
+	migrationRetryInitial = 1 * time.Second
+	migrationRetryMax     = 30 * time.Second
+)
+
+// nextMigrationBackoff doubles up to the ceiling, starting at the initial delay.
+func nextMigrationBackoff(current time.Duration) time.Duration {
+	if current <= 0 {
+		return migrationRetryInitial
+	}
+	next := current * 2
+	if next > migrationRetryMax {
+		return migrationRetryMax
+	}
+	return next
+}
+
+// isContextError reports whether err is a context cancellation or deadline,
+// including one wrapped by a caller.
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // watchLeadership cancels leaderCtx as soon as this Core stops being the leader,

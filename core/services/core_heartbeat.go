@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -33,6 +34,10 @@ type CoreHeartbeatService struct {
 	coreID   string
 	region   string
 	grpcPort int
+
+	started atomic.Bool
+	stopCh  chan struct{}
+	doneCh  chan struct{}
 }
 
 func NewCoreHeartbeatService(r *redis.Client, coreID, region string, grpcPort int) *CoreHeartbeatService {
@@ -44,21 +49,69 @@ func NewCoreHeartbeatService(r *redis.Client, coreID, region string, grpcPort in
 		coreID:   coreID,
 		region:   region,
 		grpcPort: grpcPort,
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
 }
 
-// Start begins writing heartbeats every 10 seconds.
+// key is the single definition of where this Core's heartbeat lives. Start and
+// Stop must agree on it: a Stop that deleted a different key would look
+// successful and leave the instance counted until its TTL ran out.
+func (s *CoreHeartbeatService) key() string {
+	return "dylaris:core:" + s.coreID
+}
+
+// Start begins writing heartbeats every 10 seconds. Calling it twice is a
+// no-op, so a second call cannot leave an unstoppable goroutine behind.
 func (s *CoreHeartbeatService) Start() {
+	if !s.started.CompareAndSwap(false, true) {
+		return
+	}
 	log.Printf("Core Heartbeat started (id=%s, grpc_port=%d)", s.coreID, s.grpcPort)
 
 	s.writeHeartbeat()
 
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
-		for range ticker.C {
-			s.writeHeartbeat()
+		defer close(s.doneCh)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.stopCh:
+				return
+			case <-ticker.C:
+				s.writeHeartbeat()
+			}
 		}
 	}()
+}
+
+// Stop halts the heartbeat loop and removes this Core's key, then blocks until
+// the loop has exited. Deleting the key is the useful half: the key carries a
+// 30s TTL, so without this a Core that shut down cleanly would still be counted
+// as online for up to half a minute - long enough to make the host-path storage
+// backend unsavable right after scaling a deployment back down to one Core.
+//
+// A Core that dies without running this (SIGKILL, OOM, hardware) still falls
+// back to the TTL, which is why the TTL stays.
+//
+// Safe to call without a preceding Start: it returns immediately rather than
+// blocking on a goroutine that was never launched.
+func (s *CoreHeartbeatService) Stop(ctx context.Context) {
+	if !s.started.Load() {
+		return
+	}
+	select {
+	case <-s.stopCh:
+		// already stopped
+	default:
+		close(s.stopCh)
+	}
+	<-s.doneCh
+
+	if err := s.redis.Del(ctx, s.key()).Err(); err != nil {
+		log.Printf("Core Heartbeat: could not remove %s on shutdown, it will expire with its TTL instead: %v", s.key(), err)
+	}
 }
 
 func (s *CoreHeartbeatService) writeHeartbeat() {
@@ -90,8 +143,7 @@ func (s *CoreHeartbeatService) writeHeartbeat() {
 		return
 	}
 
-	key := "dylaris:core:" + s.coreID
-	if err := s.redis.Set(ctx, key, string(data), 30*time.Second).Err(); err != nil {
+	if err := s.redis.Set(ctx, s.key(), string(data), 30*time.Second).Err(); err != nil {
 		log.Printf("Core Heartbeat Redis error: %v", err)
 	}
 }

@@ -222,7 +222,7 @@ func (s *AppState) CountOnlineCores(ctx context.Context) (int, error) {
 
 // hostPathMultiCoreMessage is shared by the save refusal and the panel warning
 // so the operator is told the same thing in both places.
-const hostPathMultiCoreMessage = "The filesystem backend stores files on one machine's disk, and %d Core instances are online. Each Core would serve only the files it wrote itself. Use the S3 backend, or mount a shared filesystem (NFS/SMB) at this path on every host. A Core that was just restarted can still be counted for up to 30 seconds."
+const hostPathMultiCoreMessage = "The filesystem backend stores files on one machine's disk, and %d Core instances are online. Each Core would serve only the files it wrote itself. Use the S3 backend, or mount a shared filesystem (NFS/SMB) at this path on every host. A Core that was killed rather than shut down cleanly can still be counted for up to 30 seconds."
 
 // hostPathMultiCoreWarning returns the operator-facing warning for a config
 // that is ALREADY saved as a host path on a deployment that has since grown

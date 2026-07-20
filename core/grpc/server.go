@@ -350,14 +350,21 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	}
 }
 
-// StartGRPCServer starts the gRPC server on the given port.
-// Blocks until the server is stopped. When tlsEnabled is set, it presents the
-// cluster-wide certificate derived from clusterSecret (CLUSTER_SECRET) so nodes
-// can pin its fingerprint; otherwise it serves plaintext (unchanged behavior).
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer, tlsEnabled bool, clusterSecret string) error {
+// StartGRPCServer binds the port, starts serving in its own goroutine and
+// returns the server so the caller can shut it down. When tlsEnabled is set, it
+// presents the cluster-wide certificate derived from clusterSecret
+// (CLUSTER_SECRET) so nodes can pin its fingerprint; otherwise it serves
+// plaintext (unchanged behavior).
+//
+// Returning the *grpc.Server is the point of this signature: the server used to
+// be a local here, so nothing outside could call GracefulStop and every node
+// stream was severed by process exit instead of drained. Bind errors are
+// returned synchronously rather than raised from inside a goroutine, so a port
+// clash now fails the caller's boot sequence at a defined point.
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer, tlsEnabled bool, clusterSecret string) (*grpc.Server, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %w", port, err)
+		return nil, fmt.Errorf("failed to listen on port %d: %w", port, err)
 	}
 
 	opts := []grpc.ServerOption{
@@ -375,7 +382,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 	if tlsEnabled {
 		cert, fp, cerr := beamauth.DeriveClusterGRPCCert(clusterSecret)
 		if cerr != nil {
-			return fmt.Errorf("derive cluster gRPC cert: %w", cerr)
+			return nil, fmt.Errorf("derive cluster gRPC cert: %w", cerr)
 		}
 		opts = append(opts, grpc.Creds(credentials.NewServerTLSFromCert(&cert)))
 		log.Printf("gRPC: NodeService TLS enabled (fingerprint pinning), cert fp=%s...", fp[:16])
@@ -387,5 +394,14 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)
-	return grpcServer.Serve(lis)
+	go func() {
+		// Serve returns nil after Stop/GracefulStop, so an orderly shutdown is
+		// silent here and only a genuine serve failure is logged. It is logged
+		// rather than fatal: by the time this can fail the caller owns the
+		// process lifecycle and may already be shutting down.
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Printf("gRPC: NodeService stopped serving: %v", err)
+		}
+	}()
+	return grpcServer, nil
 }

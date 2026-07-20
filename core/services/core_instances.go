@@ -50,9 +50,11 @@ const coreScanKeyBudget = 10000
 //   - It can UNDERCOUNT. Instances are distinguished by DYLARIS_CORE_ID, which
 //     defaults to the hostname. Two Cores configured with the same id write the
 //     same key and are indistinguishable here.
-//   - It can OVERCOUNT for up to 30s (the heartbeat TTL) after a Core stops,
-//     because a stopped instance's key is not deleted, only expired. A rolling
-//     restart therefore shows two Cores for a short window.
+//   - It can OVERCOUNT for up to 30s (the heartbeat TTL) after a Core stops
+//     WITHOUT running its shutdown path - SIGKILL, OOM, host failure - because
+//     the key then expires rather than being deleted. A Core that shuts down
+//     cleanly deletes its own key (CoreHeartbeatService.Stop), so an orderly
+//     rolling restart no longer shows the outgoing instance.
 func OnlineCoreIDs(ctx context.Context, rdb *redis.Client) ([]string, error) {
 	if rdb == nil {
 		return nil, fmt.Errorf("core instances: no redis client")
