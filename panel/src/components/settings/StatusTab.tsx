@@ -10,6 +10,7 @@ import {
     Loader2,
 } from 'lucide-react';
 import { getSystemHealth, type SystemHealth, type HealthStatus, type HealthComponent } from '@/lib/api';
+import { healthGuidance } from '@/lib/healthGuidance';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -59,6 +60,7 @@ function ComponentCard({ comp }: { comp: HealthComponent }) {
     const meta = STATUS_META[comp.status] ?? STATUS_META.disabled;
     const c = colorClasses(meta.color);
     const Icon = meta.Icon;
+    const guidance = healthGuidance(comp.key, comp.cause);
     return (
         <div className="rounded-(--radius-lg) border border-(--base-04) bg-(--base-01) p-4">
             <div className="flex items-start justify-between gap-3">
@@ -74,8 +76,28 @@ function ComponentCard({ comp }: { comp: HealthComponent }) {
                 <StatusPill status={comp.status} />
             </div>
 
+            {/* What to do about it, when the component classified its failure.
+                Shown ABOVE the raw server message: the message is evidence, the
+                guidance is the action, and an operator reading top to bottom
+                should hit the action first. */}
+            {guidance && (
+                <div className="mt-3 rounded-(--radius-md) border border-(--base-04) bg-(--base-02) p-3">
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+                            What to do
+                        </span>
+                        {!guidance.selfHealing && (
+                            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--warning-light)">
+                                needs you
+                            </span>
+                        )}
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-(--base-08)">{guidance.advice}</p>
+                </div>
+            )}
+
             {comp.reason && (
-                <p className="mt-3 text-xs leading-relaxed text-(--base-07)">{comp.reason}</p>
+                <p className="mt-3 font-mono text-xs leading-relaxed break-words text-(--base-07)">{comp.reason}</p>
             )}
 
             {comp.items && comp.items.length > 0 && (

@@ -218,6 +218,16 @@ export interface HealthComponent {
     detail?: string;
     reason?: string;
     items?: HealthItem[];
+    /**
+     * Machine-readable failure class, where the component has one. `status`
+     * cannot carry this: two components can both be `down` for reasons that
+     * need entirely different fixes, and a free-text `reason` is not something
+     * the UI can branch on. Only the Redis component sets it today
+     * (core/database/rediserror.go RedisFailure.Slug). Absent means the
+     * component reports no classification and the card shows detail and reason
+     * alone.
+     */
+    cause?: string;
 }
 
 export interface SystemHealth {

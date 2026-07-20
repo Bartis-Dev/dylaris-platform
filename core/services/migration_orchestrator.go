@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"dylaris-core/database"
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services/redisacl"
@@ -205,7 +206,15 @@ func (o *MigrationOrchestrator) consume(ctx context.Context) {
 		// to fix it is the unbounded retry rate and the goroutine per turn,
 		// not a pegged core.
 		backoff = nextMigrationBackoff(backoff)
-		log.Printf("migration: queue consumer stopped (%v), retrying in %s", err, backoff)
+		// Say plainly when waiting cannot help. A rejected credential or a
+		// missing ACL grant produces the same steady retry line as a Redis
+		// restart, and an operator watching the log has no way to tell that one
+		// of them is waiting for them.
+		if failure := database.ClassifyRedisError(err); failure.NeedsOperator() {
+			log.Printf("migration: queue consumer cannot reach the queue and this will NOT clear on its own (%s): %v - retrying in %s", failure.Slug(), err, backoff)
+		} else {
+			log.Printf("migration: queue consumer stopped (%v), retrying in %s", err, backoff)
+		}
 		select {
 		case <-ctx.Done():
 			return

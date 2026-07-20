@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"dylaris-core/database"
 	"dylaris-core/services"
 )
 
@@ -37,6 +38,15 @@ type healthComponent struct {
 	Detail string       `json:"detail,omitempty"` // short one-line summary
 	Reason string       `json:"reason,omitempty"` // why it's degraded/down
 	Items  []healthItem `json:"items,omitempty"`  // sub-rows (per node, per edge, ...)
+
+	// Cause is a machine-readable class for the failure, where the component
+	// has one. Status alone cannot carry this: two components can both be
+	// "down" for reasons that need completely different actions, and the panel
+	// has no way to tell them apart from a free-text reason. Only the Redis
+	// component sets it today (database.RedisFailure.Slug); an empty value
+	// means the component has no classification and the panel falls back to
+	// showing Detail and Reason alone.
+	Cause string `json:"cause,omitempty"`
 }
 
 // healthItem is a sub-row (e.g. a single node) under a component.
@@ -155,19 +165,33 @@ func (h *HealthHandler) metricsComponent(ctx context.Context, dbUp bool) healthC
 	return comp
 }
 
+// redisComponent pings Redis and reports WHY it failed, not just that it did.
+//
+// A single PING is enough to separate the classes: verified against valkey 8, a
+// user without the +ping permission gets NOPERM from PING itself rather than a
+// generic failure, so no second probe command is needed to detect an ACL gap.
+//
+// The reply is still carried verbatim in Reason. This route requires
+// settings.read, so the server's own message - which names the command a NOPERM
+// refers to - is exactly what an operator needs to fix it.
 func (h *HealthHandler) redisComponent(ctx context.Context, up *bool) healthComponent {
 	comp := healthComponent{Key: "redis", Name: "Redis"}
 	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
-	if err := h.state.Redis.Ping(cctx).Err(); err != nil {
+
+	err := h.state.Redis.Ping(cctx).Err()
+	failure := database.ClassifyRedisError(err)
+	if failure != database.RedisOK {
 		comp.Status = "down"
-		comp.Detail = "Connection failed"
+		comp.Detail = failure.Summary()
+		comp.Cause = failure.Slug()
 		comp.Reason = err.Error()
 		return comp
 	}
+
 	*up = true
 	comp.Status = "up"
-	comp.Detail = "Connection alive"
+	comp.Detail = failure.Summary()
 	return comp
 }
 
@@ -381,6 +405,14 @@ func countStatus(online, total int) string {
 // it, converting a partial outage into a total one. The flag is there so an
 // operator's own monitoring can see the state; the orchestrator ignores it.
 //
+// The same reasoning is applied to Redis, per class rather than wholesale. An
+// UNREACHABLE Redis still fails this check: it can clear on its own, and a
+// reschedule may land somewhere it is reachable. A rejected credential or a
+// missing ACL permission does NOT, because a restart cannot repair either, and
+// gating on them would restart-loop Core over a configuration mistake - taking
+// down the panel an operator needs in order to fix it. Both are still reported
+// in the body.
+//
 // The flag is coarse on purpose. This route is unauthenticated, so it must not
 // carry the path, the bucket or the errno the admin endpoint reports. It is
 // read from atomics only, adding no query to a path that runs on every health
@@ -391,6 +423,20 @@ func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 
 	dbErr := h.state.Store.Ping(ctx)
 	redisErr := h.state.Redis.Ping(ctx).Err()
+
+	// A rejected credential or a missing ACL permission must NOT fail this
+	// check, for the same reason storage does not gate it: the orchestrator
+	// responds to a failure by killing and restarting the container, and a
+	// restart cannot repair a WRONGPASS or a NOPERM. It would restart-loop
+	// instead, taking down the very panel an operator needs to fix the ACL and
+	// turning a configuration mistake into a total outage. An unreachable Redis
+	// still fails the check: that one can clear on its own, and a reschedule
+	// may genuinely land somewhere it is reachable.
+	//
+	// Reported either way in the body, so an operator's own monitoring sees the
+	// state even when the orchestrator is told to leave the container alone.
+	redisFailure := database.ClassifyRedisError(redisErr)
+	redisGates := redisFailure != database.RedisOK && !redisFailure.NeedsOperator()
 
 	// Checked without consulting which backend is configured, which would cost
 	// a settings read. The idle mechanism reports ok: the watchdog is stopped
@@ -405,7 +451,7 @@ func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if dbErr != nil || redisErr != nil {
+	if dbErr != nil || redisGates {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":  "not ready",
@@ -416,11 +462,21 @@ func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reaching here with a Redis failure means it was one the orchestrator is
+	// deliberately not asked to act on, so the body must still say so rather
+	// than reporting a flat "ready" - the healthchecks discard it, but an
+	// operator reading this endpoint by hand would otherwise be told everything
+	// is fine while Redis is rejecting every command.
+	status := "ready"
+	if redisErr != nil {
+		status = "degraded"
+	}
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "ready",
+		"status":  status,
 		"db":      true,
-		"redis":   true,
+		"redis":   redisErr == nil,
 		"storage": storageOK,
 	})
 }
