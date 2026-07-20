@@ -3,7 +3,9 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"time"
 
@@ -212,6 +214,111 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 			log.Printf("backup-scheduler: job %d dispatch failed: %v", job.ID, err)
 		}
 	}
+
+	// Runs whose result never came back. Deliberately AFTER dispatch: reaping
+	// is cleanup and must never delay this tick's real work.
+	b.reapAbandonedRuns(ctx, now)
+}
+
+// How long a run may sit at "running" before it is treated as abandoned.
+//
+// Generous on purpose. The window has to clear the slowest legitimate backup -
+// archiving tens of GB on a busy node and uploading it over a home BYON uplink -
+// because the cost of being wrong is a scary "failed" against a backup that
+// was actually still working.
+//
+// Being wrong is also recoverable, which is what allows a single fixed number
+// here instead of something adaptive: consumeResults updates by run id without
+// checking the current status, so a result that finally arrives after the
+// reaper gave up overwrites the verdict with the truth, retention included.
+const backupRunAbandonedAfter = 6 * time.Hour
+
+// How many abandoned runs one tick will close. Each one may open a storage
+// connection, and the first sweep after this ships can meet a backlog that has
+// been accumulating since the deployment was installed.
+const backupReapBatchSize = 25
+
+// reapAbandonedRuns closes runs whose result never arrived.
+//
+// It resolves them to "failed" and never to "success", even when the archive
+// turns out to be sitting in storage. Core has no confirmation from the node -
+// no reported size, no completion signal - so calling such a run successful
+// would present an unverified archive as a backup somebody can rely on. That is
+// the one error in this whole path that actually hurts, because it is only
+// discovered during a restore. The message says what was found instead, and an
+// operator can act on that.
+//
+// Nothing is deleted here for the same reason: an archive that may be a
+// complete backup is not something a cleanup routine should remove on a guess.
+func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) {
+	runs, err := b.store.ListAbandonedBackupRuns(now.Add(-backupRunAbandonedAfter), backupReapBatchSize)
+	if err != nil {
+		log.Printf("backup-scheduler: listing abandoned runs failed: %v", err)
+		return
+	}
+	for _, run := range runs {
+		size, detail := b.describeAbandonedRun(ctx, run)
+		age := now.Sub(run.StartedAt).Round(time.Minute)
+		message := fmt.Sprintf("No result was received from the node within %s. %s", age, detail)
+		if err := b.store.UpdateBackupRunStatus(run.ID, "failed", message, size, run.StorageKey, now); err != nil {
+			log.Printf("backup-scheduler: could not close abandoned run %d: %v", run.ID, err)
+			continue
+		}
+		log.Printf("backup-scheduler: closed abandoned run %d (job %d, started %s ago): %s", run.ID, run.JobID, age, detail)
+	}
+}
+
+// describeAbandonedRun reports whether an archive turned up where the run was
+// going to write one, and returns its size alongside a sentence for the run's
+// error message.
+//
+// The size is recorded even though the run is failed. It is safe: every query
+// that sums backup bytes for billing or the storage quota filters on status
+// "success" (store/billing.go BackupBytesByOwner, store/traffic.go
+// TenantBackupBytes), so a size here informs an operator without being charged
+// for. It is also the most useful single number for deciding whether the
+// archive is worth investigating.
+func (b *BackupScheduler) describeAbandonedRun(ctx context.Context, run models.BackupRun) (int64, string) {
+	if run.StorageKey == "" {
+		return 0, "The run never recorded a storage key, so no archive was written."
+	}
+
+	obj, err := b.statBackupObject(ctx, run)
+	switch {
+	case err == nil:
+		return obj.Size, fmt.Sprintf(
+			"An archive of %d bytes is present at %s. The node never confirmed it, so it is UNVERIFIED - check it before relying on it. It is left in place and is not counted against the storage quota.",
+			obj.Size, run.StorageKey)
+	case errors.Is(err, fs.ErrNotExist):
+		return 0, fmt.Sprintf("No archive was written to %s, so the backup did not complete.", run.StorageKey)
+	default:
+		// Storage itself could not answer. Saying "no archive exists" here
+		// would be a claim the code cannot make.
+		return 0, fmt.Sprintf("Whether an archive exists at %s could not be determined: %v", run.StorageKey, err)
+	}
+}
+
+// statBackupObject opens the job's configured backend and stats the run's key.
+func (b *BackupScheduler) statBackupObject(ctx context.Context, run models.BackupRun) (backupstorage.Object, error) {
+	job, err := b.store.GetBackupJob(run.JobID)
+	if err != nil {
+		return backupstorage.Object{}, fmt.Errorf("load job: %w", err)
+	}
+	if job.StorageID == nil {
+		return backupstorage.Object{}, fmt.Errorf("the job has no storage configured")
+	}
+	bs, err := b.store.GetBackupStorage(*job.StorageID)
+	if err != nil {
+		return backupstorage.Object{}, fmt.Errorf("load storage: %w", err)
+	}
+	if bs == nil {
+		return backupstorage.Object{}, fmt.Errorf("the job's storage no longer exists")
+	}
+	provider, err := backupstorage.Open(ctx, bs, backupstorage.Deps{Registry: b.registry, NodeStore: b.store})
+	if err != nil {
+		return backupstorage.Object{}, fmt.Errorf("open storage: %w", err)
+	}
+	return provider.Stat(ctx, run.StorageKey)
 }
 
 func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) error {

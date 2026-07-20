@@ -38,8 +38,15 @@ type Storage interface {
 	// matches (not an error).
 	List(ctx context.Context, prefix string) ([]Object, error)
 
-	// Stat returns metadata for `key`. Returns os.ErrNotExist-style error
-	// when missing; callers should check for not-found semantics.
+	// Stat returns metadata for `key`. A missing key is reported so that
+	// errors.Is(err, fs.ErrNotExist) is true; any other error means the
+	// backend could not answer, which is NOT evidence the key is absent.
+	// Callers that act on absence must tell the two apart - the backup reaper
+	// decides from this whether a run wrote an archive before it went silent.
+	//
+	// Both providers are held to this. LocalStorage inherits it from os.Stat;
+	// S3Storage wraps the SDK's NotFound explicitly, which it did not always
+	// do, so this line described only half the implementations.
 	Stat(ctx context.Context, key string) (Object, error)
 
 	// DownloadURL returns a pre-signed GET URL valid for the given duration if

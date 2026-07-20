@@ -276,6 +276,49 @@ func (s *PostgresStore) UpdateBackupRunStatus(id int, status, errorMsg string, s
 	return err
 }
 
+// ListAbandonedBackupRuns returns runs still marked "running" that started
+// before the cutoff, oldest first.
+//
+// A run is created and committed as "running" BEFORE the work is dispatched to
+// a node, and the only thing that ever moves it off "running" is a result
+// message the node publishes over Redis Pub/Sub. Pub/Sub is fire-and-forget:
+// if no Core is subscribed at that moment - every Core restarting, a rolling
+// deploy - the result is gone and the row stays "running" for good. A node that
+// dies mid-backup has the same effect.
+//
+// Nothing cleaned these up. PruneOldBackupRuns only ever deletes rows with
+// status "success", so an abandoned row is never retried, never pruned and
+// never counted, it simply accumulates.
+//
+// The limit bounds one sweep. Reaping opens a storage connection per run to
+// find out whether an archive exists, and the first sweep after this ships may
+// find a long backlog; a cap keeps that off a single tick.
+func (s *PostgresStore) ListAbandonedBackupRuns(startedBefore time.Time, limit int) ([]models.BackupRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(
+		`SELECT `+backupRunCols+` FROM backup_runs
+		 WHERE status = 'running' AND started_at < $1
+		 ORDER BY started_at ASC
+		 LIMIT $2`,
+		startedBefore, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.BackupRun
+	for rows.Next() {
+		r, err := s.scanRun(rows)
+		if err != nil {
+			continue
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) DeleteBackupRun(id int) error {
 	_, err := s.db.Exec(`DELETE FROM backup_runs WHERE id = $1`, id)
 	return err

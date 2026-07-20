@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -102,12 +103,25 @@ func (s *S3Storage) Delete(ctx context.Context, key string) error {
 	})
 	if err != nil {
 		// Treat missing object as a no-op (idempotent delete).
-		var ae smithy.APIError
-		if errors.As(err, &ae) && (ae.ErrorCode() == "NoSuchKey" || ae.ErrorCode() == "NotFound") {
+		if isS3NotFound(err) {
 			return nil
 		}
 	}
 	return err
+}
+
+// isS3NotFound reports whether an AWS API error means the object is not there.
+// GetObject and DeleteObject answer "NoSuchKey"; HeadObject answers "NotFound".
+// Mirrors the identical helpers in storage/s3provider.go and
+// storage/modpack/s3.go - same discrimination, kept per package because the
+// three S3 backends deliberately share no code.
+func isS3NotFound(err error) bool {
+	var ae smithy.APIError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	code := ae.ErrorCode()
+	return code == "NoSuchKey" || code == "NotFound"
 }
 
 func (s *S3Storage) List(ctx context.Context, prefix string) ([]Object, error) {
@@ -138,6 +152,15 @@ func (s *S3Storage) Stat(ctx context.Context, key string) (Object, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		// The Storage interface promises a missing key is reported
+		// os.ErrNotExist-style, and this returned the raw AWS error, so
+		// errors.Is(err, fs.ErrNotExist) was false for the one backend most
+		// deployments use - the contract held for LocalStorage only. Wrapped
+		// here the same way storage/s3provider.go does it, so a caller can tell
+		// "the object is not there" from "the object store did not answer".
+		if isS3NotFound(err) {
+			return Object{}, fmt.Errorf("s3 Stat %s: %w", key, fs.ErrNotExist)
+		}
 		return Object{}, err
 	}
 	_ = types.ObjectStorageClassStandard // pull in types package

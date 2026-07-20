@@ -196,6 +196,7 @@ type Store interface {
 	UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error
 	DeleteBackupRun(id int) error
 	PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error)
+	ListAbandonedBackupRuns(startedBefore time.Time, limit int) ([]models.BackupRun, error)
 
 	CreateBackupRestore(r *models.BackupRestore) (int, error)
 	GetBackupRestore(id int) (*models.BackupRestore, error)
