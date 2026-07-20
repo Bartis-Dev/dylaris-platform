@@ -34,7 +34,12 @@ const coreLeaderKey = "dylaris:core:leader"
 const coreScanKeyBudget = 10000
 
 // OnlineCoreIDs returns the ids of the Core instances currently heartbeating,
-// sorted, deduplicated, at most coreScanKeyBudget keys examined.
+// sorted and deduplicated.
+//
+// The key budget is checked once per SCAN batch rather than per key, and the
+// COUNT passed to SCAN is a hint the server may exceed, so the real bound is
+// coreScanKeyBudget plus at most one batch. Stating it as a hard "at most"
+// would be wrong; the point of the budget is that the walk is bounded at all.
 //
 // SCAN rather than KEYS (which node/grpc_mesh.go uses): KEYS blocks the whole
 // Redis server for the length of the walk, and this runs on an HTTP request

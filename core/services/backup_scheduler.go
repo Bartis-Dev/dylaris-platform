@@ -28,6 +28,9 @@ type BackupScheduler struct {
 	queue    *QueueService       // publishes backup_run to the node's :cmds stream (BC1)
 	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
 	leader   leader.Election
+	// coreStorage opens the shared Core file storage as a backup backend.
+	// Optional; required only for jobs whose storage row is "core-storage".
+	coreStorage func(subPrefix string) (backupstorage.Storage, error)
 }
 
 func NewBackupScheduler(s store.Store, r *redis.Client, q *QueueService) *BackupScheduler {
@@ -40,6 +43,19 @@ func NewBackupScheduler(s store.Store, r *redis.Client, q *QueueService) *Backup
 // retention pass still trims its own folder).
 func (b *BackupScheduler) SetRegistry(reg *nodegrpc.Registry) {
 	b.registry = reg
+}
+
+// SetCoreStorage wires the builder that opens the shared Core file storage as
+// a backup backend. Without it, backupstorage.Open refuses every job whose
+// storage row is "core-storage", so the reaper's probe could never reach one:
+// it reported "could not be determined" for the whole provider rather than
+// present-or-absent, which is the answer the reaper exists to give.
+//
+// Supplied from main.go, which owns the AppState the builder needs. Optional,
+// like SetRegistry: a scheduler without it still reaps, it just cannot inspect
+// core-storage-backed archives.
+func (b *BackupScheduler) SetCoreStorage(fn func(subPrefix string) (backupstorage.Storage, error)) {
+	b.coreStorage = fn
 }
 
 // SetLeader wires the leader-election gate. Without it the scheduler ticks
@@ -188,10 +204,23 @@ func (b *BackupScheduler) enforceRetention(ctx context.Context, jobID int) {
 	}
 }
 
+// storageDeps is the single place the scheduler's backup-storage dependencies
+// are assembled, so a provider that needs one of them cannot work on one code
+// path and be refused on another. That is what happened to core-storage: the
+// retention delete and the reaper each built their own Deps literal without a
+// CoreStorage builder.
+func (b *BackupScheduler) storageDeps() backupstorage.Deps {
+	return backupstorage.Deps{
+		Registry:    b.registry,
+		NodeStore:   b.store,
+		CoreStorage: b.coreStorage,
+	}
+}
+
 // deleteStorageObject opens the configured backend and deletes a single
 // object. Used by the retention pass after a successful run.
 func (b *BackupScheduler) deleteStorageObject(ctx context.Context, bs *models.BackupStorage, key string) error {
-	deps := backupstorage.Deps{Registry: b.registry, NodeStore: b.store}
+	deps := b.storageDeps()
 	provider, err := backupstorage.Open(ctx, bs, deps)
 	if err != nil {
 		return err
@@ -294,7 +323,17 @@ func (b *BackupScheduler) describeAbandonedRun(ctx context.Context, run models.B
 	default:
 		// Storage itself could not answer. Saying "no archive exists" here
 		// would be a claim the code cannot make.
-		return 0, fmt.Sprintf("Whether an archive exists at %s could not be determined: %v", run.StorageKey, err)
+		//
+		// The error is LOGGED, not stored. This message is rendered to anyone
+		// holding backups.read on the server - a tenant, not an operator -
+		// while the backend's endpoint and bucket live behind settings.read.
+		// A transport failure from the S3 SDK carries the full request URL, so
+		// pasting %v here would hand an internal hostname, bucket name and
+		// often an internal IP to exactly the audience the settings boundary
+		// keeps them from. The storage key is already in the API response, so
+		// naming it costs nothing.
+		log.Printf("backup-scheduler: could not determine whether run %d wrote an archive at %s: %v", run.ID, run.StorageKey, err)
+		return 0, fmt.Sprintf("Whether an archive exists at %s could not be determined. The Core log has the reason.", run.StorageKey)
 	}
 }
 
@@ -314,7 +353,7 @@ func (b *BackupScheduler) statBackupObject(ctx context.Context, run models.Backu
 	if bs == nil {
 		return backupstorage.Object{}, fmt.Errorf("the job's storage no longer exists")
 	}
-	provider, err := backupstorage.Open(ctx, bs, backupstorage.Deps{Registry: b.registry, NodeStore: b.store})
+	provider, err := backupstorage.Open(ctx, bs, b.storageDeps())
 	if err != nil {
 		return backupstorage.Object{}, fmt.Errorf("open storage: %w", err)
 	}

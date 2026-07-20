@@ -40,7 +40,11 @@ func TestNextMigrationBackoff(t *testing.T) {
 // the ceiling was chosen against as an assertion rather than as a comment, so
 // raising one without the other fails here instead of in production.
 func TestMigrationBackoffCeilingIsBelowTheMigrationLockTTL(t *testing.T) {
-	const migrationLockTTL = 10 * time.Minute
+	// Reads the package constant deliberately. An earlier version of this test
+	// declared its own `const migrationLockTTL = 10 * time.Minute`, which
+	// shadowed the real one - so lowering the actual lock TTL, the exact drift
+	// the test says it catches, left it green. It could not fail for its stated
+	// reason.
 	if migrationRetryMax >= migrationLockTTL/2 {
 		t.Fatalf("migrationRetryMax = %s, want well under the %s migration lock TTL", migrationRetryMax, migrationLockTTL)
 	}

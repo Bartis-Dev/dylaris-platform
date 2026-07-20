@@ -587,6 +587,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// handler used to hold each requested object in memory in full; it streams
 	// now, so concurrency costs a copy buffer rather than a whole pack. This
 	// limiter only bounds egress.
+	//
+	// And it bounds it against honest clients only. clientIP takes the leftmost
+	// X-Forwarded-For value with no trusted-proxy check, so a caller that sets
+	// that header itself gets a fresh bucket per request and never reaches any
+	// ceiling. That is pre-existing and shared with the login and share-link
+	// limiters, so it is not fixed here, but this comment must not read as if
+	// the budget were a real control against a deliberate attacker: it is a
+	// guard against runaway or misconfigured clients.
 	mirrorLimiter := handlers.NewIPRateLimiter()
 	solder.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.SolderMirrorRequestsPerMinute, solderHandler.SolderMirror)).Methods("GET")
 

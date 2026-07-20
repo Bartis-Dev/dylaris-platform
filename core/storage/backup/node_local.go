@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -217,7 +218,12 @@ func (n *NodeLocalStorage) Stat(ctx context.Context, key string) (Object, error)
 			return o, nil
 		}
 	}
-	return Object{}, fmt.Errorf("backup %s not found", key)
+	// Wrapped so errors.Is(err, fs.ErrNotExist) holds, which is what the
+	// Storage interface promises and what the backup reaper decides on: it has
+	// to tell "the node never wrote this archive" from "the node could not be
+	// asked". Returning a bare fmt.Errorf here made every abandoned run on a
+	// node-local job report the second when it meant the first.
+	return Object{}, fmt.Errorf("backup %s not found: %w", key, fs.ErrNotExist)
 }
 
 // DownloadURL returns "" so the Core backup handler streams the archive

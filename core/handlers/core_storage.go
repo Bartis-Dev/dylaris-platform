@@ -199,9 +199,15 @@ func (s *AppState) SyncStorageGate() {
 	}
 }
 
-// isHostPathBackend is the one place the two spellings of the filesystem
-// backend are recognised. "local" is the historical value; "path" is what the
-// panel writes today. Both still appear in stored configs.
+// isHostPathBackend recognises the two spellings of the filesystem backend.
+// "local" is the historical value; "path" is what the panel writes today. Both
+// still appear in stored configs.
+//
+// It is NOT the only place they are matched, and an earlier version of this
+// comment saying so was wrong: validateCoreStorageConfig, SyncStorageGate,
+// TestConnection's ephemeral-path branch and health.go's storageComponent each
+// switch on the literals directly. Anyone adding a third spelling has to visit
+// all of them - this helper alone will not carry it.
 func isHostPathBackend(backend string) bool {
 	return backend == "path" || backend == "local"
 }

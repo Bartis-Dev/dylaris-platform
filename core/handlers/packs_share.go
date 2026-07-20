@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -141,6 +142,14 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 		// at all.
 		filename := pack.InternalSlug + "-" + build.VersionString + ".mrpack"
 		if err := serveModpackObject(w, r, prov, key, deliverRedirect, "application/x-modrinth-modpack+zip", filename); err != nil {
+			// A missing object is a 404 like every other absent resource on
+			// this route, not a 500. The route's documented shape is a uniform
+			// 404 so a token cannot be probed by status code, and answering 500
+			// for a deleted pack broke both that and the helper's own contract.
+			if errors.Is(err, modpack.ErrNotFound) {
+				notFound()
+				return
+			}
 			sendJSONError(w, "Failed to read pack", http.StatusInternalServerError)
 			return
 		}

@@ -107,7 +107,18 @@ func (s *CoreHeartbeatService) Stop(ctx context.Context) {
 	default:
 		close(s.stopCh)
 	}
-	<-s.doneCh
+
+	// The join honours ctx too. The loop can be inside a Redis write when the
+	// stop arrives, and that write does not observe this context, so without
+	// the second case the caller's deadline bounded only the Del below while
+	// the wait above ran for however long go-redis took. A shutdown budget
+	// that is not enforced is the thing this branch kept finding.
+	select {
+	case <-s.doneCh:
+	case <-ctx.Done():
+		log.Printf("Core Heartbeat: the write loop did not stop within the shutdown budget; leaving %s to expire with its TTL", s.key())
+		return
+	}
 
 	if err := s.redis.Del(ctx, s.key()).Err(); err != nil {
 		log.Printf("Core Heartbeat: could not remove %s on shutdown, it will expire with its TTL instead: %v", s.key(), err)

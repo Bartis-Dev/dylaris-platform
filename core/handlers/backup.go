@@ -552,18 +552,29 @@ func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
 // handler — keeps the call-sites uniform.
 func (h *BackupHandler) backupDeps() backupstorage.Deps {
 	return backupstorage.Deps{
-		Registry:  h.state.GRPCRegistry,
-		NodeStore: h.state.Store,
-		// Resolved PER CALL, never cached: the shared Core file storage
-		// config can change under a running Core, and every other provider
-		// in this codebase resolves per request too.
-		CoreStorage: func(subPrefix string) (backupstorage.Storage, error) {
-			prov, err := h.state.buildCoreStorageProvider(subPrefix)
-			if err != nil {
-				return nil, err
-			}
-			return storage.NewCoreStorageBackupAdapter(prov), nil
-		},
+		Registry:    h.state.GRPCRegistry,
+		NodeStore:   h.state.Store,
+		CoreStorage: h.state.CoreStorageBackupBuilder(),
+	}
+}
+
+// CoreStorageBackupBuilder returns the closure that opens the shared Core file
+// storage as a backup backend. Exported because the backup scheduler lives in
+// package services and is wired from main.go, which cannot reach the
+// unexported provider builder - and a scheduler without this is refused by
+// backupstorage.Open for every "core-storage" job, which is how the reaper's
+// storage probe came to be inert for that provider.
+//
+// The returned closure resolves PER CALL, never caching: the shared Core file
+// storage config can change under a running Core, and every other provider in
+// this codebase resolves per request too.
+func (s *AppState) CoreStorageBackupBuilder() func(subPrefix string) (backupstorage.Storage, error) {
+	return func(subPrefix string) (backupstorage.Storage, error) {
+		prov, err := s.buildCoreStorageProvider(subPrefix)
+		if err != nil {
+			return nil, err
+		}
+		return storage.NewCoreStorageBackupAdapter(prov), nil
 	}
 }
 

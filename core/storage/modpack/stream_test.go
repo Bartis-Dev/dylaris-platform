@@ -126,8 +126,14 @@ func TestCoreStorageProvider_StreamDelegatesAndMapsAbsence(t *testing.T) {
 	if got := readAllAndClose(t, rc); got != "core-storage-bytes" {
 		t.Errorf("body = %q, want the stored object", got)
 	}
-	if size != int64(len("core-storage-bytes")) {
-		t.Errorf("size = %d, want %d", size, len("core-storage-bytes"))
+	// SizeUnknown, not the real length. This assertion used to demand the real
+	// size, and satisfying it meant calling Stat while the reader returned
+	// above still held one of the shared filesystem-semaphore slots - a second
+	// acquisition that deadlocks the whole storage layer under concurrency.
+	// The requirement was the bug, so it is the assertion that changed. The
+	// deadlock guard lives in core_storage_stream_test.go.
+	if size != SizeUnknown {
+		t.Errorf("size = %d, want SizeUnknown: learning the real size needs a second slot acquisition", size)
 	}
 
 	if _, _, err := p.Stream(context.Background(), "modpacks/gone.mrpack"); !errors.Is(err, ErrNotFound) {

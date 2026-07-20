@@ -76,11 +76,28 @@ func (p *CoreStorageProvider) Get(ctx context.Context, key string) ([]byte, erro
 // returns a stream on both backends - the buffering this replaces was added by
 // this adapter's own Get, not by the layer below it.
 //
-// StorageProvider has no size on GetFile and no Stat, so the size comes from
-// the same parent-directory listing Stat uses. That listing is a second round
-// trip, and on a large prefix an expensive one, so a failure to determine the
-// size is NOT fatal: the object streams with SizeUnknown and the caller omits
-// Content-Length. Serving the pack matters more than announcing its length.
+// It always reports SizeUnknown, and that is a correctness requirement, not a
+// shortcut.
+//
+// StorageProvider has no size on GetFile and no Stat, so the only way to learn
+// one here is Stat, which lists the key's parent directory. On the gated host
+// path backend that is a second trip through the shared 128-slot filesystem
+// semaphore - while the reader GetFile just returned is STILL HOLDING a slot of
+// its own, because that slot is only released on Close, out in the handler.
+// Asking for the size therefore means holding one slot and queueing for
+// another. With enough concurrent streams every slot is held by a reader whose
+// owner is blocked waiting for a slot that can never free, and since acquireFS
+// deliberately does not fail fast, the whole filesystem side of Core wedges
+// permanently against a perfectly healthy backend. The public Solder mirror is
+// one of the callers, so it does not take an authenticated user to get there.
+//
+// Doing the Stat FIRST and the open second would avoid the nesting, but it
+// would describe a different object than the one being served if the key were
+// rewritten in between, and a wrong Content-Length leaves the client hanging or
+// truncating. Omitting the header costs a chunked response and nothing else.
+//
+// LocalProvider.Stream still reports a real size: it takes it from the open
+// file handle, so it needs no second acquisition and has no such window.
 func (p *CoreStorageProvider) Stream(ctx context.Context, key string) (io.ReadCloser, int64, error) {
 	rc, err := p.prov.GetFile(ctx, key)
 	if err != nil {
@@ -89,12 +106,7 @@ func (p *CoreStorageProvider) Stream(ctx context.Context, key string) (io.ReadCl
 		}
 		return nil, 0, fmt.Errorf("modpack storage: core-storage stream %s: %w", key, err)
 	}
-
-	size, exists, serr := p.Stat(ctx, key)
-	if serr != nil || !exists {
-		return rc, SizeUnknown, nil
-	}
-	return rc, size, nil
+	return rc, SizeUnknown, nil
 }
 
 // DownloadURL delegates to the Core file storage provider, so a modpack kept

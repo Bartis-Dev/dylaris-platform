@@ -11,10 +11,20 @@ import (
 	"dylaris-core/storage/modpack"
 )
 
-// modpackPresignTTL bounds a handed-out download URL. Long enough for a slow
-// client to finish a multi-GB pack, short enough that a leaked link is not a
-// permanent one.
-const modpackPresignTTL = 6 * time.Hour
+// modpackPresignTTL bounds a handed-out download URL.
+//
+// Five minutes, matching the library download on the same codebase. An earlier
+// value of six hours was justified as "long enough for a slow client to finish
+// a multi-GB pack", which misreads what the TTL does: the signature is checked
+// when the request is RECEIVED, so it bounds when a download may START, not how
+// long it may take. An in-flight transfer is unaffected by the URL expiring.
+//
+// The short window matters most on the share route. That link used to be
+// streamed through Core, so revoking it cut access at once. A presigned URL is
+// a bearer credential the object store honours with no reference to Core, so
+// whatever TTL is set here is the window in which a revoked - or expired -
+// share link still serves the pack to anyone the URL was forwarded to.
+const modpackPresignTTL = 5 * time.Minute
 
 // SolderMirrorRequestsPerMinute is the per-IP budget on the public mirror
 // route. See the route registration in routes.go for why it sits this high:

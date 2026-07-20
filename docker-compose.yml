@@ -44,6 +44,23 @@ services:
       # MUST be the same host as FRONTEND_URL on a DIFFERENT port. See .env.example.
       TAB_PROXY_PORT: "${TAB_PROXY_PORT:-}"
       TAB_PROXY_ORIGIN: "${TAB_PROXY_ORIGIN:-}"
+    # Core's shutdown runs a sequence, and the whole of it has to fit inside
+    # this window or the later steps simply never execute. Budget: the API
+    # listener drains for up to 30s, the tab-proxy listener for up to another
+    # 30s, node gRPC streams for up to 10s, and only then does Core cancel its
+    # background loops, DELETE its heartbeat key and RELEASE the leader lease.
+    # Docker's default is 10s, which cut it off before the first step finished:
+    # the heartbeat and the lease were then left to expire on their own 30s
+    # TTLs on every single deploy, which is exactly what deleting them early
+    # was meant to avoid.
+    #
+    # Draining the API listener really does take the full 30s whenever a panel
+    # tab is open: Shutdown waits for active connections and an SSE stream on
+    # /api/system/events stays active until its client goes away. Expect a
+    # rolling deploy to hold the outgoing task for that long. With start-first
+    # the replacement is already serving, so this is a lingering task, not
+    # downtime.
+    stop_grace_period: 90s
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)

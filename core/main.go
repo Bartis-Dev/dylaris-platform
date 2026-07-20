@@ -496,6 +496,11 @@ func main() {
 	// the elected Core to avoid double-dispatch and double-result-write.
 	backupScheduler := services.NewBackupScheduler(pgStore, redisClient, appState.Queue)
 	backupScheduler.SetRegistry(grpcRegistry)
+	// Same builder handlers/backup.go supplies, so a job stored on the shared
+	// Core file storage behaves identically whether it is reached from a
+	// request or from the scheduler. Without it the scheduler is refused by
+	// backupstorage.Open for exactly those jobs.
+	backupScheduler.SetCoreStorage(appState.CoreStorageBackupBuilder())
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
 

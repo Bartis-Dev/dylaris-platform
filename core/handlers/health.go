@@ -307,12 +307,21 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 // storageComponent reports the connection state of the configured core-storage
 // backend: the host-path watchdog's verdict, or the s3 wrapper's.
 //
-// It reads atomics only and touches neither the filesystem nor the network.
-// That is a requirement, not an optimisation. Statting a wedged network mount
-// here would block inside a syscall no context can interrupt, so the status
-// page would hang on exactly the outage it exists to report, and a timeout
-// around it would abandon a goroutine pinned to an OS thread on every request.
-// The reading it hands back can therefore be up to one probe interval stale.
+// It touches neither the filesystem nor the network. That is a requirement,
+// not an optimisation. Statting a wedged network mount here would block inside
+// a syscall no context can interrupt, so the status page would hang on exactly
+// the outage it exists to report, and a timeout around it would abandon a
+// goroutine pinned to an OS thread on every request. The reading it hands back
+// can therefore be up to one probe interval stale.
+//
+// It is NOT free of I/O altogether, and an earlier version of this comment
+// claiming it "reads atomics only" was wrong: LoadCoreStorageConfig below
+// issues several settings reads, and Store.GetSetting takes no context, so a
+// wedged Postgres blocks this component for as long as the driver allows. That
+// is the same hole nodesComponent has and the handler comment above names.
+// Reading the config is unavoidable here - which backend is configured decides
+// which of the two mechanisms to report - so the honest statement is that this
+// component is bounded against a storage outage and not against a database one.
 //
 // "up" means no evidence of a problem, NOT verified reachable. Neither backend
 // proves reachability: the watchdog's verdict lags its probe, and s3 is only
