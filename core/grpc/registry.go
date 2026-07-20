@@ -187,11 +187,27 @@ func (conn *NodeConnection) Send(msg *pb.NodeMessage) error {
 
 // RouteResponse delivers an incoming message to the waiting handler via request_id.
 // Returns false if no handler is waiting (message is dropped).
+//
+// The lock is held ACROSS the send, not just across the map lookup. Every path
+// that closes a pending channel (Register replacing a reconnecting node's old
+// connection, Unregister, CloseStreamingRequest) closes it and drops the map
+// entry while holding this same mutex, so holding it here means the channel
+// this goroutine is about to send on cannot be closed underneath it. Looking
+// the channel up under the lock and then sending after releasing it left a
+// window in which a node reconnecting under the same id - which runs Register
+// on the NEW stream's goroutine while the OLD stream's read loop is still
+// routing - could close the channel between the two, and a send on a closed
+// channel panics. Nothing in this package recovers that panic, so it would
+// take the Core process down.
+//
+// Holding the mutex across the send is safe because the send is the
+// non-blocking form: it either lands in the buffered channel or falls to
+// default immediately, so this never sleeps while holding the lock.
 func (conn *NodeConnection) RouteResponse(msg *pb.NodeMessage) bool {
 	conn.mu.Lock()
-	ch, ok := conn.pending[msg.RequestId]
-	conn.mu.Unlock()
+	defer conn.mu.Unlock()
 
+	ch, ok := conn.pending[msg.RequestId]
 	if !ok || ch == nil {
 		return false
 	}
