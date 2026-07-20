@@ -27,7 +27,7 @@ import (
 // availability of any kind.
 
 const (
-	// maxConcurrentFSOps is how many goroutines may be inside a host-path
+	// MaxConcurrentFSOps is how many goroutines may be inside a host-path
 	// filesystem syscall at one time.
 	//
 	// The load-bearing distinction is that WAITING for a slot parks a goroutine
@@ -37,7 +37,10 @@ const (
 	// This is not a performance tuning knob. It is a bound on thread
 	// consumption: far above realistic healthy concurrency for this product,
 	// and two orders of magnitude below the ceiling it protects.
-	maxConcurrentFSOps = 128
+	//
+	// Exported so a caller (and a test that must saturate the gate) knows the
+	// bound without hardcoding it.
+	MaxConcurrentFSOps = 128
 
 	// fsOpDeadline is how long a DETACHED filesystem call may run before the
 	// caller stops waiting for it. Well above any plausible healthy metadata

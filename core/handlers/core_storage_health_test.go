@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"dylaris-core/storage"
 )
@@ -226,5 +229,59 @@ func TestSyncStorageGateIsNilSafe(t *testing.T) {
 	s.SyncStorageGate()
 	if ok, _ := s.StorageGate.Healthy(); !ok {
 		t.Error("a nil gate must read as healthy")
+	}
+}
+
+// TestNewStorageProviderForConfigBoundsTheSlotWait proves the build passes a
+// BOUNDED context to the gate, not context.Background(). With every filesystem
+// slot held, the MkdirAll acquire can never proceed; a bounded wait fails the
+// build with a deadline error, while context.Background() would block the
+// goroutine forever - undrainable at shutdown, unreactive to a client hangup.
+//
+// A healthy gate is used deliberately: GatedProviderBlocked passes, so the only
+// thing that can stop the build is the acquire deadline itself.
+func TestNewStorageProviderForConfigBoundsTheSlotWait(t *testing.T) {
+	gate := storage.NewGate()
+
+	// Saturate every slot with holders that stay inside the gate until released.
+	release := make(chan struct{})
+	var held sync.WaitGroup
+	entered := make(chan struct{}, storage.MaxConcurrentFSOps)
+	for i := 0; i < storage.MaxConcurrentFSOps; i++ {
+		held.Add(1)
+		go func() {
+			defer held.Done()
+			_ = gate.Run(context.Background(), func() error {
+				entered <- struct{}{}
+				<-release
+				return nil
+			})
+		}()
+	}
+	for i := 0; i < storage.MaxConcurrentFSOps; i++ {
+		<-entered // all slots now taken
+	}
+	t.Cleanup(func() { close(release); held.Wait() })
+
+	// Shrink the wait so the test does not sit for the real 15s.
+	prev := storageSlotWaitDeadline
+	storageSlotWaitDeadline = 100 * time.Millisecond
+	t.Cleanup(func() { storageSlotWaitDeadline = prev })
+
+	cfg := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := newStorageProviderForConfig(cfg, CoreStoragePrefixLibrary, gate, nil)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("build succeeded with every slot held; want a deadline error")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("build never returned with every slot held; the acquire wait is not bounded (context.Background()?)")
 	}
 }

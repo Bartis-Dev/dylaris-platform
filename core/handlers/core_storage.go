@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -47,6 +48,17 @@ const (
 	CoreStoragePrefixServerBackups = "server-backups"
 	CoreStoragePrefixModpacks      = "modpacks"
 )
+
+// storageSlotWaitDeadline bounds how long a host-path provider build waits for
+// a free filesystem-concurrency slot before failing the build. Long enough that
+// ordinary contention (a slot freeing as an in-flight op completes) is never
+// tripped, short enough to stay well inside the shutdown drain so a build in
+// progress cannot hold shutdown open. It bounds only the WAIT; the gate's own
+// deadline still bounds the MkdirAll once a slot is held.
+//
+// A var, not a const, only so a test can shrink it to prove the wait is bounded
+// without waiting the real 15s. Production never reassigns it.
+var storageSlotWaitDeadline = 15 * time.Second
 
 // CoreStorageConfig is the wire + persisted shape of the shared config. The S3
 // secret is write-only: never emitted on read; S3SecretSet tells the UI whether
@@ -484,10 +496,26 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *
 	// Under the same concurrency bound as every provider method, for the same
 	// reason: on a wedged mount this MkdirAll is a syscall that never returns,
 	// and one per request is unbounded. MkdirAll's OWN error stays ignored as
-	// before; only the gate giving up on it aborts the build. There is no
-	// request context to pass here, and a caller waiting for a free slot is
-	// waiting on a bound, not on the mount.
-	if err := gate.Do(context.Background(), func() error {
+	// before; only the gate giving up on it aborts the build.
+	//
+	// The wait for a SLOT is bounded here, which it was not before. gate.Do's
+	// context bounds the acquire (the deadline the gate arms only starts once a
+	// slot is held), so passing context.Background() meant a build could wait
+	// for a free slot forever - and, having no request context, could not be
+	// cancelled when the client hung up or Core shut down. A genuinely wedged
+	// mount is already caught fast by GatedProviderBlocked above; what remains
+	// is legitimate saturation (every slot held by an in-flight download), which
+	// is healthy backpressure but must still be finite. If a slot does not free
+	// within the deadline the build fails with a retryable error instead of
+	// pinning a goroutine that shutdown cannot drain.
+	//
+	// Threading the real request context through would react to a client
+	// disconnect immediately, but buildCoreStorageProvider is a
+	// func(subPrefix)-shaped closure at ~39 call sites and the modpack factory;
+	// the bound removes the unbounded-hang without that churn.
+	acquireCtx, cancelAcquire := context.WithTimeout(context.Background(), storageSlotWaitDeadline)
+	defer cancelAcquire()
+	if err := gate.Do(acquireCtx, func() error {
 		_ = os.MkdirAll(root, 0755)
 		return nil
 	}); err != nil {

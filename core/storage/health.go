@@ -116,7 +116,7 @@ func NewGate() *Gate {
 func newGate(interval, timeout time.Duration, probe func(root string) error) *Gate {
 	g := &Gate{
 		sem:        make(chan struct{}, 1),
-		fsSem:      make(chan struct{}, maxConcurrentFSOps),
+		fsSem:      make(chan struct{}, MaxConcurrentFSOps),
 		fsDeadline: fsOpDeadline,
 		interval:   interval,
 		timeout:    timeout,

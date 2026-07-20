@@ -484,3 +484,35 @@ func TestAbandonedPanicDoesNotCrashAndReleasesSlot(t *testing.T) {
 		t.Fatal("the abandoned panicking call never released its slot")
 	}
 }
+
+// TestSaturatedGateHonoursAcquireDeadline pins the property the per-request
+// provider build relies on: when every slot is held, the wait for one is bounded
+// by the CALLER's context, not left to run forever. A build that passed
+// context.Background() here would block until a slot freed, which on a mount
+// held open by in-flight downloads is unbounded and undrainable at shutdown.
+func TestSaturatedGateHonoursAcquireDeadline(t *testing.T) {
+	g := newLimitedGate(1, testDeadline)
+
+	// Hold the single slot.
+	inner := newBlockingInner()
+	p := NewGatedProvider(inner, g)
+	held := started(func() { _, _ = p.ListFiles(context.Background(), "a") })
+	recv(t, inner.entered, "the holder to take the slot")
+	t.Cleanup(func() { close(inner.release); <-held })
+
+	// A second acquire with a short deadline must give up, not hang.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- g.Do(ctx, func() error { return nil }) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Do on a saturated gate = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(testDeadline):
+		t.Fatal("Do on a saturated gate never returned; the acquire ignored its context deadline")
+	}
+}
