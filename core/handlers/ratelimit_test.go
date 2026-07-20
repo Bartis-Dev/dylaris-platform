@@ -111,3 +111,44 @@ func TestIPRateLimiterAllow(t *testing.T) {
 		}
 	})
 }
+
+// TestIPRateLimiter_BoundedUnderLiveIPFlood covers the case the expired-only
+// sweep missed and the old doc comment wrongly claimed to handle: a flood of
+// DISTINCT, still-LIVE IPs. Nothing is expired, so without the arbitrary
+// eviction the map grows without limit. Feeding well past the ceiling must
+// leave it bounded.
+func TestIPRateLimiter_BoundedUnderLiveIPFlood(t *testing.T) {
+	l := NewIPRateLimiter()
+
+	const feed = maxBuckets * 3
+	for i := 0; i < feed; i++ {
+		// Every key distinct and fresh: no bucket is ever expired during the
+		// loop, so the expired sweep alone would never bring the map down.
+		l.allow(fmt.Sprintf("10.%d.%d.%d", i/65536%256, i/256%256, i%256), 60)
+	}
+
+	l.mu.Lock()
+	size := len(l.buckets)
+	l.mu.Unlock()
+
+	if size > maxBuckets {
+		t.Fatalf("map holds %d buckets after %d distinct live IPs, want <= %d", size, feed, maxBuckets)
+	}
+}
+
+// TestIPRateLimiter_BudgetSurvivesEviction is the guard the bound must not
+// break: the same IP is still counted to its limit and then denied.
+func TestIPRateLimiter_BudgetSurvivesEviction(t *testing.T) {
+	l := NewIPRateLimiter()
+	const limit = 5
+
+	allowed := 0
+	for i := 0; i < limit+3; i++ {
+		if l.allow("203.0.113.7", limit) {
+			allowed++
+		}
+	}
+	if allowed != limit {
+		t.Fatalf("allowed %d requests, want exactly the %d-request budget", allowed, limit)
+	}
+}

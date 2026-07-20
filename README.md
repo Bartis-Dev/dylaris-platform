@@ -448,6 +448,14 @@ location /api/ {
 }
 ```
 
+Core reads the real client IP from `X-Forwarded-For` (set above) for rate
+limiting and the audit log, but only from a **trusted** proxy. It trusts the
+private ranges by default, which covers a proxy on the private Docker network
+like this one — so no extra config is needed. If your proxy reaches Core from a
+public address instead, set `TRUSTED_PROXY_CIDRS` to that address; if Core is
+exposed directly with no proxy, set `TRUSTED_PROXY_CIDRS=none`. See
+`.env.example`.
+
 ### Traefik (alternative)
 
 Terminate TLS with a cert resolver and route by host/path. Example labels on the Core/Panel services:

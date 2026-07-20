@@ -20,9 +20,26 @@ func NewIPRateLimiter() *IPRateLimiter {
 	return &IPRateLimiter{buckets: make(map[string]*rateBucket)}
 }
 
+// Map-size bounds. maxBuckets is the ceiling that triggers eviction;
+// bucketEvictTarget is how far down eviction brings it, leaving headroom so the
+// sweep does not run on every call once busy.
+const (
+	maxBuckets        = 10000
+	bucketEvictTarget = 9000
+)
+
 // allow reports whether the IP is still under its per-minute budget, rolling
-// the window when the bucket's reset has passed. It opportunistically evicts
-// expired buckets so the map cannot grow without bound under many distinct IPs.
+// the window when the bucket's reset has passed.
+//
+// The map is bounded at maxBuckets. Expired buckets are dropped first; if a
+// flood of DISTINCT live IPs keeps it over the ceiling with nothing expired,
+// arbitrary buckets are evicted down to the target. An earlier version swept
+// only expired entries and claimed that bounded the map - it did not, because
+// under exactly that flood nothing is expired. Map iteration is randomized, so
+// the eviction drops an arbitrary subset; an evicted IP simply gets a fresh
+// window, which is the safe direction to fail under memory pressure. The XFF
+// handling in clientIP is what stops a single client minting buckets by forging
+// the header, so reaching this ceiling now takes genuinely many source IPs.
 func (l *IPRateLimiter) allow(ip string, perMin int) bool {
 	if perMin <= 0 {
 		perMin = 60
@@ -30,11 +47,17 @@ func (l *IPRateLimiter) allow(ip string, perMin int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
-	if len(l.buckets) > 10000 {
+	if len(l.buckets) >= maxBuckets {
 		for k, b := range l.buckets {
 			if now.After(b.reset) {
 				delete(l.buckets, k)
 			}
+		}
+		for k := range l.buckets {
+			if len(l.buckets) <= bucketEvictTarget {
+				break
+			}
+			delete(l.buckets, k)
 		}
 	}
 	b, ok := l.buckets[ip]

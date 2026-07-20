@@ -3,7 +3,6 @@ package handlers
 import (
 	"log"
 	"net/http"
-	"strings"
 
 	"dylaris-core/models"
 )
@@ -96,27 +95,4 @@ func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorI
 	if err := state.Store.InsertAuditIdentity(ev); err != nil {
 		log.Printf("audit: failed to insert %s event: %v", eventType, err)
 	}
-}
-
-// clientIP extracts the originating IP from common proxy headers, falling
-// back to RemoteAddr. Returns "" if nothing reasonable is available so the
-// downstream NULLIF(...,'')::inet cast keeps the DB row clean.
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		// X-Forwarded-For is a comma-separated list; the originating client
-		// is the leftmost entry.
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
-		}
-		return strings.TrimSpace(v)
-	}
-	if v := r.Header.Get("X-Real-IP"); v != "" {
-		return strings.TrimSpace(v)
-	}
-	// RemoteAddr is host:port — strip the port for INET-compatible storage.
-	addr := r.RemoteAddr
-	if i := strings.LastIndexByte(addr, ':'); i > 0 {
-		return addr[:i]
-	}
-	return addr
 }

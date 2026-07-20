@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -114,6 +115,21 @@ type Config struct {
 	// (the bell simply shows no updates).
 	UpdatesFeedURLPlatform string
 	UpdatesFeedURLGateway  string
+
+	// TrustedProxyCIDRs are the networks a reverse proxy in front of Core may
+	// occupy. It decides whether an X-Forwarded-For header is believed: the
+	// client IP is taken as the first hop, walking the header right-to-left,
+	// that is NOT inside one of these networks. A forged XFF entry from a real
+	// client sits to the LEFT of the address the trusted proxy appended, so it
+	// is never reached - which is what stops a client from spoofing the IP the
+	// rate limiters and the audit log key on.
+	//
+	// Parsed from TRUSTED_PROXY_CIDRS. Unset or empty defaults to the private
+	// ranges (the shipped reference proxy sits on the private Docker network),
+	// so per-client limiting works out of the box while a public attacker's
+	// forged header is ignored. The literal value "none" trusts nothing and
+	// makes Core ignore XFF entirely - correct when Core is exposed directly.
+	TrustedProxyCIDRs []*net.IPNet
 }
 
 func LoadConfig() (Config, error) {
@@ -206,6 +222,8 @@ func LoadConfig() (Config, error) {
 		// cross-pushed there. Override both via env for a self-hosted mirror.
 		UpdatesFeedURLPlatform: getEnv("UPDATES_FEED_URL_PLATFORM", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/feed.jsonl"),
 		UpdatesFeedURLGateway:  getEnv("UPDATES_FEED_URL_GATEWAY", ""),
+
+		TrustedProxyCIDRs: ParseTrustedProxyCIDRs(getEnv("TRUSTED_PROXY_CIDRS", "")),
 	}
 
 	// Refuse to boot with a predictable signing key. A default/empty JWT_SECRET
