@@ -100,7 +100,9 @@ func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 func TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
 	seedCoreStorageS3(fs)
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	// A Redis with one heartbeat: saving a host-path backend now consults the
+	// online-Core count, and refuses when it cannot be taken at all.
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	dir := testConnectionProbeDir(t)
 	body, _ := json.Marshal(CoreStorageConfig{Backend: "path", Path: dir, PathConfirmed: true})

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"dylaris-core/services"
 	"dylaris-core/storage"
 )
 
@@ -196,6 +197,95 @@ func (s *AppState) SyncStorageGate() {
 	if cfg.Backend != "s3" {
 		s.StorageS3.Reset()
 	}
+}
+
+// isHostPathBackend is the one place the two spellings of the filesystem
+// backend are recognised. "local" is the historical value; "path" is what the
+// panel writes today. Both still appear in stored configs.
+func isHostPathBackend(backend string) bool {
+	return backend == "path" || backend == "local"
+}
+
+// CountOnlineCores reports how many Core instances are currently heartbeating.
+//
+// It exists for the host-path backend, which stores files on ONE machine's
+// filesystem. With a second Core online, half the reads miss and half the
+// writes land where the other Core will never look for them - and nothing
+// fails loudly, because each Core's own writes read back perfectly.
+func (s *AppState) CountOnlineCores(ctx context.Context) (int, error) {
+	ids, err := services.OnlineCoreIDs(ctx, s.Redis)
+	if err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+// hostPathMultiCoreMessage is shared by the save refusal and the panel warning
+// so the operator is told the same thing in both places.
+const hostPathMultiCoreMessage = "The filesystem backend stores files on one machine's disk, and %d Core instances are online. Each Core would serve only the files it wrote itself. Use the S3 backend, or mount a shared filesystem (NFS/SMB) at this path on every host. A Core that was just restarted can still be counted for up to 30 seconds."
+
+// hostPathMultiCoreWarning returns the operator-facing warning for a config
+// that is ALREADY saved as a host path on a deployment that has since grown
+// past one Core, or "" when there is nothing to warn about.
+//
+// A second Core appearing after the fact does NOT auto-disable the backend.
+// Silently repointing where files are stored is worse than a loud warning: the
+// operator may be mid-deploy, and an automatic switch would strand every file
+// written so far somewhere Core no longer looks.
+//
+// Takes the count rather than fetching it so the caller pays for one Redis
+// round trip, and so this stays a pure function.
+func hostPathMultiCoreWarning(cfg CoreStorageConfig, online int) string {
+	if !isHostPathBackend(cfg.Backend) || online <= 1 {
+		return ""
+	}
+	return fmt.Sprintf(hostPathMultiCoreMessage, online)
+}
+
+// WarnAboutHostPathAtBoot logs the warning above once at startup, so a Core
+// joining a host-path deployment says so even if no admin opens the storage
+// tab. Returns the message it logged (empty when there was nothing to warn
+// about) so the behaviour is testable without capturing log output.
+func (s *AppState) WarnAboutHostPathAtBoot(ctx context.Context) string {
+	online, err := s.CountOnlineCores(ctx)
+	if err != nil {
+		log.Printf("core storage: could not count online Cores at boot: %v", err)
+		return ""
+	}
+	warning := hostPathMultiCoreWarning(s.LoadCoreStorageConfig(), online)
+	if warning != "" {
+		log.Printf("core storage: WARNING: %s", warning)
+	}
+	return warning
+}
+
+// guardHostPathBackend refuses a filesystem-backend save while more than one
+// Core is online. It gates the SAVE only; TestConnection is deliberately left
+// open, because testing whether a path is reachable stays a useful and
+// harmless thing to do on any number of Cores.
+//
+// An error counting is treated as a refusal rather than a pass. This is a rare,
+// deliberate admin action, not a hot path, so "could not verify" is worth a
+// retry; letting it through would silently split file storage across instances,
+// which is the failure this whole check exists to prevent. Redis being
+// unreachable is separately visible on the health page, so the operator is not
+// left guessing about the cause.
+func (h *CoreStorageHandler) guardHostPathBackend(ctx context.Context, cfg CoreStorageConfig) (ok bool, status int, message string) {
+	if !isHostPathBackend(cfg.Backend) {
+		return true, 0, ""
+	}
+	online, err := h.state.CountOnlineCores(ctx)
+	if err != nil {
+		log.Printf("core storage: could not count online Cores: %v", err)
+		return false, http.StatusServiceUnavailable,
+			"Could not verify how many Core instances are online, so the filesystem backend cannot be saved right now. Check that Redis is reachable and try again."
+	}
+	// 0 and 1 are both "not more than one": a count of 0 means this Core's own
+	// heartbeat has not landed yet, not that no Core is running.
+	if online <= 1 {
+		return true, 0, ""
+	}
+	return false, http.StatusConflict, fmt.Sprintf(hostPathMultiCoreMessage, online)
 }
 
 // ProbeS3Connection performs one cheap, read-only call against the configured
@@ -386,12 +476,36 @@ func NewCoreStorageHandler(state *AppState) *CoreStorageHandler {
 // at the route). The stored S3 secret is never emitted: S3SecretKey is
 // blanked (and, thanks to its "omitempty" json tag, omitted entirely from
 // the response) while S3SecretSet tells the panel one is already stored.
+// GetConfig GET /api/settings/core-storage - PANEL settings.read (RequireCap
+// at the route). Alongside the stored config it answers the two questions the
+// form needs about the host-path backend: may it be selected, and is the one
+// already saved now unsafe.
 func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := h.state.LoadCoreStorageConfig()
 	cfg.S3SecretKey = "" // write-only; never emitted
+
+	// The instance ids are NOT emitted, only the count. They are hostnames, and
+	// the count alone is everything the form has to render.
+	online, err := h.state.CountOnlineCores(r.Context())
+	hostPathAllowed := true
+	if err != nil {
+		// A hint the UI could not compute is not a reason to grey out a valid
+		// option. The save path is the enforcement point and refuses on this
+		// same error, with a message that explains itself; the form stays
+		// usable in the meantime.
+		log.Printf("core storage: could not count online Cores for the settings form: %v", err)
+	} else {
+		hostPathAllowed = online <= 1
+	}
+
+	warning := hostPathMultiCoreWarning(cfg, online)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"settings": cfg,
+		"success":         true,
+		"settings":        cfg,
+		"onlineCores":     online,
+		"hostPathAllowed": hostPathAllowed,
+		"hostPathWarning": warning,
 	})
 }
 
@@ -461,6 +575,13 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	effective := mergeCoreStorageCandidate(req, existing)
 	if err := validateCoreStorageConfig(effective); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// After validation, before any write: a refused save must never leave a
+	// half-applied config behind.
+	if ok, status, msg := h.guardHostPathBackend(r.Context(), effective); !ok {
+		sendJSONError(w, msg, status)
 		return
 	}
 

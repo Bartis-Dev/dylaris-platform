@@ -29,6 +29,14 @@ export default function CoreStorageTab() {
   // the next test replaces or clears it.
   const [testWarning, setTestWarning] = useState<string | null>(null);
 
+  // The single-Core constraint on the filesystem backend, as answered by the
+  // server. hostPathAllowed defaults to true so the form behaves normally
+  // until the first GET lands, and stays true if the server could not take the
+  // count - the save is refused server-side either way.
+  const [hostPathAllowed, setHostPathAllowed] = useState(true);
+  const [onlineCores, setOnlineCores] = useState(0);
+  const [multiCoreWarning, setMultiCoreWarning] = useState<string | null>(null);
+
   // Snapshot of the last-saved config, used for dirty detection.
   const snapshotRef = useRef<CoreStorageConfig | null>(null);
 
@@ -43,21 +51,27 @@ export default function CoreStorageTab() {
         setSettings(s);
         snapshotRef.current = s;
       }
+      setHostPathAllowed(res.hostPathAllowed !== false);
+      setOnlineCores(res.onlineCores ?? 0);
+      setMultiCoreWarning(res.hostPathWarning || null);
       setLoading(false);
     });
   }, []);
 
-  const canSave = canSaveCoreStorage(settings, snapshotRef.current);
+  const canSave = canSaveCoreStorage(settings, snapshotRef.current, hostPathAllowed);
   const identityChanged = settings.backend === 's3' && s3IdentityChanged(settings, snapshotRef.current);
 
   const handleSave = async () => {
     if (!canSave) {
-      showToast(
-        settings.backend === 'path'
-          ? 'Enter an absolute path and tick the confirmation checkbox before saving.'
-          : 'Fill in the bucket, access key and secret before saving.',
-        false,
-      );
+      // The multi-Core case has its own message: telling an admin to tick a
+      // checkbox they cannot reach would be the wrong instruction entirely.
+      const reason =
+        settings.backend !== 'path'
+          ? 'Fill in the bucket, access key and secret before saving.'
+          : !hostPathAllowed
+            ? `The filesystem backend cannot be used while ${onlineCores} Core instances are online. Use S3, or scale down to one Core.`
+            : 'Enter an absolute path and tick the confirmation checkbox before saving.';
+      showToast(reason, false);
       return;
     }
     setSaving(true);
@@ -114,23 +128,32 @@ export default function CoreStorageTab() {
           {BACKENDS.map(b => {
             const Icon = b.icon;
             const active = settings.backend === b.id;
+            // Only the filesystem backend is constrained, and only while a
+            // second Core is online.
+            const blocked = b.id === 'path' && !hostPathAllowed;
             return (
               <button
                 key={b.id}
                 type="button"
                 onClick={() => set('backend', b.id)}
+                disabled={blocked}
+                aria-describedby={blocked ? 'core-storage-host-path-blocked' : undefined}
                 className={`card p-4 text-left transition-all relative focus:outline-none focus-visible:ring-2 focus-visible:ring-(--accent) ${
-                  active ? 'border-(--accent) ring-1 ring-(--accent)/40 bg-(--accent-ghost)' : 'border-(--base-03) hover:border-(--base-05)'
+                  blocked
+                    ? 'border-(--base-03) opacity-50 cursor-not-allowed'
+                    : active
+                      ? 'border-(--accent) ring-1 ring-(--accent)/40 bg-(--accent-ghost)'
+                      : 'border-(--base-03) hover:border-(--base-05)'
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-(--accent)/20 text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
+                  <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${active && !blocked ? 'bg-(--accent)/20 text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
                     <Icon size={18} />
                   </div>
                   <div className="min-w-0">
-                    <div className={`font-medium text-sm flex items-center gap-1.5 ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
+                    <div className={`font-medium text-sm flex items-center gap-1.5 ${active && !blocked ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
                       {b.label}
-                      {active && <CircleCheck size={13} className="text-(--accent-light)" />}
+                      {active && !blocked && <CircleCheck size={13} className="text-(--accent-light)" />}
                     </div>
                     <div className="text-xs text-(--base-06) mt-1">{b.description}</div>
                   </div>
@@ -139,7 +162,27 @@ export default function CoreStorageTab() {
             );
           })}
         </div>
+
+        {/* The reason, spelled out. A greyed-out option with no explanation is
+            the thing an operator files a bug about. */}
+        {!hostPathAllowed && (
+          <p id="core-storage-host-path-blocked" className="text-xs text-(--base-06) mt-2">
+            The filesystem backend is unavailable because {onlineCores} Core instances are online. It stores
+            files on a single machine&apos;s disk, so each Core would only serve what it wrote itself. Use S3, or
+            scale down to one Core. A Core that was just restarted can still be counted for up to 30 seconds.
+          </p>
+        )}
       </div>
+
+      {/* A host path that was already saved before the deployment grew. Kept
+          separate from the selector hint above: this one means files are
+          being written to a split store right now. */}
+      {multiCoreWarning && (
+        <div className="alert alert-warning text-xs flex items-start gap-2">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>{multiCoreWarning}</span>
+        </div>
+      )}
 
       {/* Path backend */}
       {settings.backend === 'path' && (
@@ -159,9 +202,12 @@ export default function CoreStorageTab() {
           <div className="alert alert-warning text-xs">
             <AlertTriangle size={14} className="shrink-0 mt-0.5" />
             <span>
-              Must be reachable by <strong>every</strong> Core. A host-local directory only works with a single Core or
-              all Cores pinned to one host. For multiple Cores across hosts, mount a shared filesystem here (NFS/SMB/WebDAV)
-              or use S3.
+              Must be reachable by <strong>every</strong> Core, and must be a <strong>mounted volume</strong> - a plain
+              directory lives inside the container and is erased when it is recreated. A host-local directory therefore
+              only works with a single Core. For multiple Cores, mount a shared filesystem (NFS/SMB) at this path on
+              every host and bind-mount it into the Core container, or use S3. The commented recipe in{' '}
+              <code className="font-mono text-[11px]">docker-stack.yml</code> covers the mount options and the
+              bind-propagation setting that a share mounted after container start requires.
             </span>
           </div>
 

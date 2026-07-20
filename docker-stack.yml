@@ -74,9 +74,60 @@ services:
     volumes:
       # Core writes library, ticket-attachments, ticket-backups here. Without a
       # volume this data is lost on container recreation. NOTE: this is a LOCAL
-      # per-host volume; multi-replica Core (see docker-stack.yml) needs shared or
-      # S3-backed storage - single replica or S3 for correctness there.
+      # per-host volume, and this stack runs "replicas: 2" below - so the two
+      # Cores do NOT share it. That is why the "Core File Storage" setting in
+      # the panel must be pointed at S3, or at a shared filesystem mounted on
+      # every host (see the commented block below). Core refuses to save the
+      # filesystem backend while more than one Core is online.
       - core_data:/app/dylaris_data
+
+      # ── Optional: a shared filesystem instead of S3 ──────────────────────
+      # Mount the share on EVERY swarm host at the same path, then bind-mount
+      # it in here and point the panel's "Core File Storage" -> Filesystem
+      # Path at the container-side path (/mnt/dylaris-shared).
+      #
+      # - type: bind
+      #   source: /mnt/dylaris-shared
+      #   target: /mnt/dylaris-shared
+      #   bind:
+      #     propagation: rslave
+      #
+      # Why "rslave": Docker's bind propagation defaults to rprivate, so a
+      # share mounted on the host AFTER the container started stays invisible
+      # inside it - Core would then write into the container's own filesystem
+      # and lose everything on recreation. rslave lets host mounts appearing
+      # under this path propagate in. It requires the host mountpoint to
+      # already be shared; verify with:
+      #     findmnt -o TARGET,PROPAGATION /mnt/dylaris-shared
+      # Mount propagation does not work with Docker Desktop.
+      #
+      # /etc/fstab on each host:
+      #
+      #   NFS (recommended):
+      #     nas:/export/dylaris  /mnt/dylaris-shared  nfs  defaults,_netdev  0 0
+      #
+      #     Leave the default "hard" retry behaviour in place. nfs(5) states
+      #     that "soft" can cause SILENT DATA CORRUPTION and should only be
+      #     used "when client responsiveness is more important than data
+      #     integrity" - which is the wrong trade for a file store. Core does
+      #     not need "soft" to stay responsive: it runs its own watchdog and
+      #     circuit breaker over this path, fails storage requests fast while
+      #     the mount is unreachable, and caps concurrent filesystem calls, so
+      #     an unreachable NAS degrades Core rather than hanging it. Processes
+      #     blocked on a "hard" mount are also killable on any kernel since
+      #     2.6.25 (the "intr" option is ignored since then - do not add it).
+      #     If the application must be able to tell a timeout from a generic
+      #     I/O error, "softerr" returns ETIMEDOUT instead of EIO, but it
+      #     carries the same corruption caveat as "soft".
+      #
+      #   SMB/CIFS:
+      #     //nas/dylaris  /mnt/dylaris-shared  cifs  credentials=/etc/dylaris-smb.cred,uid=0,gid=0,_netdev  0 0
+      #
+      #     Note the inversion: CIFS defaults to "soft" (return an error),
+      #     the opposite of NFS's "hard" default. Leave it. Add "hard" only if
+      #     you specifically want operations to block until the server is back.
+      #     Detection of an unresponsive server is driven by echo_interval
+      #     (default 60s; reconnect is attempted at 3x that value).
     deploy:
       # Multiple replicas are safe: Redis leader-election keeps singleton jobs
       # (discovery, Warp resync) on one replica; all replicas serve the API.

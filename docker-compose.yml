@@ -59,8 +59,11 @@ services:
     volumes:
       # Core writes library, ticket-attachments, ticket-backups here. Without a
       # volume this data is lost on container recreation. NOTE: this is a LOCAL
-      # per-host volume; multi-replica Core (see docker-stack.yml) needs shared or
-      # S3-backed storage - single replica or S3 for correctness there.
+      # per-host volume. It is correct for this single-Core compose file; the
+      # multi-replica Swarm topology in docker-stack.yml needs S3 or a shared
+      # filesystem instead, and that file carries the mount recipe. Core
+      # refuses to save the panel's filesystem backend while more than one
+      # Core is online.
       - core_data:/app/dylaris_data
 
   node:

@@ -467,6 +467,16 @@ func main() {
 	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.Region, cfg.GRPCPort)
 	coreHeartbeat.Start()
 
+	// Warn once, here, if this instance is joining a deployment that stores
+	// files on a host path. That combination is only correct on a single Core,
+	// and the panel's warning is only seen by an admin who opens the storage
+	// tab - a scale-up is exactly the case where nobody does.
+	//
+	// Placed AFTER coreHeartbeat.Start() on purpose: Start writes this Core's
+	// key before returning, so the count includes us. Running it earlier would
+	// have the second Core see only the first and stay silent.
+	appState.WarnAboutHostPathAtBoot(context.Background())
+
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
 	// Leader-gated: tick + Pub/Sub result processing run only on

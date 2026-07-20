@@ -86,3 +86,25 @@ describe('s3IdentityChanged', () => {
     expect(s3IdentityChanged({ ...saved, s3Endpoint: 'https://other.example.com' }, saved)).toBe(true);
   });
 });
+
+describe('canSaveCoreStorage host-path single-Core constraint', () => {
+  const path: CoreStorageConfig = { ...base, backend: 'path', path: '/mnt/shared', pathConfirmed: true };
+  const s3: CoreStorageConfig = { ...base, backend: 's3', s3Bucket: 'b', s3AccessKey: 'k', s3SecretKey: 'sec' };
+
+  it('an otherwise valid host path cannot be saved while a second Core is online', () => {
+    expect(canSaveCoreStorage(path, null, false)).toBe(false);
+  });
+  it('the same config is saveable on a single Core', () => {
+    expect(canSaveCoreStorage(path, null, true)).toBe(true);
+  });
+  it('defaults to allowed, so a caller that has not fetched the answer behaves as before', () => {
+    expect(canSaveCoreStorage(path, null)).toBe(true);
+  });
+  it('does not block s3, which is the backend multi-Core deployments are meant to use', () => {
+    expect(canSaveCoreStorage(s3, null, false)).toBe(true);
+  });
+  it('does not rescue a host path that is invalid for other reasons', () => {
+    expect(canSaveCoreStorage({ ...path, pathConfirmed: false }, null, true)).toBe(false);
+    expect(canSaveCoreStorage({ ...path, path: 'relative' }, null, true)).toBe(false);
+  });
+});

@@ -29,9 +29,20 @@ export function isAbsolutePath(p: string): boolean {
   return p.startsWith('/');
 }
 
-export function canSaveCoreStorage(c: CoreStorageConfig, saved: CoreStorageConfig | null = null): boolean {
+// hostPathAllowed mirrors the server's single-Core constraint on the
+// filesystem backend (core/handlers/core_storage.go guardHostPathBackend): a
+// host path stores files on one machine's disk, so a second Core would leave
+// each instance serving only what it wrote itself. Defaults to true so a
+// caller that has not fetched the server's answer yet - or a server that could
+// not take the count - behaves exactly as before; the server refuses the save
+// either way, this only decides whether the button is offered.
+export function canSaveCoreStorage(
+  c: CoreStorageConfig,
+  saved: CoreStorageConfig | null = null,
+  hostPathAllowed: boolean = true,
+): boolean {
   if (c.backend === 'path') {
-    return isAbsolutePath(c.path.trim()) && c.pathConfirmed === true;
+    return hostPathAllowed && isAbsolutePath(c.path.trim()) && c.pathConfirmed === true;
   }
   if (c.backend === 's3') {
     // A stored secret only counts as "present" when the identity it was
