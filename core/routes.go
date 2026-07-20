@@ -444,6 +444,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	authzHandler := handlers.NewAuthzHandler()
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
 	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
+	storageConnectionHandler := handlers.NewStorageConnectionHandler(appState)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -1288,6 +1289,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.SaveConfig))).Methods("POST")
 	api.HandleFunc("/settings/core-storage/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.TestConnection))).Methods("POST")
+	// Coarse connection state of the configured core storage backends. Authed,
+	// not capability-gated: it is the initial value for the storage.connection
+	// .changed SSE events, which every authed panel session already receives,
+	// and it carries no cause, path, bucket or endpoint.
+	api.HandleFunc("/storage/connection", authHandler.AuthMiddleware(storageConnectionHandler.GetConnection)).Methods("GET")
 
 	// --- Regions ---
 	// User-facing: list of enabled regions (drives region pickers).

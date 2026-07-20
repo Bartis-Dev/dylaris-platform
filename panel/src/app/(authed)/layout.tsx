@@ -11,6 +11,7 @@ import UpdatesBell from '@/components/UpdatesBell';
 import ProfilePopup from '@/components/ProfilePopup';
 import MaintenanceBanner from '@/components/MaintenanceBanner';
 import BillingBanner from '@/components/BillingBanner';
+import StorageBanner from '@/components/StorageBanner';
 import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
@@ -72,6 +73,8 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <MaintenanceBanner />
             {/* Non-dismissible billing banner for past_due/suspended tenants. */}
             <BillingBanner />
+            {/* Storage backend reachability. Renders nothing while both are ok. */}
+            <StorageBanner />
             {/* Top Navbar */}
             <div className="relative z-30 shrink-0">
                 <Navbar>

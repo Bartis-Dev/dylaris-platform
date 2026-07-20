@@ -78,6 +78,12 @@ type AppState struct {
 	// an AppState built without one - only ever a test - simply never pauses.
 	StorageS3 *storage.S3Resilience
 
+	// StorageStatus forwards StorageGate's and StorageS3's transitions onto the
+	// system-events channel and answers GET /api/storage/connection. It reads
+	// both backends live rather than mirroring them. Nil-safe, so an AppState
+	// built without one - only ever a test - simply reports both backends ok.
+	StorageStatus *services.StorageStatus
+
 	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
 	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the
 	// leader-gated worker progresses expired grace windows. Nil-safe in callers.

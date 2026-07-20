@@ -117,6 +117,11 @@ var ExemptRoutes = map[string]bool{
 	"/api/system/events":   true, // authed; SSE stream, ticket-authed per-connection
 	"/api/system/features": true, // authed; read for every authenticated user
 
+	// Coarse storage connection state: the initial value for the
+	// storage.connection.changed events on that same SSE stream, and no more
+	// revealing than they are (no cause, path, bucket or endpoint).
+	"/api/storage/connection": true, // authed; read-only coarse state
+
 	// BYON node enrollment tokens: per-user, own tokens only (byonCallerID scoping).
 	"/api/nodes/enroll-token":      true, // authed; in-handler owner filter
 	"/api/nodes/enroll-token/{id}": true, // authed; in-handler owner filter

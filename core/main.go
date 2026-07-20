@@ -227,6 +227,13 @@ func main() {
 	// every code path can call h.state.Events.Publish unconditionally.
 	appState.Events = services.NewSystemEventsPublisher(redisClient)
 
+	// Storage connection state onto the system-events channel. Wired AFTER the
+	// publisher above, because it captures it. Start before Attach so the
+	// forwarder is already draining when the first transition can fire.
+	appState.StorageStatus = services.NewStorageStatus(appState.Events, appState.StorageGate, appState.StorageS3)
+	appState.StorageStatus.Start(context.Background())
+	appState.StorageStatus.Attach()
+
 	// Leader election: a single Redis lease named for the
 	// "core-leader" role, identified by this instance's CoreID. Every
 	// scheduled background loop consults the leader's IsLeader() to
