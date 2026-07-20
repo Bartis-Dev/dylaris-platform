@@ -1,11 +1,80 @@
 package nodegrpc
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
 	pb "dylaris-proto/node"
 )
+
+// errSendStream is a NodeConnect stream whose Send always fails. The embedded
+// interface is nil on purpose: SendRequestStreaming only ever calls Send on the
+// stream, so no other method is reached, and this keeps the fake to one line of
+// behaviour.
+type errSendStream struct {
+	pb.NodeService_NodeConnectServer
+	err error
+}
+
+func (s errSendStream) Send(*pb.NodeMessage) error { return s.err }
+
+// TestSendRequestStreamingCleansUpOnSendFailure pins the error path's
+// housekeeping: when the send fails the pending entry must be removed and the
+// channel must not be left reachable, or a later RouteResponse would send on a
+// channel no reader owns.
+func TestSendRequestStreamingCleansUpOnSendFailure(t *testing.T) {
+	r := NewRegistry()
+	conn := r.Register(1, "token", errSendStream{err: errors.New("node dropped")})
+
+	ch, err := r.SendRequestStreaming(1, &pb.NodeMessage{RequestId: "req-1"})
+	if err == nil {
+		t.Fatal("SendRequestStreaming returned nil error after the send failed")
+	}
+	if ch != nil {
+		t.Fatal("SendRequestStreaming returned a channel alongside an error")
+	}
+
+	conn.mu.Lock()
+	_, present := conn.pending["req-1"]
+	conn.mu.Unlock()
+	if present {
+		t.Fatal("the pending entry was left behind after a send failure")
+	}
+	if conn.RouteResponse(&pb.NodeMessage{RequestId: "req-1"}) {
+		t.Fatal("RouteResponse routed to a request whose send failed")
+	}
+}
+
+// TestSendRequestStreamingSendFailureDoesNotDoubleClose exercises the send-
+// failure path against a concurrent Unregister of the same node, which is the
+// interleaving the close-under-lock guard exists for: both paths close the
+// pending channel, and closing an already-closed channel panics.
+//
+// A smoke check, not a proof - it only trips the broken version when the two
+// goroutines interleave inside the window - but the panic is a hard crash, so a
+// few hundred rounds make it reliable. What guarantees the fix is that both
+// closers drop the map entry under conn.mu (TestPendingChannelsAreRemovedWhenClosed)
+// and the send-failure path re-checks presence before closing. Run with -race.
+func TestSendRequestStreamingSendFailureDoesNotDoubleClose(t *testing.T) {
+	const rounds = 500
+	for i := 0; i < rounds; i++ {
+		r := NewRegistry()
+		r.Register(1, "token", errSendStream{err: errors.New("node dropped")})
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = r.SendRequestStreaming(1, &pb.NodeMessage{RequestId: "req-1"})
+		}()
+		go func() {
+			defer wg.Done()
+			r.Unregister(1)
+		}()
+		wg.Wait()
+	}
+}
 
 // addPending registers a response channel the way SendRequest/SendRequestStreaming
 // do. Those two cannot be used here because they call conn.Send, which needs a

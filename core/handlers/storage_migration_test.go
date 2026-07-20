@@ -276,7 +276,11 @@ func TestStorageDataSetResolver_CombinedCoreStorageIsConfigSwitchable(t *testing
 	fs.kv[keyCoreStorageBackend] = "path"
 	fs.kv[keyCoreStoragePath] = srcRoot
 	fs.kv[keyCoreStoragePathConfirm] = "true"
-	st := &AppState{Store: fs}
+	// One online Core: SwitchConfig now runs the single-Core host-path guard,
+	// which needs to count instances. A nil Redis would read as "cannot verify"
+	// and refuse the switch. A single-Core deployment is exactly when a
+	// host-path target is legitimate.
+	st := &AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}
 	res := NewStorageDataSetResolver(st)
 
 	ds, label, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{

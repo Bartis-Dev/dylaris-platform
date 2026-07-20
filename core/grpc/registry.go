@@ -146,10 +146,20 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 
 	// Send request
 	if err := conn.Send(msg); err != nil {
+		// Close under the lock, and only if the entry is still ours. The node's
+		// stream goroutine can run Unregister (or a reconnect can run Register)
+		// concurrently with this send failing, and that path closes ch and nils
+		// the map while holding conn.mu. Closing here without the lock, or
+		// without re-checking, races it into a close-of-closed-channel panic -
+		// the same window closed in RouteResponse, on the sibling path. A nil
+		// map yields (nil, false), so a delete-after-Unregister is a no-op and
+		// the already-closed channel is not touched again.
 		conn.mu.Lock()
-		delete(conn.pending, msg.RequestId)
+		if _, ok := conn.pending[msg.RequestId]; ok {
+			delete(conn.pending, msg.RequestId)
+			close(ch)
+		}
 		conn.mu.Unlock()
-		close(ch)
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
 	return ch, nil

@@ -265,33 +265,66 @@ func (s *AppState) WarnAboutHostPathAtBoot(ctx context.Context) string {
 	return warning
 }
 
-// guardHostPathBackend refuses a filesystem-backend save while more than one
-// Core is online. It gates the SAVE only; TestConnection is deliberately left
-// open, because testing whether a path is reachable stays a useful and
-// harmless thing to do on any number of Cores.
+// hostPathRefusal is returned by checkHostPathAllowed when a filesystem-backend
+// config must not be persisted. It carries the HTTP status the settings form
+// should answer with; a non-HTTP caller (the storage-migration config switch)
+// uses only Error().
+type hostPathRefusal struct {
+	status  int
+	message string
+}
+
+func (e *hostPathRefusal) Error() string { return e.message }
+
+// checkHostPathAllowed refuses a filesystem-backend config while more than one
+// Core is online, and returns nil otherwise. It is the single gate both the
+// settings save and the storage-migration config switch go through, so neither
+// can persist a host path the other would reject - the two used to disagree,
+// and a migration to a host-path target sailed past the guard the save had.
 //
-// An error counting is treated as a refusal rather than a pass. This is a rare,
+// A count error is treated as a refusal rather than a pass. This is a rare,
 // deliberate admin action, not a hot path, so "could not verify" is worth a
 // retry; letting it through would silently split file storage across instances,
 // which is the failure this whole check exists to prevent. Redis being
 // unreachable is separately visible on the health page, so the operator is not
 // left guessing about the cause.
-func (h *CoreStorageHandler) guardHostPathBackend(ctx context.Context, cfg CoreStorageConfig) (ok bool, status int, message string) {
+func (s *AppState) checkHostPathAllowed(ctx context.Context, cfg CoreStorageConfig) error {
 	if !isHostPathBackend(cfg.Backend) {
-		return true, 0, ""
+		return nil
 	}
-	online, err := h.state.CountOnlineCores(ctx)
+	online, err := s.CountOnlineCores(ctx)
 	if err != nil {
 		log.Printf("core storage: could not count online Cores: %v", err)
-		return false, http.StatusServiceUnavailable,
-			"Could not verify how many Core instances are online, so the filesystem backend cannot be saved right now. Check that Redis is reachable and try again."
+		return &hostPathRefusal{
+			status:  http.StatusServiceUnavailable,
+			message: "Could not verify how many Core instances are online, so the filesystem backend cannot be used right now. Check that Redis is reachable and try again.",
+		}
 	}
 	// 0 and 1 are both "not more than one": a count of 0 means this Core's own
 	// heartbeat has not landed yet, not that no Core is running.
 	if online <= 1 {
+		return nil
+	}
+	return &hostPathRefusal{
+		status:  http.StatusConflict,
+		message: fmt.Sprintf(hostPathMultiCoreMessage, online),
+	}
+}
+
+// guardHostPathBackend adapts checkHostPathAllowed to the SaveConfig handler's
+// (ok, status, message) shape. It gates the SAVE only; TestConnection is
+// deliberately left open, because testing whether a path is reachable stays a
+// useful and harmless thing to do on any number of Cores.
+func (h *CoreStorageHandler) guardHostPathBackend(ctx context.Context, cfg CoreStorageConfig) (ok bool, status int, message string) {
+	err := h.state.checkHostPathAllowed(ctx, cfg)
+	if err == nil {
 		return true, 0, ""
 	}
-	return false, http.StatusConflict, fmt.Sprintf(hostPathMultiCoreMessage, online)
+	var refusal *hostPathRefusal
+	if errors.As(err, &refusal) {
+		return false, refusal.status, refusal.message
+	}
+	return false, http.StatusServiceUnavailable, err.Error()
 }
 
 // ProbeS3Connection performs one cheap, read-only call against the configured

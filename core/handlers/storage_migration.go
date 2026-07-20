@@ -591,7 +591,7 @@ func (r *StorageDataSetResolver) ResolveTarget(_ context.Context, sourceID strin
 //
 // It writes through persistCoreStorageConfig, the same writer SaveConfig uses,
 // so the settings form and the migration cannot drift apart.
-func (r *StorageDataSetResolver) SwitchConfig(_ context.Context, sourceID string, tc services.StorageTargetConfig) error {
+func (r *StorageDataSetResolver) SwitchConfig(ctx context.Context, sourceID string, tc services.StorageTargetConfig) error {
 	if _, err := r.sourceCoreStorageConfigFor(sourceID); err != nil {
 		return err
 	}
@@ -602,8 +602,20 @@ func (r *StorageDataSetResolver) SwitchConfig(_ context.Context, sourceID string
 	if sourceID == storagemigrate.DataSetModpacks {
 		// Modpacks have their own settings namespace; point THOSE at the
 		// target rather than repointing the shared Core file storage, which
-		// three other data sets also read.
+		// three other data sets also read. The host-path guard below is NOT
+		// applied here on purpose: the modpack settings form has no such guard
+		// either, so guarding only the migration path would be an asymmetry in
+		// the other direction. Modpacks on a multi-Core host path stay the
+		// modpack settings form's concern, not this one's.
 		return r.switchModpackConfig(cfg)
+	}
+	// The same single-Core guard the settings form applies through
+	// guardHostPathBackend. Without it a migration to a host-path target
+	// persists it with no count check at all, landing the deployment in exactly
+	// the split-storage state the guard on SaveConfig exists to prevent. The
+	// job surfaces this error with the source left intact and nothing deleted.
+	if err := r.state.checkHostPathAllowed(ctx, cfg); err != nil {
+		return err
 	}
 	// cfg.S3SecretKey, not a "was a secret submitted" flag: persistCoreStorageConfig
 	// takes the secret VALUE so the only thing it can ever write is the one
