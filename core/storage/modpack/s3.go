@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -83,6 +84,52 @@ func (s *S3Provider) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("modpack storage: s3 read %s: %w", key, err)
 	}
 	return data, nil
+}
+
+// Stream hands back the GetObject body itself rather than reading it, so the
+// object crosses Core as a copy between two sockets instead of landing in the
+// heap. ContentLength comes from the same response, so it describes exactly the
+// body being returned.
+//
+// The body is NOT closed here on success - the caller owns it, per the
+// interface. It is closed on every error path before returning.
+func (s *S3Provider) Stream(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		if isS3NotFound(err) {
+			return nil, 0, ErrNotFound
+		}
+		return nil, 0, fmt.Errorf("modpack storage: s3 stream %s: %w", key, err)
+	}
+	size := SizeUnknown
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	return out.Body, size, nil
+}
+
+// DownloadURL presigns a GET so the client fetches from the object store
+// directly and the bytes never enter this process.
+//
+// A presign is a local signing operation: it contacts nothing and therefore
+// cannot tell whether the key exists. A URL for a missing key is issued
+// happily and 404s at the object store, which is the same answer the caller
+// would have produced anyway.
+func (s *S3Provider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	req, err := s3.NewPresignClient(s.client).PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("modpack storage: s3 presign %s: %w", key, err)
+	}
+	return req.URL, nil
 }
 
 func (s *S3Provider) Delete(ctx context.Context, key string) error {

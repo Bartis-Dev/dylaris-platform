@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"time"
 
 	"dylaris-core/storage"
 )
@@ -69,6 +70,47 @@ func (p *CoreStorageProvider) Get(ctx context.Context, key string) ([]byte, erro
 		return nil, fmt.Errorf("modpack storage: core-storage read %s: %w", key, err)
 	}
 	return data, nil
+}
+
+// Stream delegates to the underlying storage provider's GetFile, which already
+// returns a stream on both backends - the buffering this replaces was added by
+// this adapter's own Get, not by the layer below it.
+//
+// StorageProvider has no size on GetFile and no Stat, so the size comes from
+// the same parent-directory listing Stat uses. That listing is a second round
+// trip, and on a large prefix an expensive one, so a failure to determine the
+// size is NOT fatal: the object streams with SizeUnknown and the caller omits
+// Content-Length. Serving the pack matters more than announcing its length.
+func (p *CoreStorageProvider) Stream(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	rc, err := p.prov.GetFile(ctx, key)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, 0, ErrNotFound
+		}
+		return nil, 0, fmt.Errorf("modpack storage: core-storage stream %s: %w", key, err)
+	}
+
+	size, exists, serr := p.Stat(ctx, key)
+	if serr != nil || !exists {
+		return rc, SizeUnknown, nil
+	}
+	return rc, size, nil
+}
+
+// DownloadURL delegates to the Core file storage provider, so a modpack kept
+// on a core storage backed by S3 becomes a redirect exactly like a library
+// download already is. The path backend returns ("", nil) and the caller
+// streams.
+//
+// This is the case that made the public mirror route hold whole packs in the
+// heap: routing modpacks through core storage meant they could never be
+// presigned, because this adapter had no way to express one.
+func (p *CoreStorageProvider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	url, err := p.prov.DownloadURL(ctx, key, ttl)
+	if err != nil {
+		return "", fmt.Errorf("modpack storage: core-storage presign %s: %w", key, err)
+	}
+	return url, nil
 }
 
 // Delete is idempotent: LocalProvider.DeletePath is os.RemoveAll (nil on

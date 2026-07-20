@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"path"
-	"strconv"
 	"strings"
 
 	"dylaris-core/storage/modpack"
@@ -55,13 +54,16 @@ func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return
 	}
-	data, err := prov.Get(r.Context(), key)
-	if err != nil {
+	// deliverStream, not deliverRedirect, and that is a deliberate limit rather
+	// than an oversight. This route serves the Technic launcher as well as our
+	// own nodes, and whether that launcher follows a 302 is not something this
+	// codebase can verify - a wrong guess breaks pack installs for every
+	// launcher user. Streaming is correct for every client and already removes
+	// the defect that mattered, which was Core holding the whole pack in memory
+	// once per concurrent request. Switching this to a redirect would save
+	// bandwidth too, but needs a real launcher to test against first.
+	if err := serveModpackObject(w, r, prov, key, deliverStream, "application/zip", path.Base(key)); err != nil {
 		solderJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", path.Base(key)))
-	_, _ = w.Write(data)
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // LocalProvider writes each .mrpack to one or more local filesystem paths.
@@ -90,6 +92,48 @@ func (p *LocalProvider) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("modpack storage: read %s: %w", full, err)
 	}
 	return nil, ErrNotFound
+}
+
+// Stream opens the first path that holds the key and hands back the open file.
+// The size comes from the same os.File the caller will read, not from a
+// separate Stat, so the two cannot disagree about the object being served.
+//
+// The file is left open on the successful path - closing it is the caller's
+// job, as the interface says.
+func (p *LocalProvider) Stream(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := p.ensureConfigured(); err != nil {
+		return nil, 0, err
+	}
+
+	for _, base := range p.Paths {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		full := filepath.Join(base, filepath.FromSlash(key))
+		f, err := os.Open(full)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, 0, fmt.Errorf("modpack storage: open %s: %w", full, err)
+		}
+		info, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return nil, 0, fmt.Errorf("modpack storage: stat %s: %w", full, err)
+		}
+		return f, info.Size(), nil
+	}
+	return nil, 0, ErrNotFound
+}
+
+// DownloadURL returns ("", nil): these are paths on Core's own disk, so there
+// is nothing to hand a client. The caller streams instead.
+func (p *LocalProvider) DownloadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
 }
 
 // Delete removes the key from every configured path. Missing files are not

@@ -135,14 +135,15 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Storage unavailable", http.StatusInternalServerError)
 			return
 		}
-		data, err := prov.Get(r.Context(), key)
-		if err != nil {
+		// deliverRedirect is safe here where it is not on the Solder mirror:
+		// this link is opened by a browser, and browsers follow a 302. On an
+		// S3-backed modpack storage the pack then never enters this process
+		// at all.
+		filename := pack.InternalSlug + "-" + build.VersionString + ".mrpack"
+		if err := serveModpackObject(w, r, prov, key, deliverRedirect, "application/x-modrinth-modpack+zip", filename); err != nil {
 			sendJSONError(w, "Failed to read pack", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/x-modrinth-modpack+zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", pack.InternalSlug+"-"+build.VersionString+".mrpack"))
-		_, _ = w.Write(data)
 
 	case models.ShareLinkServerPack:
 		content, err := h.state.Store.ListBuildContent(build.ID)

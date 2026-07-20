@@ -569,7 +569,26 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	solder.HandleFunc("/api/modpack/{slug}", solderHandler.GetModpack).Methods("GET")
 	solder.HandleFunc("/api/modpack/{slug}/{build}", solderHandler.GetBuild).Methods("GET")
 	solder.HandleFunc("/api/verify/{key}", solderHandler.VerifyKey).Methods("GET")
-	solder.HandleFunc("/mirror/{rest:.*}", solderHandler.SolderMirror).Methods("GET")
+	// The mirror is the one route here that serves BYTES rather than JSON and
+	// it is unauthenticated, so it gets the same kind of per-IP limiter its
+	// sibling /api/share already had. Its own instance, not a shared one: a
+	// client exhausting one budget must not lock the other.
+	//
+	// The ceiling is deliberately high, and it is the one number here that is a
+	// judgement call rather than a measurement. This budget counts REQUESTS,
+	// while a launcher installing a pack fetches one zip PER MOD - several
+	// hundred for a large pack, and quickly on a fast link - so a tight limit
+	// would return 429 in the middle of a legitimate install. Whether the
+	// launcher retries a 429 is not something this codebase can verify, so the
+	// number is set where no plausible install reaches it and only sustained
+	// automated pulling does. Raise it if a large pack ever trips it.
+	//
+	// It is not what stops the resource abuse that mattered, either. The
+	// handler used to hold each requested object in memory in full; it streams
+	// now, so concurrency costs a copy buffer rather than a whole pack. This
+	// limiter only bounds egress.
+	mirrorLimiter := handlers.NewIPRateLimiter()
+	solder.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.SolderMirrorRequestsPerMinute, solderHandler.SolderMirror)).Methods("GET")
 
 	// --- PUBLIC SHARE-LINK DOWNLOAD ---
 	// Sibling of the /solder block on the ROOT router: bypasses the /api
