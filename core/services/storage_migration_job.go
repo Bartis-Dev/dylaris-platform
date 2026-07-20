@@ -139,6 +139,20 @@ func (j *StorageMigrationJob) appendLog(line string) {
 	}
 }
 
+// snapshot copies the job so it can leave the service's mutex.
+//
+// Start used to hand its caller the SAME pointer it stored in s.job, which the
+// runner goroutine then kept writing under the mutex the caller does not hold.
+// Log is cloned rather than shared because it is the field the runner appends
+// to for the whole life of the job; the rest is copied by value. FinishedAt and
+// Verify are shared pointers on purpose: the runner replaces those pointers, it
+// never writes through them, so the pointee a snapshot holds is immutable.
+func (j *StorageMigrationJob) snapshot() *StorageMigrationJob {
+	cp := *j
+	cp.Log = append([]string(nil), j.Log...)
+	return &cp
+}
+
 // StorageMigrationInProgress reports whether a phase is still live. Mirrored
 // exactly by storageMigrationInProgress in the panel.
 func StorageMigrationInProgress(p StorageMigrationPhase) bool {
@@ -454,10 +468,11 @@ func (s *StorageMigrationService) Start(ctx context.Context, req StorageMigratio
 	s.mu.Lock()
 	s.job = job
 	s.persistLocked(job)
+	out := job.snapshot()
 	s.mu.Unlock()
 
 	go s.run(req, src, target)
-	return job, nil
+	return out, nil
 }
 
 // GetJob reads the shared job record from Redis (any Core can answer). The

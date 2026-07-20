@@ -79,6 +79,21 @@ func (j *DBMigrationJob) appendLog(line string) {
 	}
 }
 
+// snapshot copies the job so it can leave the service's mutex.
+//
+// Start used to hand its caller the SAME pointer it stored in s.job, which the
+// runner goroutine then kept writing under the mutex the caller does not hold.
+// Log and Tables are cloned because they are the two the runner keeps appending
+// to; the rest is copied by value. FinishedAt and Verify are shared pointers on
+// purpose: the runner replaces those pointers, it never writes through them, so
+// the pointee a snapshot holds is immutable.
+func (j *DBMigrationJob) snapshot() *DBMigrationJob {
+	cp := *j
+	cp.Log = append([]string(nil), j.Log...)
+	cp.Tables = append([]TableCopyResult(nil), j.Tables...)
+	return &cp
+}
+
 // DBMigrationService orchestrates a single, cluster-wide-exclusive migration
 // job. The job state lives in Redis so any Core can serve the status to admins;
 // a SetNX lock guarantees only one runs at a time. The SOURCE is the live Core's
@@ -152,10 +167,11 @@ func (s *DBMigrationService) Start(ctx context.Context, target DBConnParams, sta
 	s.mu.Lock()
 	s.job = job
 	s.persistLocked(job)
+	out := job.snapshot()
 	s.mu.Unlock()
 
 	go s.run(target, startedBy, prevBlockLevel)
-	return job, nil
+	return out, nil
 }
 
 // GetJob reads the shared job record from Redis (any Core can answer). The
