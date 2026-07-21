@@ -96,6 +96,26 @@ func newTestRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return redis.NewClient(&redis.Options{Addr: mr.Addr()}), mr
 }
 
+func TestMaxUploadCap(t *testing.T) {
+	ctx := context.Background()
+	rdb, mr := newTestRedis(t)
+
+	if got := MaxUploadCap(ctx, rdb); got != 0 {
+		t.Errorf("no cap set: got %d, want 0", got)
+	}
+	mr.Set(MaxUploadBytesKey, "4096")
+	if got := MaxUploadCap(ctx, rdb); got != 4096 {
+		t.Errorf("cap set: got %d, want 4096", got)
+	}
+	mr.Set(MaxUploadBytesKey, "not-a-number")
+	if got := MaxUploadCap(ctx, rdb); got != 0 {
+		t.Errorf("unparseable cap: got %d, want 0", got)
+	}
+	if got := MaxUploadCap(ctx, nil); got != 0 {
+		t.Errorf("nil rdb: got %d, want 0", got)
+	}
+}
+
 func TestCheckSizeCap(t *testing.T) {
 	ctx := context.Background()
 	rdb, mr := newTestRedis(t)

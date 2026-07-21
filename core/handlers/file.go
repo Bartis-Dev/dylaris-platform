@@ -803,12 +803,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	// ticket carries, so browser and beam uploads share one per-user/day bucket
 	// (shared dylaris-pkg/beam/quota). Fail-open, like the disk check above.
 	username, _ := r.Context().Value("username").(string)
+	sizeCap := quota.MaxUploadCap(r.Context(), h.state.Redis) // read once, not once per file
 	var quotaUploadSize int64
 	for _, fh := range r.MultipartForm.File["files"] {
 		quotaUploadSize += fh.Size
-		if ok, capBytes := quota.CheckSizeCap(r.Context(), h.state.Redis, fh.Size); !ok {
+		if quota.ExceedsSizeCap(fh.Size, sizeCap) {
 			sendJSONError(w, fmt.Sprintf("Upload of %s exceeds the %s per-file limit",
-				formatBytesHuman(fh.Size), formatBytesHuman(capBytes)), http.StatusRequestEntityTooLarge)
+				formatBytesHuman(fh.Size), formatBytesHuman(sizeCap)), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}

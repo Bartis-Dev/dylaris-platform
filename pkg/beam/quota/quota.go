@@ -10,6 +10,15 @@
 // counter lives under DailyKey. Every check fails OPEN: a nil client, a missing
 // or unparseable value, a non-positive limit, or an empty username all mean "no
 // limit" so a misconfigured or unpublished setting never blocks uploads.
+//
+// INVARIANT for callers: the daily quota is keyed by username, and an empty
+// username disables it entirely (so distinct anonymous/unauthenticated sessions
+// never collide in one shared bucket). Today's enforcement paths (core HTTP
+// upload, beam gRPC upload) always carry the authenticated username, so this is
+// never hit. A NEW upload/write path MUST pass that authenticated username to
+// CheckDailyQuota/RecordDailyUsage — forgetting it silently grants NO quota
+// rather than failing closed. Deliberately not a hard deny here: guarding a path
+// that does not exist would be defensive code for an impossible case.
 package quota
 
 import (
@@ -56,18 +65,28 @@ func ExceedsDaily(used, limit, incoming int64) bool {
 	return used+incoming > limit
 }
 
-// CheckSizeCap reports whether a single upload of `size` bytes is allowed under
-// the configured absolute per-upload cap. Fail-open: nil rdb, a missing or
-// unparseable key, or a non-positive cap all return allowed=true. The returned
-// capBytes is the configured cap (0 when none) for the caller's error message.
-func CheckSizeCap(ctx context.Context, rdb *redis.Client, size int64) (allowed bool, capBytes int64) {
+// MaxUploadCap returns the configured absolute per-upload cap in bytes (0 = no
+// cap). A caller checking many items (e.g. a multi-file HTTP upload) reads it
+// ONCE and applies ExceedsSizeCap per item, instead of a Redis round-trip each.
+// Fail-open: nil rdb, or a missing/unparseable key = 0 (no cap).
+func MaxUploadCap(ctx context.Context, rdb *redis.Client) int64 {
 	if rdb == nil {
-		return true, 0
+		return 0
 	}
 	capBytes, err := rdb.Get(ctx, MaxUploadBytesKey).Int64()
 	if err != nil {
-		return true, 0
+		return 0
 	}
+	return capBytes
+}
+
+// CheckSizeCap reports whether a single upload of `size` bytes is allowed under
+// the configured absolute per-upload cap. Fail-open (see MaxUploadCap). The
+// returned capBytes is the configured cap (0 when none) for the caller's error
+// message. For many items in one request, read MaxUploadCap once and use
+// ExceedsSizeCap instead of calling this per item.
+func CheckSizeCap(ctx context.Context, rdb *redis.Client, size int64) (allowed bool, capBytes int64) {
+	capBytes = MaxUploadCap(ctx, rdb)
 	return !ExceedsSizeCap(size, capBytes), capBytes
 }
 
