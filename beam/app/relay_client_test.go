@@ -1,10 +1,79 @@
 package main
 
 import (
+	"io"
 	"net"
 	"testing"
 	"time"
+
+	pb "dylaris-proto/beam"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// fakeUploadClientStream is a minimal BeamNodeService_UploadFileClient
+// (= grpc.ClientStreamingClient[BeamUploadMsg, BeamOpResp]). WriteChunk only
+// calls Send and CloseAndRecv, so the embedded nil ClientStream is never used.
+type fakeUploadClientStream struct {
+	grpc.ClientStream
+	sendErr  error
+	recvResp *pb.BeamOpResp
+	recvErr  error
+	closed   bool
+}
+
+func (f *fakeUploadClientStream) Send(*pb.BeamUploadMsg) error { return f.sendErr }
+func (f *fakeUploadClientStream) CloseAndRecv() (*pb.BeamOpResp, error) {
+	f.closed = true
+	return f.recvResp, f.recvErr
+}
+
+// TestUploadSessionWriteChunkSurfacesTerminatingStatus is the regression guard
+// for the fail-fast fix: when Send reports a bare io.EOF (server ended the
+// stream early, e.g. a limit rejection), WriteChunk must fetch the real
+// terminating status via CloseAndRecv and return THAT, not the EOF that reads
+// like a transient network blip and gets retried for 20s.
+func TestUploadSessionWriteChunkSurfacesTerminatingStatus(t *testing.T) {
+	wantErr := status.Error(codes.ResourceExhausted, "daily upload quota reached")
+	fs := &fakeUploadClientStream{sendErr: io.EOF, recvErr: wantErr}
+	sess := &UploadSession{stream: fs, cancel: func() {}}
+
+	err := sess.WriteChunk([]byte("x"), 0)
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("WriteChunk err = %v (code %v), want ResourceExhausted", err, status.Code(err))
+	}
+	if !fs.closed {
+		t.Error("CloseAndRecv was not called on io.EOF")
+	}
+}
+
+func TestUploadSessionWriteChunkPassesThroughNonEOFError(t *testing.T) {
+	// A non-EOF send error is a live stream error — returned as-is, no CloseAndRecv.
+	wantErr := status.Error(codes.Unavailable, "transient")
+	fs := &fakeUploadClientStream{sendErr: wantErr}
+	sess := &UploadSession{stream: fs, cancel: func() {}}
+
+	if err := sess.WriteChunk([]byte("x"), 0); err != wantErr {
+		t.Fatalf("WriteChunk err = %v, want %v", err, wantErr)
+	}
+	if fs.closed {
+		t.Error("CloseAndRecv should not be called on a non-EOF error")
+	}
+}
+
+func TestUploadSessionWriteChunkSuccess(t *testing.T) {
+	fs := &fakeUploadClientStream{}
+	sess := &UploadSession{stream: fs, cancel: func() {}}
+
+	if err := sess.WriteChunk([]byte("x"), 0); err != nil {
+		t.Fatalf("WriteChunk err = %v, want nil", err)
+	}
+	if fs.closed {
+		t.Error("CloseAndRecv should not be called on success")
+	}
+}
 
 func TestIsPrivateLANIP(t *testing.T) {
 	cases := []struct {

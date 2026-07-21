@@ -9,6 +9,7 @@
 
 import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
 import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
+import { isFatalBeamUploadError, cleanBeamGrpcMessage } from './beamUploadErrors';
 import { devLog } from '@/lib/devLog';
 import {
     reportUploadStart,
@@ -362,10 +363,19 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                             }
                             return;
                         } catch (err) {
+                            const m = err instanceof Error ? err.message : String(err);
+                            // A deliberate Node refusal (limit, bad path, auth) is
+                            // permanent for this upload — retrying wastes the whole
+                            // retry budget and buries the real reason under a
+                            // "Connection unstable" message. Fail fast with the
+                            // Node's own reason instead.
+                            if (isFatalBeamUploadError(m)) {
+                                devLog('beam.upload', 'error', `chunk #${chunkIdx} refused by node (fatal, no retry): ${m}`);
+                                throw new Error(cleanBeamGrpcMessage(m));
+                            }
                             attempt++;
                             if (firstFailureAt === 0) firstFailureAt = Date.now();
                             const elapsed = Date.now() - firstFailureAt;
-                            const m = err instanceof Error ? err.message : String(err);
 
                             if (elapsed > RETRY_GIVE_UP_AFTER_MS || !app.BeamUploadResume) {
                                 devLog('beam.upload', 'error', `chunk #${chunkIdx} gave up after ${attempt} attempt(s) / ${elapsed}ms: ${m}`);

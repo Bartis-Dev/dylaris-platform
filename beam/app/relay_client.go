@@ -444,11 +444,22 @@ func (c *BeamNodeClient) UploadStart(uploadID, path, filename, strategy string, 
 }
 
 func (s *UploadSession) WriteChunk(data []byte, offset int64) error {
-	return s.stream.Send(&pb.BeamUploadMsg{
+	err := s.stream.Send(&pb.BeamUploadMsg{
 		Payload: &pb.BeamUploadMsg_Chunk{
 			Chunk: &pb.BeamUploadChunkData{Data: data, Offset: offset},
 		},
 	})
+	// gRPC client-streaming reports a server-side early termination as a bare
+	// io.EOF on Send — the real terminating status (e.g. ResourceExhausted
+	// "daily upload quota reached ...", or a transient Unavailable) is only
+	// retrievable via CloseAndRecv. Fetch it so the caller sees the actual
+	// reason instead of an EOF that reads like a network blip and gets retried.
+	if err == io.EOF {
+		if _, recvErr := s.stream.CloseAndRecv(); recvErr != nil {
+			return recvErr
+		}
+	}
+	return err
 }
 
 func (s *UploadSession) Finish() error {
