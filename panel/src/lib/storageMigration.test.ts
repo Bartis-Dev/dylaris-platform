@@ -135,6 +135,9 @@ describe('targetConfigValid', () => {
   it('rejects an unset backend', () => {
     expect(targetConfigValid(EMPTY_TARGET_CONFIG)).toBe(false);
   });
+  it('accepts a selected connection even with blank inline s3 fields', () => {
+    expect(targetConfigValid(validTargetConfig({ s3Bucket: '', s3AccessKey: '', s3SecretKey: '', connectionId: 5 }))).toBe(true);
+  });
 });
 
 describe('canStartMigration', () => {
@@ -257,6 +260,13 @@ describe('startMigrateFromForm', () => {
       form({ targetConfig: { ...EMPTY_TARGET_CONFIG, backend: 'path', path: '/mnt/new', pathConfirmed: true } }),
     );
     expect(body.targetConfig).toEqual({ backend: 'path', path: '/mnt/new', pathConfirmed: true });
+  });
+
+  it('a connection target sends only the reference, never the inline secret', () => {
+    const body = startMigrateFromForm(
+      form({ targetConfig: validTargetConfig({ connectionId: 5, s3SecretKey: 'must-not-be-sent' }) }),
+    );
+    expect(body.targetConfig).toEqual({ backend: 's3', connectionId: 5 });
   });
 
   // Minor fix: an unset backend must not be sent as a malformed path request

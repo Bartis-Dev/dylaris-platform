@@ -135,6 +135,9 @@ export interface TargetConfigForm {
   s3SecretKey: string;
   s3PathStyle: boolean;
   s3Prefix: string;
+  // When > 0 the s3 target is a saved storage connection; the inline s3 fields
+  // are ignored and the credentials come from the connection.
+  connectionId: number;
 }
 
 export interface MigrationForm {
@@ -159,6 +162,7 @@ export const EMPTY_TARGET_CONFIG: TargetConfigForm = {
   s3SecretKey: '',
   s3PathStyle: false,
   s3Prefix: '',
+  connectionId: 0,
 };
 
 export const EMPTY_MIGRATION_FORM: MigrationForm = {
@@ -199,6 +203,9 @@ export function deleteSourceAllowed(verifyMode: VerifyMode): boolean {
 // for a config the API would reject with 400.
 export function targetConfigValid(cfg: TargetConfigForm): boolean {
   if (cfg.backend === 's3') {
+    // A saved connection supplies the credentials; the inline s3 fields are
+    // then irrelevant. The server validates the connection itself.
+    if (cfg.connectionId > 0) return true;
     return !!cfg.s3Bucket && !!cfg.s3AccessKey && !!cfg.s3SecretKey;
   }
   if (cfg.backend === 'path') {
@@ -310,6 +317,7 @@ export interface StorageTargetConfigBody {
   s3SecretKey?: string;
   s3PathStyle?: boolean;
   s3Prefix?: string;
+  connectionId?: number;
 }
 
 export interface StartStorageMigrationBody {
@@ -351,7 +359,11 @@ export function startMigrateFromForm(form: MigrationForm): StartStorageMigration
     return body;
   }
   const c = form.targetConfig;
-  if (c.backend === 's3') {
+  if (c.backend === 's3' && c.connectionId > 0) {
+    // A saved connection: send only the reference. The server pulls the
+    // credentials from the connection; no inline secret goes on the wire.
+    body.targetConfig = { backend: 's3', connectionId: c.connectionId };
+  } else if (c.backend === 's3') {
     body.targetConfig = {
       backend: 's3',
       s3Endpoint: c.s3Endpoint,

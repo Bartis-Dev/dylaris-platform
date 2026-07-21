@@ -18,6 +18,7 @@ import {
     type VerifyMode,
 } from '@/lib/storageMigration';
 import { systemEvents } from '@/lib/systemEvents';
+import { listStorageConnections, type StorageConnection } from '@/lib/api';
 
 const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
     preparing: 'Preparing',
@@ -49,6 +50,12 @@ export default function StorageMigrationTab() {
 
     const [wizardOpen, setWizardOpen] = useState(false);
     const [form, setForm] = useState<MigrationForm>(EMPTY_MIGRATION_FORM);
+    const [connections, setConnections] = useState<StorageConnection[]>([]);
+    useEffect(() => {
+        listStorageConnections().then(res => {
+            if (res.success && res.connections) setConnections(res.connections);
+        });
+    }, []);
     const [submitting, setSubmitting] = useState(false);
 
     const [cancelling, setCancelling] = useState(false);
@@ -407,6 +414,7 @@ export default function StorageMigrationTab() {
                                 {form.targetKind === 'config' ? (
                                     <TargetConfigFields
                                         cfg={form.targetConfig}
+                                        connections={connections}
                                         onChange={patch => setForm(f => ({ ...f, targetConfig: { ...f.targetConfig, ...patch } }))}
                                     />
                                 ) : targets.length === 0 ? (
@@ -840,9 +848,10 @@ function VerifyView({ report, dataSet }: { report: StorageVerifyReport; dataSet:
 // backend that has not been saved yet, so there is nothing to prefill from and
 // the operator always enters it fresh.
 function TargetConfigFields({
-    cfg, onChange,
+    cfg, connections, onChange,
 }: {
     cfg: TargetConfigForm;
+    connections: StorageConnection[];
     onChange: (patch: Partial<TargetConfigForm>) => void;
 }) {
     return (
@@ -862,6 +871,21 @@ function TargetConfigFields({
 
             {cfg.backend === 's3' && (
                 <div className="space-y-2">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="mono-label">Storage connection</label>
+                        <select
+                            value={cfg.connectionId}
+                            onChange={e => onChange({ connectionId: Number(e.target.value) })}
+                            className="input-field w-full"
+                        >
+                            <option value={0}>Enter credentials manually</option>
+                            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                    </div>
+                    {cfg.connectionId > 0 ? (
+                        <p className="alert alert-info text-xs">Migrating to the saved connection. Its credentials are managed on the Storage Connections page.</p>
+                    ) : (
+                    <>
                     <Field label="Endpoint" value={cfg.s3Endpoint} onChange={v => onChange({ s3Endpoint: v })} placeholder="https://s3.example.com" />
                     <Field label="Bucket" value={cfg.s3Bucket} onChange={v => onChange({ s3Bucket: v })} />
                     <Field label="Region" value={cfg.s3Region} onChange={v => onChange({ s3Region: v })} placeholder="auto" />
@@ -872,6 +896,8 @@ function TargetConfigFields({
                         <input type="checkbox" checked={cfg.s3PathStyle} onChange={e => onChange({ s3PathStyle: e.target.checked })} />
                         <span>Use path-style addressing (required by MinIO and some S3-compatible providers)</span>
                     </label>
+                    </>
+                    )}
                 </div>
             )}
 
