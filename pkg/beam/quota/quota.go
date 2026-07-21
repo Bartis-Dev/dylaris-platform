@@ -90,26 +90,35 @@ func CheckSizeCap(ctx context.Context, rdb *redis.Client, size int64) (allowed b
 	return !ExceedsSizeCap(size, capBytes), capBytes
 }
 
-// CheckDailyQuota reports whether adding `incoming` bytes to `username`'s daily
-// upload total is allowed under the configured daily limit, reading the
-// per-user/day counter. Fail-open: nil rdb, an empty username, a missing or
-// unparseable or non-positive limit, or a counter read error all return
-// allowed=true. Returns the current used total and the configured limit for the
-// caller's error message. Best-effort: the counter is advisory (bumped on
-// completion via RecordDailyUsage), so this reflects the value at call time and
-// concurrent uploads by the same user are not serialized against the limit.
-func CheckDailyQuota(ctx context.Context, rdb *redis.Client, username string, incoming int64) (allowed bool, used, limit int64) {
+// DailyUsage returns the user's bytes uploaded today and the configured daily
+// limit. Both are 0 when there is no limit (nil rdb, empty username, a missing
+// or unparseable or non-positive limit). A caller that needs a remaining-quota
+// ceiling (e.g. the streaming SFTP path) uses limit-used. Fail-open: a counter
+// read error reports used=0.
+func DailyUsage(ctx context.Context, rdb *redis.Client, username string) (used, limit int64) {
 	if rdb == nil || username == "" {
-		return true, 0, 0
+		return 0, 0
 	}
 	limit, err := rdb.Get(ctx, DailyUploadBytesKey).Int64()
 	if err != nil || limit <= 0 {
-		return true, 0, limit
+		return 0, 0
 	}
 	used, err = rdb.Get(ctx, DailyKey(username, time.Now())).Int64()
 	if err != nil {
 		used = 0 // no counter yet today
 	}
+	return used, limit
+}
+
+// CheckDailyQuota reports whether adding `incoming` bytes to `username`'s daily
+// upload total is allowed under the configured daily limit. Fail-open (see
+// DailyUsage): no limit / no rdb / no username all return allowed=true. Returns
+// the current used total and the configured limit for the caller's error
+// message. Best-effort: the counter is advisory (bumped on completion via
+// RecordDailyUsage), so this reflects the value at call time and concurrent
+// uploads by the same user are not serialized against the limit.
+func CheckDailyQuota(ctx context.Context, rdb *redis.Client, username string, incoming int64) (allowed bool, used, limit int64) {
+	used, limit = DailyUsage(ctx, rdb, username)
 	return !ExceedsDaily(used, limit, incoming), used, limit
 }
 

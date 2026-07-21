@@ -158,6 +158,29 @@ func TestCheckDailyQuota(t *testing.T) {
 	}
 }
 
+func TestDailyUsage(t *testing.T) {
+	ctx := context.Background()
+	rdb, mr := newTestRedis(t)
+
+	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 0 || limit != 0 {
+		t.Errorf("no limit set: (%d, %d), want (0, 0)", used, limit)
+	}
+	mr.Set(DailyUploadBytesKey, "1000")
+	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 0 || limit != 1000 {
+		t.Errorf("limit set, no counter: (%d, %d), want (0, 1000)", used, limit)
+	}
+	mr.Set(DailyKey("alice", time.Now()), "750")
+	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 750 || limit != 1000 {
+		t.Errorf("counter set: (%d, %d), want (750, 1000)", used, limit)
+	}
+	if used, limit := DailyUsage(ctx, rdb, ""); used != 0 || limit != 0 {
+		t.Errorf("empty username: (%d, %d), want (0, 0)", used, limit)
+	}
+	if used, limit := DailyUsage(ctx, nil, "alice"); used != 0 || limit != 0 {
+		t.Errorf("nil rdb: (%d, %d), want (0, 0)", used, limit)
+	}
+}
+
 func TestRecordDailyUsage(t *testing.T) {
 	ctx := context.Background()
 	rdb, mr := newTestRedis(t)

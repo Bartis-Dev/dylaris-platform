@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-pkg/beam/quota"
+
 	"github.com/pkg/sftp"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
@@ -139,11 +141,11 @@ func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 		if err != nil {
 			continue
 		}
-		go s.handleSession(channel, requests, servers)
+		go s.handleSession(channel, requests, servers, username)
 	}
 }
 
-func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Request, servers []sftpServerRef) {
+func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Request, servers []sftpServerRef, username string) {
 	defer channel.Close()
 
 	for req := range requests {
@@ -153,7 +155,7 @@ func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Req
 				if req.WantReply {
 					req.Reply(true, nil)
 				}
-				vfs := newVirtualFS(servers, s.storageMgr)
+				vfs := newVirtualFS(servers, s.storageMgr, s.rdb, username)
 				handlers := sftp.Handlers{
 					FileGet:  vfs,
 					FilePut:  vfs,
@@ -224,14 +226,20 @@ type virtualFS struct {
 	servers    []sftpServerRef
 	storageMgr *StorageManager
 	nameToUUID map[string]string
+	// rdb + username let Filewrite meter writes against the upload limits and
+	// attribute them to the user's shared daily-quota bucket. The SFTP login
+	// username is the account username (sftp_sync.go keys sftp:auth by it), the
+	// same identity the beam/HTTP upload paths use, so all three share one bucket.
+	rdb      *redis.Client
+	username string
 }
 
-func newVirtualFS(servers []sftpServerRef, sm *StorageManager) *virtualFS {
+func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client, username string) *virtualFS {
 	m := make(map[string]string, len(servers))
 	for _, s := range servers {
 		m[s.Name] = s.UUID
 	}
-	return &virtualFS{servers: servers, storageMgr: sm, nameToUUID: m}
+	return &virtualFS{servers: servers, storageMgr: sm, nameToUUID: m, rdb: rdb, username: username}
 }
 
 // resolve converts a virtual path to a real OS path.
@@ -278,7 +286,84 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 		return nil, os.ErrPermission
 	}
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	return os.OpenFile(realPath, flags, 0644)
+	f, err := os.OpenFile(realPath, flags, 0644)
+	if err != nil {
+		return nil, err
+	}
+	// Without Redis there is nothing to meter against — behave as before.
+	if v.rdb == nil {
+		return f, nil
+	}
+	// SFTP is a streaming protocol with no declared size, so the upload limits
+	// are enforced per write against a ceiling computed once here, and the
+	// written bytes count toward the user's daily quota on close.
+	ceil, reason := sftpWriteCeiling(context.Background(), v.rdb, v.serverUUIDForPath(r.Filepath), v.username)
+	return &meteredSFTPWriter{f: f, ceil: ceil, reason: reason, rdb: v.rdb, username: v.username}, nil
+}
+
+// serverUUIDForPath returns the server UUID a virtual path targets, or "" for the
+// virtual root / an unknown server name.
+func (v *virtualFS) serverUUIDForPath(path string) string {
+	path = filepath.ToSlash(filepath.Clean("/" + path))
+	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
+	return v.nameToUUID[parts[0]]
+}
+
+// sftpWriteCeiling returns the largest end offset a write to this server dir may
+// reach — the minimum of the enforced upload limits (per-upload size cap,
+// remaining server disk headroom, remaining daily quota) — plus a label naming
+// the tightest one. ceil < 0 means no limit is configured (writes unrestricted).
+func sftpWriteCeiling(ctx context.Context, rdb *redis.Client, serverUUID, username string) (ceil int64, reason string) {
+	ceil = -1
+	consider := func(enforced bool, remaining int64, label string) {
+		if !enforced {
+			return
+		}
+		if remaining < 0 {
+			remaining = 0 // already over -> ceiling 0 rejects any non-empty write
+		}
+		if ceil < 0 || remaining < ceil {
+			ceil, reason = remaining, label
+		}
+	}
+	if capBytes := quota.MaxUploadCap(ctx, rdb); capBytes > 0 {
+		consider(true, capBytes, "per-upload size limit")
+	}
+	if total, limit := serverDiskGauge(ctx, rdb, serverUUID); limit > 0 {
+		consider(true, limit-total, "server disk limit")
+	}
+	if used, limit := quota.DailyUsage(ctx, rdb, username); limit > 0 {
+		consider(true, limit-used, "daily upload quota")
+	}
+	return ceil, reason
+}
+
+// meteredSFTPWriter wraps the destination file so streaming SFTP writes obey the
+// upload limits (enforced per write, since there is no declared size) and count
+// toward the user's shared daily quota when the transfer closes.
+type meteredSFTPWriter struct {
+	f        *os.File
+	ceil     int64  // max allowed end offset; < 0 = unlimited
+	reason   string // which limit set the ceiling, for the error
+	maxEnd   int64  // largest end offset written = resulting file size
+	rdb      *redis.Client
+	username string
+}
+
+func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
+	if m.ceil >= 0 && off+int64(len(p)) > m.ceil {
+		return 0, fmt.Errorf("SFTP write refused: %s exceeded", m.reason)
+	}
+	n, err := m.f.WriteAt(p, off)
+	if end := off + int64(n); end > m.maxEnd {
+		m.maxEnd = end
+	}
+	return n, err
+}
+
+func (m *meteredSFTPWriter) Close() error {
+	quota.RecordDailyUsage(context.Background(), m.rdb, m.username, m.maxEnd)
+	return m.f.Close()
 }
 
 // --- sftp.FileCmder ---
@@ -399,12 +484,12 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 
 type virtualDirInfo struct{ name string }
 
-func (d *virtualDirInfo) Name() string      { return d.name }
-func (d *virtualDirInfo) Size() int64       { return 0 }
-func (d *virtualDirInfo) Mode() os.FileMode { return os.ModeDir | 0755 }
+func (d *virtualDirInfo) Name() string       { return d.name }
+func (d *virtualDirInfo) Size() int64        { return 0 }
+func (d *virtualDirInfo) Mode() os.FileMode  { return os.ModeDir | 0755 }
 func (d *virtualDirInfo) ModTime() time.Time { return time.Time{} }
-func (d *virtualDirInfo) IsDir() bool       { return true }
-func (d *virtualDirInfo) Sys() interface{}  { return nil }
+func (d *virtualDirInfo) IsDir() bool        { return true }
+func (d *virtualDirInfo) Sys() interface{}   { return nil }
 
 type namedFileInfo struct {
 	os.FileInfo

@@ -531,9 +531,25 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
+	// A direct content save writes bytes to the server dir just like an upload,
+	// so the same admin caps apply — otherwise it would be a way to write past
+	// the size cap / disk limit / daily quota. Size is known up front.
+	size := int64(len(req.Content))
+	username := s.extractUsername(ctx)
+	if total, limit := serverDiskGauge(ctx, s.rdb, serverUUID); beamUploadExceedsDisk(total, limit, size) {
+		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("disk limit reached: %d of %d bytes used", total, limit)}, nil
+	}
+	if ok, capBytes := quota.CheckSizeCap(ctx, s.rdb, size); !ok {
+		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("file of %d bytes exceeds the %d byte per-upload limit", size, capBytes)}, nil
+	}
+	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, size); !ok {
+		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, limit)}, nil
+	}
+
 	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	s.recordBeamDailyUsage(ctx, username, size)
 
 	return &pb.BeamOpResp{Success: true, Message: "saved"}, nil
 }
@@ -897,30 +913,38 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	return stream.SendAndClose(&pb.BeamOpResp{Success: true, Message: "uploaded"})
 }
 
-// checkBeamUploadDiskHeadroom rejects an upload that would push the server past
-// its disk limit, reading the same dylaris:server:<uuid>:stats:disk gauge the
-// HTTP upload path checks (core file.go). A missing gauge, no rdb, an unparseable
-// value, or a non-positive limit means "no known limit" and the upload proceeds:
-// the gauge is advisory, and refusing on its absence would break every upload
-// whenever stats have not been published yet.
-func (s *beamServer) checkBeamUploadDiskHeadroom(ctx context.Context, serverUUID string, incoming int64) error {
-	if s.rdb == nil {
-		return nil
+// serverDiskGauge reads the advisory per-server disk gauge
+// (dylaris:server:<uuid>:stats:disk, JSON {total,limit}). Returns (0,0) on a nil
+// client, a missing key, or an unparseable value, which every caller treats as
+// "no known limit". Shared by the beam upload, SFTP and SaveFileContent paths so
+// they all read the gauge the same way.
+func serverDiskGauge(ctx context.Context, rdb *redis.Client, serverUUID string) (total, limit int64) {
+	if rdb == nil {
+		return 0, 0
 	}
-	raw, err := s.rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", serverUUID)).Result()
+	raw, err := rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", serverUUID)).Result()
 	if err != nil {
-		return nil
+		return 0, 0
 	}
 	var disk struct {
 		Total int64 `json:"total"`
 		Limit int64 `json:"limit"`
 	}
 	if json.Unmarshal([]byte(raw), &disk) != nil {
-		return nil
+		return 0, 0
 	}
-	if beamUploadExceedsDisk(disk.Total, disk.Limit, incoming) {
+	return disk.Total, disk.Limit
+}
+
+// checkBeamUploadDiskHeadroom rejects an upload that would push the server past
+// its disk limit. A missing gauge / no rdb / a non-positive limit means "no known
+// limit" and the upload proceeds: the gauge is advisory, and refusing on its
+// absence would break every upload whenever stats have not been published yet.
+func (s *beamServer) checkBeamUploadDiskHeadroom(ctx context.Context, serverUUID string, incoming int64) error {
+	total, limit := serverDiskGauge(ctx, s.rdb, serverUUID)
+	if beamUploadExceedsDisk(total, limit, incoming) {
 		return status.Errorf(codes.ResourceExhausted,
-			"disk limit reached: %d of %d bytes used, upload is %d bytes", disk.Total, disk.Limit, incoming)
+			"disk limit reached: %d of %d bytes used, upload is %d bytes", total, limit, incoming)
 	}
 	return nil
 }
