@@ -55,21 +55,89 @@ func (l *LocalStorage) resolveKey(key string) (string, error) {
 	return full, nil
 }
 
-func (l *LocalStorage) Put(_ context.Context, key string, r io.Reader, _ int64) error {
+// backupUploadTempPrefix marks the half-written archives Put leaves behind when
+// a transfer dies between the copy and the rename. A fixed, recognisable prefix
+// lets List hide them so a partial upload is never served as a real backup, and
+// lets orphans be swept.
+const backupUploadTempPrefix = ".dylaris-backup-upload-"
+
+// ctxReader aborts a copy between chunks once ctx is done. It cannot unblock a
+// read already stuck in a syscall on a wedged mount - nothing in userspace can -
+// but it stops a copy that is still making progress (a cancelled job, a dropped
+// stream).
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// Put stages the archive next to its destination and renames it into place, so
+// the destination key only ever refers to a complete file.
+//
+// Writing straight into the destination truncated the real name up front, so a
+// transfer that died mid-copy - a dropped stream, a mounted share going away -
+// either published a truncated archive under the real name or destroyed the
+// previous good one. Silent backup corruption; this is the fix. It mirrors the
+// core LocalProvider.WriteFile, which was fixed the same way.
+//
+// The temp file lives in the destination directory because rename cannot cross
+// filesystems. rename is atomic on local POSIX; neither CIFS nor NFS guarantees
+// it, so on a mounted share this is a large improvement over truncate-in-place,
+// not a guarantee.
+func (l *LocalStorage) Put(ctx context.Context, key string, r io.Reader, _ int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, err := l.resolveKey(key)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	dir := filepath.Dir(full)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+
+	tmp, err := os.CreateTemp(dir, backupUploadTempPrefix+"*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, r)
-	return err
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	// CreateTemp is 0600; archives are read back by Core (and by other replicas
+	// when BasePath is a share), so keep the previous 0644 mode.
+	if err := tmp.Chmod(0o644); err != nil {
+		return err
+	}
+	if _, err := io.Copy(tmp, &ctxReader{ctx: ctx, r: r}); err != nil {
+		return err
+	}
+	// Sync before rename so a network filesystem that buffers the write and
+	// fails on flush surfaces the error here, instead of renaming a file whose
+	// tail never landed.
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, full); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (l *LocalStorage) Get(_ context.Context, key string) (io.ReadCloser, error) {
@@ -105,6 +173,11 @@ func (l *LocalStorage) List(_ context.Context, prefix string) ([]Object, error) 
 			return walkErr
 		}
 		if info.IsDir() {
+			return nil
+		}
+		// Skip staging temp files Put may have left behind (see Put): a partial
+		// upload must never be listed or served as a real backup archive.
+		if strings.HasPrefix(filepath.Base(path), backupUploadTempPrefix) {
 			return nil
 		}
 		rel, _ := filepath.Rel(l.BasePath, path)
