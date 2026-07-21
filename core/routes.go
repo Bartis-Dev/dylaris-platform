@@ -137,12 +137,17 @@ var requiredCaps = map[string]string{
 	// server from the job/run row, not a path {id}/{uuid} -> in-handler only
 	// (Rule R5), deliberately NOT listed here (they go into
 	// authz.InHandlerAuthzRoutes in Task 22).
-	"/api/backup-storages":                     "settings.read",
-	"/api/backup-storages/{id:[0-9]+}":         "settings.write",
-	"/api/backup-storages/{id:[0-9]+}/test":    "settings.write",
-	"/api/servers/{id:[0-9]+}/backup-jobs":     "backups.read",
-	"/api/servers/{id:[0-9]+}/backup-restores": "backups.read",
-	"/api/servers/{id:[0-9]+}/backup-usage":    "backups.read",
+	"/api/backup-storages":                  "settings.read",
+	"/api/backup-storages/{id:[0-9]+}":      "settings.write",
+	"/api/backup-storages/{id:[0-9]+}/test": "settings.write",
+	// storage-connections are the named, shared storage-provider configs that
+	// generalize backup-storages -> same PANEL settings.read/write treatment.
+	"/api/storage-connections":                  "settings.read",
+	"/api/storage-connections/{id:[0-9]+}":      "settings.write",
+	"/api/storage-connections/{id:[0-9]+}/test": "settings.write",
+	"/api/servers/{id:[0-9]+}/backup-jobs":      "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-restores":  "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-usage":     "backups.read",
 
 	// Phase 4 Task 11: per-server network (gateway) routes. GET+POST /routes
 	// share one template -> network.read representative; the fine
@@ -465,6 +470,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesFeedURLPlatform, appState.UpdatesFeedURLGateway)
 	backupHandler := handlers.NewBackupHandler(appState)
+	storageConnectionsHandler := handlers.NewStorageConnectionsHandler(appState)
 	regionsHandler := handlers.NewRegionsHandler(appState)
 	userRegionsHandler := handlers.NewUserRegionsHandler(appState)
 	authSettingsHandler := handlers.NewAuthSettingsHandler(appState)
@@ -1393,6 +1399,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.UpdateStorage))).Methods("PATCH")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteStorage))).Methods("DELETE")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.TestStorage))).Methods("POST")
+
+	// storage-connections: named, shared, at-rest-encrypted storage configs that
+	// generalize backup-storages. Same PANEL settings.read/write gating.
+	api.HandleFunc("/storage-connections", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageConnectionsHandler.ListConnections))).Methods("GET")
+	api.HandleFunc("/storage-connections", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.CreateConnection))).Methods("POST")
+	api.HandleFunc("/storage-connections/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.UpdateConnection))).Methods("PATCH")
+	api.HandleFunc("/storage-connections/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.DeleteConnection))).Methods("DELETE")
+	api.HandleFunc("/storage-connections/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.TestConnection))).Methods("POST")
+
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListJobs))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.create")(backupHandler.CreateJob))).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateJob)).Methods("PATCH")
