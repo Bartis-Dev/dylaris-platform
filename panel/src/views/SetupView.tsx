@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
-import { uploadFiles } from '@/lib/api/files';
+import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
 import { JAVA_IMAGES, recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
@@ -344,7 +344,10 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 const renamedFile = new File([uploadFile], '.upload.zip', { type: uploadFile.type });
                 const dt = new DataTransfer();
                 dt.items.add(renamedFile);
-                const uploadRes = await uploadFiles(sanitized, dt.files, (p) => setUploadProgress(p), undefined, undefined, server.uuid);
+                // Inside the Beam desktop app this streams the archive straight to
+                // the node over the beam tunnel; in a browser createBeamAdapter
+                // resolves to the same HTTP-through-Core upload as before.
+                const uploadRes = await createBeamAdapter().uploadFiles(sanitized, dt.files, (p) => setUploadProgress(p), undefined, undefined, server.uuid);
                 if (!uploadRes.success) {
                     setError(uploadRes.message || 'Upload failed');
                     setSubmitting(false);
