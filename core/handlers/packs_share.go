@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -160,14 +161,24 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to load content", http.StatusInternalServerError)
 			return
 		}
-		data, err := h.renderServerPack(r.Context(), content)
-		if err != nil {
-			sendJSONError(w, "Failed to render server pack", http.StatusInternalServerError)
-			return
-		}
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", pack.InternalSlug+"-"+build.VersionString+"-server.zip"))
-		_, _ = w.Write(data)
+		// The pack streams straight to the client so Core never holds the whole
+		// archive in memory. cw tracks whether any byte has been sent: a render
+		// error before the first byte can still be a clean 500 (the headers set
+		// above are only sent on the first write), while a failure partway
+		// through can only be logged - the status is already committed. The
+		// security checks inside renderServerPack run before each entry is
+		// written, so a rejected entry never reaches the client.
+		cw := &countingWriter{w: w}
+		if err := h.renderServerPack(r.Context(), content, cw); err != nil {
+			if cw.written == 0 {
+				sendJSONError(w, "Failed to render server pack", http.StatusInternalServerError)
+			} else {
+				log.Printf("share: server-pack render failed for %s after %d bytes: %v", pack.InternalSlug, cw.written, err)
+			}
+			return
+		}
 
 	default:
 		notFound()
