@@ -66,6 +66,24 @@ func (s *S3Provider) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
+// PutStream uploads size bytes from r with Content-Length set, so the object
+// store streams the body instead of Core buffering it. r should be seekable (a
+// temp file) so the SDK can rewind on a retry.
+func (s *S3Provider) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   r,
+	}
+	if size > 0 {
+		input.ContentLength = aws.Int64(size)
+	}
+	if _, err := s.client.PutObject(ctx, input); err != nil {
+		return fmt.Errorf("modpack storage: s3 put-stream %s: %w", key, err)
+	}
+	return nil
+}
+
 func (s *S3Provider) Get(ctx context.Context, key string) ([]byte, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),

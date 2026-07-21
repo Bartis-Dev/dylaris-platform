@@ -231,3 +231,36 @@ func newTestS3(t *testing.T, endpoint string) *S3Provider {
 	}
 	return p
 }
+
+// TestLocalProvider_PutStreamMirrorsAndRoundTrips: PutStream must land the
+// object on EVERY configured path (Get probes them in order), reading the
+// source stream only once. It is the write-side counterpart of Stream.
+func TestLocalProvider_PutStreamMirrorsAndRoundTrips(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	p := &LocalProvider{Paths: []string{a, b}}
+
+	body := "streamed-object-bytes"
+	if err := p.PutStream(context.Background(), "modpacks/pack.mrpack", strings.NewReader(body), int64(len(body))); err != nil {
+		t.Fatalf("PutStream: %v", err)
+	}
+
+	// Present on both mirror paths.
+	for _, base := range []string{a, b} {
+		got, err := os.ReadFile(filepath.Join(base, "modpacks", "pack.mrpack"))
+		if err != nil {
+			t.Fatalf("read from %s: %v", base, err)
+		}
+		if string(got) != body {
+			t.Errorf("path %s has %q, want %q", base, got, body)
+		}
+	}
+
+	// And retrievable through Get.
+	got, err := p.Get(context.Background(), "modpacks/pack.mrpack")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("Get = %q, want %q", got, body)
+	}
+}

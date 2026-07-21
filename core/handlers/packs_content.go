@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -136,6 +138,28 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 	return err
 }
 
+// validateStoredModZip runs the store-time zip checks over a seekable upload
+// (an io.ReaderAt) instead of a []byte, so a large pre-built content bundle
+// never has to be read into memory just to be validated. It rejects a
+// traversal-bearing entry name (the render re-serves these verbatim) and any
+// entry declaring a size over the render cap (a decompression bomb must not be
+// persisted). An unreadable zip is rejected.
+func validateStoredModZip(ra io.ReaderAt, size int64) error {
+	zr, err := zip.NewReader(ra, size)
+	if err != nil {
+		return fmt.Errorf("zip is unreadable or malformed")
+	}
+	for _, f := range zr.File {
+		if modpack.IsUnsafeEntryPath(f.Name) {
+			return fmt.Errorf("zip contains unsafe entry paths")
+		}
+		if f.UncompressedSize64 > maxServerPackEntryBytes {
+			return fmt.Errorf("zip entry exceeds the size cap")
+		}
+	}
+	return nil
+}
+
 func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok || b.Frozen {
@@ -144,8 +168,12 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := r.Context().Value("userID").(string)
 
-	// multipart: field "file", plus form fields side + contentType
-	if err := r.ParseMultipartForm(512 << 20); err != nil { // 512 MiB
+	// multipart: field "file", plus form fields side + contentType. The memory
+	// budget is small on purpose: it is how much of the file part is held in RAM
+	// before the rest spills to a temp file, so a large upload costs a few MiB
+	// of heap plus disk rather than its whole size in memory. The stored .zip
+	// path then reads that temp-backed part by streaming.
+	if err := r.ParseMultipartForm(8 << 20); err != nil { // 8 MiB in RAM, rest to disk
 		sendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
 		return
 	}
@@ -155,11 +183,6 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	data, err := io.ReadAll(f)
-	if err != nil {
-		sendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
-		return
-	}
 	side := r.FormValue("side")
 	if side == "" {
 		side = models.SideBoth
@@ -176,61 +199,20 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A raw .jar is wrapped into a Solder zip (mods/<file>.jar); an already-
-	// Solder-format .zip is stored as-is; any other single raw file (e.g. a
-	// config text file) is wrapped at its in-.minecraft target path so the
-	// stored artifact is always a valid Solder zip.
-	var zipBytes []byte
-	switch {
-	case strings.HasSuffix(strings.ToLower(fileName), ".jar"):
-		zipBytes, err = modpack.WrapJarAsSolderZip(fileName, data)
-		if err != nil {
-			sendJSONError(w, "Failed to wrap jar", http.StatusInternalServerError)
-			return
-		}
-	case strings.HasSuffix(strings.ToLower(fileName), ".zip") && contentType == models.ContentTypeMod:
-		// A pre-structured Solder-format bundle (config/, resourcepacks/, ...):
-		// store as-is, but reject traversal-bearing entries since the render
-		// re-serves these bytes verbatim.
-		if modpack.HasUnsafeZipEntry(data) {
-			sendJSONError(w, "Zip contains unsafe entry paths", http.StatusBadRequest)
-			return
-		}
-		// Store-time defense in depth (BC2 bundled minor): reject a per-entry
-		// declared size over the render cap so a decompression bomb is never
-		// persisted, on top of the render-time cap in packs_mrpack.go /
-		// packs_serverpack.go.
-		if hasOversizedZipEntry(data) {
-			sendJSONError(w, "Zip entry exceeds the size cap", http.StatusBadRequest)
-			return
-		}
-		zipBytes = data
-	default:
-		// A resourcepack/shaderpack/config file (incl. a raw .zip resourcepack
-		// or a raw config text file): wrap at its target path so it lands in the
-		// right in-.minecraft folder instead of the instance root.
-		zipBytes, err = modpack.BuildSolderContentZip(targetPathFor(contentType, fileName), data)
-		if err != nil {
-			sendJSONError(w, "Failed to wrap file", http.StatusInternalServerError)
-			return
-		}
-	}
-	md5hex, sha1hex, _ := modpack.Hashes(zipBytes)
-	// sha1 of the inner jar drives Modrinth auto-link; for a wrapped jar hash the jar itself.
-	_, innerSha1, innerSha512 := modpack.Hashes(data)
-
 	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
 	if err != nil || prov == nil {
 		sendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return
 	}
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
-	version := "u-" + sha1hex[:8]
-	key := "packs/" + userID + "/mods/" + slug + "/" + slug + "-" + version + ".zip"
-	if err := prov.Put(r.Context(), key, zipBytes); err != nil {
-		sendJSONError(w, "Storage put failed", http.StatusInternalServerError)
+
+	meta, herr := h.storeUploadedContent(r.Context(), prov, f, hdr, fileName, contentType, userID, slug)
+	if herr != nil {
+		sendJSONError(w, herr.msg, herr.status)
 		return
 	}
+	md5hex, innerSha1, innerSha512 := meta.md5, meta.innerSha1, meta.innerSha512
+	key, version := meta.key, meta.version
 
 	modID, err := h.state.Store.UpsertMod(&models.Mod{
 		OwnerID: userID, Slug: slug, PrettyName: fileName, ContentType: contentType,
@@ -242,7 +224,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	mv := &models.Modversion{
 		ModID:      modID,
 		Version:    version,
-		Filesize:   int64(len(zipBytes)),
+		Filesize:   meta.size,
 		StorageKey: key,
 		MD5:        md5hex,
 		SHA1:       innerSha1,

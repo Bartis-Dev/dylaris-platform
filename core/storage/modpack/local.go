@@ -66,6 +66,88 @@ func (p *LocalProvider) Put(ctx context.Context, key string, data []byte) error 
 	return nil
 }
 
+// PutStream copies size bytes from r to the first configured path, then mirrors
+// that file to any remaining paths. The source stream is read exactly once (into
+// the first path), so the caller never has to seek it and memory stays a copy
+// buffer regardless of object size. size is accepted for interface symmetry and
+// is not needed here (the filesystem knows the length).
+func (p *LocalProvider) PutStream(ctx context.Context, key string, r io.Reader, _ int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := p.ensureConfigured(); err != nil {
+		return err
+	}
+
+	written := make([]string, 0, len(p.Paths))
+	rollback := func() {
+		for _, done := range written {
+			_ = os.Remove(done)
+		}
+	}
+
+	// First path consumes the stream.
+	first := filepath.Join(p.Paths[0], filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(first), 0o755); err != nil {
+		return fmt.Errorf("modpack storage: mkdir %s: %w", filepath.Dir(first), err)
+	}
+	dst, err := os.Create(first)
+	if err != nil {
+		return fmt.Errorf("modpack storage: create %s: %w", first, err)
+	}
+	if _, err := io.Copy(dst, r); err != nil {
+		dst.Close()
+		_ = os.Remove(first)
+		return fmt.Errorf("modpack storage: write %s: %w", first, err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(first)
+		return fmt.Errorf("modpack storage: write %s: %w", first, err)
+	}
+	written = append(written, first)
+
+	// Remaining paths are copied from the file just written, so the source
+	// stream is not needed again.
+	for _, base := range p.Paths[1:] {
+		if err := ctx.Err(); err != nil {
+			rollback()
+			return err
+		}
+		if err := copyLocalFile(first, filepath.Join(base, filepath.FromSlash(key))); err != nil {
+			rollback()
+			return err
+		}
+		written = append(written, filepath.Join(base, filepath.FromSlash(key)))
+	}
+	return nil
+}
+
+// copyLocalFile mirrors src to dst, creating parent dirs.
+func copyLocalFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("modpack storage: mkdir %s: %w", filepath.Dir(dst), err)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("modpack storage: create %s: %w", dst, err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(dst)
+		return fmt.Errorf("modpack storage: mirror %s: %w", dst, err)
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(dst)
+		return fmt.Errorf("modpack storage: mirror %s: %w", dst, err)
+	}
+	return nil
+}
+
 // Get returns the contents of the first path that holds the key. If every
 // path reports os.ErrNotExist, ErrNotFound is returned. Any other error
 // short-circuits the search.

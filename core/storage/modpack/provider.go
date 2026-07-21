@@ -29,6 +29,18 @@ type ModpackStorageProvider interface {
 	Delete(ctx context.Context, key string) error
 	Stat(ctx context.Context, key string) (size int64, exists bool, err error)
 
+	// PutStream stores size bytes read from r, without ever holding the whole
+	// object in memory. It is the write-side counterpart of Stream: a content
+	// upload can flow client -> disk -> storage through a fixed buffer, so a
+	// large file or many concurrent uploads cost bounded RAM instead of one
+	// full copy each.
+	//
+	// size is required (not -1): S3 sets it as Content-Length so the object
+	// store never has to buffer the body to learn its length. r SHOULD be a
+	// seekable source (a temp file) so an S3 retry can rewind it. This exists
+	// alongside Put; Put stays for callers that already hold the bytes.
+	PutStream(ctx context.Context, key string, r io.Reader, size int64) error
+
 	// Stream returns the object as a reader plus its size, for callers that
 	// hand the bytes straight to a client without inspecting them. The caller
 	// MUST close the reader. A missing key returns ErrNotFound.

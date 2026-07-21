@@ -72,6 +72,19 @@ func (p *CoreStorageProvider) Get(ctx context.Context, key string) ([]byte, erro
 	return data, nil
 }
 
+// PutStream delegates to the underlying storage provider's WriteFile, which
+// takes an io.Reader and streams it. The size is not forwarded: WriteFile has
+// no size parameter, so a core-storage-on-S3 backend may still let the AWS SDK
+// determine the length itself. The local backend streams through a temp file
+// and rename regardless. This is the one PutStream that is not guaranteed
+// end-to-end streaming on S3; the dedicated s3 modpack backend (S3Provider) is.
+func (p *CoreStorageProvider) PutStream(ctx context.Context, key string, r io.Reader, _ int64) error {
+	if err := p.prov.WriteFile(ctx, key, r); err != nil {
+		return fmt.Errorf("modpack storage: core-storage put-stream %s: %w", key, err)
+	}
+	return nil
+}
+
 // Stream delegates to the underlying storage provider's GetFile, which already
 // returns a stream on both backends - the buffering this replaces was added by
 // this adapter's own Get, not by the layer below it.

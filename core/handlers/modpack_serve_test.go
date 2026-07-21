@@ -56,7 +56,10 @@ func (f *serveFakeProvider) DownloadURL(context.Context, string, time.Duration) 
 }
 
 func (f *serveFakeProvider) Put(context.Context, string, []byte) error { return nil }
-func (f *serveFakeProvider) Delete(context.Context, string) error      { return nil }
+func (f *serveFakeProvider) PutStream(context.Context, string, io.Reader, int64) error {
+	return nil
+}
+func (f *serveFakeProvider) Delete(context.Context, string) error { return nil }
 func (f *serveFakeProvider) Stat(context.Context, string) (int64, bool, error) {
 	return f.size, true, nil
 }
