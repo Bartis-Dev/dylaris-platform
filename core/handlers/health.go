@@ -338,7 +338,17 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 // every authenticated user.
 func (h *HealthHandler) storageComponent() healthComponent {
 	comp := healthComponent{Key: "storage", Name: "Core storage"}
-	cfg := h.state.LoadCoreStorageConfig()
+	cfg, err := h.state.effectiveCoreStorageConfig()
+	if err != nil {
+		// A selected storage connection that no longer resolves: the backend is
+		// intended but unusable. Report it rather than describing the stale
+		// inline config, which would mislead the operator into fixing the wrong
+		// thing.
+		comp.Status = "down"
+		comp.Detail = "Selected storage connection is unavailable"
+		comp.Reason = err.Error()
+		return comp
+	}
 
 	switch cfg.Backend {
 	case "s3":

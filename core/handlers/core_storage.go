@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,11 @@ type CoreStorageConfig struct {
 	S3PathStyle   bool   `json:"s3PathStyle"`
 	S3Prefix      string `json:"s3Prefix"`
 	S3SecretSet   bool   `json:"s3SecretSet"`
+	// ConnectionID references a saved storage connection. When non-zero, the
+	// provider is built from that named connection instead of the inline
+	// s3 fields above (see effectiveCoreStorageConfig). 0 = use the inline
+	// config. Echoed back to the panel so the form can show the selection.
+	ConnectionID int `json:"connectionId"`
 }
 
 // validateCoreStorageConfig enforces the rules the panel also mirrors: path
@@ -165,6 +171,7 @@ func (s *AppState) LoadCoreStorageConfig() CoreStorageConfig {
 		return v
 	}
 	secret := get(keyCoreStorageS3SecretKey)
+	connID, _ := strconv.Atoi(get(keyCoreStorageConnectionID)) // "" or bad -> 0 = none
 	return CoreStorageConfig{
 		Backend:       get(keyCoreStorageBackend),
 		Path:          get(keyCoreStoragePath),
@@ -177,12 +184,17 @@ func (s *AppState) LoadCoreStorageConfig() CoreStorageConfig {
 		S3PathStyle:   get(keyCoreStorageS3PathStyle) == "true",
 		S3Prefix:      get(keyCoreStorageS3Prefix),
 		S3SecretSet:   secret != "",
+		ConnectionID:  connID,
 	}
 }
 
-// CoreStorageConfigured reports whether a valid shared config exists.
+// CoreStorageConfigured reports whether a valid shared config exists. It uses
+// the effective config so a selected storage connection counts as configured
+// (and a selected-but-broken connection counts as NOT configured, since
+// effectiveCoreStorageConfig errors on it).
 func (s *AppState) CoreStorageConfigured() bool {
-	return validateCoreStorageConfig(s.LoadCoreStorageConfig()) == nil
+	cfg, err := s.effectiveCoreStorageConfig()
+	return err == nil && validateCoreStorageConfig(cfg) == nil
 }
 
 // SyncStorageGate points the two storage connection mechanisms at whichever
@@ -200,7 +212,14 @@ func (s *AppState) CoreStorageConfigured() bool {
 // the answer. Watch, Stop and Reset are all idempotent, so calling this on a
 // config write that changed something else costs nothing.
 func (s *AppState) SyncStorageGate() {
-	cfg := s.LoadCoreStorageConfig()
+	cfg, err := s.effectiveCoreStorageConfig()
+	if err != nil {
+		// A selected-but-broken connection is still an s3 intent: stop the path
+		// watchdog (we are not on a host path) and leave the s3 state alone. The
+		// per-request provider build surfaces the real error to callers.
+		s.StorageGate.Stop()
+		return
+	}
 	if (cfg.Backend == "path" || cfg.Backend == "local") && cfg.Path != "" {
 		s.StorageGate.Watch(cfg.Path)
 	} else {
@@ -354,7 +373,10 @@ func (h *CoreStorageHandler) guardHostPathBackend(ctx context.Context, cfg CoreS
 // about permissions. A backend that answers a list but refuses a write is
 // reachable, which is exactly what the reconnecting state asks about.
 func (s *AppState) ProbeS3Connection(ctx context.Context) error {
-	cfg := s.LoadCoreStorageConfig()
+	cfg, err := s.effectiveCoreStorageConfig()
+	if err != nil {
+		return fmt.Errorf("%w: %v", storage.ErrS3ProbeUnavailable, err)
+	}
 	if cfg.Backend != "s3" {
 		return storage.ErrS3ProbeUnavailable
 	}
@@ -384,7 +406,10 @@ func (s *AppState) ProbeS3Connection(ctx context.Context) error {
 // here, once, so that failure is never silent - callers only ever surface a
 // generic "not configured" style response to the client either way.
 func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StorageProvider, error) {
-	cfg := s.LoadCoreStorageConfig()
+	cfg, err := s.effectiveCoreStorageConfig()
+	if err != nil {
+		return nil, err
+	}
 	if err := validateCoreStorageConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -638,18 +663,41 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	req = normalizeCoreStorageCandidate(req)
 
-	existing := h.state.LoadCoreStorageConfig()
-	effective := mergeCoreStorageCandidate(req, existing)
-	if err := validateCoreStorageConfig(effective); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
-		return
+	// A selected connection implies the s3 backend. Set it before the merge:
+	// mergeCoreStorageCandidate discards a candidate with an empty backend, which
+	// would silently drop the connection selection.
+	if req.ConnectionID != 0 && req.Backend == "" {
+		req.Backend = "s3"
 	}
 
-	// After validation, before any write: a refused save must never leave a
-	// half-applied config behind.
-	if ok, status, msg := h.guardHostPathBackend(r.Context(), effective); !ok {
-		sendJSONError(w, msg, status)
-		return
+	existing := h.state.LoadCoreStorageConfig()
+	effective := mergeCoreStorageCandidate(req, existing)
+
+	if effective.ConnectionID != 0 {
+		// The connection supplies the credentials, so validate the RESOLVED
+		// connection rather than the inline s3 fields (which the operator may
+		// deliberately leave blank). The host-path guard does not apply - a
+		// connection is always s3.
+		conn, err := h.state.Store.GetStorageConnection(effective.ConnectionID)
+		if err != nil {
+			sendJSONError(w, "Selected storage connection not found", http.StatusBadRequest)
+			return
+		}
+		if err := validateCoreStorageConfig(coreStorageConfigFromConnection(conn)); err != nil {
+			sendJSONError(w, "Selected storage connection is not usable: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := validateCoreStorageConfig(effective); err != nil {
+			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// After validation, before any write: a refused save must never leave a
+		// half-applied config behind.
+		if ok, status, msg := h.guardHostPathBackend(r.Context(), effective); !ok {
+			sendJSONError(w, msg, status)
+			return
+		}
 	}
 
 	// req.S3SecretKey, not effective.S3SecretKey: the merged config carries the

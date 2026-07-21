@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"dylaris-core/services"
@@ -212,6 +213,13 @@ func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storag
 // backend away from s3 clears it outright so it does not linger orphaned with
 // S3SecretSet still reporting true.
 func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, secret string) error {
+	// 0 stores "" (no connection selected). Written unconditionally like the
+	// other non-secret keys, so switching to an inline target via the migration
+	// path clears a previously selected connection.
+	connID := ""
+	if cfg.ConnectionID != 0 {
+		connID = strconv.Itoa(cfg.ConnectionID)
+	}
 	pairs := []struct{ k, v string }{
 		{keyCoreStorageBackend, cfg.Backend},
 		{keyCoreStoragePath, cfg.Path},
@@ -222,6 +230,7 @@ func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, secret string
 		{keyCoreStorageS3AccessKey, cfg.S3AccessKey},
 		{keyCoreStorageS3PathStyle, boolStr(cfg.S3PathStyle)},
 		{keyCoreStorageS3Prefix, cfg.S3Prefix},
+		{keyCoreStorageConnectionID, connID},
 	}
 	if secret != "" {
 		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, secret})
