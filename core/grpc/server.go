@@ -368,8 +368,20 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 	}
 
 	opts := []grpc.ServerOption{
+		// Detect a SILENTLY dead node - a frozen VM or a network blackhole that
+		// never sends a TCP RST - within ~15s rather than ~40s. Time is how long
+		// an idle connection sits before Core pings it; Timeout is how long it
+		// then waits for the ack. A streaming request (file download/upload, the
+		// tab-proxy bridge) blocks in `range ch` until this fires, so the sum is
+		// how long a user waits on a vanished node before seeing an error.
+		//
+		// Only Time was lowered. Timeout stays at 10s on purpose: it bounds the
+		// ack wait, and a node saturating its uplink with a large transfer can
+		// legitimately delay a ping ack by a few seconds, so a tight Timeout
+		// would kill the very upload in progress. Lowering Time (how OFTEN we
+		// check) is the risk-free half; the ping is a tiny frame.
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    30 * time.Second,
+			Time:    5 * time.Second,
 			Timeout: 10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
