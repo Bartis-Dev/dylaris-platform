@@ -769,6 +769,15 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			}
 			destPath = resolved
 
+			// Create the destination's parent dir if it doesn't exist yet. The
+			// HTTP write path does this (grpc_handler.go handleWrite); the beam
+			// path did not, so an upload into a not-yet-created sub-server dir
+			// (server import: .upload.zip lands before setup makes the dir)
+			// failed at temp-file creation. Mirror it here.
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return status.Errorf(codes.Internal, "create dir: %v", err)
+			}
+
 			if uploadID != "" {
 				// Stable temp name so a follow-up Start with the same id
 				// reattaches to the same file. RDWR so we don't truncate
