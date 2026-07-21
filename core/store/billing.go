@@ -179,8 +179,14 @@ func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, e
 	return out, rows.Err()
 }
 
-// BackupBytesByOwner returns the current stored backup size (successful runs) for
-// a tenant. Used by the R2 quota gate before a new backup.
+// BackupBytesByOwner returns the storage a tenant's backups actually occupy.
+// Used by the R2 quota gate before a new backup.
+//
+// It counts successful runs AND any run carrying a nonzero size, which is how it
+// picks up an abandoned run whose archive was confirmed present by the reaper.
+// The node reports every failed backup with size 0 (node/backup_worker.go), so
+// the only failed rows with a size are those the reaper found an object for -
+// real bytes on the backend that would otherwise sit uncounted.
 func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 	var total sql.NullInt64
 	err := s.db.QueryRow(`
@@ -188,7 +194,7 @@ func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
-		WHERE s.owner_id = $1 AND br.status = 'success'`, ownerID).Scan(&total)
+		WHERE s.owner_id = $1 AND (br.status = 'success' OR br.size_bytes > 0)`, ownerID).Scan(&total)
 	if err != nil {
 		return 0, err
 	}

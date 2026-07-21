@@ -301,12 +301,13 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 // going to write one, and returns its size alongside a sentence for the run's
 // error message.
 //
-// The size is recorded even though the run is failed. It is safe: every query
-// that sums backup bytes for billing or the storage quota filters on status
-// "success" (store/billing.go BackupBytesByOwner, store/traffic.go
-// TenantBackupBytes), so a size here informs an operator without being charged
-// for. It is also the most useful single number for deciding whether the
-// archive is worth investigating.
+// The size is recorded even though the run is failed, and it now counts toward
+// the storage quota. The object is real bytes on the backend, so the quota
+// queries (store/billing.go BackupBytesByOwner, store/traffic.go
+// TenantBackupBytes) count any run with a nonzero size, not just successes. A
+// node-failed run is always size 0, so this only ever picks up the archives the
+// reaper actually found. It is also the most useful single number for deciding
+// whether the archive is worth investigating.
 func (b *BackupScheduler) describeAbandonedRun(ctx context.Context, run models.BackupRun) (int64, string) {
 	if run.StorageKey == "" {
 		return 0, "The run never recorded a storage key, so no archive was written."
@@ -316,7 +317,7 @@ func (b *BackupScheduler) describeAbandonedRun(ctx context.Context, run models.B
 	switch {
 	case err == nil:
 		return obj.Size, fmt.Sprintf(
-			"An archive of %d bytes is present at %s. The node never confirmed it, so it is UNVERIFIED - check it before relying on it. It is left in place and is not counted against the storage quota.",
+			"An archive of %d bytes is present at %s. The node never confirmed it, so it is UNVERIFIED - check it before relying on it. It is left in place and counts against the storage quota; delete this run to reclaim the space.",
 			obj.Size, run.StorageKey)
 	case errors.Is(err, fs.ErrNotExist):
 		return 0, fmt.Sprintf("No archive was written to %s, so the backup did not complete.", run.StorageKey)

@@ -45,11 +45,15 @@ func (s *PostgresStore) TenantServerOwners() (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// TenantBackupBytes returns the current stored backup size per tenant (user id),
-// summing successful backup runs for servers on tenant-owned nodes. This is a
-// storage gauge (what is held in R2 right now), not a flow, so the aggregator
-// overwrites the snapshot each tick. Tenants with no backups are absent from the
-// map; the caller resets those to 0.
+// TenantBackupBytes returns the storage a tenant's backups occupy per tenant
+// (user id), for servers on tenant-owned nodes. This is a storage gauge (what is
+// held right now), not a flow, so the aggregator overwrites the snapshot each
+// tick. Tenants with no backups are absent from the map; the caller resets those
+// to 0.
+//
+// Like BackupBytesByOwner it counts successful runs plus any run with a nonzero
+// size, so an abandoned run whose archive the reaper confirmed present is
+// included. Failed runs are size 0 unless the reaper found a real object.
 func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 	rows, err := s.db.Query(`
 		SELECT n.owner_id, COALESCE(SUM(br.size_bytes), 0)
@@ -57,7 +61,7 @@ func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
 		JOIN nodes n ON n.id = s.node_id
-		WHERE n.owner_id IS NOT NULL AND br.status = 'success'
+		WHERE n.owner_id IS NOT NULL AND (br.status = 'success' OR br.size_bytes > 0)
 		GROUP BY n.owner_id`)
 	if err != nil {
 		return nil, err
