@@ -56,6 +56,12 @@ type beamServer struct {
 	// (beamConnCleaner, wired as a gRPC StatsHandler), so a recycled peer
 	// address can't inherit a previous session's binding.
 	serverUUIDByPeer sync.Map // map[string]string
+
+	// usernameByPeer mirrors serverUUIDByPeer for the ticket's username, kept
+	// so UploadFile can attribute a per-user daily upload quota. Authenticate
+	// stores claims.Username (only when non-empty); beamConnCleaner clears it
+	// alongside the serverUUID binding when the connection ends.
+	usernameByPeer sync.Map // map[string]string
 }
 
 // beamConnKey carries the connection's remote address from TagConn through to
@@ -67,11 +73,14 @@ type beamConnKey struct{}
 // connection that reuses the same (recycled) peer address would inherit the
 // previous session's authorization without authenticating.
 type beamConnCleaner struct {
-	m *sync.Map
+	uuid *sync.Map
+	user *sync.Map
 }
 
-func (c *beamConnCleaner) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
-func (c *beamConnCleaner) HandleRPC(context.Context, stats.RPCStats)                        {}
+func (c *beamConnCleaner) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+func (c *beamConnCleaner) HandleRPC(context.Context, stats.RPCStats) {}
 func (c *beamConnCleaner) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
 	if info != nil && info.RemoteAddr != nil {
 		return context.WithValue(ctx, beamConnKey{}, info.RemoteAddr.String())
@@ -81,7 +90,8 @@ func (c *beamConnCleaner) TagConn(ctx context.Context, info *stats.ConnTagInfo) 
 func (c *beamConnCleaner) HandleConn(ctx context.Context, st stats.ConnStats) {
 	if _, ended := st.(*stats.ConnEnd); ended {
 		if addr, _ := ctx.Value(beamConnKey{}).(string); addr != "" {
-			c.m.Delete(addr)
+			c.uuid.Delete(addr)
+			c.user.Delete(addr)
 		}
 	}
 }
@@ -129,7 +139,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 		jwtSecret:  jwtSecret,
 		nodeID:     nodeID,
 	}
-	srv := grpc.NewServer(grpc.StatsHandler(&beamConnCleaner{m: &bs.serverUUIDByPeer}))
+	srv := grpc.NewServer(grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer}))
 	pb.RegisterBeamNodeServiceServer(srv, bs)
 
 	log.Printf("beam-server: listening on %s (reachable via overlay; JWT-gated)", listenAddr)
@@ -189,7 +199,7 @@ func startBeamLANListener(ctx context.Context, bs *beamServer, jwtSecret, nodeID
 	}
 	tlsSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewServerTLSFromCert(&cert)),
-		grpc.StatsHandler(&beamConnCleaner{m: &bs.serverUUIDByPeer}),
+		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer}),
 	)
 	pb.RegisterBeamNodeServiceServer(tlsSrv, bs)
 	log.Printf("beam-server: LAN fast-path (TLS, pinned) listening on %s, fp=%s", addr, fp[:16]+"...")
@@ -438,6 +448,11 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 	// the same Beam.exe session.
 	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
 		s.serverUUIDByPeer.Store(p.Addr.String(), claims.ServerUUID)
+		// Keep the username too, but only when present, so an empty-username
+		// ticket never shares a daily-quota bucket with another user.
+		if claims.Username != "" {
+			s.usernameByPeer.Store(p.Addr.String(), claims.Username)
+		}
 	}
 	return &pb.BeamAuthResp{
 		Ok:         true,
@@ -714,6 +729,7 @@ func readUploadIDFromContext(ctx context.Context) string {
 func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadMsg, pb.BeamOpResp]) error {
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
+	username := s.extractUsername(ctx)
 	uploadID := readUploadIDFromContext(ctx)
 
 	var destPath string
@@ -788,6 +804,18 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return err
 			}
 
+			// Absolute per-upload size cap (admin-configured, server-wide).
+			if err := s.checkBeamUploadSizeCap(ctx, p.Start.TotalSize); err != nil {
+				return err
+			}
+
+			// Per-user daily upload quota (admin-configured). Best-effort
+			// pre-check against today's counter; the counter is bumped by the
+			// final on-disk size on successful completion below.
+			if err := s.checkBeamDailyQuota(ctx, username, p.Start.TotalSize); err != nil {
+				return err
+			}
+
 			if uploadID != "" {
 				// Stable temp name so a follow-up Start with the same id
 				// reattaches to the same file. RDWR so we don't truncate
@@ -841,6 +869,11 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			os.Remove(tmpPath)
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
+		// Count the completed upload against the user's daily quota by the final
+		// on-disk size, so a resumed multi-session upload is counted once.
+		if fi, statErr := os.Stat(destPath); statErr == nil {
+			s.recordBeamDailyUsage(ctx, username, fi.Size())
+		}
 	}
 
 	return stream.SendAndClose(&pb.BeamOpResp{Success: true, Message: "uploaded"})
@@ -883,6 +916,99 @@ func beamUploadExceedsDisk(total, limit, incoming int64) bool {
 	return total+incoming > limit
 }
 
+// beam:max_upload_bytes and beam:daily_upload_bytes are the Redis config keys
+// Core's SaveBeamSettings publishes. Both hold a byte count; 0 or missing means
+// "no limit". The node polls them per upload, the same way it reads the disk
+// gauge, rather than via a background watcher.
+const (
+	beamMaxUploadBytesKey   = "beam:max_upload_bytes"
+	beamDailyUploadBytesKey = "beam:daily_upload_bytes"
+)
+
+// checkBeamUploadSizeCap rejects a single upload whose declared size exceeds the
+// admin-configured absolute per-upload cap. Same fail-open convention as the
+// disk headroom check: no rdb, a missing/unparseable key, or a non-positive cap
+// means "no cap" and the upload proceeds.
+func (s *beamServer) checkBeamUploadSizeCap(ctx context.Context, incoming int64) error {
+	if s.rdb == nil {
+		return nil
+	}
+	capBytes, err := s.rdb.Get(ctx, beamMaxUploadBytesKey).Int64()
+	if err != nil {
+		return nil
+	}
+	if beamUploadExceedsSizeCap(incoming, capBytes) {
+		return status.Errorf(codes.ResourceExhausted,
+			"upload of %d bytes exceeds the %d byte per-upload limit", incoming, capBytes)
+	}
+	return nil
+}
+
+// beamUploadExceedsSizeCap reports whether a single upload of `size` bytes is
+// larger than `capBytes`. A non-positive cap means "no cap".
+func beamUploadExceedsSizeCap(size, capBytes int64) bool {
+	if capBytes <= 0 {
+		return false
+	}
+	return size > capBytes
+}
+
+// beamDailyKey is the per-user, per-day upload counter key. Kept a pure function
+// of (username, day) so its format is testable without Redis. The day is taken
+// in UTC so the window does not shift with node timezone.
+func beamDailyKey(username string, day time.Time) string {
+	return fmt.Sprintf("dylaris:beam:daily:%s:%s", username, day.UTC().Format("2006-01-02"))
+}
+
+// checkBeamDailyQuota rejects an upload that would push the user's bytes uploaded
+// today past the admin-configured daily limit. Fail-open: no rdb, no username, a
+// missing/unparseable or non-positive limit, or a missing counter all mean "no
+// quota" and the upload proceeds. The counter is advisory (bumped on completion),
+// so this pre-check reflects the value at Start; concurrent uploads by the same
+// user are not serialized against the limit.
+func (s *beamServer) checkBeamDailyQuota(ctx context.Context, username string, incoming int64) error {
+	if s.rdb == nil || username == "" {
+		return nil
+	}
+	limit, err := s.rdb.Get(ctx, beamDailyUploadBytesKey).Int64()
+	if err != nil || limit <= 0 {
+		return nil
+	}
+	used, err := s.rdb.Get(ctx, beamDailyKey(username, time.Now())).Int64()
+	if err != nil {
+		used = 0 // no counter yet today
+	}
+	if beamDailyQuotaExceeded(used, limit, incoming) {
+		return status.Errorf(codes.ResourceExhausted,
+			"daily upload quota reached: %d of %d bytes used today, upload is %d bytes", used, limit, incoming)
+	}
+	return nil
+}
+
+// beamDailyQuotaExceeded reports whether adding `incoming` to today's `used`
+// would exceed `limit`. A non-positive limit means "no limit".
+func beamDailyQuotaExceeded(used, limit, incoming int64) bool {
+	if limit <= 0 {
+		return false
+	}
+	return used+incoming > limit
+}
+
+// recordBeamDailyUsage adds `n` bytes to the user's daily upload counter and
+// re-arms its TTL, mirroring the SFTP auth-fail counter (IncrBy + Expire in one
+// pipeline). Best-effort: a Redis error just means the quota is not accounted
+// this round. A no-op when rdb/username is absent or n is non-positive.
+func (s *beamServer) recordBeamDailyUsage(ctx context.Context, username string, n int64) {
+	if s.rdb == nil || username == "" || n <= 0 {
+		return
+	}
+	key := beamDailyKey(username, time.Now())
+	pipe := s.rdb.Pipeline()
+	pipe.IncrBy(ctx, key, n)
+	pipe.Expire(ctx, key, 48*time.Hour)
+	_, _ = pipe.Exec(ctx)
+}
+
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
 	// TODO: implement selective zip download (reuse StreamHandler pattern)
 	return status.Errorf(codes.Unimplemented, "selective download not yet implemented in Beam")
@@ -900,9 +1026,25 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 	if down > 0 && (limit == 0 || down < limit) {
 		limit = down
 	}
+
+	// Daily upload accounting, when configured and the caller's ticket carried a
+	// username. A missing config key, counter, or username reads as 0 (unlimited
+	// / none), matching the enforcement path's fail-open behavior.
+	var dailyUsed, dailyLimit int64
+	if s.rdb != nil {
+		if v, err := s.rdb.Get(ctx, beamDailyUploadBytesKey).Int64(); err == nil {
+			dailyLimit = v
+		}
+		if username := s.extractUsername(ctx); username != "" {
+			if v, err := s.rdb.Get(ctx, beamDailyKey(username, time.Now())).Int64(); err == nil {
+				dailyUsed = v
+			}
+		}
+	}
+
 	return &pb.BeamQuotaResp{
-		DailyUsed:  0, // TODO: track daily transfer in Redis
-		DailyLimit: 0, // 0 = unlimited
+		DailyUsed:  dailyUsed,
+		DailyLimit: dailyLimit,
 		BwLimit:    limit,
 	}, nil
 }
@@ -928,6 +1070,23 @@ func (s *beamServer) extractServerUUID(ctx context.Context) string {
 	}
 	uuid, _ := v.(string)
 	return uuid
+}
+
+// extractUsername returns the ticket username Authenticate stashed for this
+// peer, or "" when none was stored (an empty-username ticket, or not yet
+// authenticated). A "" result disables the per-user daily quota rather than
+// bucketing distinct users together.
+func (s *beamServer) extractUsername(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p == nil || p.Addr == nil {
+		return ""
+	}
+	v, ok := s.usernameByPeer.Load(p.Addr.String())
+	if !ok {
+		return ""
+	}
+	name, _ := v.(string)
+	return name
 }
 
 // copyDir and copyFile are defined in installer.go — reused here.
