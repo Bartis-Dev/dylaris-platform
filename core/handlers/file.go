@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-pkg/beam/quota"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
@@ -784,6 +785,28 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Beam upload limits (admin-configured), enforced here too so a browser
+	// upload cannot evade the size cap + per-user daily quota the node enforces
+	// on the beam tunnel path. The username is the same context value the beam
+	// ticket carries, so browser and beam uploads share one per-user/day bucket
+	// (shared dylaris-pkg/beam/quota). Fail-open, like the disk check above.
+	username, _ := r.Context().Value("username").(string)
+	var quotaUploadSize int64
+	for _, fh := range r.MultipartForm.File["files"] {
+		quotaUploadSize += fh.Size
+		if ok, capBytes := quota.CheckSizeCap(r.Context(), h.state.Redis, fh.Size); !ok {
+			sendJSONError(w, fmt.Sprintf("Upload of %s exceeds the %s per-file limit",
+				formatBytesHuman(fh.Size), formatBytesHuman(capBytes)), http.StatusRequestEntityTooLarge)
+			return
+		}
+	}
+	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.state.Redis, username, quotaUploadSize); !ok {
+		sendJSONError(w, fmt.Sprintf("Daily upload quota reached — %s of %s used today, upload is %s",
+			formatBytesHuman(used), formatBytesHuman(limit), formatBytesHuman(quotaUploadSize)),
+			http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusNotFound)
@@ -797,6 +820,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	files := r.MultipartForm.File["files"]
+	var uploadedBytes int64 // actual bytes streamed, for the daily quota counter
 	for _, fileHeader := range files {
 		sanitizedName := sanitizeFilename(fileHeader.Filename)
 		if sanitizedName == "" || sanitizedName == ".active_server" {
@@ -880,7 +904,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
 			return
 		}
+		uploadedBytes += offset
 	}
+
+	// Count the completed upload against the user's shared daily quota, by the
+	// bytes actually streamed. Runs only on full success; a mid-loop failure
+	// returns above and is not counted.
+	quota.RecordDailyUsage(r.Context(), h.state.Redis, username, uploadedBytes)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

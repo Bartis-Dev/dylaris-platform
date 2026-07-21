@@ -16,6 +16,7 @@ import (
 	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
+	"dylaris-pkg/beam/quota"
 	pb "dylaris-proto/beam"
 
 	"github.com/redis/go-redis/v9"
@@ -916,97 +917,35 @@ func beamUploadExceedsDisk(total, limit, incoming int64) bool {
 	return total+incoming > limit
 }
 
-// beam:max_upload_bytes and beam:daily_upload_bytes are the Redis config keys
-// Core's SaveBeamSettings publishes. Both hold a byte count; 0 or missing means
-// "no limit". The node polls them per upload, the same way it reads the disk
-// gauge, rather than via a background watcher.
-const (
-	beamMaxUploadBytesKey   = "beam:max_upload_bytes"
-	beamDailyUploadBytesKey = "beam:daily_upload_bytes"
-)
+// The upload size cap + per-user daily quota live in the shared dylaris-pkg/beam/quota
+// package so the node (this beam path) and core (the browser HTTP path) enforce
+// the identical limits against the identical per-user/day Redis bucket. These
+// methods only translate the shared decision into a gRPC status error; the keys,
+// thresholds and fail-open reads are defined once in that package.
 
 // checkBeamUploadSizeCap rejects a single upload whose declared size exceeds the
-// admin-configured absolute per-upload cap. Same fail-open convention as the
-// disk headroom check: no rdb, a missing/unparseable key, or a non-positive cap
-// means "no cap" and the upload proceeds.
+// admin-configured absolute per-upload cap.
 func (s *beamServer) checkBeamUploadSizeCap(ctx context.Context, incoming int64) error {
-	if s.rdb == nil {
-		return nil
-	}
-	capBytes, err := s.rdb.Get(ctx, beamMaxUploadBytesKey).Int64()
-	if err != nil {
-		return nil
-	}
-	if beamUploadExceedsSizeCap(incoming, capBytes) {
+	if ok, capBytes := quota.CheckSizeCap(ctx, s.rdb, incoming); !ok {
 		return status.Errorf(codes.ResourceExhausted,
 			"upload of %d bytes exceeds the %d byte per-upload limit", incoming, capBytes)
 	}
 	return nil
 }
 
-// beamUploadExceedsSizeCap reports whether a single upload of `size` bytes is
-// larger than `capBytes`. A non-positive cap means "no cap".
-func beamUploadExceedsSizeCap(size, capBytes int64) bool {
-	if capBytes <= 0 {
-		return false
-	}
-	return size > capBytes
-}
-
-// beamDailyKey is the per-user, per-day upload counter key. Kept a pure function
-// of (username, day) so its format is testable without Redis. The day is taken
-// in UTC so the window does not shift with node timezone.
-func beamDailyKey(username string, day time.Time) string {
-	return fmt.Sprintf("dylaris:beam:daily:%s:%s", username, day.UTC().Format("2006-01-02"))
-}
-
 // checkBeamDailyQuota rejects an upload that would push the user's bytes uploaded
-// today past the admin-configured daily limit. Fail-open: no rdb, no username, a
-// missing/unparseable or non-positive limit, or a missing counter all mean "no
-// quota" and the upload proceeds. The counter is advisory (bumped on completion),
-// so this pre-check reflects the value at Start; concurrent uploads by the same
-// user are not serialized against the limit.
+// today past the admin-configured daily limit.
 func (s *beamServer) checkBeamDailyQuota(ctx context.Context, username string, incoming int64) error {
-	if s.rdb == nil || username == "" {
-		return nil
-	}
-	limit, err := s.rdb.Get(ctx, beamDailyUploadBytesKey).Int64()
-	if err != nil || limit <= 0 {
-		return nil
-	}
-	used, err := s.rdb.Get(ctx, beamDailyKey(username, time.Now())).Int64()
-	if err != nil {
-		used = 0 // no counter yet today
-	}
-	if beamDailyQuotaExceeded(used, limit, incoming) {
+	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, incoming); !ok {
 		return status.Errorf(codes.ResourceExhausted,
 			"daily upload quota reached: %d of %d bytes used today, upload is %d bytes", used, limit, incoming)
 	}
 	return nil
 }
 
-// beamDailyQuotaExceeded reports whether adding `incoming` to today's `used`
-// would exceed `limit`. A non-positive limit means "no limit".
-func beamDailyQuotaExceeded(used, limit, incoming int64) bool {
-	if limit <= 0 {
-		return false
-	}
-	return used+incoming > limit
-}
-
-// recordBeamDailyUsage adds `n` bytes to the user's daily upload counter and
-// re-arms its TTL, mirroring the SFTP auth-fail counter (IncrBy + Expire in one
-// pipeline). Best-effort: a Redis error just means the quota is not accounted
-// this round. A no-op when rdb/username is absent or n is non-positive.
+// recordBeamDailyUsage adds `n` bytes to the user's shared daily upload counter.
 func (s *beamServer) recordBeamDailyUsage(ctx context.Context, username string, n int64) {
-	if s.rdb == nil || username == "" || n <= 0 {
-		return
-	}
-	key := beamDailyKey(username, time.Now())
-	pipe := s.rdb.Pipeline()
-	pipe.IncrBy(ctx, key, n)
-	pipe.Expire(ctx, key, 48*time.Hour)
-	_, _ = pipe.Exec(ctx)
+	quota.RecordDailyUsage(ctx, s.rdb, username, n)
 }
 
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
@@ -1032,11 +971,11 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 	// / none), matching the enforcement path's fail-open behavior.
 	var dailyUsed, dailyLimit int64
 	if s.rdb != nil {
-		if v, err := s.rdb.Get(ctx, beamDailyUploadBytesKey).Int64(); err == nil {
+		if v, err := s.rdb.Get(ctx, quota.DailyUploadBytesKey).Int64(); err == nil {
 			dailyLimit = v
 		}
 		if username := s.extractUsername(ctx); username != "" {
-			if v, err := s.rdb.Get(ctx, beamDailyKey(username, time.Now())).Int64(); err == nil {
+			if v, err := s.rdb.Get(ctx, quota.DailyKey(username, time.Now())).Int64(); err == nil {
 				dailyUsed = v
 			}
 		}

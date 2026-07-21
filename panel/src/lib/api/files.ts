@@ -105,7 +105,16 @@ export function uploadFiles(path: string, files: FileList, onProgress: (p: numbe
                 try { resolve(JSON.parse(xhr.responseText)); }
                 catch { resolve({ success: false, message: 'Bad upload response' }); }
             } else {
-                resolve({ success: false, message: 'Upload failed' });
+                // Surface the server's reason (a quota, size-cap or disk-limit
+                // rejection carries a {success:false, message} body with a real
+                // status like 413). Without this the user only ever sees the
+                // generic text and never learns why the upload was refused.
+                try {
+                    const body = JSON.parse(xhr.responseText);
+                    resolve({ success: false, message: body.message || 'Upload failed' });
+                } catch {
+                    resolve({ success: false, message: 'Upload failed' });
+                }
             }
         };
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });

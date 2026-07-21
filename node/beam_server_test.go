@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
 	pb "dylaris-proto/beam"
@@ -123,83 +122,6 @@ func TestValidateBeamPathOp(t *testing.T) {
 			_, err := bs.validateBeamPathOp(c.path, uuid, c.op)
 			if (err != nil) != c.wantErr {
 				t.Errorf("validateBeamPathOp(%q, %q, %q) err=%v, wantErr=%v", c.path, uuid, c.op, err, c.wantErr)
-			}
-		})
-	}
-}
-
-func TestBeamUploadExceedsSizeCap(t *testing.T) {
-	cases := []struct {
-		name           string
-		size, capBytes int64
-		want           bool
-	}{
-		{"zero cap is unlimited", 999999, 0, false},
-		{"negative cap is unlimited", 999999, -1, false},
-		{"under the cap", 100, 200, false},
-		{"exactly at the cap", 200, 200, false},
-		{"one byte over", 201, 200, true},
-		{"empty upload under cap", 0, 200, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := beamUploadExceedsSizeCap(c.size, c.capBytes); got != c.want {
-				t.Errorf("beamUploadExceedsSizeCap(%d, %d) = %v, want %v", c.size, c.capBytes, got, c.want)
-			}
-		})
-	}
-}
-
-func TestBeamDailyQuotaExceeded(t *testing.T) {
-	cases := []struct {
-		name                  string
-		used, limit, incoming int64
-		want                  bool
-	}{
-		{"zero limit is unlimited", 100, 0, 999999, false},
-		{"negative limit is unlimited", 100, -1, 999999, false},
-		{"fits exactly at limit", 100, 200, 100, false},
-		{"one byte over", 100, 200, 101, true},
-		{"already at limit, empty upload", 200, 200, 0, false},
-		{"already over", 300, 200, 0, true},
-		{"comfortable headroom", 50, 1000, 100, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := beamDailyQuotaExceeded(c.used, c.limit, c.incoming); got != c.want {
-				t.Errorf("beamDailyQuotaExceeded(%d, %d, %d) = %v, want %v", c.used, c.limit, c.incoming, got, c.want)
-			}
-		})
-	}
-}
-
-// TestBeamDailyKey pins the counter key format and, critically, that the day is
-// normalized to UTC so a node in a positive-offset timezone shares the same
-// window as Core.
-func TestBeamDailyKey(t *testing.T) {
-	cases := []struct {
-		name     string
-		username string
-		day      time.Time
-		want     string
-	}{
-		{
-			name:     "utc midday",
-			username: "alice",
-			day:      time.Date(2026, 7, 21, 15, 4, 5, 0, time.UTC),
-			want:     "dylaris:beam:daily:alice:2026-07-21",
-		},
-		{
-			name:     "positive offset rolls back to prior utc day",
-			username: "bob",
-			day:      time.Date(2026, 7, 22, 0, 30, 0, 0, time.FixedZone("X", 2*3600)),
-			want:     "dylaris:beam:daily:bob:2026-07-21",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := beamDailyKey(c.username, c.day); got != c.want {
-				t.Errorf("beamDailyKey(%q, %v) = %q, want %q", c.username, c.day, got, c.want)
 			}
 		})
 	}
