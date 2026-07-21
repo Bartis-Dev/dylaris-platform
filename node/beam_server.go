@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,8 +41,9 @@ type beamServer struct {
 	pb.UnimplementedBeamNodeServiceServer
 	storageMgr *StorageManager
 	throttle   *BeamThrottle
-	jwtSecret  string // BEAM_JWT_SECRET — must match the gateway's beam-relay
-	nodeID     string // local node id; tickets must claim this same id
+	rdb        *redis.Client // for the beam-upload disk-quota pre-check
+	jwtSecret  string        // BEAM_JWT_SECRET — must match the gateway's beam-relay
+	nodeID     string        // local node id; tickets must claim this same id
 
 	// serverUUIDByPeer remembers which server a gRPC peer (= one Beam.exe
 	// session's TCP connection) is authenticated for. Authenticate writes
@@ -123,6 +125,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	bs := &beamServer{
 		storageMgr: storageMgr,
 		throttle:   throttle,
+		rdb:        rdb,
 		jwtSecret:  jwtSecret,
 		nodeID:     nodeID,
 	}
@@ -778,6 +781,13 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return status.Errorf(codes.Internal, "create dir: %v", err)
 			}
 
+			// Disk-quota pre-check. The beam tunnel bypasses Core's HTTP body
+			// size cap and its disk precheck, so enforce the same server disk
+			// limit here against the declared upload size before streaming.
+			if err := s.checkBeamUploadDiskHeadroom(ctx, serverUUID, p.Start.TotalSize); err != nil {
+				return err
+			}
+
 			if uploadID != "" {
 				// Stable temp name so a follow-up Start with the same id
 				// reattaches to the same file. RDWR so we don't truncate
@@ -834,6 +844,43 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	}
 
 	return stream.SendAndClose(&pb.BeamOpResp{Success: true, Message: "uploaded"})
+}
+
+// checkBeamUploadDiskHeadroom rejects an upload that would push the server past
+// its disk limit, reading the same dylaris:server:<uuid>:stats:disk gauge the
+// HTTP upload path checks (core file.go). A missing gauge, no rdb, an unparseable
+// value, or a non-positive limit means "no known limit" and the upload proceeds:
+// the gauge is advisory, and refusing on its absence would break every upload
+// whenever stats have not been published yet.
+func (s *beamServer) checkBeamUploadDiskHeadroom(ctx context.Context, serverUUID string, incoming int64) error {
+	if s.rdb == nil {
+		return nil
+	}
+	raw, err := s.rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", serverUUID)).Result()
+	if err != nil {
+		return nil
+	}
+	var disk struct {
+		Total int64 `json:"total"`
+		Limit int64 `json:"limit"`
+	}
+	if json.Unmarshal([]byte(raw), &disk) != nil {
+		return nil
+	}
+	if beamUploadExceedsDisk(disk.Total, disk.Limit, incoming) {
+		return status.Errorf(codes.ResourceExhausted,
+			"disk limit reached: %d of %d bytes used, upload is %d bytes", disk.Total, disk.Limit, incoming)
+	}
+	return nil
+}
+
+// beamUploadExceedsDisk reports whether adding `incoming` bytes to `total` would
+// exceed `limit`. A non-positive limit means "no limit".
+func beamUploadExceedsDisk(total, limit, incoming int64) bool {
+	if limit <= 0 {
+		return false
+	}
+	return total+incoming > limit
 }
 
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {

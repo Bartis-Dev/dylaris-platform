@@ -125,3 +125,26 @@ func TestValidateBeamPathOp(t *testing.T) {
 		})
 	}
 }
+
+func TestBeamUploadExceedsDisk(t *testing.T) {
+	cases := []struct {
+		name                   string
+		total, limit, incoming int64
+		want                   bool
+	}{
+		{"zero limit is unlimited", 100, 0, 999999, false},
+		{"negative limit is unlimited", 100, -1, 999999, false},
+		{"fits exactly at limit", 100, 200, 100, false},
+		{"one byte over", 100, 200, 101, true},
+		{"already at limit, empty upload", 200, 200, 0, false},
+		{"already over", 300, 200, 0, true},
+		{"comfortable headroom", 50, 1000, 100, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := beamUploadExceedsDisk(c.total, c.limit, c.incoming); got != c.want {
+				t.Errorf("beamUploadExceedsDisk(%d, %d, %d) = %v, want %v", c.total, c.limit, c.incoming, got, c.want)
+			}
+		})
+	}
+}
