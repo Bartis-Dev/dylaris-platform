@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"dylaris-core/models"
@@ -75,72 +76,18 @@ func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.Bu
 		return fmt.Errorf("modpack storage not configured")
 	}
 	zw := zip.NewWriter(dst)
-	var total int64 // bounds the assembled pack across both source branches
+	total := &packSizeBudget{limit: maxServerPackTotalBytes}
 	for _, e := range content {
 		if e.Side == models.SideClient {
 			continue // client-only content is not part of a server pack
 		}
 		switch e.Source {
 		case models.SourceUpload:
-			if e.StorageKey == "" {
-				return fmt.Errorf("upload content %q missing storage key", e.ModSlug)
-			}
-			raw, err := prov.Get(ctx, e.StorageKey)
-			if err != nil {
-				return fmt.Errorf("read stored content %q: %w", e.ModSlug, err)
-			}
-			// These bytes are re-served to whoever extracts the zip, so a
-			// traversal-bearing entry name would zip-slip the operator's box.
-			if modpack.HasUnsafeZipEntry(raw) {
-				return fmt.Errorf("stored content %q has unsafe entry paths", e.ModSlug)
-			}
-			zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
-			if err != nil {
-				return fmt.Errorf("unzip stored content %q: %w", e.ModSlug, err)
-			}
-			for _, f := range zr.File {
-				if f.FileInfo().IsDir() {
-					continue
-				}
-				if f.UncompressedSize64 > maxServerPackEntryBytes {
-					return fmt.Errorf("stored content %q entry %q exceeds the size cap", e.ModSlug, f.Name)
-				}
-				rc, err := f.Open()
-				if err != nil {
-					return err
-				}
-				b, err := io.ReadAll(io.LimitReader(rc, maxServerPackEntryBytes+1))
-				rc.Close()
-				if err != nil {
-					return err
-				}
-				if int64(len(b)) > maxServerPackEntryBytes {
-					return fmt.Errorf("stored content %q entry %q exceeds the size cap", e.ModSlug, f.Name)
-				}
-				total += int64(len(b))
-				if total > maxServerPackTotalBytes {
-					return fmt.Errorf("server pack exceeds the total size cap")
-				}
-				if err := writeServerPackEntry(zw, f.Name, b); err != nil {
-					return err
-				}
+			if err := h.streamUploadContent(ctx, zw, prov, e, total); err != nil {
+				return err
 			}
 		case models.SourceModrinth:
-			if e.ModrinthDownloadURL == "" || e.SHA1 == "" {
-				return fmt.Errorf("modrinth content %q missing download URL or sha1", e.ModSlug)
-			}
-			if e.TargetPath == "" || modpack.IsUnsafeEntryPath(e.TargetPath) {
-				return fmt.Errorf("modrinth content %q has an invalid target path", e.ModSlug)
-			}
-			jar, err := services.DownloadModrinthJar(ctx, e.ModrinthDownloadURL, e.SHA1, e.SHA512)
-			if err != nil {
-				return fmt.Errorf("download %q: %w", e.ModSlug, err)
-			}
-			total += int64(len(jar))
-			if total > maxServerPackTotalBytes {
-				return fmt.Errorf("server pack exceeds the total size cap")
-			}
-			if err := writeServerPackEntry(zw, e.TargetPath, jar); err != nil {
+			if err := streamModrinthContent(ctx, zw, e, total); err != nil {
 				return err
 			}
 		default:
@@ -148,6 +95,99 @@ func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.Bu
 		}
 	}
 	return zw.Close()
+}
+
+// streamUploadContent copies a stored content zip to a temp file and re-serves
+// its inner files into the output zip WITHOUT ever holding the whole object in
+// memory. A zip cannot be read as a forward stream - its index is at the end -
+// so the object is spooled to disk (bounded by io.Copy's buffer) and read from
+// there, which is what keeps memory flat no matter how large the content is.
+func (h *PacksHandler) streamUploadContent(ctx context.Context, zw *zip.Writer, prov modpack.ModpackStorageProvider, e models.BuildContentEntry, total *packSizeBudget) error {
+	if e.StorageKey == "" {
+		return fmt.Errorf("upload content %q missing storage key", e.ModSlug)
+	}
+	rc, _, err := prov.Stream(ctx, e.StorageKey)
+	if err != nil {
+		return fmt.Errorf("read stored content %q: %w", e.ModSlug, err)
+	}
+	// The whole stored object may not exceed the pack total; that is the only
+	// bound on a single content zip, and it caps the temp file too.
+	tmp, size, err := spoolToTemp(rc, maxServerPackTotalBytes)
+	rc.Close()
+	if err != nil {
+		return fmt.Errorf("stage stored content %q: %w", e.ModSlug, err)
+	}
+	defer cleanupTemp(tmp)
+
+	zr, err := zip.NewReader(tmp, size)
+	if err != nil {
+		return fmt.Errorf("unzip stored content %q: %w", e.ModSlug, err)
+	}
+	// Check every entry NAME before writing any of them. Names come from the
+	// zip index without reading content, so this restores the old whole-object
+	// rejection: a stored zip with a traversal-bearing entry - which would
+	// zip-slip whoever extracts the pack - is refused before a single byte of
+	// it reaches the output.
+	for _, f := range zr.File {
+		if modpack.IsUnsafeEntryPath(f.Name) {
+			return fmt.Errorf("stored content %q has unsafe entry paths", e.ModSlug)
+		}
+	}
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if f.UncompressedSize64 > maxServerPackEntryBytes {
+			return fmt.Errorf("stored content %q entry %q exceeds the size cap", e.ModSlug, f.Name)
+		}
+		src, err := f.Open()
+		if err != nil {
+			return err
+		}
+		err = copyPackEntry(zw, f.Name, src, maxServerPackEntryBytes, total)
+		src.Close()
+		if err != nil {
+			return fmt.Errorf("stored content %q entry %q: %w", e.ModSlug, f.Name, err)
+		}
+	}
+	return nil
+}
+
+// streamModrinthContent downloads a Modrinth jar to a temp file, verifies its
+// hash there, and streams it into the output zip. Verifying against a temp file
+// rather than the response keeps the guarantee that unverified bytes never reach
+// the client, while still never holding the jar in memory.
+func streamModrinthContent(ctx context.Context, zw *zip.Writer, e models.BuildContentEntry, total *packSizeBudget) error {
+	if e.ModrinthDownloadURL == "" || e.SHA1 == "" {
+		return fmt.Errorf("modrinth content %q missing download URL or sha1", e.ModSlug)
+	}
+	if e.TargetPath == "" || modpack.IsUnsafeEntryPath(e.TargetPath) {
+		return fmt.Errorf("modrinth content %q has an invalid target path", e.ModSlug)
+	}
+	tmp, err := os.CreateTemp("", "dylaris-modrinth-*")
+	if err != nil {
+		return err
+	}
+	defer cleanupTemp(tmp)
+
+	if _, err := services.StreamModrinthJar(ctx, e.ModrinthDownloadURL, tmp, e.SHA1, e.SHA512); err != nil {
+		return fmt.Errorf("download %q: %w", e.ModSlug, err)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := copyPackEntry(zw, e.TargetPath, tmp, maxServerPackEntryBytes, total); err != nil {
+		return fmt.Errorf("modrinth content %q: %w", e.ModSlug, err)
+	}
+	return nil
+}
+
+// packSizeBudget tracks the running assembled size against the total cap. A
+// pointer is threaded through the per-entry helpers so the cap spans every
+// source, exactly as the single local counter did before.
+type packSizeBudget struct {
+	used  int64
+	limit int64
 }
 
 // countingWriter passes writes through and records how many bytes have gone to
@@ -165,12 +205,62 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// writeServerPackEntry writes one file into zw at name (deflate).
-func writeServerPackEntry(zw *zip.Writer, name string, data []byte) error {
+// spoolToTemp copies src into a fresh temp file, rewound to the start, bounded
+// by limit bytes. Peak memory is io.Copy's buffer, so the object size does not
+// enter the heap. The caller cleans the file up with cleanupTemp.
+func spoolToTemp(src io.Reader, limit int64) (*os.File, int64, error) {
+	f, err := os.CreateTemp("", "dylaris-pack-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	// One byte past the cap so a file exactly at the limit is accepted and
+	// anything larger is rejected, without measuring the source up front.
+	n, err := io.Copy(f, io.LimitReader(src, limit+1))
+	if err != nil {
+		cleanupTemp(f)
+		return nil, 0, err
+	}
+	if n > limit {
+		cleanupTemp(f)
+		return nil, 0, fmt.Errorf("stored object exceeds the %d byte cap", limit)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		cleanupTemp(f)
+		return nil, 0, err
+	}
+	return f, n, nil
+}
+
+// cleanupTemp closes and removes a temp file, ignoring errors (best-effort
+// cleanup on a path where the useful error, if any, was already returned).
+func cleanupTemp(f *os.File) {
+	if f == nil {
+		return
+	}
+	name := f.Name()
+	f.Close()
+	os.Remove(name)
+}
+
+// copyPackEntry streams src into a new deflate entry named name, enforcing the
+// per-entry cap and advancing the total budget as bytes flow - never buffering
+// the entry. The per-entry LimitReader guards a source that under-declares its
+// size, so a lying zip header cannot smuggle more than the cap.
+func copyPackEntry(zw *zip.Writer, name string, src io.Reader, entryCap int64, total *packSizeBudget) error {
 	fw, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: time.Now()})
 	if err != nil {
 		return err
 	}
-	_, err = fw.Write(data)
-	return err
+	n, err := io.Copy(fw, io.LimitReader(src, entryCap+1))
+	if err != nil {
+		return err
+	}
+	if n > entryCap {
+		return fmt.Errorf("entry %q exceeds the size cap", name)
+	}
+	total.used += n
+	if total.used > total.limit {
+		return fmt.Errorf("server pack exceeds the total size cap")
+	}
+	return nil
 }

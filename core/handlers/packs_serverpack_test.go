@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,5 +161,99 @@ func TestRenderServerPack_FirstEntryErrorWritesNothing(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("wrote %d bytes on a first-entry failure, want 0 so the caller can still send a clean error", out.Len())
+	}
+}
+
+// TestSpoolToTemp pins the primitive the constant-memory render rests on: it
+// copies within the limit, rewinds so the caller can read from the start, and
+// rejects anything over the limit without having buffered it.
+func TestSpoolToTemp(t *testing.T) {
+	t.Run("within limit, rewound", func(t *testing.T) {
+		f, n, err := spoolToTemp(strings.NewReader("hello world"), 100)
+		if err != nil {
+			t.Fatalf("spoolToTemp: %v", err)
+		}
+		defer cleanupTemp(f)
+		if n != 11 {
+			t.Errorf("size = %d, want 11", n)
+		}
+		got, _ := io.ReadAll(f)
+		if string(got) != "hello world" {
+			t.Errorf("content = %q, want it readable from the start", got)
+		}
+	})
+
+	t.Run("over limit is rejected", func(t *testing.T) {
+		f, _, err := spoolToTemp(strings.NewReader("way too many bytes"), 5)
+		if err == nil {
+			cleanupTemp(f)
+			t.Fatal("spoolToTemp accepted a source over the limit, want an error")
+		}
+	})
+}
+
+// TestCopyPackEntry_EnforcesEntryCapOnAStream is the security-relevant one: the
+// per-entry cap must hold even when the source lies about (or does not declare)
+// its size, because the bytes now flow through a stream rather than a measured
+// []byte. A zip header claiming 1 byte must not be able to write 1 GiB.
+func TestCopyPackEntry_EnforcesEntryCapOnAStream(t *testing.T) {
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	total := &packSizeBudget{limit: 1 << 30}
+
+	// 20 bytes into a 10-byte-capped entry.
+	err := copyPackEntry(zw, "big.bin", strings.NewReader("0123456789abcdefghij"), 10, total)
+	if err == nil {
+		t.Fatal("copyPackEntry wrote a source larger than the entry cap, want an error")
+	}
+	if !strings.Contains(err.Error(), "cap") {
+		t.Errorf("error = %v, want it to name the cap", err)
+	}
+}
+
+// TestCopyPackEntry_EnforcesTotalBudget: the running total spans entries, so a
+// pack that stays under the per-entry cap but exceeds the total is still caught.
+func TestCopyPackEntry_EnforcesTotalBudget(t *testing.T) {
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	total := &packSizeBudget{limit: 15}
+
+	if err := copyPackEntry(zw, "a", strings.NewReader("0123456789"), 100, total); err != nil {
+		t.Fatalf("first entry: %v", err)
+	}
+	if err := copyPackEntry(zw, "b", strings.NewReader("0123456789"), 100, total); err == nil {
+		t.Fatal("second entry pushed the total to 20 over a 15 budget, want an error")
+	}
+}
+
+// TestRenderServerPack_StreamsLargeUploadContentWithoutBuffering renders a
+// stored zip whose inner file is several MB - comfortably past any single copy
+// buffer - and checks the output is byte-correct. It exercises the
+// spool-to-temp then stream-out path end to end; the memory stays flat by
+// construction (io.Copy buffers, never the whole object).
+func TestRenderServerPack_StreamsLargeUploadContentWithoutBuffering(t *testing.T) {
+	dir := t.TempDir()
+	big := bytes.Repeat([]byte("A"), 3<<20) // 3 MiB
+	storeZip(t, dir, "uploads/big.zip", "mods/big.jar", big)
+	h := localModpackHandler(t, dir)
+
+	var out bytes.Buffer
+	if err := h.renderServerPack(context.Background(), []models.BuildContentEntry{uploadEntry("uploads/big.zip")}, &out); err != nil {
+		t.Fatalf("renderServerPack: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	if err != nil {
+		t.Fatalf("output is not a valid zip: %v", err)
+	}
+	var got []byte
+	for _, f := range zr.File {
+		if f.Name == "mods/big.jar" {
+			rc, _ := f.Open()
+			got, _ = io.ReadAll(rc)
+			rc.Close()
+		}
+	}
+	if !bytes.Equal(got, big) {
+		t.Fatalf("streamed entry = %d bytes, want the %d stored bytes intact", len(got), len(big))
 	}
 }
