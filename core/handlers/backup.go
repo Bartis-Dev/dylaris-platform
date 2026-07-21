@@ -155,12 +155,20 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error()})
 		return
 	}
-	probeKey := fmt.Sprintf("__dylaris_probe_%d.txt", time.Now().UnixNano())
-	if err := provider.Put(r.Context(), probeKey, strReader("ok"), 2); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "put failed: " + err.Error()})
+	// Round-trip put/read-back/delete: a backend that accepts a write but hands
+	// back different or no bytes is broken, and put-then-delete alone reported it
+	// as green.
+	if ok, msg := probeBackupStorage(r.Context(), provider); !ok {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": msg})
 		return
 	}
-	provider.Delete(r.Context(), probeKey)
+	// A local/shared path on the container's own filesystem passes every probe
+	// yet loses every archive on the next container recreation. Report that as a
+	// warning riding along with success, never as a plain green result.
+	if warning := backupStorageEphemeralWarning(storage); warning != "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "warning": warning})
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable, Server, Info,
+    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle,
 } from 'lucide-react';
 import {
     BackupStorage,
@@ -210,6 +210,9 @@ export default function BackupsTab() {
     const [editing, setEditing] = useState<BackupStorage | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [saving, setSaving] = useState(false);
+    // Persistent per-storage durability warnings from the last test. A warning
+    // that scrolls away in a toast is one nobody acts on.
+    const [testWarnings, setTestWarnings] = useState<Record<number, string>>({});
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -270,7 +273,20 @@ export default function BackupsTab() {
 
     const handleTest = async (id: number) => {
         const res = await testBackupStorage(id);
-        showToast(res.success ? 'Connection OK' : (res.message || 'Connection failed'), res.success);
+        // Cleared on every test, so a warning never outlives the config that
+        // produced it: fixing the mount and re-testing makes it disappear.
+        setTestWarnings(prev => {
+            const next = { ...prev };
+            if (res.success && res.warning) next[id] = res.warning;
+            else delete next[id];
+            return next;
+        });
+        showToast(
+            res.success
+                ? (res.warning ? 'Connection OK, see the warning below.' : 'Connection OK')
+                : (res.message || 'Connection failed'),
+            res.success,
+        );
     };
 
     const handleConfigSave = async () => {
@@ -356,34 +372,42 @@ export default function BackupsTab() {
                 ) : (
                     <div className="space-y-2">
                         {storages.map(s => (
-                            <div key={s.id} className="flex items-center justify-between gap-3 bg-(--base-03) border border-(--base-04) rounded-md px-3 py-2.5">
-                                <div className="flex items-center gap-3 min-w-0">
-                                    {s.provider === 's3'
-                                        ? <Cloud size={16} className="text-(--accent-light) shrink-0" />
-                                        : s.provider === 'node-local'
-                                            ? <Server size={16} className="text-(--primary-light) shrink-0" />
-                                            : <HardDrive size={16} className="text-(--primary-light) shrink-0" />}
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium text-(--base-09)">{s.name}</span>
-                                            {s.isDefault && <span className="badge badge-accent">default</span>}
-                                        </div>
-                                        <div className="mono-label">
-                                            {s.provider === 'local' ? 'shared' : s.provider}
+                            <div key={s.id} className="space-y-1.5">
+                                <div className="flex items-center justify-between gap-3 bg-(--base-03) border border-(--base-04) rounded-md px-3 py-2.5">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        {s.provider === 's3'
+                                            ? <Cloud size={16} className="text-(--accent-light) shrink-0" />
+                                            : s.provider === 'node-local'
+                                                ? <Server size={16} className="text-(--primary-light) shrink-0" />
+                                                : <HardDrive size={16} className="text-(--primary-light) shrink-0" />}
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-medium text-(--base-09)">{s.name}</span>
+                                                {s.isDefault && <span className="badge badge-accent">default</span>}
+                                            </div>
+                                            <div className="mono-label">
+                                                {s.provider === 'local' ? 'shared' : s.provider}
+                                            </div>
                                         </div>
                                     </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <button onClick={() => handleTest(s.id)} className="btn btn-secondary btn-sm" title="Test connection">
+                                            <Cable size={12} /> Test
+                                        </button>
+                                        <button onClick={() => setEditing(s)} className="btn btn-secondary btn-sm">
+                                            <Pencil size={12} /> Edit
+                                        </button>
+                                        <button onClick={() => handleDelete(s.id)} className="btn btn-danger btn-sm">
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-1.5">
-                                    <button onClick={() => handleTest(s.id)} className="btn btn-secondary btn-sm" title="Test connection">
-                                        <Cable size={12} /> Test
-                                    </button>
-                                    <button onClick={() => setEditing(s)} className="btn btn-secondary btn-sm">
-                                        <Pencil size={12} /> Edit
-                                    </button>
-                                    <button onClick={() => handleDelete(s.id)} className="btn btn-danger btn-sm">
-                                        <Trash2 size={12} />
-                                    </button>
-                                </div>
+                                {testWarnings[s.id] && (
+                                    <div className="alert alert-warning text-xs flex items-start gap-2">
+                                        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                        <span>{testWarnings[s.id]}</span>
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>

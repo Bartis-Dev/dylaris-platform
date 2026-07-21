@@ -438,7 +438,7 @@ export const updateBackupStorage = (id: number, s: Partial<BackupStorage>): Prom
     fetchAPI(`/backup-storages/${id}`, { method: 'PATCH', body: JSON.stringify(s) });
 export const deleteBackupStorage = (id: number): Promise<{ success: boolean }> =>
     fetchAPI(`/backup-storages/${id}`, { method: 'DELETE' });
-export const testBackupStorage = (id: number): Promise<{ success: boolean; message?: string }> =>
+export const testBackupStorage = (id: number): Promise<{ success: boolean; message?: string; warning?: string }> =>
     fetchAPI(`/backup-storages/${id}/test`, { method: 'POST' });
 
 // --- STORAGE CONNECTIONS ---
