@@ -108,3 +108,14 @@ describe('canSaveCoreStorage host-path single-Core constraint', () => {
     expect(canSaveCoreStorage({ ...path, path: 'relative' }, null, true)).toBe(false);
   });
 });
+
+describe('canSaveCoreStorage with a selected storage connection', () => {
+  it('a selected connection makes an s3 config saveable even with blank inline fields', () => {
+    const c: CoreStorageConfig = { ...base, backend: 's3', s3Bucket: '', s3AccessKey: '', s3SecretKey: '', connectionId: 5 };
+    expect(canSaveCoreStorage(c, null, true)).toBe(true);
+  });
+  it('connectionId 0 falls back to the inline requirements, so blank inline is not saveable', () => {
+    const c: CoreStorageConfig = { ...base, backend: 's3', s3Bucket: '', s3AccessKey: '', s3SecretKey: '', connectionId: 0 };
+    expect(canSaveCoreStorage(c, null, true)).toBe(false);
+  });
+});

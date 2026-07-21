@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage, s3IdentityChanged, type CoreStorageConfig } from '@/lib/coreStorage';
-import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2 } from 'lucide-react';
+import { listStorageConnections, type StorageConnection } from '@/lib/api';
+import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
@@ -15,7 +16,7 @@ const BACKENDS = [
 const EMPTY: CoreStorageConfig = {
   backend: 'path', path: '', pathConfirmed: false,
   s3Endpoint: '', s3Bucket: '', s3Region: '', s3AccessKey: '', s3SecretKey: '',
-  s3PathStyle: false, s3Prefix: '', s3SecretSet: false,
+  s3PathStyle: false, s3Prefix: '', s3SecretSet: false, connectionId: 0,
 };
 
 export default function CoreStorageTab() {
@@ -36,6 +37,9 @@ export default function CoreStorageTab() {
   const [hostPathAllowed, setHostPathAllowed] = useState(true);
   const [onlineCores, setOnlineCores] = useState(0);
   const [multiCoreWarning, setMultiCoreWarning] = useState<string | null>(null);
+
+  // Saved storage connections for the "use a saved connection" selector.
+  const [connections, setConnections] = useState<StorageConnection[]>([]);
 
   // Snapshot of the last-saved config, used for dirty detection.
   const snapshotRef = useRef<CoreStorageConfig | null>(null);
@@ -58,8 +62,18 @@ export default function CoreStorageTab() {
     });
   }, []);
 
+  useEffect(() => {
+    listStorageConnections().then(res => {
+      if (res.success && res.connections) setConnections(res.connections);
+    });
+  }, []);
+
   const canSave = canSaveCoreStorage(settings, snapshotRef.current, hostPathAllowed);
   const identityChanged = settings.backend === 's3' && s3IdentityChanged(settings, snapshotRef.current);
+  // A saved connection supplies the credentials; the inline s3 fields and the
+  // inline Test are then hidden (the connection has its own test on the Storage
+  // Connections page).
+  const usingConnection = settings.backend === 's3' && (settings.connectionId ?? 0) > 0;
 
   const handleSave = async () => {
     if (!canSave) {
@@ -232,6 +246,27 @@ export default function CoreStorageTab() {
       {/* S3 backend */}
       {settings.backend === 's3' && (
         <div className="space-y-4">
+          <div className="flex flex-col gap-[5px]">
+            <label className="input-label" htmlFor="core-storage-connection">Storage connection</label>
+            <select
+              id="core-storage-connection"
+              value={settings.connectionId ?? 0}
+              onChange={e => set('connectionId', Number(e.target.value))}
+              className="input-field w-full"
+            >
+              <option value={0}>Enter credentials manually</option>
+              {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <p className="text-xs text-(--base-06)">Reuse a saved connection from Settings -&gt; Storage Connections, or enter S3 credentials inline below.</p>
+          </div>
+
+          {usingConnection ? (
+            <div className="alert alert-info text-xs flex items-start gap-2">
+              <Info size={14} className="shrink-0 mt-0.5" />
+              <span>Credentials come from the selected connection. Manage or test it on the Storage Connections page.</span>
+            </div>
+          ) : (
+          <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-[5px]">
               <label className="input-label" htmlFor="core-storage-s3-endpoint">Endpoint URL (blank = AWS)</label>
@@ -294,6 +329,8 @@ export default function CoreStorageTab() {
               <span className="text-xs text-(--base-08) group-hover:text-(--base-09)">Path-style addressing (required for MinIO)</span>
             </label>
           </div>
+          </>
+          )}
         </div>
       )}
 
@@ -308,15 +345,17 @@ export default function CoreStorageTab() {
           {saving && <Loader2 size={14} className="animate-spin" />}
           {saving ? 'Saving...' : 'Save'}
         </button>
-        <button
-          type="button"
-          onClick={handleTest}
-          disabled={testing}
-          className="btn btn-secondary disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-        >
-          {testing ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
-          {testing ? 'Testing...' : 'Test Connection'}
-        </button>
+        {!usingConnection && (
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={testing}
+            className="btn btn-secondary disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+          >
+            {testing ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
+            {testing ? 'Testing...' : 'Test Connection'}
+          </button>
+        )}
       </div>
 
       {testWarning && (

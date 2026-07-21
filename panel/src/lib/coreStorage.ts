@@ -15,6 +15,10 @@ export interface CoreStorageConfig {
   s3PathStyle: boolean;
   s3Prefix: string;
   s3SecretSet?: boolean;
+  // References a saved storage connection. When set (> 0), the credentials come
+  // from that connection and the inline s3 fields are ignored. 0/undefined =
+  // enter credentials inline.
+  connectionId?: number;
 }
 
 // isAbsolutePath requires a literal leading "/", matching the server check in
@@ -45,6 +49,10 @@ export function canSaveCoreStorage(
     return hostPathAllowed && isAbsolutePath(c.path.trim()) && c.pathConfirmed === true;
   }
   if (c.backend === 's3') {
+    // A selected connection supplies the credentials; the inline s3 fields are
+    // then irrelevant and may be blank. The backend validates the connection
+    // itself (core/handlers/core_storage.go SaveConfig).
+    if ((c.connectionId ?? 0) > 0) return true;
     // A stored secret only counts as "present" when the identity it was
     // stored against (endpoint/bucket/access key) hasn't changed - mirrors
     // the backend's anti credential-rebinding rule (see s3IdentityChanged
