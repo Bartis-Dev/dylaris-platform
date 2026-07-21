@@ -203,6 +203,14 @@ type Store interface {
 	ListBackupRestores(serverID, limit int) ([]models.BackupRestore, error)
 	UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) error
 
+	// --- Storage connections ---
+	ListStorageConnections() ([]models.StorageConnection, error)
+	GetStorageConnection(id int) (*models.StorageConnection, error)
+	CreateStorageConnection(c *models.StorageConnection) (int, error)
+	UpdateStorageConnection(c *models.StorageConnection) error
+	SetStorageConnectionSecret(id int, secret string) error
+	DeleteStorageConnection(id int) error
+
 	// --- Storage migration manifests ---
 	CreateStorageManifest(m *models.StorageManifest, entries []models.StorageManifestEntry) (int, error)
 	GetStorageManifest(id int) (*models.StorageManifest, error)

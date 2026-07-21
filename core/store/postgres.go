@@ -31,6 +31,12 @@ type PostgresStore struct {
 	// SetSettingsEncryptionKey runs at boot; nil means pass-through (the
 	// pre-encryption behaviour), so tests and early boot are unaffected.
 	settingsSecretKey []byte
+	// storageConnSecretKey encrypts storage_connections.secret_enc at rest. nil
+	// until SetStorageConnEncryptionKey runs at boot. Unlike the settings key a
+	// nil key makes a non-empty-secret write fail closed: storage_connections is
+	// a greenfield table, so there is no legacy plaintext to tolerate and a
+	// secret must never land there in the clear.
+	storageConnSecretKey []byte
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {

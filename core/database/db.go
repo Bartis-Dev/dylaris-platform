@@ -184,6 +184,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyStorageManifestsSchema(db); err != nil {
 		return err
 	}
+	if err := applyStorageConnectionsSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

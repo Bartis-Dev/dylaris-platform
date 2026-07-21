@@ -150,6 +150,10 @@ func main() {
 	// the storage secrets are never persisted in the clear. A legacy plaintext
 	// secret still reads through and is re-encrypted on its next save.
 	pgStore.SetSettingsEncryptionKey(cfg.ClusterSecret)
+	// Encrypt storage_connections secrets at rest with a distinct
+	// CLUSTER_SECRET-derived key. Installed before any handler resolves a
+	// connection, so a connection secret is never stored or read in the clear.
+	pgStore.SetStorageConnEncryptionKey(cfg.ClusterSecret)
 
 	// Which reverse-proxy networks may set X-Forwarded-For. Installed before any
 	// handler serves, so the rate limiters and the audit log key on a client IP
