@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -299,12 +300,23 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 
 // SaveFileHandler handles requests to save file content
 func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
+	// Bound the request body: the whole file content arrives inline as JSON, so
+	// without this an authenticated user could POST an arbitrarily large body and
+	// have it decoded into RAM. Reuse the per-user upload ceiling (the same one
+	// UploadFileHandler applies via MaxBytesReader).
+	r.Body = http.MaxBytesReader(w, r.Body, h.getTransferLimit(r, "upload"))
+
 	var req struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			sendJSONError(w, "File is too large or exceeds your upload limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
