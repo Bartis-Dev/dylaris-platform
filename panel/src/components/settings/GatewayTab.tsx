@@ -55,6 +55,12 @@ interface BeamSettings {
     refDownInternal?: number;
     refUpExternal?: number;
     refDownExternal?: number;
+
+    // Upload limits (bytes, 0 = unlimited), enforced node-side on the beam
+    // upload path. maxUploadBytes is an absolute per-upload cap; dailyUploadBytes
+    // is a per-user daily total.
+    maxUploadBytes?: number;
+    dailyUploadBytes?: number;
 }
 
 const BW_UNITS = [
@@ -213,6 +219,17 @@ function bpsToMbit(bps: number | undefined): number {
     return Math.round(bps / MBIT_TO_BPS);
 }
 
+// Upload limits are stored in bytes; the UI edits them in GiB. 0 = unlimited.
+const GIB_TO_BYTES = 1024 * 1024 * 1024;
+function bytesToGiB(bytes: number | undefined): number {
+    if (!bytes || bytes <= 0) return 0;
+    return Math.round((bytes / GIB_TO_BYTES) * 100) / 100; // 2 decimals
+}
+function giBToBytes(gib: number): number {
+    if (!gib || gib <= 0) return 0;
+    return Math.round(gib * GIB_TO_BYTES);
+}
+
 // Snapshot of every field a dirty-check should follow. Everything is
 // numeric in bytes/sec for the bw/ref fields so the JSON.stringify
 // equality check is exact.
@@ -231,6 +248,8 @@ interface BeamEditableSnapshot {
     refDownInternal: number;
     refUpExternal: number;
     refDownExternal: number;
+    maxUploadBytes: number;
+    dailyUploadBytes: number;
 }
 
 function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
@@ -252,6 +271,8 @@ function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
         refDownInternal: s.refDownInternal ?? 0,
         refUpExternal: s.refUpExternal ?? 0,
         refDownExternal: s.refDownExternal ?? 0,
+        maxUploadBytes: s.maxUploadBytes ?? 0,
+        dailyUploadBytes: s.dailyUploadBytes ?? 0,
     };
 }
 
@@ -318,6 +339,8 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             refDownInternal: snap.refDownInternal,
             refUpExternal: snap.refUpExternal,
             refDownExternal: snap.refDownExternal,
+            maxUploadBytes: snap.maxUploadBytes,
+            dailyUploadBytes: snap.dailyUploadBytes,
         }));
     };
 
@@ -337,6 +360,9 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
     const setRefField = (k: RefKey, mbit: number) =>
         setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
+
+    const setUploadLimit = (k: 'maxUploadBytes' | 'dailyUploadBytes', gib: number) =>
+        setSettings(s => ({ ...s, [k]: giBToBytes(gib) }));
 
     if (loading) return (
         <div className="space-y-6">
@@ -514,6 +540,40 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                             refValue={settings.refDownExternal}
                             onChange={v => setBwField('bwDownExternal', v)}
                         />
+                    </div>
+                </div>
+            </div>
+
+            {/* ─── Upload limits (enforced node-side) ─── */}
+            <div className="card p-5 space-y-4">
+                <div>
+                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1">Upload Limits</h3>
+                    <p className="text-xs text-(--base-06)">
+                        Caps on files pushed to a node over Beam (server import, file browser). Values in <span className="font-mono">GiB</span> — <strong>0 = unlimited</strong>. Enforced on the node, which Core&apos;s HTTP body-size cap never sees. Downloads are not counted.
+                    </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Max per upload</label>
+                        <input
+                            type="number" min={0} step={0.1}
+                            value={bytesToGiB(settings.maxUploadBytes) || ''}
+                            onChange={e => setUploadLimit('maxUploadBytes', parseFloat(e.target.value) || 0)}
+                            placeholder="0"
+                            className="input-field input-mono"
+                        />
+                        <p className="text-xs text-(--base-06)">Rejects any single upload larger than this.</p>
+                    </div>
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label">Daily per user</label>
+                        <input
+                            type="number" min={0} step={0.1}
+                            value={bytesToGiB(settings.dailyUploadBytes) || ''}
+                            onChange={e => setUploadLimit('dailyUploadBytes', parseFloat(e.target.value) || 0)}
+                            placeholder="0"
+                            className="input-field input-mono"
+                        />
+                        <p className="text-xs text-(--base-06)">Total a user may upload per calendar day (UTC).</p>
                     </div>
                 </div>
             </div>
