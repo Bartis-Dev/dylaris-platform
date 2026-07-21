@@ -196,6 +196,11 @@ type StorageTargetConfig struct {
 	S3SecretKey   string `json:"s3SecretKey,omitempty"`
 	S3PathStyle   bool   `json:"s3PathStyle"`
 	S3Prefix      string `json:"s3Prefix"`
+	// ConnectionID references a saved storage connection. When non-zero, the
+	// target is built from that connection (credentials and all) and the inline
+	// s3 fields above are ignored; the switch persists the connection reference
+	// rather than inline credentials. 0 = an inline (throwaway) target.
+	ConnectionID int `json:"connectionId,omitempty"`
 }
 
 // StorageMigrationRequest is the validated shape of a start request.
@@ -251,12 +256,13 @@ func (r StorageMigrationRequest) Validate() error {
 		if !hasCfg && !hasSet {
 			return errors.New("a migrate job needs a target: either targetDataSet (another data set) or targetConfig (an ad-hoc storage config)")
 		}
-		if hasCfg && r.TargetConfig.Backend == "" {
+		if hasCfg && r.TargetConfig.Backend == "" && r.TargetConfig.ConnectionID == 0 {
 			// Shape check only. The full rules live in
 			// handlers.validateCoreStorageConfig, which the resolver applies
 			// before a single object is read; duplicating them here would give
-			// them two homes and let them drift.
-			return errors.New("targetConfig.backend is required (\"path\" or \"s3\")")
+			// them two homes and let them drift. A connection target may omit the
+			// backend (it is always s3) - the resolver loads the connection.
+			return errors.New("targetConfig.backend is required (\"path\" or \"s3\"), unless a connectionId is given")
 		}
 		if !storagemigrate.ValidVerifyMode(r.VerifyMode) {
 			return fmt.Errorf("verifyMode must be %q or %q", storagemigrate.VerifyModeFull, storagemigrate.VerifyModeSample)

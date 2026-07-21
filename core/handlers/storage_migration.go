@@ -559,12 +559,33 @@ func subPrefixContains(outer, inner string) bool {
 // build a provider. The refusal has to land HERE, at Start, because by the time
 // the copy loop noticed it would already have rewritten source objects onto
 // themselves.
+// targetCoreStorageConfig resolves a migration target into a CoreStorageConfig,
+// loading a referenced storage connection when one is set. For a connection
+// target the credentials come from the connection (decrypted in the store), the
+// backend is s3, and ConnectionID is preserved so a switch persists the
+// reference. For an inline target it is the plain field mapping.
+func (r *StorageDataSetResolver) targetCoreStorageConfig(tc services.StorageTargetConfig) (CoreStorageConfig, error) {
+	if tc.ConnectionID != 0 {
+		conn, err := r.state.Store.GetStorageConnection(tc.ConnectionID)
+		if err != nil {
+			return CoreStorageConfig{}, fmt.Errorf("target storage connection %d: %w", tc.ConnectionID, err)
+		}
+		cfg := coreStorageConfigFromConnection(conn)
+		cfg.ConnectionID = tc.ConnectionID
+		return cfg, nil
+	}
+	return coreStorageConfigFromTarget(tc), nil
+}
+
 func (r *StorageDataSetResolver) ResolveTarget(_ context.Context, sourceID string, tc services.StorageTargetConfig) (storagemigrate.DataSet, string, error) {
 	loc, err := r.sourceCoreStorageConfigFor(sourceID)
 	if err != nil {
 		return nil, "", err
 	}
-	tgtCfg := coreStorageConfigFromTarget(tc)
+	tgtCfg, err := r.targetCoreStorageConfig(tc)
+	if err != nil {
+		return nil, "", err
+	}
 	if err := validateCoreStorageConfig(tgtCfg); err != nil {
 		return nil, "", fmt.Errorf("target storage config: %w", err)
 	}
@@ -595,7 +616,10 @@ func (r *StorageDataSetResolver) SwitchConfig(ctx context.Context, sourceID stri
 	if _, err := r.sourceCoreStorageConfigFor(sourceID); err != nil {
 		return err
 	}
-	cfg := coreStorageConfigFromTarget(tc)
+	cfg, err := r.targetCoreStorageConfig(tc)
+	if err != nil {
+		return err
+	}
 	if err := validateCoreStorageConfig(cfg); err != nil {
 		return fmt.Errorf("target storage config: %w", err)
 	}
@@ -631,6 +655,12 @@ func (r *StorageDataSetResolver) switchModpackConfig(cfg CoreStorageConfig) erro
 			return fmt.Errorf("save setting %s: %w", k, err)
 		}
 		return nil
+	}
+	// Point (or un-point) modpack storage at a saved connection. Written
+	// unconditionally so an inline switch clears a previously-selected connection
+	// too; buildModpackStorageProvider checks this id before the inline settings.
+	if err := set(keyModpackStorageConnectionID, storageConnIDSetting(cfg.ConnectionID)); err != nil {
+		return err
 	}
 	if cfg.Backend == "s3" {
 		for _, p := range []struct{ k, v string }{
@@ -668,7 +698,13 @@ func (r *StorageDataSetResolver) switchModpackConfig(cfg CoreStorageConfig) erro
 func storageMigrationAuditPayload(req services.StorageMigrationRequest, jobID string) map[string]interface{} {
 	target := req.TargetDataSet
 	if req.TargetConfig != nil {
-		target = coreStorageBackendLabel(coreStorageConfigFromTarget(*req.TargetConfig), req.DataSet)
+		if req.TargetConfig.ConnectionID != 0 {
+			// A connection target has no inline credentials to label; name the
+			// reference instead. Still credential-free.
+			target = fmt.Sprintf("storage-connection:%d", req.TargetConfig.ConnectionID)
+		} else {
+			target = coreStorageBackendLabel(coreStorageConfigFromTarget(*req.TargetConfig), req.DataSet)
+		}
 	}
 	return map[string]interface{}{
 		"action":       "storage_migration_start",

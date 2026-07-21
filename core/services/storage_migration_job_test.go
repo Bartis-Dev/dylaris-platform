@@ -377,6 +377,20 @@ func TestStorageMigrationRequest_Validate(t *testing.T) {
 				TargetConfig: &StorageTargetConfig{}},
 			true,
 		},
+		{
+			// A connection target may omit the backend (it is always s3); the
+			// resolver loads the connection and its credentials.
+			"migrate with a connection target and no backend",
+			StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full",
+				TargetConfig: &StorageTargetConfig{ConnectionID: 5}},
+			false,
+		},
+		{
+			"migrate with a connection target and an explicit s3 backend",
+			StorageMigrationRequest{Kind: StorageJobMigrate, DataSet: "library", VerifyMode: "full",
+				TargetConfig: &StorageTargetConfig{Backend: "s3", ConnectionID: 5}},
+			false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
