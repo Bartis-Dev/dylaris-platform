@@ -145,6 +145,11 @@ func main() {
 	defer db.Close()
 
 	pgStore := store.NewPostgresStore(db)
+	// Encrypt the credential settings (S3 secret keys) at rest, keyed from
+	// CLUSTER_SECRET. Installed before any handler reads or writes a setting, so
+	// the storage secrets are never persisted in the clear. A legacy plaintext
+	// secret still reads through and is re-encrypted on its next save.
+	pgStore.SetSettingsEncryptionKey(cfg.ClusterSecret)
 
 	// Which reverse-proxy networks may set X-Forwarded-For. Installed before any
 	// handler serves, so the rate limiters and the audit log key on a client IP

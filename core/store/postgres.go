@@ -27,6 +27,10 @@ func hashAuthToken(token string) string {
 
 type PostgresStore struct {
 	db *sql.DB
+	// settingsSecretKey encrypts the credential settings at rest. nil until
+	// SetSettingsEncryptionKey runs at boot; nil means pass-through (the
+	// pre-encryption behaviour), so tests and early boot are unaffected.
+	settingsSecretKey []byte
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
@@ -1171,14 +1175,18 @@ func (s *PostgresStore) GetSetting(key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return value, nil
+	return s.decodeSettingValue(key, value), nil
 }
 
 func (s *PostgresStore) SetSetting(key, value string) error {
-	_, err := s.db.Exec(`
+	stored, err := s.encodeSettingValue(key, value)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
 		INSERT INTO settings (key, value) VALUES ($1, $2)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-	`, key, value)
+	`, key, stored)
 	return err
 }
 
@@ -1611,11 +1619,15 @@ func (s *PostgresStore) ListAuditIdentity(targetUserID *string, eventType string
 // Existing call sites use SetSetting (updated_by stays NULL); audit-aware
 // new flows call this variant. updated_at is bumped to NOW() on every write.
 func (s *PostgresStore) SetSettingBy(key, value string, updatedBy string) error {
-	_, err := s.db.Exec(`
+	stored, err := s.encodeSettingValue(key, value)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
 		INSERT INTO settings (key, value, updated_at, updated_by)
 		VALUES ($1, $2, NOW(), $3)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
-	`, key, value, updatedBy)
+	`, key, stored, updatedBy)
 	return err
 }
 
