@@ -17,6 +17,15 @@ func globalReadKeys() []string {
 		"~dylaris:routing_mode", "~dylaris:file_access_mode",
 		"%R~dylaris:placement:*",
 		"~beam:bw_limit", "~beam:bw_up_internal", "~beam:bw_down_internal",
+		// Upload-limit config the node enforces on the beam + SFTP + SaveFileContent
+		// write paths (read-only), plus the per-user daily counter it reads AND
+		// increments (read+write). Without these the node's quota reads return
+		// NOPERM and the shared quota package fails OPEN, silently disabling the
+		// node-side size cap + daily quota and never recording node uploads into
+		// the shared bucket. The counter is per-user (not node-scoped), so the
+		// node needs it for every user whose uploads it handles.
+		"%R~beam:max_upload_bytes", "%R~beam:daily_upload_bytes",
+		"~dylaris:beam:daily:*",
 		"%R~dylaris:core:*",
 		"%R~sftp:auth:*",
 		"~dylaris:migration:*",
@@ -29,6 +38,11 @@ func globalReadKeys() []string {
 func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules, "~dylaris:node:"+token+":*", "~dylaris:discovery:"+token, "~beam:node-endpoint:"+token)
+	// The node reads its own SFTP server list (sftp:node:<nodeName>:user:<user>,
+	// nodeName == token) to resolve which server a virtual SFTP path targets.
+	// Without this getUserServers gets NOPERM and every SFTP session sees an
+	// empty root, so SFTP is dead under mandatory ACL.
+	rules = append(rules, "%R~sftp:node:"+token+":*")
 	for _, u := range serverUUIDs {
 		rules = append(rules, "~dylaris:server:"+u+":*")
 	}
