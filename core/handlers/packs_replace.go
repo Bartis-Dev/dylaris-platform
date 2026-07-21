@@ -104,7 +104,7 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 		return fmt.Errorf("wrap failed: %w", err)
 	}
 	md5hex, _, _ := modpack.Hashes(zipBytes)
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil || prov == nil {
 		return fmt.Errorf("no pack storage configured")
 	}

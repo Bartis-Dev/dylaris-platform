@@ -68,7 +68,7 @@ func hasOversizedZipEntry(zipBytes []byte) bool {
 // paths) still runs BEFORE its entry is written, so a rejected entry aborts the
 // stream without its bytes ever reaching the client.
 func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.BuildContentEntry, dst io.Writer) error {
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil {
 		return err
 	}

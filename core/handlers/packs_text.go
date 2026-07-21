@@ -32,7 +32,7 @@ func (h *PacksHandler) loadOwnedContentModversion(r *http.Request) (*models.Pack
 	if err != nil || mv == nil {
 		return nil, nil, nil, false
 	}
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil || prov == nil {
 		return nil, nil, nil, false
 	}

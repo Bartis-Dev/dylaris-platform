@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"dylaris-core/models"
-	"dylaris-core/storage/modpack"
 
 	"github.com/gorilla/mux"
 )
@@ -295,7 +294,7 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil || prov == nil {
 		solderJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return

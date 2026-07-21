@@ -132,7 +132,7 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to render pack", http.StatusInternalServerError)
 			return
 		}
-		prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+		prov, err := h.state.buildModpackStorageProvider()
 		if err != nil || prov == nil {
 			sendJSONError(w, "Storage unavailable", http.StatusInternalServerError)
 			return

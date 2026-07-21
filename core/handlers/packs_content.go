@@ -199,7 +199,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil || prov == nil {
 		sendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return

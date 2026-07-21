@@ -30,6 +30,10 @@ type modpackSettings struct {
 	S3SecretKey              string   `json:"s3SecretKey,omitempty"` // write-only
 	UpdateCheckIntervalHours int      `json:"updateCheckIntervalHours"`
 	ShareLinksEnabled        bool     `json:"shareLinksEnabled"`
+	// ConnectionID references a saved storage connection. When non-zero, modpack
+	// storage is built from that connection (buildModpackStorageProvider) and the
+	// inline s3 fields are ignored. 0 = use the inline config.
+	ConnectionID int `json:"connectionId"`
 }
 
 // Get GET /api/admin/settings/modpacks - PANEL settings.read (RequireCap at the route).
@@ -65,6 +69,7 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	out.UpdateCheckIntervalHours = interval
 	out.ShareLinksEnabled = get("modpack_share_links_enabled") == "true"
+	out.ConnectionID, _ = strconv.Atoi(get(keyModpackStorageConnectionID)) // "" or bad -> 0 = none
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": out,
@@ -150,6 +155,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_storage_s3_access_key", req.S3AccessKey},
 		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
 		{"modpack_share_links_enabled", boolStr(req.ShareLinksEnabled)},
+		{keyModpackStorageConnectionID, storageConnIDSetting(req.ConnectionID)},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {

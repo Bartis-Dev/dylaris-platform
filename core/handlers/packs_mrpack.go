@@ -209,7 +209,7 @@ func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack 
 
 // renderMrpack returns the full .mrpack bytes for a build.
 func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
-	prov, _ := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, _ := h.state.buildModpackStorageProvider()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	if err := h.writeMrpackZip(ctx, zw, pack, build, content, prov); err != nil {
@@ -237,7 +237,7 @@ func (h *PacksHandler) persistMrpackForBuild(ctx context.Context, pack *models.P
 	if build.Channel == models.ChannelDraft {
 		return data, nil
 	}
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil {
 		return nil, fmt.Errorf("modpack storage misconfigured: %w", err)
 	}
@@ -275,7 +275,7 @@ func (h *PacksHandler) ensureInstallMrpack(ctx context.Context, pack *models.Pac
 	if err != nil {
 		return "", err
 	}
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil {
 		return "", err
 	}

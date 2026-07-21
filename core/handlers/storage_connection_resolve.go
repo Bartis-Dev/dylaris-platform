@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-core/storage/modpack"
 )
 
 // keyCoreStorageConnectionID names the setting that, when set to a storage
@@ -14,6 +15,20 @@ import (
 // instead of the inline core_storage_s3_* keys. Empty or "0" means "use the
 // inline config" - the fallback the spec keeps open.
 const keyCoreStorageConnectionID = "core_storage_connection_id"
+
+// keyModpackStorageConnectionID names the setting that, when set to a storage
+// connection id, makes modpack storage build from that named connection instead
+// of the inline modpack_storage_s3_* keys. Empty or "0" = use the inline config.
+const keyModpackStorageConnectionID = "modpack_storage_connection_id"
+
+// storageConnIDSetting formats a connection id for persistence: 0 stores "" (no
+// connection selected) so an empty setting reads back as "none".
+func storageConnIDSetting(id int) string {
+	if id == 0 {
+		return ""
+	}
+	return strconv.Itoa(id)
+}
 
 // selectedStorageConnection resolves the connection referenced by the given
 // id-setting. ok is false (with a nil connection and nil error) when nothing is
@@ -77,4 +92,27 @@ func (s *AppState) effectiveCoreStorageConfig() (CoreStorageConfig, error) {
 		return coreStorageConfigFromConnection(conn), nil
 	}
 	return s.LoadCoreStorageConfig(), nil
+}
+
+// buildModpackStorageProvider builds the modpack storage provider, resolving a
+// selected storage connection first. When modpack_storage_connection_id is set,
+// the connection is built as an s3 storage.StorageProvider (which supports
+// path-style and prefix, unlike modpack's native NewS3) and adapted to the
+// modpack interface via NewCoreStorageProvider - the same adapter the
+// "core-storage" modpack backend already uses. Otherwise it delegates to the
+// inline modpack_storage_* settings unchanged, so an install with no connection
+// selected behaves exactly as before.
+func (s *AppState) buildModpackStorageProvider() (modpack.ModpackStorageProvider, error) {
+	conn, ok, err := s.selectedStorageConnection(keyModpackStorageConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		prov, err := storageConnectionProvider(conn)
+		if err != nil {
+			return nil, err
+		}
+		return modpack.NewCoreStorageProvider(prov), nil
+	}
+	return modpack.NewProviderFromSettings(s.Store.GetSetting, s.buildCoreStorageProvider)
 }

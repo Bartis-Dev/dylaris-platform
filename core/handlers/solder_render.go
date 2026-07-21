@@ -73,7 +73,7 @@ func (h *PacksHandler) renderSolderBuild(pack *models.Pack, build *models.PackBu
 		return fmt.Errorf("list build content: %w", err)
 	}
 
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.buildCoreStorageProvider)
+	prov, err := h.state.buildModpackStorageProvider()
 	if err != nil {
 		return fmt.Errorf("modpack storage not configured: %w", err)
 	}

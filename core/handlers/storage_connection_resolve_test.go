@@ -111,6 +111,51 @@ func TestEffectiveCoreStorageConfig_ConnectionOverridesInline(t *testing.T) {
 	}
 }
 
+// TestBuildModpackStorageProvider_UsesSelectedConnection: with a modpack
+// connection selected, a provider is built from it (not from the inline modpack
+// settings).
+func TestBuildModpackStorageProvider_UsesSelectedConnection(t *testing.T) {
+	connCfg, _ := json.Marshal(storageConnectionConfig{Bucket: "mp-bucket", Region: "eu"})
+	fs := &resolveFakeStore{
+		settings: map[string]string{keyModpackStorageConnectionID: "5"},
+		conn: &models.StorageConnection{
+			ID: 5, Name: "nas", Provider: "s3",
+			Config: connCfg, AccessKey: "AK", SecretAccessKey: "SK",
+		},
+	}
+	s := &AppState{Store: fs}
+	prov, err := s.buildModpackStorageProvider()
+	if err != nil {
+		t.Fatalf("buildModpackStorageProvider: %v", err)
+	}
+	if prov == nil {
+		t.Fatal("provider is nil; a selected connection must yield a provider")
+	}
+}
+
+// TestBuildModpackStorageProvider_DelegatesWhenNoConnection: with nothing
+// selected it falls through to the inline settings, which here are unconfigured,
+// so the factory's (nil, nil) "not configured" result is returned unchanged.
+func TestBuildModpackStorageProvider_DelegatesWhenNoConnection(t *testing.T) {
+	fs := &resolveFakeStore{settings: map[string]string{}} // no connection, no modpack settings
+	s := &AppState{Store: fs}
+	prov, err := s.buildModpackStorageProvider()
+	if err != nil {
+		t.Fatalf("buildModpackStorageProvider: %v", err)
+	}
+	if prov != nil {
+		t.Fatalf("want nil (unconfigured inline), got a provider - delegation path is wrong")
+	}
+}
+
+func TestBuildModpackStorageProvider_BadIDErrors(t *testing.T) {
+	fs := &resolveFakeStore{settings: map[string]string{keyModpackStorageConnectionID: "nope"}}
+	s := &AppState{Store: fs}
+	if _, err := s.buildModpackStorageProvider(); err == nil {
+		t.Fatal("buildModpackStorageProvider(bad id) err = nil, want an error")
+	}
+}
+
 func TestEffectiveCoreStorageConfig_FallsBackToInline(t *testing.T) {
 	fs := &resolveFakeStore{
 		settings: map[string]string{
