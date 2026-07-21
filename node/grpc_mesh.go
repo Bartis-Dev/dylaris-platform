@@ -127,10 +127,23 @@ func (m *MeshManager) cleanupStalePendingWrites() {
 }
 
 func (m *MeshManager) scanCores(ctx context.Context) {
-	keys, err := m.rdb.Keys(ctx, "dylaris:core:*").Result()
-	if err != nil {
-		log.Printf("gRPC Mesh: Redis scan error: %v", err)
-		return
+	// SCAN, not KEYS: the node's scoped Redis ACL grants SCAN but denies KEYS
+	// (it is in @dangerous). KEYS here returned NOPERM, so Core discovery never
+	// ran and the node<->Core gRPC connection was never established — file
+	// transfers to the node then fail with "Node not connected".
+	var keys []string
+	var cursor uint64
+	for {
+		batch, next, err := m.rdb.Scan(ctx, cursor, "dylaris:core:*", 100).Result()
+		if err != nil {
+			log.Printf("gRPC Mesh: Redis scan error: %v", err)
+			return
+		}
+		keys = append(keys, batch...)
+		cursor = next
+		if cursor == 0 {
+			break
+		}
 	}
 
 	activeCores := make(map[string]bool)
@@ -488,4 +501,3 @@ func getNodeIPs() NodeIPInfo {
 
 	return info
 }
-
