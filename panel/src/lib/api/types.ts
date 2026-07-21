@@ -441,6 +441,56 @@ export const deleteBackupStorage = (id: number): Promise<{ success: boolean }> =
 export const testBackupStorage = (id: number): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/backup-storages/${id}/test`, { method: 'POST' });
 
+// --- STORAGE CONNECTIONS ---
+// Named, reusable storage backends (currently s3) that any feature can
+// reference instead of re-entering credentials. The secret access key lives
+// encrypted server-side in its own column and is never returned by the API.
+
+export interface StorageConnectionConfig {
+    endpoint?: string;
+    region?: string;
+    bucket?: string;
+    forcePathStyle?: boolean;
+    prefix?: string;
+}
+
+export interface StorageConnection {
+    id: number;
+    name: string;
+    provider: 's3';
+    config: StorageConnectionConfig;
+    accessKey: string;
+    createdAt?: string;
+    updatedAt?: string;
+    /**
+     * True when a secret is stored. The secret itself is never returned by the
+     * API, so the edit form shows the field empty; leaving it blank keeps the
+     * stored secret.
+     */
+    secretSet?: boolean;
+}
+
+// Write payload: the secret is sent separately (write-only) and omitted on an
+// edit that keeps the existing one.
+export interface StorageConnectionInput {
+    name: string;
+    provider: 's3';
+    config: StorageConnectionConfig;
+    accessKey: string;
+    secretAccessKey?: string;
+}
+
+export const listStorageConnections = (): Promise<{ success: boolean; connections?: StorageConnection[] }> =>
+    fetchAPI('/storage-connections');
+export const createStorageConnection = (c: StorageConnectionInput): Promise<{ success: boolean; id?: number }> =>
+    fetchAPI('/storage-connections', { method: 'POST', body: JSON.stringify(c) });
+export const updateStorageConnection = (id: number, c: StorageConnectionInput): Promise<{ success: boolean }> =>
+    fetchAPI(`/storage-connections/${id}`, { method: 'PATCH', body: JSON.stringify(c) });
+export const deleteStorageConnection = (id: number): Promise<{ success: boolean }> =>
+    fetchAPI(`/storage-connections/${id}`, { method: 'DELETE' });
+export const testStorageConnection = (id: number): Promise<{ success: boolean; ok?: boolean; message?: string }> =>
+    fetchAPI(`/storage-connections/${id}/test`, { method: 'POST' });
+
 export const listBackupJobs = (serverId: number): Promise<{ success: boolean; jobs?: BackupJob[] }> =>
     fetchAPI(`/servers/${serverId}/backup-jobs`);
 export const createBackupJob = (serverId: number, j: Partial<BackupJob>): Promise<{ success: boolean; id?: number }> =>
