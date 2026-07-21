@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -12,7 +13,9 @@ import (
 	pb "dylaris-proto/beam"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // fakeBeamUploadStream is a minimal grpc.ClientStreamingServer for UploadFile.
@@ -93,6 +96,32 @@ func TestUploadFile_CreatesMissingSubServerDir(t *testing.T) {
 	}
 	if string(got) != string(content) {
 		t.Errorf("uploaded content mismatch: got %q, want %q", got, content)
+	}
+}
+
+// TestUploadFile_RejectsBytesBeyondDeclaredSize pins the ceiling that binds the
+// beam path: the disk/size-cap/quota pre-checks run against the declared
+// TotalSize, so a client that declares tiny and then streams more must be cut
+// off. Without the ceiling this upload would write 100 bytes into a 1-byte
+// declared upload and report success, defeating every pre-check.
+func TestUploadFile_RejectsBytesBeyondDeclaredSize(t *testing.T) {
+	bs, _, ctx := newTestBeamServer(t)
+
+	stream := &fakeBeamUploadStream{
+		ctx: ctx,
+		msgs: []*pb.BeamUploadMsg{
+			{Payload: &pb.BeamUploadMsg_Start{Start: &pb.BeamUploadStart{
+				Path: "survival", Filename: "world.zip", TotalSize: 1,
+			}}},
+			{Payload: &pb.BeamUploadMsg_Chunk{Chunk: &pb.BeamUploadChunkData{
+				Data: bytes.Repeat([]byte("x"), 100), Offset: 0,
+			}}},
+		},
+	}
+
+	err := bs.UploadFile(stream)
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("UploadFile err = %v (code %v), want ResourceExhausted", err, status.Code(err))
 	}
 }
 

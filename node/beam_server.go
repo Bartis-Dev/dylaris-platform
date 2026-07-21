@@ -736,6 +736,12 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	var destPath string
 	var tmpFile *os.File
 	var tmpPath string
+	// declaredSize is the client's BeamUploadStart TotalSize. The disk-headroom,
+	// size-cap and daily-quota pre-checks are all evaluated against it, so the
+	// chunk loop MUST enforce that the actual bytes written never exceed it —
+	// otherwise a client declares a tiny size, passes every check, then streams
+	// unbounded (defeating the size cap + disk limit and slipping the quota).
+	var declaredSize int64
 	// completed flips true after we receive the client's stream EOF — the
 	// signal that all chunks made it through. Until then any exit path
 	// (cancel, disconnect, error) must remove the temp file so a partial
@@ -788,6 +794,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return status.Error(codes.PermissionDenied, err.Error())
 			}
 			destPath = resolved
+			declaredSize = p.Start.TotalSize
 
 			// Create the destination's parent dir if it doesn't exist yet. The
 			// HTTP write path does this (grpc_handler.go handleWrite); the beam
@@ -845,6 +852,16 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		case *pb.BeamUploadMsg_Chunk:
 			if tmpFile == nil {
 				return status.Errorf(codes.FailedPrecondition, "no upload started")
+			}
+
+			// Hard ceiling on actual bytes: the disk, size-cap and quota
+			// pre-checks all ran against declaredSize, so a client must not be
+			// able to declare small and then stream past it. A truthful client
+			// (offsets 0..TotalSize) is never affected. This is what binds the
+			// beam path the way MaxBytesReader binds the core HTTP path.
+			if p.Chunk.Offset+int64(len(p.Chunk.Data)) > declaredSize {
+				return status.Errorf(codes.ResourceExhausted,
+					"upload exceeds its declared size of %d bytes", declaredSize)
 			}
 
 			// Throttle: this is the upload direction (client → disk).
