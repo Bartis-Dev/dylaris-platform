@@ -682,6 +682,14 @@ type BeamSettings struct {
 	RefDownInternal int64 `json:"refDownInternal"`
 	RefUpExternal   int64 `json:"refUpExternal"`
 	RefDownExternal int64 `json:"refDownExternal"`
+
+	// Upload limits (bytes, 0 = unlimited). Enforced by the node on the beam
+	// upload path, which bypasses Core's HTTP body-size cap and disk precheck.
+	// MaxUploadBytes is an absolute per-upload cap; DailyUploadBytes is a
+	// per-user daily total. Published to Redis keys beam:max_upload_bytes /
+	// beam:daily_upload_bytes, which the node reads per upload.
+	MaxUploadBytes   int64 `json:"maxUploadBytes"`
+	DailyUploadBytes int64 `json:"dailyUploadBytes"`
 }
 
 // GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)
@@ -773,6 +781,10 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.ref_down_internal", fmt.Sprintf("%d", req.RefDownInternal)},
 		{"beam.ref_up_external", fmt.Sprintf("%d", req.RefUpExternal)},
 		{"beam.ref_down_external", fmt.Sprintf("%d", req.RefDownExternal)},
+
+		// Beam upload limits (bytes, 0 = unlimited), enforced node-side.
+		{"beam.max_upload_bytes", fmt.Sprintf("%d", req.MaxUploadBytes)},
+		{"beam.daily_upload_bytes", fmt.Sprintf("%d", req.DailyUploadBytes)},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -792,6 +804,8 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		h.state.Redis.Set(ctx, "beam:bw_down_internal", fmt.Sprintf("%d", req.BwDownInternal), 0)
 		h.state.Redis.Set(ctx, "beam:bw_up_external", fmt.Sprintf("%d", req.BwUpExternal), 0)
 		h.state.Redis.Set(ctx, "beam:bw_down_external", fmt.Sprintf("%d", req.BwDownExternal), 0)
+		h.state.Redis.Set(ctx, "beam:max_upload_bytes", fmt.Sprintf("%d", req.MaxUploadBytes), 0)
+		h.state.Redis.Set(ctx, "beam:daily_upload_bytes", fmt.Sprintf("%d", req.DailyUploadBytes), 0)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -851,6 +865,10 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 	fmt.Sscanf(getSetting("beam.ref_down_internal"), "%d", &settings.RefDownInternal)
 	fmt.Sscanf(getSetting("beam.ref_up_external"), "%d", &settings.RefUpExternal)
 	fmt.Sscanf(getSetting("beam.ref_down_external"), "%d", &settings.RefDownExternal)
+
+	// Beam upload limits (bytes). Default 0 (unlimited) when never set.
+	fmt.Sscanf(getSetting("beam.max_upload_bytes"), "%d", &settings.MaxUploadBytes)
+	fmt.Sscanf(getSetting("beam.daily_upload_bytes"), "%d", &settings.DailyUploadBytes)
 
 	return settings
 }
