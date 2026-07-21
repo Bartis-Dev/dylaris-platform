@@ -44,6 +44,11 @@ func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
 	if storages == nil {
 		storages = []models.BackupStorage{}
 	}
+	// Never return the s3 secret. A settings.read holder could otherwise
+	// harvest every backup credential straight from this list.
+	for i := range storages {
+		storages[i] = redactBackupStorageSecret(storages[i])
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "storages": storages})
 }
 
@@ -104,6 +109,12 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	if !validBackupProvider(req.Provider) {
 		sendJSONError(w, "invalid provider (expected shared, s3, node-local or core-storage)", 400)
 		return
+	}
+	// The panel edits with the secret redacted, so an update normally carries no
+	// secret. Backfill the stored one unless a new value was submitted, or the
+	// edit would silently wipe the credential.
+	if existing, err := h.state.Store.GetBackupStorage(id); err == nil {
+		req = mergeBackupStorageSecret(req, existing)
 	}
 	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
 		sendJSONError(w, err.Error(), 500)

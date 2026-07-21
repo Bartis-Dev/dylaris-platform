@@ -368,6 +368,12 @@ export interface BackupStorage {
     config: Record<string, unknown>;
     isDefault: boolean;
     createdAt?: string;
+    /**
+     * True when an s3 secret is stored. The secret itself is never returned by
+     * the API (redacted server-side), so the edit form shows the field empty
+     * and leaving it blank keeps the stored secret.
+     */
+    secretSet?: boolean;
 }
 
 // Global backup-mode + quota config (persisted server-side under

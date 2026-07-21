@@ -427,18 +427,30 @@ export default function BackupsTab() {
 
                             {editing.provider === 's3' && (
                                 <>
-                                    {(['endpoint', 'region', 'bucket', 'accessKeyId', 'secretAccessKey'] as (keyof S3Config)[]).map(field => (
-                                        <div key={field} className="form-group">
-                                            <label className="input-label">{field}</label>
-                                            <input
-                                                type={field === 'secretAccessKey' ? 'password' : 'text'}
-                                                value={String((editing.config as unknown as S3Config)[field] ?? '')}
-                                                onChange={e => setEditing({ ...editing, config: { ...(editing.config as object), [field]: e.target.value } })}
-                                                className="input-field font-mono"
-                                                placeholder={field === 'endpoint' ? 'https://fsn1.your-objectstorage.com' : ''}
-                                            />
-                                        </div>
-                                    ))}
+                                    {(['endpoint', 'region', 'bucket', 'accessKeyId', 'secretAccessKey'] as (keyof S3Config)[]).map(field => {
+                                        // The secret is never returned by the API. Show the field
+                                        // empty with a "leave blank to keep" hint when one is
+                                        // stored; a save carrying no secret preserves it server-side.
+                                        const isSecret = field === 'secretAccessKey';
+                                        const secretStored = isSecret && editing.secretSet;
+                                        return (
+                                            <div key={field} className="form-group">
+                                                <label className="input-label">{field}</label>
+                                                <input
+                                                    type={isSecret ? 'password' : 'text'}
+                                                    value={isSecret ? String((editing.config as unknown as S3Config).secretAccessKey ?? '') : String((editing.config as unknown as S3Config)[field] ?? '')}
+                                                    onChange={e => setEditing({ ...editing, config: { ...(editing.config as object), [field]: e.target.value } })}
+                                                    className="input-field font-mono"
+                                                    autoComplete={isSecret ? 'new-password' : undefined}
+                                                    placeholder={
+                                                        secretStored ? 'Leave blank to keep the stored secret'
+                                                            : field === 'endpoint' ? 'https://fsn1.your-objectstorage.com'
+                                                                : ''
+                                                    }
+                                                />
+                                            </div>
+                                        );
+                                    })}
                                     <div className="flex items-center justify-between">
                                         <label className="input-label">Force Path Style</label>
                                         <button

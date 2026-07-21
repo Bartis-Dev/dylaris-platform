@@ -13,6 +13,13 @@ type BackupStorage struct {
 	Config    json.RawMessage `json:"config"`
 	IsDefault bool            `json:"isDefault"`
 	CreatedAt time.Time       `json:"createdAt"`
+
+	// SecretSet reports, on a read response, that an s3 secret is stored
+	// WITHOUT returning it. It is transient: set by the handler before
+	// encoding, never persisted (the store reads Config, not this). The secret
+	// itself is redacted from Config on read so a settings.read holder can no
+	// longer harvest every backup credential over the API.
+	SecretSet bool `json:"secretSet,omitempty"`
 }
 
 // BackupJob describes a recurring or manual backup configuration.

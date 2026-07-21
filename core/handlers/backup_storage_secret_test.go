@@ -1,0 +1,163 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"dylaris-core/models"
+	"dylaris-core/store"
+
+	"github.com/gorilla/mux"
+)
+
+func s3Storage(secret string) models.BackupStorage {
+	cfg, _ := json.Marshal(map[string]string{
+		"endpoint": "https://objects.internal:9000", "bucket": "backups",
+		"region": "us-east-1", "accessKeyId": "AKIA", "secretAccessKey": secret,
+	})
+	return models.BackupStorage{ID: 1, Name: "s3", Provider: "s3", Config: cfg}
+}
+
+// TestRedactBackupStorageSecret_RemovesTheSecret is the leak fix: the read path
+// must never carry secretAccessKey, and it must flag that one exists so the
+// panel can show a write-only field.
+func TestRedactBackupStorageSecret_RemovesTheSecret(t *testing.T) {
+	got := redactBackupStorageSecret(s3Storage("super-secret-value"))
+
+	if strings.Contains(string(got.Config), "super-secret-value") {
+		t.Fatalf("redacted config still contains the secret: %s", got.Config)
+	}
+	if strings.Contains(string(got.Config), "secretAccessKey") {
+		t.Errorf("redacted config still names secretAccessKey: %s", got.Config)
+	}
+	if !got.SecretSet {
+		t.Error("SecretSet = false, want true when a secret was stored")
+	}
+	// The non-secret fields survive so the form can still show them.
+	if !strings.Contains(string(got.Config), "backups") {
+		t.Errorf("redaction dropped a non-secret field: %s", got.Config)
+	}
+}
+
+func TestRedactBackupStorageSecret_NoSecretStored(t *testing.T) {
+	got := redactBackupStorageSecret(s3Storage(""))
+	if got.SecretSet {
+		t.Error("SecretSet = true, want false when the stored secret is empty")
+	}
+}
+
+// TestRedactBackupStorageSecret_NonS3Unchanged: only s3 carries a secret; a
+// local/node-local config is returned as-is.
+func TestRedactBackupStorageSecret_NonS3Unchanged(t *testing.T) {
+	bs := models.BackupStorage{Provider: "local", Config: json.RawMessage(`{"basePath":"/data"}`)}
+	got := redactBackupStorageSecret(bs)
+	if string(got.Config) != `{"basePath":"/data"}` || got.SecretSet {
+		t.Errorf("non-s3 storage was altered: %+v", got)
+	}
+}
+
+// TestRedactBackupStorageSecret_UnparseableConfigDropsTheBlob: a config that
+// cannot be parsed field-by-field is emptied rather than risk leaking part of
+// a secret it might contain.
+func TestRedactBackupStorageSecret_UnparseableConfigDropsTheBlob(t *testing.T) {
+	bs := models.BackupStorage{Provider: "s3", Config: json.RawMessage(`not json`)}
+	got := redactBackupStorageSecret(bs)
+	if string(got.Config) != "{}" {
+		t.Errorf("config = %s, want {} for an unparseable s3 config", got.Config)
+	}
+}
+
+// TestMergeBackupStorageSecret_KeepsExistingWhenBlank is what makes the
+// write-only field usable: an edit with no secret preserves the stored one.
+func TestMergeBackupStorageSecret_KeepsExistingWhenBlank(t *testing.T) {
+	existing := s3Storage("stored-secret")
+	incoming := s3Storage("") // panel sent a blank secret
+
+	merged := mergeBackupStorageSecret(incoming, &existing)
+
+	if !strings.Contains(string(merged.Config), "stored-secret") {
+		t.Fatalf("blank edit wiped the secret: %s", merged.Config)
+	}
+}
+
+// TestMergeBackupStorageSecret_UsesNewSecret: a submitted secret is a rotation
+// and must replace the stored one.
+func TestMergeBackupStorageSecret_UsesNewSecret(t *testing.T) {
+	existing := s3Storage("old-secret")
+	incoming := s3Storage("new-secret")
+
+	merged := mergeBackupStorageSecret(incoming, &existing)
+
+	if !strings.Contains(string(merged.Config), "new-secret") {
+		t.Fatalf("rotation was ignored: %s", merged.Config)
+	}
+	if strings.Contains(string(merged.Config), "old-secret") {
+		t.Errorf("both secrets present after rotation: %s", merged.Config)
+	}
+}
+
+// backupSecretFakeStore serves a canned storage list and records updates, so a
+// handler-level test can prove the redaction/merge actually run on the wire.
+type backupSecretFakeStore struct {
+	store.Store
+	list    []models.BackupStorage
+	byID    map[int]*models.BackupStorage
+	updated *models.BackupStorage
+}
+
+func (f *backupSecretFakeStore) ListBackupStorages() ([]models.BackupStorage, error) {
+	return f.list, nil
+}
+func (f *backupSecretFakeStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
+	return f.byID[id], nil
+}
+func (f *backupSecretFakeStore) UpdateBackupStorage(s *models.BackupStorage) error {
+	f.updated = s
+	return nil
+}
+
+// TestListStorages_NeverReturnsTheSecret is the leak fix on the wire: the
+// response to GET /api/backup-storages must not contain the s3 secret, whatever
+// a settings.read holder does with it.
+func TestListStorages_NeverReturnsTheSecret(t *testing.T) {
+	st := &backupSecretFakeStore{list: []models.BackupStorage{s3Storage("leaked-secret-abc")}}
+	h := &BackupHandler{state: &AppState{Store: st}}
+
+	rec := httptest.NewRecorder()
+	h.ListStorages(rec, httptest.NewRequest(http.MethodGet, "/api/backup-storages", nil))
+
+	body := rec.Body.String()
+	if strings.Contains(body, "leaked-secret-abc") {
+		t.Fatalf("the list response leaked the s3 secret: %s", body)
+	}
+	if !strings.Contains(body, "secretSet") {
+		t.Errorf("response omits secretSet, so the panel cannot show a write-only field: %s", body)
+	}
+}
+
+// TestUpdateStorage_BlankSecretKeepsTheStoredOne pins the write side end to end:
+// an update carrying a blank secret must persist the existing one, not wipe it.
+func TestUpdateStorage_BlankSecretKeepsTheStoredOne(t *testing.T) {
+	existing := s3Storage("stored-secret-xyz")
+	st := &backupSecretFakeStore{byID: map[int]*models.BackupStorage{1: &existing}}
+	h := &BackupHandler{state: &AppState{Store: st}}
+
+	// The panel re-submits the redacted config (no secret).
+	blank := s3Storage("")
+	blank.ID = 1
+	payload, _ := json.Marshal(blank)
+	req := httptest.NewRequest(http.MethodPatch, "/api/backup-storages/1", strings.NewReader(string(payload)))
+	req = mux.SetURLVars(req, map[string]string{"id": "1"})
+
+	h.UpdateStorage(httptest.NewRecorder(), req)
+
+	if st.updated == nil {
+		t.Fatal("UpdateBackupStorage was never called")
+	}
+	if !strings.Contains(string(st.updated.Config), "stored-secret-xyz") {
+		t.Fatalf("blank update wiped the stored secret: %s", st.updated.Config)
+	}
+}
