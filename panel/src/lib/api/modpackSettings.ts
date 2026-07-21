@@ -15,6 +15,9 @@ export interface ModpackSettings {
     s3SecretKey?: string;
     updateCheckIntervalHours: number;
     shareLinksEnabled: boolean;
+    // References a saved storage connection. When set (> 0), modpack storage is
+    // built from that connection and the inline s3 fields are ignored.
+    connectionId?: number;
 }
 
 export interface GetModpackSettingsResponse {

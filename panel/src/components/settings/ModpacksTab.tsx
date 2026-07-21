@@ -13,6 +13,7 @@ import { Package, Plus, X, CircleCheck, CircleAlert } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { getModpackSettings, setModpackSettings, type ModpackSettings } from '@/lib/api/modpackSettings';
+import { listStorageConnections, type StorageConnection } from '@/lib/api';
 
 const DEFAULTS: ModpackSettings = {
     featureEnabled: true,
@@ -25,6 +26,7 @@ const DEFAULTS: ModpackSettings = {
     s3SecretKey: '',
     updateCheckIntervalHours: 24,
     shareLinksEnabled: false,
+    connectionId: 0,
 };
 
 export default function ModpacksTab() {
@@ -33,6 +35,7 @@ export default function ModpacksTab() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [connections, setConnections] = useState<StorageConnection[]>([]);
 
     // Snapshot of last-saved settings for dirty detection. We deliberately
     // stash a copy with s3SecretKey blanked out so toggling the password
@@ -55,6 +58,14 @@ export default function ModpacksTab() {
             setLoading(false);
         });
     }, []);
+
+    useEffect(() => {
+        listStorageConnections().then(res => {
+            if (res.success && res.connections) setConnections(res.connections);
+        });
+    }, []);
+
+    const usingConnection = settings.provider === 's3' && (settings.connectionId ?? 0) > 0;
 
     const handleSave = async () => {
         setSaving(true);
@@ -242,8 +253,25 @@ export default function ModpacksTab() {
                     </div>
                 )}
 
-                {/* S3 — endpoint + bucket + region + creds */}
+                {/* S3 — a saved connection or inline endpoint + bucket + region + creds */}
                 {settings.provider === 's3' && (
+                    <div className="space-y-4">
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="mono-label">Storage connection</label>
+                            <select
+                                value={settings.connectionId ?? 0}
+                                onChange={e => setSettings(s => ({ ...s, connectionId: Number(e.target.value) }))}
+                                className="input-field w-full"
+                            >
+                                <option value={0}>Enter credentials manually</option>
+                                {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                            <p className="text-xs text-(--base-06)">Reuse a saved connection from Settings -&gt; Storage Connections, or enter S3 credentials inline below.</p>
+                        </div>
+
+                        {usingConnection ? (
+                            <div className="alert alert-info text-xs">Credentials come from the selected connection. Manage or test it on the Storage Connections page.</div>
+                        ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <Field
                             label="Endpoint"
@@ -283,6 +311,8 @@ export default function ModpacksTab() {
                                 The secret is write-only on the wire — GET never returns it.
                             </p>
                         </div>
+                    </div>
+                        )}
                     </div>
                 )}
             </div>
