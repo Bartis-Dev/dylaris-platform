@@ -7,15 +7,25 @@ import (
 
 func createBackupTables(db *sql.DB) error {
 	tables := []string{
-		// Configured storage backends. Admin-managed.
+		// Configured storage backends. Admin-managed. The s3 secret access key
+		// lives encrypted in its OWN column (secret_enc, AES-256-GCM via
+		// pkg/crypto/at_rest.go), hoisted out of the config JSONB at rest so a
+		// stray blob read can never surface it; the store re-injects it only on
+		// the provider-build read path. Mirrors storage_connections.
 		`CREATE TABLE IF NOT EXISTS backup_storages (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL UNIQUE,
-			provider TEXT NOT NULL,           -- 'local' | 's3'
+			provider TEXT NOT NULL,           -- 'local' | 'shared' | 's3' | 'node-local' | 'core-storage'
 			config JSONB NOT NULL DEFAULT '{}'::jsonb,
+			secret_enc TEXT NOT NULL DEFAULT '',
 			is_default BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// Additive: brings existing deployments' backup_storages up to the
+		// encrypted-secret shape. Idempotent, drops nothing. A legacy row keeps
+		// its plaintext secret inside config until its next write, which the
+		// store migrates into secret_enc (read-then-rewrite).
+		`ALTER TABLE backup_storages ADD COLUMN IF NOT EXISTS secret_enc TEXT NOT NULL DEFAULT ''`,
 		// Per-server backup job. Multiple jobs allowed per container; each
 		// optionally targets a single sub-server (sub_server = NULL means
 		// full-container snapshot).

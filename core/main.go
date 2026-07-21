@@ -154,6 +154,11 @@ func main() {
 	// CLUSTER_SECRET-derived key. Installed before any handler resolves a
 	// connection, so a connection secret is never stored or read in the clear.
 	pgStore.SetStorageConnEncryptionKey(cfg.ClusterSecret)
+	// Encrypt backup_storages s3 secrets at rest with a distinct
+	// CLUSTER_SECRET-derived key. Installed before any backup handler or the
+	// scheduler resolves a storage, so the s3 secret is never stored in the
+	// clear and a legacy plaintext one is re-encrypted on its next save.
+	pgStore.SetBackupStorageEncryptionKey(cfg.ClusterSecret)
 
 	// Which reverse-proxy networks may set X-Forwarded-For. Installed before any
 	// handler serves, so the rate limiters and the audit log key on a client IP

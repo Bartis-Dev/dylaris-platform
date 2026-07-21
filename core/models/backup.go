@@ -15,10 +15,11 @@ type BackupStorage struct {
 	CreatedAt time.Time       `json:"createdAt"`
 
 	// SecretSet reports, on a read response, that an s3 secret is stored
-	// WITHOUT returning it. It is transient: set by the handler before
-	// encoding, never persisted (the store reads Config, not this). The secret
-	// itself is redacted from Config on read so a settings.read holder can no
-	// longer harvest every backup credential over the API.
+	// WITHOUT returning it. It is transient: set by the store on read from the
+	// encrypted secret_enc column (or a legacy plaintext secret still in
+	// config), never persisted. The secret itself lives encrypted in secret_enc
+	// and is stripped from Config on the list path, so a settings.read holder
+	// can no longer harvest every backup credential over the API.
 	SecretSet bool `json:"secretSet,omitempty"`
 }
 

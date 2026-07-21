@@ -37,6 +37,12 @@ type PostgresStore struct {
 	// a greenfield table, so there is no legacy plaintext to tolerate and a
 	// secret must never land there in the clear.
 	storageConnSecretKey []byte
+	// backupStorageSecretKey encrypts backup_storages.secret_enc at rest. nil
+	// until SetBackupStorageEncryptionKey runs at boot. A non-empty-secret write
+	// fails closed with no key. Unlike storage_connections this table is NOT
+	// greenfield, so the read path tolerates a legacy plaintext secret still
+	// sitting in config and migrates it into secret_enc on the next write.
+	backupStorageSecretKey []byte
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
