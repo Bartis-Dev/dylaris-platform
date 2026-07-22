@@ -160,6 +160,7 @@ type DockerConfig struct {
 
 type ServerConfig struct {
 	UUID            string       `json:"uuid"`
+	OwnerID         string       `json:"ownerId"` // tenant key for network isolation; empty on restart/reconcile (resolved from allocator)
 	Docker          DockerConfig `json:"docker"`
 	ActiveSubServer string       `json:"activeSubServer"`
 	// ExistingBinds, when non-empty, overrides the default bind-mount
@@ -579,11 +580,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	applyPidsLimit(hc)
 	applyIOWeight(hc)
 
-	nc := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			"dylaris_net": {NetworkID: netID},
-		},
-	}
+	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID)
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
@@ -752,11 +749,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 		log.Printf("Container %s: binding host port %d → container port %d/tcp", containerName, hostP, cPort)
 	}
 
-	nc := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			"dylaris_net": {NetworkID: netID},
-		},
-	}
+	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID)
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 

@@ -178,7 +178,8 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// Node: Only create directory + container (no install)
 	if h.state.Queue != nil {
 		configPayload := map[string]interface{}{
-			"uuid": req.UUID,
+			"uuid":    req.UUID,
+			"ownerId": srv.OwnerID,
 			"docker": map[string]interface{}{
 				"image":      srv.GameImage,
 				"ram":        req.Docker.RAM,
@@ -368,7 +369,8 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 
 		configPayload := map[string]interface{}{
-			"uuid": srv.UUID,
+			"uuid":    srv.UUID,
+			"ownerId": srv.OwnerID,
 			"docker": map[string]interface{}{
 				"image":         req.JavaImage,
 				"ram":           srv.Memory,

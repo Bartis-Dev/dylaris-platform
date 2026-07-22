@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -144,5 +145,21 @@ func TestTenantEndpointsFallbackWhenDisabled(t *testing.T) {
 	ep, ok := nc.EndpointsConfig["dylaris_net"]
 	if !ok || ep.NetworkID != "global-net-id" {
 		t.Fatalf("fallback endpoints = %v, want dylaris_net -> global-net-id", nc.EndpointsConfig)
+	}
+}
+
+func TestServerConfigDecodesOwnerID(t *testing.T) {
+	// Exactly the shape Core's create payload marshals (map[string]interface{}).
+	payload := []byte(`{"uuid":"srv-1","ownerId":"owner-A","activeSubServer":"server",` +
+		`"docker":{"image":"img","ram":2048,"cpuLimit":2}}`)
+	var cfg ServerConfig
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.OwnerID != "owner-A" {
+		t.Fatalf("OwnerID = %q, want owner-A", cfg.OwnerID)
+	}
+	if cfg.UUID != "srv-1" || cfg.Docker.RAM != 2048 {
+		t.Fatalf("other fields lost: %+v", cfg)
 	}
 }
