@@ -36,6 +36,9 @@ type rconConfigFakeStore struct {
 
 	setRconCalls []rconSetCall
 	setRconErr   error
+
+	applyPropsCalls []applyPropsCall
+	applyPropsErr   error
 }
 
 type rconSetCall struct {
@@ -43,6 +46,15 @@ type rconSetCall struct {
 	enabled  bool
 	port     int
 	password string
+}
+
+type applyPropsCall struct {
+	nodeID          int
+	serverUUID      string
+	activeSubServer string
+	enabled         bool
+	port            int
+	password        string
 }
 
 func (f *rconConfigFakeStore) GetServerByID(id int) (*models.Server, error) {
@@ -63,7 +75,15 @@ func (f *rconConfigFakeStore) SetServerRconConfig(serverID int, enabled bool, po
 }
 
 func newRconConfigHandler(fs *rconConfigFakeStore) *RconHandler {
-	return &RconHandler{state: &AppState{Store: fs}}
+	h := &RconHandler{state: &AppState{Store: fs}}
+	// Inject a fake props-writer so these tests exercise SetConfig's own logic
+	// without a live node/gRPC registry. It records the call and returns the
+	// configured error (nil by default = success).
+	h.applyProps = func(nodeID int, serverUUID, activeSubServer string, enabled bool, port int, password string) error {
+		fs.applyPropsCalls = append(fs.applyPropsCalls, applyPropsCall{nodeID, serverUUID, activeSubServer, enabled, port, password})
+		return fs.applyPropsErr
+	}
+	return h
 }
 
 func rconSetConfigReq(serverID int, username string, isAdmin bool, userID string, body map[string]interface{}) *http.Request {
@@ -155,7 +175,7 @@ func TestRconSetConfig_PortRangeGuard(t *testing.T) {
 func TestRconSetConfig_PasswordBranching(t *testing.T) {
 	t.Run("regenerate=true always mints a new password even with one already stored", func(t *testing.T) {
 		fs := &rconConfigFakeStore{
-			server:       &models.Server{ID: 1, OwnerName: "alice"},
+			server:       &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "server"},
 			rconEnabled:  true,
 			rconPassword: "old-password",
 		}
@@ -180,7 +200,7 @@ func TestRconSetConfig_PasswordBranching(t *testing.T) {
 
 	t.Run("enabled=true with no stored password auto-regenerates", func(t *testing.T) {
 		fs := &rconConfigFakeStore{
-			server:       &models.Server{ID: 1, OwnerName: "alice"},
+			server:       &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "server"},
 			rconEnabled:  false,
 			rconPassword: "",
 		}
@@ -201,7 +221,7 @@ func TestRconSetConfig_PasswordBranching(t *testing.T) {
 
 	t.Run("enabled=true with an existing stored password and regenerate=false keeps it", func(t *testing.T) {
 		fs := &rconConfigFakeStore{
-			server:       &models.Server{ID: 1, OwnerName: "alice"},
+			server:       &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "server"},
 			rconEnabled:  true,
 			rconPassword: "existing-secret",
 		}
@@ -261,7 +281,7 @@ func TestRconSetConfig_PasswordBranching(t *testing.T) {
 
 	t.Run("port 0 falls back to the existing stored port", func(t *testing.T) {
 		fs := &rconConfigFakeStore{
-			server:      &models.Server{ID: 1, OwnerName: "alice"},
+			server:      &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "server"},
 			rconEnabled: true,
 			rconPort:    25580,
 		}
@@ -284,5 +304,89 @@ func TestRconSetConfig_PersistFailure(t *testing.T) {
 	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": false, "port": 25575}))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- server.properties propagation (the connection-refused fix) ---
+
+// Enabling on an installed server writes enable-rcon into server.properties and
+// only then persists the DB flag, using the same resolved port for both.
+func TestRconSetConfig_WritesServerProperties(t *testing.T) {
+	fs := &rconConfigFakeStore{
+		server:       &models.Server{ID: 1, OwnerName: "alice", UUID: "srv-uuid", NodeID: 7, ActiveSubServer: "survival"},
+		rconEnabled:  false,
+		rconPassword: "kept-secret",
+	}
+	h := newRconConfigHandler(fs)
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.applyPropsCalls) != 1 {
+		t.Fatalf("applyPropsCalls = %+v, want exactly 1", fs.applyPropsCalls)
+	}
+	call := fs.applyPropsCalls[0]
+	if call.nodeID != 7 || call.serverUUID != "srv-uuid" || call.activeSubServer != "survival" {
+		t.Fatalf("applyProps target = %+v, want node 7 / srv-uuid / survival", call)
+	}
+	if !call.enabled || call.port != 25575 || call.password != "kept-secret" {
+		t.Fatalf("applyProps args = %+v, want enabled/port 25575/kept-secret", call)
+	}
+	// DB persisted with the same values.
+	if len(fs.setRconCalls) != 1 || !fs.setRconCalls[0].enabled || fs.setRconCalls[0].port != 25575 {
+		t.Fatalf("setRconCalls = %+v, want the same enabled/port persisted", fs.setRconCalls)
+	}
+}
+
+// A failure writing server.properties aborts the whole request: the DB flag is
+// NOT flipped, so the DB and the file never diverge.
+func TestRconSetConfig_PropsFailureAborts(t *testing.T) {
+	fs := &rconConfigFakeStore{
+		server:        &models.Server{ID: 1, OwnerName: "alice", UUID: "srv-uuid", NodeID: 7, ActiveSubServer: "survival"},
+		rconPassword:  "kept-secret",
+		applyPropsErr: errors.New("node offline"),
+	}
+	h := newRconConfigHandler(fs)
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.setRconCalls) != 0 {
+		t.Fatalf("setRconCalls = %+v, want NO DB write after a props-write failure", fs.setRconCalls)
+	}
+}
+
+// Enabling on a server that has not been installed yet (no active sub-server)
+// is rejected before touching server.properties or the DB.
+func TestRconSetConfig_EnableRequiresActiveSubServer(t *testing.T) {
+	fs := &rconConfigFakeStore{server: &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: ""}}
+	h := newRconConfigHandler(fs)
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.applyPropsCalls) != 0 || len(fs.setRconCalls) != 0 {
+		t.Fatalf("expected no props-write and no DB write; props=%+v db=%+v", fs.applyPropsCalls, fs.setRconCalls)
+	}
+}
+
+// Disabling a not-yet-installed server records the DB flag without a props-write
+// (there is no file to touch and nothing is listening).
+func TestRconSetConfig_DisableSkipsPropsWhenNoSubServer(t *testing.T) {
+	fs := &rconConfigFakeStore{server: &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: ""}}
+	h := newRconConfigHandler(fs)
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": false, "port": 25575}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.applyPropsCalls) != 0 {
+		t.Fatalf("applyPropsCalls = %+v, want none (nothing installed to write)", fs.applyPropsCalls)
+	}
+	if len(fs.setRconCalls) != 1 || fs.setRconCalls[0].enabled {
+		t.Fatalf("setRconCalls = %+v, want one call with enabled=false", fs.setRconCalls)
 	}
 }

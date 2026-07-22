@@ -29,10 +29,17 @@ import (
 
 type RconHandler struct {
 	state *AppState
+	// applyProps writes the RCON keys into the active sub-server's
+	// server.properties on the node. A field (not a direct method call) so the
+	// SetConfig unit tests can inject a fake instead of a live node/gRPC
+	// registry. Defaults to the real applyRconToServerProperties.
+	applyProps func(nodeID int, serverUUID, activeSubServer string, enabled bool, port int, password string) error
 }
 
 func NewRconHandler(state *AppState) *RconHandler {
-	return &RconHandler{state: state}
+	h := &RconHandler{state: state}
+	h.applyProps = h.applyRconToServerProperties
+	return h
 }
 
 const (
@@ -40,9 +47,9 @@ const (
 	// reply. MC servers typically reply instantly but a frozen server can
 	// hang the TCP socket — we'd rather report timeout to the user than
 	// stall a request thread.
-	rconExecTimeout    = 5 * time.Second
-	rconMaxCommandLen  = 1024
-	defaultRconPort    = 25575
+	rconExecTimeout   = 5 * time.Second
+	rconMaxCommandLen = 1024
+	defaultRconPort   = 25575
 )
 
 type rconRequest struct {
@@ -201,7 +208,8 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 // returned ONCE in the response so the user can copy them.
 func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
@@ -233,6 +241,30 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	if port == 0 {
 		port = existingPort
 	}
+	if port == 0 {
+		port = defaultRconPort
+	}
+
+	// Enabling RCON is only meaningful once the server has an installed,
+	// active sub-server whose server.properties we can write.
+	if req.Enabled && srv.ActiveSubServer == "" {
+		sendJSONError(w, "Install or start the server before enabling RCON", http.StatusConflict)
+		return
+	}
+
+	// Write server.properties BEFORE flipping the DB flag so the DB and the file
+	// never diverge: DB rcon_enabled is what the exec + Players gates read, but
+	// MC only listens if enable-rcon lives in server.properties. On a node/file
+	// failure we return an error and touch NEITHER, so a transient failure can't
+	// leave the DB saying "enabled" while MC never opened the port. Skipped only
+	// when disabling a not-yet-installed server (no file, nothing listening).
+	if srv.ActiveSubServer != "" {
+		if err := h.applyProps(srv.NodeID, srv.UUID, srv.ActiveSubServer, req.Enabled, port, password); err != nil {
+			sendJSONError(w, fmt.Sprintf("Failed to apply RCON to server.properties: %v", err), http.StatusBadGateway)
+			return
+		}
+	}
+
 	if err := h.state.Store.SetServerRconConfig(serverID, req.Enabled, port, password); err != nil {
 		sendJSONError(w, "Failed to save rcon config", http.StatusInternalServerError)
 		return
@@ -243,7 +275,7 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		Port:      port,
 		HasSecret: password != "",
 		Password:  exposeNew,
-		Message:   "RCON config saved. Restart the server to apply.",
+		Message:   "RCON config saved and written to server.properties. Restart the server to apply.",
 	})
 }
 

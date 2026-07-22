@@ -4,13 +4,14 @@ package main
 // server UUID + command + password + (optionally) the RCON port; we open a
 // TCP connection to the container's RCON socket and forward the reply.
 //
-// Address resolution V1:
-//   - mc_<uuid> on the dylaris_net overlay if reachable (Docker DNS will
-//     resolve it from inside the node's network namespace)
-//   - 127.0.0.1:<rcon_port> as a fallback for host-network setups / dev
-//   We try overlay first, fall back on dial failure. Real prod is overlay-
-//   only; the fallback covers single-host dev where the container publishes
-//   its RCON port on the host.
+// Address resolution: the MC container is a sibling on the dylaris_net
+// overlay, reachable by its container name mc_<uuid>. Docker DNS resolves it
+// from inside the node's network namespace, so we dial mc_<uuid>:<rcon_port>
+// and nothing else. There is no 127.0.0.1 fallback: the node is containerized
+// and its own loopback is never the MC container, so a fallback dial there
+// could only fail with a misleading "connection refused" that masks the real
+// overlay error (e.g. RCON not listening because enable-rcon was never
+// written to server.properties). We surface the mc_<uuid> error directly.
 
 import (
 	"fmt"
@@ -37,30 +38,22 @@ func (h *StreamHandler) handleRconExec(requestID, serverUUID string, req *pb.Rco
 		timeout = rconDefaultTimeout
 	}
 
-	addrs := []string{
-		fmt.Sprintf("mc_%s:%d", serverUUID, port),
-		fmt.Sprintf("127.0.0.1:%d", port),
+	addr := fmt.Sprintf("mc_%s:%d", serverUUID, port)
+	out, err := execRcon(addr, req.RconPassword, req.Command, timeout)
+	if err != nil {
+		return rconErrMsg(requestID, err.Error(), start)
 	}
-
-	var lastErr error
-	for _, addr := range addrs {
-		out, err := execRcon(addr, req.RconPassword, req.Command, timeout)
-		if err == nil {
-			return &pb.NodeMessage{
-				RequestId:  requestID,
-				ServerUuid: serverUUID,
-				Payload: &pb.NodeMessage_RconExecResp{
-					RconExecResp: &pb.RconExecResp{
-						Ok:         true,
-						Output:     out,
-						DurationMs: time.Since(start).Milliseconds(),
-					},
-				},
-			}
-		}
-		lastErr = err
+	return &pb.NodeMessage{
+		RequestId:  requestID,
+		ServerUuid: serverUUID,
+		Payload: &pb.NodeMessage_RconExecResp{
+			RconExecResp: &pb.RconExecResp{
+				Ok:         true,
+				Output:     out,
+				DurationMs: time.Since(start).Milliseconds(),
+			},
+		},
 	}
-	return rconErrMsg(requestID, lastErr.Error(), start)
 }
 
 func rconErrMsg(requestID, msg string, start time.Time) *pb.NodeMessage {
