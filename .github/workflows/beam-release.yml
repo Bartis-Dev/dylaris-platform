@@ -65,8 +65,12 @@ jobs:
       - name: Build beam (windows/amd64 cross)
         working-directory: beam/app
         # Cross-compile the Windows binary from Linux (no CGO). Single target, so
-        # Wails names it build/bin/DylarisBeam.exe (no arch suffix).
-        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
+        # Wails names it build/bin/DylarisBeam.exe (no arch suffix). -skipbindings
+        # is REQUIRED cross-building from Linux: Wails would otherwise compile the
+        # bindings generator FOR windows and try to run that .exe on the Linux
+        # runner ("not a valid CIL image"). The linux/amd64 build above already
+        # generated the (platform-agnostic) frontend bindings, so reuse them.
+        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -skipbindings -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
 
       - name: Build Windows NSIS installer (best-effort)
         working-directory: beam/app
@@ -75,9 +79,10 @@ jobs:
         # installer). If makensis is absent, Wails logs a warning and skips the
         # installer WITHOUT failing; if makensis errors, this step fails and
         # continue-on-error keeps the raw .exe shipping. On success it writes
-        # build/bin/DylarisBeam-amd64-installer.exe.
+        # build/bin/DylarisBeam-amd64-installer.exe. -skipbindings for the same
+        # cross-build reason as above.
         continue-on-error: true
-        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -nsis -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
+        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -nsis -skipbindings -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
 
       - name: Stage + sign release assets
         working-directory: beam/app
