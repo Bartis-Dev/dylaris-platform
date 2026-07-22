@@ -10,22 +10,25 @@ permissions:
 
 jobs:
   build-beam:
-    # Phase 2 (WS6): the ONE self-hosted Linux job now cross-builds BOTH
-    # linux/amd64 and windows/amd64. Wails renders Windows via the pure-Go
-    # go-webview2 loader (no CGO) and embeds the icon/manifest via a pure-Go
-    # .syso, so GOOS=windows GOARCH=amd64 cross-compiles from Linux with the
-    # stock toolchain - no windows-latest runner. macOS still needs its own
-    # runner; when that lands, convert this into a matrix, e.g.:
-    #   strategy:
-    #     matrix:
-    #       include:
-    #         - { os: ubuntu-latest, platform: linux/amd64,  slug: linux-amd64 }
-    #         - { os: macos-latest,  platform: darwin/amd64, slug: darwin-amd64 }
-    #   runs-on: ${{ matrix.os }}
-    # and drive -platform / the slug from matrix.
-    runs-on: self-hosted
+    # ONE Linux job cross-builds BOTH linux/amd64 and windows/amd64. Wails renders
+    # Windows via the pure-Go go-webview2 loader (no CGO) and embeds the icon /
+    # manifest via a pure-Go .syso, so GOOS=windows GOARCH=amd64 cross-compiles
+    # from Linux with the stock toolchain - no windows-latest runner needed for the
+    # .exe. Runs on a GitHub-hosted ubuntu-22.04 (NOT a self-hosted runner and NOT
+    # ubuntu-latest): the Linux build needs the GTK3 + WebKit2GTK 4.0 dev headers,
+    # which we apt-install below and which 22.04 still ships (24.04 dropped 4.0).
+    # macOS still needs its own runner; when that lands, convert this into a matrix.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Wails Linux build deps
+        # GTK3 + WebKit2GTK 4.0 for the linux/amd64 webview build; makensis (nsis)
+        # so the best-effort Windows installer step can produce the .exe installer.
+        # The Windows cross-build itself is pure-Go and needs none of these.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev nsis
 
       - name: Derive version from tag
         id: ver
