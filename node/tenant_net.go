@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -113,4 +117,221 @@ func nextFreeSubnet(used []*net.IPNet, prefixLen int) (*net.IPNet, error) {
 		}
 	}
 	return nil, fmt.Errorf("tenant allocator: no free /%d block in private pools", prefixLen)
+}
+
+// errSubnetFull signals a tenant subnet has no free slot; callers enlarge.
+var errSubnetFull = errors.New("tenant allocator: subnet full")
+
+// ownerAlloc is one owner's assignment: its subnet, the serverUUID->slot map,
+// and the next slot to hand out. NextSlot is monotonic (freed slots are NOT
+// reused) so a server's fixed IP is stable across the owner's lifetime.
+type ownerAlloc struct {
+	Subnet   string         `json:"subnet"`
+	Slots    map[string]int `json:"slots"`
+	NextSlot int            `json:"nextSlot"`
+}
+
+type tenantState struct {
+	Owners map[string]*ownerAlloc `json:"owners"`
+}
+
+// TenantAllocator maps owners to /26 subnets and servers to fixed IPs, persisted
+// to disk beside .node_secret so assignments survive node restarts. NOT safe for
+// concurrent use; the TenantNetworkManager serializes access under its mutex.
+type TenantAllocator struct {
+	path  string
+	state *tenantState
+}
+
+// tenantStatePath is the on-disk allocator file, beside .node_secret.
+func tenantStatePath(dir string) string {
+	return filepath.Join(dir, ".tenant_networks.json")
+}
+
+// loadTenantAllocator reads persisted state; a missing or malformed file yields
+// an empty allocator (same resilience posture as loadNodeSecret).
+func loadTenantAllocator(dir string) *TenantAllocator {
+	a := &TenantAllocator{
+		path:  tenantStatePath(dir),
+		state: &tenantState{Owners: map[string]*ownerAlloc{}},
+	}
+	data, err := os.ReadFile(a.path)
+	if err != nil {
+		return a
+	}
+	var st tenantState
+	if err := json.Unmarshal(data, &st); err != nil || st.Owners == nil {
+		return a
+	}
+	a.state = &st
+	return a
+}
+
+// save writes the state as JSON with 0600 perms (like saveNodeSecret).
+func (a *TenantAllocator) save() error {
+	data, err := json.MarshalIndent(a.state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(a.path, data, 0600)
+}
+
+// subnetString returns an owner's subnet CIDR (ok=false when unknown).
+func (a *TenantAllocator) subnetString(ownerID string) (string, bool) {
+	if o, ok := a.state.Owners[ownerID]; ok {
+		return o.Subnet, true
+	}
+	return "", false
+}
+
+// usedSubnets unions externally-supplied Docker subnets with every owner's
+// currently-allocated subnet, so a new pick overlaps neither.
+func (a *TenantAllocator) usedSubnets(extra []*net.IPNet) []*net.IPNet {
+	used := append([]*net.IPNet{}, extra...)
+	for _, o := range a.state.Owners {
+		if _, n, err := net.ParseCIDR(o.Subnet); err == nil {
+			used = append(used, n)
+		}
+	}
+	return used
+}
+
+// ensureSubnet returns the owner's subnet, allocating a new /26 (avoiding
+// usedDockerSubnets + all allocated subnets) when the owner is unknown.
+func (a *TenantAllocator) ensureSubnet(ownerID string, usedDockerSubnets []*net.IPNet) (*net.IPNet, error) {
+	if o, ok := a.state.Owners[ownerID]; ok {
+		_, n, err := net.ParseCIDR(o.Subnet)
+		if err != nil {
+			return nil, fmt.Errorf("corrupt subnet %q for owner %s: %w", o.Subnet, ownerID, err)
+		}
+		return n, nil
+	}
+	free, err := nextFreeSubnet(a.usedSubnets(usedDockerSubnets), tenantPrefixDefault)
+	if err != nil {
+		return nil, err
+	}
+	a.state.Owners[ownerID] = &ownerAlloc{
+		Subnet:   free.String(),
+		Slots:    map[string]int{},
+		NextSlot: 1,
+	}
+	return free, a.save()
+}
+
+// allocateSlot returns the stable slot for a server, assigning the next free one
+// when new. errSubnetFull when the subnet is exhausted (caller enlarges).
+func (a *TenantAllocator) allocateSlot(ownerID, serverUUID string) (int, error) {
+	o, ok := a.state.Owners[ownerID]
+	if !ok {
+		return 0, fmt.Errorf("tenant allocator: owner %s has no subnet", ownerID)
+	}
+	if slot, ok := o.Slots[serverUUID]; ok {
+		return slot, nil
+	}
+	_, n, err := net.ParseCIDR(o.Subnet)
+	if err != nil {
+		return 0, err
+	}
+	ones, _ := n.Mask.Size()
+	if o.NextSlot > capacityForPrefix(ones) {
+		return 0, errSubnetFull
+	}
+	slot := o.NextSlot
+	o.Slots[serverUUID] = slot
+	o.NextSlot++
+	return slot, a.save()
+}
+
+// ipFor computes the fixed IP for a server from its subnet + slot.
+func (a *TenantAllocator) ipFor(ownerID, serverUUID string) (net.IP, *net.IPNet, error) {
+	o, ok := a.state.Owners[ownerID]
+	if !ok {
+		return nil, nil, fmt.Errorf("tenant allocator: owner %s has no subnet", ownerID)
+	}
+	slot, ok := o.Slots[serverUUID]
+	if !ok {
+		return nil, nil, fmt.Errorf("tenant allocator: server %s has no slot for owner %s", serverUUID, ownerID)
+	}
+	_, n, err := net.ParseCIDR(o.Subnet)
+	if err != nil {
+		return nil, nil, err
+	}
+	return serverIPInSubnet(n, slot), n, nil
+}
+
+// ownerForServer reverse-looks-up the owner holding a serverUUID slot. Used by
+// the restart/reconcile paths where the command config carries no OwnerID.
+func (a *TenantAllocator) ownerForServer(serverUUID string) (string, bool) {
+	for owner, o := range a.state.Owners {
+		if _, ok := o.Slots[serverUUID]; ok {
+			return owner, true
+		}
+	}
+	return "", false
+}
+
+// serversForOwner lists an owner's server UUIDs (for enlarge rejoins).
+func (a *TenantAllocator) serversForOwner(ownerID string) []string {
+	o, ok := a.state.Owners[ownerID]
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(o.Slots))
+	for u := range o.Slots {
+		out = append(out, u)
+	}
+	return out
+}
+
+// release drops a server's slot; returns true when the owner has no servers
+// left (caller then removes the network + frees the subnet).
+func (a *TenantAllocator) release(ownerID, serverUUID string) (bool, error) {
+	o, ok := a.state.Owners[ownerID]
+	if !ok {
+		return false, nil
+	}
+	delete(o.Slots, serverUUID)
+	if len(o.Slots) == 0 {
+		delete(a.state.Owners, ownerID)
+		return true, a.save()
+	}
+	return false, a.save()
+}
+
+// enlarge moves an owner to a larger block (/26->/25->/24). Slots (serverUUID->
+// index) are preserved so IPs remap deterministically and mc_<uuid> hostnames
+// stay stable. usedDockerSubnets includes the owner's live (old) network, so the
+// new block is a fresh, non-overlapping region.
+func (a *TenantAllocator) enlarge(ownerID string, usedDockerSubnets []*net.IPNet) (oldNet, newNet *net.IPNet, err error) {
+	o, ok := a.state.Owners[ownerID]
+	if !ok {
+		return nil, nil, fmt.Errorf("tenant allocator: owner %s has no subnet", ownerID)
+	}
+	_, oldNet, err = net.ParseCIDR(o.Subnet)
+	if err != nil {
+		return nil, nil, err
+	}
+	ones, _ := oldNet.Mask.Size()
+	nextLen, ok := nextPrefixLen(ones)
+	if !ok {
+		return nil, nil, fmt.Errorf("tenant allocator: owner %s already at max block /%d", ownerID, ones)
+	}
+	// Avoid docker subnets + every OTHER owner's subnet (self is excluded from
+	// the owner loop but is present in usedDockerSubnets as a live network).
+	var used []*net.IPNet
+	for id, oa := range a.state.Owners {
+		if id == ownerID {
+			continue
+		}
+		if _, n, e := net.ParseCIDR(oa.Subnet); e == nil {
+			used = append(used, n)
+		}
+	}
+	used = append(used, usedDockerSubnets...)
+	newNet, err = nextFreeSubnet(used, nextLen)
+	if err != nil {
+		return nil, nil, err
+	}
+	o.Subnet = newNet.String()
+	return oldNet, newNet, a.save()
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"testing"
 )
@@ -120,4 +122,145 @@ func TestNextFreeSubnetAvoidsOverlaps(t *testing.T) {
 			t.Fatalf("got %s, want 10.0.1.0/26", got)
 		}
 	})
+}
+
+func TestAllocatorSubnetAndSlotStable(t *testing.T) {
+	a := loadTenantAllocator(t.TempDir())
+	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
+		t.Fatalf("ensureSubnet: %v", err)
+	}
+	// First owner gets 10.0.0.0/26.
+	if sn, _ := a.subnetString("owner-A"); sn != "10.0.0.0/26" {
+		t.Fatalf("owner-A subnet = %s, want 10.0.0.0/26", sn)
+	}
+	s1, err := a.allocateSlot("owner-A", "srv-1")
+	if err != nil {
+		t.Fatalf("allocateSlot srv-1: %v", err)
+	}
+	// Idempotent: same server -> same slot.
+	s1again, _ := a.allocateSlot("owner-A", "srv-1")
+	if s1 != s1again {
+		t.Fatalf("slot not stable: %d vs %d", s1, s1again)
+	}
+	s2, _ := a.allocateSlot("owner-A", "srv-2")
+	if s2 == s1 {
+		t.Fatalf("distinct servers share slot %d", s1)
+	}
+	ip, _, err := a.ipFor("owner-A", "srv-1")
+	if err != nil {
+		t.Fatalf("ipFor: %v", err)
+	}
+	if ip.String() != "10.0.0.3" {
+		t.Fatalf("srv-1 ip = %s, want 10.0.0.3", ip)
+	}
+	if owner, ok := a.ownerForServer("srv-2"); !ok || owner != "owner-A" {
+		t.Fatalf("ownerForServer(srv-2) = %q,%v want owner-A,true", owner, ok)
+	}
+}
+
+func TestAllocatorSecondOwnerGetsSecondBlock(t *testing.T) {
+	a := loadTenantAllocator(t.TempDir())
+	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
+		t.Fatalf("ensureSubnet A: %v", err)
+	}
+	if _, err := a.ensureSubnet("owner-B", nil); err != nil {
+		t.Fatalf("ensureSubnet B: %v", err)
+	}
+	snA, _ := a.subnetString("owner-A")
+	snB, _ := a.subnetString("owner-B")
+	if snA != "10.0.0.0/26" || snB != "10.0.0.64/26" {
+		t.Fatalf("subnets = %s,%s want 10.0.0.0/26,10.0.0.64/26", snA, snB)
+	}
+	// Docker already using 10.0.0.0/26 pushes a new owner past it.
+	dockerUsed := parseCIDRs([]string{"10.0.0.128/26"})
+	if _, err := a.ensureSubnet("owner-C", dockerUsed); err != nil {
+		t.Fatalf("ensureSubnet C: %v", err)
+	}
+	snC, _ := a.subnetString("owner-C")
+	if snC != "10.0.0.192/26" {
+		t.Fatalf("owner-C subnet = %s, want 10.0.0.192/26 (avoids A,B and docker .128)", snC)
+	}
+}
+
+func TestAllocatorSubnetFullThenEnlarge(t *testing.T) {
+	a := loadTenantAllocator(t.TempDir())
+	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
+		t.Fatalf("ensureSubnet: %v", err)
+	}
+	// Fill all 60 slots of the /26.
+	for i := 0; i < 60; i++ {
+		if _, err := a.allocateSlot("owner-A", fmt.Sprintf("srv-%d", i)); err != nil {
+			t.Fatalf("allocateSlot %d: %v", i, err)
+		}
+	}
+	// 61st overflows.
+	if _, err := a.allocateSlot("owner-A", "srv-overflow"); !errors.Is(err, errSubnetFull) {
+		t.Fatalf("expected errSubnetFull, got %v", err)
+	}
+	oldN, newN, err := a.enlarge("owner-A", nil)
+	if err != nil {
+		t.Fatalf("enlarge: %v", err)
+	}
+	if oldN.String() != "10.0.0.0/26" {
+		t.Fatalf("old = %s, want 10.0.0.0/26", oldN)
+	}
+	ones, _ := newN.Mask.Size()
+	if ones != 25 {
+		t.Fatalf("new prefix = /%d, want /25", ones)
+	}
+	// Existing slots keep their index; srv-0 stays slot 1 -> remapped IP.
+	ip, _, err := a.ipFor("owner-A", "srv-0")
+	if err != nil {
+		t.Fatalf("ipFor after enlarge: %v", err)
+	}
+	if !newN.Contains(ip) {
+		t.Fatalf("remapped ip %s not in new subnet %s", ip, newN)
+	}
+	// Now the overflow server fits.
+	if _, err := a.allocateSlot("owner-A", "srv-overflow"); err != nil {
+		t.Fatalf("allocateSlot after enlarge: %v", err)
+	}
+}
+
+func TestAllocatorReleaseFreesOwnerWhenEmpty(t *testing.T) {
+	a := loadTenantAllocator(t.TempDir())
+	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
+		t.Fatalf("ensureSubnet: %v", err)
+	}
+	a.allocateSlot("owner-A", "srv-1")
+	a.allocateSlot("owner-A", "srv-2")
+	empty, err := a.release("owner-A", "srv-1")
+	if err != nil {
+		t.Fatalf("release srv-1: %v", err)
+	}
+	if empty {
+		t.Fatalf("owner-A reported empty with srv-2 still present")
+	}
+	empty, err = a.release("owner-A", "srv-2")
+	if err != nil {
+		t.Fatalf("release srv-2: %v", err)
+	}
+	if !empty {
+		t.Fatalf("owner-A should be empty after last release")
+	}
+	if _, ok := a.subnetString("owner-A"); ok {
+		t.Fatalf("owner-A subnet should be gone after empty release")
+	}
+}
+
+func TestAllocatorPersistenceRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	a := loadTenantAllocator(dir)
+	a.ensureSubnet("owner-A", nil)
+	a.allocateSlot("owner-A", "srv-1")
+
+	// Reload from disk: assignments survive.
+	b := loadTenantAllocator(dir)
+	if owner, ok := b.ownerForServer("srv-1"); !ok || owner != "owner-A" {
+		t.Fatalf("reloaded ownerForServer(srv-1) = %q,%v want owner-A,true", owner, ok)
+	}
+	ip, _, err := b.ipFor("owner-A", "srv-1")
+	if err != nil || ip.String() != "10.0.0.3" {
+		t.Fatalf("reloaded ipFor(srv-1) = %v,%v want 10.0.0.3", ip, err)
+	}
 }
