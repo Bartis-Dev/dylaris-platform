@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -66,21 +64,6 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 	if err := h.state.Store.UpdateServerProxyID(serverID, &proxyID); err != nil {
 		sendJSONError(w, "Failed to link server", 500)
 		return
-	}
-
-	// Attach the game-server container to the proxy's overlay network so the
-	// proxy can reach it on the private network instead of routing over a
-	// public IP. Best-effort — DB link succeeded, network is non-blocking.
-	if h.state.Queue != nil {
-		node, nErr := h.state.Store.GetNodeByID(srv.NodeID)
-		if nErr == nil {
-			ctx := context.Background()
-			// Ensure the proxy's network exists on this node before connecting.
-			h.state.Queue.SendProxyNetworkCommand(ctx, node.Token, "proxy_network_create", proxy.UUID, "")
-			if err := h.state.Queue.SendProxyNetworkCommand(ctx, node.Token, "proxy_network_connect", srv.UUID, proxy.UUID); err != nil {
-				log.Printf("proxy_network_connect queue failed: %v", err)
-			}
-		}
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
@@ -194,29 +177,14 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
 		sendJSONError(w, "Server not found", 404)
 		return
 	}
 
-	// Remember the previous proxy so we can detach the container after the
-	// DB row is cleared.
-	prevProxyID := srv.ProxyID
-
 	if err := h.state.Store.UpdateServerProxyID(serverID, nil); err != nil {
 		sendJSONError(w, "Failed to unlink server", 500)
 		return
-	}
-
-	if prevProxyID != nil && h.state.Queue != nil {
-		if proxy, pErr := h.state.Store.GetServerByID(*prevProxyID); pErr == nil {
-			if node, nErr := h.state.Store.GetNodeByID(srv.NodeID); nErr == nil {
-				if err := h.state.Queue.SendProxyNetworkCommand(context.Background(), node.Token, "proxy_network_disconnect", srv.UUID, proxy.UUID); err != nil {
-					log.Printf("proxy_network_disconnect queue failed: %v", err)
-				}
-			}
-		}
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)

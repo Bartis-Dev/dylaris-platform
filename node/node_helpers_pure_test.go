@@ -276,19 +276,3 @@ func TestExtractJvmFlagsFromCommand(t *testing.T) {
 		}
 	})
 }
-
-func TestProxyNetworkName(t *testing.T) {
-	cases := []struct {
-		uuid string
-		want string
-	}{
-		{"ABC-123", "dylaris_proxy_abc-123"},
-		{"already-lower", "dylaris_proxy_already-lower"},
-		{"", "dylaris_proxy_"},
-	}
-	for _, c := range cases {
-		if got := proxyNetworkName(c.uuid); got != c.want {
-			t.Errorf("proxyNetworkName(%q) = %q, want %q", c.uuid, got, c.want)
-		}
-	}
-}

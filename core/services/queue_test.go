@@ -194,41 +194,6 @@ func TestSendRawCommand_PublishesPayloadAsIs(t *testing.T) {
 	}
 }
 
-func TestSendProxyNetworkCommand(t *testing.T) {
-	rdb := newQueueTestRedis(t)
-	svc := NewQueueService(rdb)
-
-	if err := svc.SendProxyNetworkCommand(context.Background(), "tok-5", "proxy_network_connect", "server-uuid", "proxy-uuid"); err != nil {
-		t.Fatalf("SendProxyNetworkCommand: %v", err)
-	}
-
-	got := readStreamPayload(t, rdb, "dylaris:node:tok-5:cmds")
-	if got["action"] != "proxy_network_connect" {
-		t.Errorf("action = %v, want proxy_network_connect", got["action"])
-	}
-	cfg, ok := got["config"].(map[string]interface{})
-	if !ok || cfg["uuid"] != "server-uuid" {
-		t.Errorf("config = %+v, want uuid=server-uuid", got["config"])
-	}
-	if got["proxyUuid"] != "proxy-uuid" {
-		t.Errorf("proxyUuid = %v, want proxy-uuid", got["proxyUuid"])
-	}
-}
-
-func TestSendProxyNetworkCommand_OmitsEmptyProxyUUID(t *testing.T) {
-	rdb := newQueueTestRedis(t)
-	svc := NewQueueService(rdb)
-
-	if err := svc.SendProxyNetworkCommand(context.Background(), "tok-6", "proxy_network_create", "proxy-uuid", ""); err != nil {
-		t.Fatalf("SendProxyNetworkCommand: %v", err)
-	}
-
-	got := readStreamPayload(t, rdb, "dylaris:node:tok-6:cmds")
-	if _, present := got["proxyUuid"]; present {
-		t.Errorf("proxyUuid must be omitted when empty, got %+v", got)
-	}
-}
-
 func TestSendMigrateCommand(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)

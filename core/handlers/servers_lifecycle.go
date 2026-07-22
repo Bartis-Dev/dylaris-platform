@@ -195,14 +195,6 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("Create command queued for %s", node.Token)
 		}
-
-		// For proxy-type servers, pre-create the proxy-isolation network so
-		// subsequent LinkServerToProxy can attach game-servers immediately.
-		if serverType == "proxy" {
-			if err := h.state.Queue.SendProxyNetworkCommand(context.Background(), node.Token, "proxy_network_create", req.UUID, ""); err != nil {
-				log.Printf("proxy_network_create queue failed: %v", err)
-			}
-		}
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
@@ -1361,14 +1353,6 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 			"uuid": srv.UUID,
 		}
 		h.state.Queue.SendCommand(context.Background(), node.Token, "delete", configPayload, nil)
-
-		// Proxy servers own a dedicated overlay network — drop it once no
-		// game-servers are attached anymore (linked servers have been
-		// detached via their own delete paths already, or we accept the
-		// remove-error and clean up later).
-		if srv.ServerType == "proxy" {
-			h.state.Queue.SendProxyNetworkCommand(context.Background(), node.Token, "proxy_network_destroy", srv.UUID, "")
-		}
 	}
 
 	// Gateway routes are stored independently from the DB row (in Redis +
