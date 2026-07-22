@@ -39,6 +39,11 @@ var (
 	mcRedisAddr string
 	mcRedisDB   string
 
+	// tenantIsolationEnabled gates per-owner Docker-network isolation for this
+	// node. Set in parseConfig from the Redis-reachability guard; false keeps MC
+	// servers on the shared dylaris_net.
+	tenantIsolationEnabled bool
+
 	nodeTags          string
 	nodeRegion        string
 	defaultCpusetCpus string
@@ -400,6 +405,15 @@ func parseConfig() {
 	mcRedisDB = os.Getenv("SIDECAR_REDIS_DB")
 	if mcRedisDB == "" {
 		mcRedisDB = strconv.Itoa(redisDB)
+	}
+
+	// Tenant isolation requires isolated containers to still reach Redis by host
+	// IP (they leave dylaris_net). Classify SIDECAR_REDIS_ADDR and fail safe.
+	tenantIsolationEnabled = redisAddrIsolationSafe(mcRedisAddr)
+	if tenantIsolationEnabled {
+		log.Printf("Tenant network isolation ENABLED (SIDECAR_REDIS_ADDR=%q is host-reachable)", mcRedisAddr)
+	} else {
+		log.Printf("Tenant network isolation DISABLED: SIDECAR_REDIS_ADDR=%q looks Docker-DNS-only; keeping MC servers on dylaris_net so Redis stays reachable", mcRedisAddr)
 	}
 
 	// 3. CPU Pinning (cpuset-cpus) default for all MC containers on this node
