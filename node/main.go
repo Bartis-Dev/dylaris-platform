@@ -1024,6 +1024,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		os.RemoveAll(serverPath)
 		storage.RemoveServerPath(cmd.Config.UUID)
+		dm.ReleaseTenant(cmd.Config.UUID)
 		log.Printf("Server %s data fully deleted", cmd.Config.UUID)
 
 	case "delete_sub_server":

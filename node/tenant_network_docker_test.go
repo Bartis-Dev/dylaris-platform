@@ -148,6 +148,38 @@ func TestTenantEndpointsFallbackWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestReleaseRemovesNetworkOnLastServer(t *testing.T) {
+	m, f := newTestManager(t, "bridge")
+	// Two servers for owner-A; create the network.
+	if _, err := m.endpointsFor("srv-1", "owner-A"); err != nil {
+		t.Fatalf("endpointsFor srv-1: %v", err)
+	}
+	if _, err := m.endpointsFor("srv-2", "owner-A"); err != nil {
+		t.Fatalf("endpointsFor srv-2: %v", err)
+	}
+	// The tenant net exists (net1). Release one: net stays.
+	m.release("srv-1")
+	for _, id := range f.removed {
+		if id == "net1" {
+			t.Fatalf("net removed while srv-2 still present")
+		}
+	}
+	// Release the last: net is removed.
+	m.release("srv-2")
+	removedNet1 := false
+	for _, id := range f.removed {
+		if id == "net1" {
+			removedNet1 = true
+		}
+	}
+	if !removedNet1 {
+		t.Fatalf("tenant net not removed after last server release; removed=%v", f.removed)
+	}
+	if _, ok := m.alloc.subnetString("owner-A"); ok {
+		t.Fatalf("owner-A subnet not freed after last release")
+	}
+}
+
 func TestServerConfigDecodesOwnerID(t *testing.T) {
 	// Exactly the shape Core's create payload marshals (map[string]interface{}).
 	payload := []byte(`{"uuid":"srv-1","ownerId":"owner-A","activeSubServer":"server",` +

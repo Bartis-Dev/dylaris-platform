@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -393,11 +394,96 @@ func (dm *DockerManager) tenantEndpoints(serverUUID, ownerID, globalNetID string
 		return fallback
 	}
 	nc, err := dm.tenant.endpointsFor(serverUUID, ownerID)
+	if errors.Is(err, errSubnetFull) {
+		if owner, ok := dm.tenant.resolveOwner(serverUUID, ownerID); ok {
+			if eErr := dm.EnlargeTenant(owner); eErr != nil {
+				log.Printf("tenant-net: enlarge failed for owner %s: %v", owner, eErr)
+			} else {
+				nc, err = dm.tenant.endpointsFor(serverUUID, ownerID)
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("tenant-net: falling back to dylaris_net for %s: %v", serverUUID, err)
 		return fallback
 	}
 	return nc
+}
+
+// ReleaseTenant frees a deleted server's tenant assignment; no-op when isolation
+// is off. Removes the owner's network when it was the last server.
+func (dm *DockerManager) ReleaseTenant(serverUUID string) {
+	if dm.tenant == nil {
+		return
+	}
+	dm.tenant.release(serverUUID)
+}
+
+// EnlargeTenant recreates an owner's tenant network with a larger subnet and
+// rejoins the owner's servers with remapped fixed IPs. Docker cannot resize a
+// subnet in place, so the same-named network is force-recreated. Rare: only when
+// a tenant exceeds ~60 servers on one node. Reshuffles IPs (mc_<uuid> survives).
+func (dm *DockerManager) EnlargeTenant(ownerID string) error {
+	t := dm.tenant
+	if t == nil {
+		return fmt.Errorf("tenant isolation disabled")
+	}
+
+	t.mu.Lock()
+	used, err := t.discoverUsedSubnets()
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+	_, newNet, err := t.alloc.enlarge(ownerID, used)
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+	uuids := t.alloc.serversForOwner(ownerID)
+	name := tenantNetworkName(ownerID)
+	t.mu.Unlock()
+
+	log.Printf("tenant-net: enlarging %s to %s (%d servers)", name, newNet, len(uuids))
+
+	// Remove the owner's containers so their endpoints release the old network.
+	had := make(map[string]bool, len(uuids))
+	for _, u := range uuids {
+		if _, ierr := dm.cli.ContainerInspect(dm.ctx, "mc_"+u); ierr == nil {
+			had[u] = true
+			dm.cli.ContainerRemove(dm.ctx, "mc_"+u, container.RemoveOptions{Force: true})
+		}
+	}
+
+	// Drop the old network (disconnect node first) and recreate at the new subnet.
+	t.mu.Lock()
+	if id, found, _ := t.findNetwork(name); found {
+		_ = t.api.NetworkDisconnect(t.ctx, id, t.nodeContainer, true)
+		if rerr := t.api.NetworkRemove(t.ctx, id); rerr != nil {
+			log.Printf("tenant-net: enlarge remove old %s: %v", name, rerr)
+		}
+	}
+	_, err = t.EnsureTenantNetwork(ownerID)
+	t.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("enlarge: recreate net: %w", err)
+	}
+
+	// Recreate the servers that had a container (rejoin new net at remapped IP).
+	for _, u := range uuids {
+		if !had[u] {
+			continue
+		}
+		cfg, ok := dm.loadSavedConfig(u)
+		if !ok {
+			log.Printf("tenant-net: enlarge cannot recreate %s (no saved config)", u)
+			continue
+		}
+		if rerr := dm.RecreateWithCommand(cfg); rerr != nil {
+			log.Printf("tenant-net: enlarge recreate %s: %v", u, rerr)
+		}
+	}
+	return nil
 }
 
 // loadSavedConfig reads a server's persisted .node_config.json (written by

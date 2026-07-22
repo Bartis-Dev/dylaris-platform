@@ -192,3 +192,33 @@ func (t *TenantNetworkManager) endpointsFor(serverUUID, ownerID string) (*networ
 		},
 	}, nil
 }
+
+// release drops a server's slot and, when it was the owner's last, disconnects
+// the node and removes the now-empty tenant network + frees the subnet.
+func (t *TenantNetworkManager) release(serverUUID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	owner, ok := t.alloc.ownerForServer(serverUUID)
+	if !ok {
+		return
+	}
+	empty, err := t.alloc.release(owner, serverUUID)
+	if err != nil {
+		log.Printf("tenant-net: release %s: %v", serverUUID, err)
+	}
+	if !empty {
+		return
+	}
+	name := tenantNetworkName(owner)
+	id, found, ferr := t.findNetwork(name)
+	if ferr != nil || !found {
+		return
+	}
+	_ = t.api.NetworkDisconnect(t.ctx, id, t.nodeContainer, true)
+	if rerr := t.api.NetworkRemove(t.ctx, id); rerr != nil {
+		log.Printf("tenant-net: remove empty %s: %v", name, rerr)
+	} else {
+		log.Printf("tenant-net: removed empty tenant net %s", name)
+	}
+}
