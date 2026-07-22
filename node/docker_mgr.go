@@ -23,11 +23,12 @@ import (
 type DockerManager struct {
 	cli           *client.Client
 	ctx           context.Context
-	hostDataPath  string            // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
-	localDataPath string            // Container-local path for dylaris_data (for file I/O inside this container, legacy)
-	storageMgr    *StorageManager   // Multi-path storage manager
-	hostPathCache map[string]string // local storage path -> host path (resolved from container mounts)
-	portMgr       *PortManager      // nil when gateway is enabled (port binding not needed)
+	hostDataPath  string                // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
+	localDataPath string                // Container-local path for dylaris_data (for file I/O inside this container, legacy)
+	storageMgr    *StorageManager       // Multi-path storage manager
+	hostPathCache map[string]string     // local storage path -> host path (resolved from container mounts)
+	portMgr       *PortManager          // nil when gateway is enabled (port binding not needed)
+	tenant        *TenantNetworkManager // nil = isolation disabled (redis guard); servers stay on dylaris_net
 }
 
 func NewDockerManager(storageMgr *StorageManager) (*DockerManager, error) {
@@ -375,6 +376,44 @@ func (dm *DockerManager) DisconnectFromProxyNetwork(containerUUID, proxyUUID str
 		return fmt.Errorf("network disconnect error: %v", err)
 	}
 	return nil
+}
+
+// tenantEndpoints builds the NetworkingConfig for a server container. Isolation
+// off (dm.tenant == nil) or any resolution/allocation error falls back to
+// dylaris_net so a server is never left unstartable by the isolation layer. The
+// enlarge-on-overflow retry is added in a later task.
+func (dm *DockerManager) tenantEndpoints(serverUUID, ownerID, globalNetID string) *network.NetworkingConfig {
+	fallback := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"dylaris_net": {NetworkID: globalNetID},
+		},
+	}
+	if dm.tenant == nil {
+		return fallback
+	}
+	nc, err := dm.tenant.endpointsFor(serverUUID, ownerID)
+	if err != nil {
+		log.Printf("tenant-net: falling back to dylaris_net for %s: %v", serverUUID, err)
+		return fallback
+	}
+	return nc
+}
+
+// loadSavedConfig reads a server's persisted .node_config.json (written by
+// saveNodeConfig). Used by the enlarge path to recreate containers.
+func (dm *DockerManager) loadSavedConfig(uuid string) (ServerConfig, bool) {
+	var cfg ServerConfig
+	if dm.storageMgr == nil {
+		return cfg, false
+	}
+	data, err := os.ReadFile(filepath.Join(dm.storageMgr.GetServerDir(uuid), ".node_config.json"))
+	if err != nil {
+		return cfg, false
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, false
+	}
+	return cfg, true
 }
 
 // RunInstallerContainer runs a one-shot container with the given image,

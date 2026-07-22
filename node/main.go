@@ -248,6 +248,14 @@ func main() {
 	// container (Forge / NeoForge).
 	SetDockerManager(dockerMgr)
 
+	// Tenant network isolation: build the per-owner network manager when the
+	// Redis guard allows it. The allocator persists beside .node_secret.
+	if tenantIsolationEnabled {
+		host, _ := os.Hostname()
+		dockerMgr.tenant = newTenantNetworkManager(dockerMgr.cli, dockerMgr.ctx, loadTenantAllocator(nodeSecretDir), host)
+		log.Printf("tenant-net: manager active (node container %q, state dir %s)", host, nodeSecretDir)
+	}
+
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
 	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, portMode)
 
