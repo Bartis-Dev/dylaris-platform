@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { getRegistrationStatus, register } from '@/lib/api/registration';
+import { isUsername } from '@/lib/validation';
 import { MailCheck, ArrowLeft, HelpCircle } from 'lucide-react';
 import { Skeleton, SkeletonHeader, SkeletonFormRow } from '@/components/Skeleton';
 
@@ -50,6 +51,10 @@ export default function RegisterPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+        if (!isUsername(username)) {
+            setError('Username: 3-32 characters, must start with a letter or digit, then letters, digits, . _ or -');
+            return;
+        }
         if (password !== confirm) {
             setError('Passwords do not match.');
             return;

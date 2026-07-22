@@ -6,6 +6,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
 import { getMyBeamChannel, setMyBeamChannel } from '@/lib/api/beamChannel';
+import { isUsername } from '@/lib/validation';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 
 interface UserProfile {
@@ -96,6 +97,10 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       setLocalError("");
+      if (newUsername !== currentUser.username && !isUsername(newUsername)) {
+          setLocalError("Username: 3-32 characters, must start with a letter or digit, then letters, digits, . _ or -");
+          return;
+      }
       if (newPassword !== confirmPassword) {
           // Surface the mismatch instead of silently dropping the password
           // change (sending "" left the user thinking it had changed).

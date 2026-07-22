@@ -210,7 +210,7 @@ export default function PacksListPage() {
                                     className="input-field input-mono w-full"
                                     placeholder="auto-derived from name"
                                 />
-                                <p className="text-xs text-(--base-06) mt-1">Lowercase, 2-64 chars, alphanumeric + - / _</p>
+                                <p className="text-xs text-(--base-06) mt-1">Lowercase, 2-64 chars: letters, digits, - or _</p>
                             </div>
                             <div>
                                 <label className="input-label">Solder display name (optional)</label>
