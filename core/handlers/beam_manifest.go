@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -17,8 +18,16 @@ import (
 // Releases. "latest/download" always resolves to the newest NON-prerelease
 // release's fixed-name assets. Shared by the download-URL resolver and the auto
 // min-version follower; overridable per-deploy via the beam.release_manifest
-// setting. Public once the repo is public (owner go-live step).
-const defaultBeamManifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
+// setting. The compiled-in fallback (used when that setting is empty) is
+// BEAM_MANIFEST_URL so a fork points at its OWN releases repo without a rebuild;
+// it defaults to the upstream repo. Read once at startup. Public once the repo is
+// public (owner go-live step).
+var defaultBeamManifestURL = func() string {
+	if v := strings.TrimSpace(os.Getenv("BEAM_MANIFEST_URL")); v != "" {
+		return v
+	}
+	return "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
+}()
 
 // beamUpdatePublicKeyB64 is the base64 (std) Ed25519 PUBLIC key that signs the
 // beam update manifest (latest.json). It MUST stay byte-identical to the app's

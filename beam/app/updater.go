@@ -24,11 +24,22 @@ import (
 // updater does an ordered semver compare against the manifest's version.
 var AppVersion = "dev"
 
+// updateRepoURL is the GitHub repository base the app pulls its signed release
+// manifests from. It is BUILD-CONFIGURABLE so a fork self-updates from ITS OWN
+// releases instead of the upstream repo, without touching source:
+//
+//	wails build -ldflags "-X main.updateRepoURL=https://github.com/acme/fork"
+//
+// (A fork that repoints this must also ship its own signing key - see the
+// embedded public key - since manifests are signature-verified.)
+var updateRepoURL = "https://github.com/Bartis-Dev/dylaris-platform"
+
 // manifestURL is the STABLE-channel GitHub Releases manifest the app checks for
 // updates. The "latest/download" path always resolves to the newest NON-prerelease
 // release's fixed-name assets. Public once the repo is public (see the Phase 1 plan
-// owner steps). The detached signature lives at manifestURL + ".sig".
-const manifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json"
+// owner steps). The detached signature lives at manifestURL + ".sig". Derived from
+// updateRepoURL so an ldflags override repoints both channels.
+var manifestURL = updateRepoURL + "/releases/latest/download/latest.json"
 
 // Update channels. Mirrors Core's beam channel values (platform/core/handlers/
 // beam_channel.go); the app receives the effective channel from GetBeamConfig.
@@ -41,8 +52,9 @@ const (
 // whose assets CI overwrites on every -dev build (GitHub "latest/download" only
 // resolves non-prereleases, so the dev channel needs its own stable URL). Same
 // signing key + verification as stable, so a dev-channel client is no less
-// protected. Only reached when Core reports update_channel == "dev".
-const devManifestURL = "https://github.com/Bartis-Dev/dylaris-platform/releases/download/beam-dev/latest.json"
+// protected. Only reached when Core reports update_channel == "dev". Derived from
+// updateRepoURL (ldflags-overridable) like the stable manifest.
+var devManifestURL = updateRepoURL + "/releases/download/beam-dev/latest.json"
 
 // errUnverifiedManifest is returned (and swallowed to "no update") when the
 // manifest signature does not verify against the embedded public key.

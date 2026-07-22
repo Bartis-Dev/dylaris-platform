@@ -37,19 +37,21 @@ func TestExtractScriptNonce(t *testing.T) {
 
 func TestBeamConnectExtra(t *testing.T) {
 	cases := []struct {
-		in, want string
+		panel, api, want string
 	}{
-		{"https://panel.example.com", " https://panel.example.com"},
-		{"https://panel.example.com/", " https://panel.example.com"},
-		{"http://192.168.1.5:25510", " http://192.168.1.5:25510"},
-		{"  https://p.example.com  ", " https://p.example.com"}, // trimmed
-		{"", ""},
-		{"not a url", ""},
-		{"/relative/path", ""},
+		{"https://panel.example.com", "", " https://panel.example.com"},
+		{"", "https://api.example.com", " https://api.example.com"},
+		{"https://panel.example.com", "https://api.example.com", " https://panel.example.com https://api.example.com"},
+		{"https://p.example.com/", "https://p.example.com", " https://p.example.com"}, // same origin -> deduped
+		{"http://192.168.1.5:25510", "", " http://192.168.1.5:25510"},
+		{"  https://p.example.com  ", "", " https://p.example.com"}, // trimmed
+		{"", "", ""},
+		{"not a url", "also not", ""},
+		{"/relative/path", "", ""},
 	}
 	for _, c := range cases {
-		if got := beamConnectExtra(c.in); got != c.want {
-			t.Errorf("beamConnectExtra(%q) = %q, want %q", c.in, got, c.want)
+		if got := beamConnectExtra(c.panel, c.api); got != c.want {
+			t.Errorf("beamConnectExtra(%q,%q) = %q, want %q", c.panel, c.api, got, c.want)
 		}
 	}
 }

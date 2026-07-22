@@ -25,6 +25,9 @@ type WailsBindings = {
   GetPanelURL?: () => Promise<string>;
   GetDefaultPanelURL?: () => Promise<string>;
   SavePanelURL?: (token: string, url: string) => Promise<void>;
+  GetAPIURL?: () => Promise<string>;
+  GetDefaultAPIURL?: () => Promise<string>;
+  SaveAPIURL?: (token: string, url: string) => Promise<void>;
   GetUpdateInfo?: () => Promise<UpdateInfo>;
   GetUpdateGate?: () => Promise<UpdateGate>;
   GetUpdateChannel?: () => Promise<string>;
@@ -64,10 +67,13 @@ const UPDATE_LABELS: Record<string, string> = {
 };
 
 export default function App() {
-  // No vendor default: the compiled-in default (GetDefaultPanelURL) fills this on
-  // mount; an open-source build ships empty and the user enters their Panel URL.
+  // Defaults come from the build (GetDefaultPanelURL / GetDefaultAPIURL) - the
+  // official binary ships the Dylaris hosts, a fork bakes its own; both fill on
+  // mount. The API URL is optional (empty = same-origin /api).
   const [defaultUrl, setDefaultUrl] = useState('');
   const [inputUrl, setInputUrl] = useState('');
+  const [apiDefaultUrl, setApiDefaultUrl] = useState('');
+  const [apiInputUrl, setApiInputUrl] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -93,7 +99,7 @@ export default function App() {
     return () => { active = false; clearInterval(id); };
   }, []);
 
-  // Pull the current + default Panel URL on mount.
+  // Pull the current + default Panel and API URLs on mount.
   useEffect(() => {
     const load = async () => {
       try {
@@ -102,10 +108,14 @@ export default function App() {
         setDefaultUrl(fallback);
         const url = (await bindings?.GetPanelURL?.()) || fallback;
         setInputUrl(url);
+        const apiFallback = (await bindings?.GetDefaultAPIURL?.()) || '';
+        setApiDefaultUrl(apiFallback);
+        // GetAPIURL falls back to the build default; "" only when none is compiled in.
+        setApiInputUrl((await bindings?.GetAPIURL?.()) ?? apiFallback);
         bindings?.GetUpdateInfo?.().then(u => setUpdate(u)).catch(() => {});
         bindings?.GetUpdateGate?.().then(g => setGate(g)).catch(() => {});
       } catch (err) {
-        console.warn('Panel URL resolve failed:', err);
+        console.warn('Panel/API URL resolve failed:', err);
         setInputUrl('');
       } finally {
         setLoaded(true);
@@ -193,14 +203,21 @@ export default function App() {
     setSavingError(null);
     let candidate = inputUrl.trim();
     if (!candidate) {
-      setSavingError('URL is required');
+      setSavingError('Panel URL is required');
       return;
     }
     if (!/^https?:\/\//i.test(candidate)) {
       candidate = 'https://' + candidate;
     }
+    // The API URL is optional: empty clears the override so the Panel talks to
+    // its API same-origin (/api). Normalize the scheme when one is given.
+    let apiCandidate = apiInputUrl.trim();
+    if (apiCandidate && !/^https?:\/\//i.test(apiCandidate)) {
+      apiCandidate = 'https://' + apiCandidate;
+    }
     try {
       await getBindings()?.SavePanelURL?.(shellToken, candidate);
+      await getBindings()?.SaveAPIURL?.(shellToken, apiCandidate);
     } catch (err) {
       setSavingError(err instanceof Error ? err.message : String(err));
       return;
@@ -281,13 +298,30 @@ export default function App() {
             if (e.key === 'Escape') window.location.href = '/';
           }}
         />
+
+        <div className="settings-title" style={{ marginTop: '1rem' }}>
+          Backend / API URL{' '}
+          <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional - blank = the Panel&apos;s own /api)</span>
+        </div>
+        <input
+          type="text"
+          className="url-input"
+          value={apiInputUrl}
+          onChange={e => setApiInputUrl(e.target.value)}
+          placeholder="https://api.example.com"
+          disabled={!loaded}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleSave();
+            if (e.key === 'Escape') window.location.href = '/';
+          }}
+        />
         {savingError && <div className="error">{savingError}</div>}
 
         <div className="settings-actions">
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => setInputUrl(defaultUrl)}
+            onClick={() => { setInputUrl(defaultUrl); setApiInputUrl(apiDefaultUrl); }}
           >
             Use default
           </button>

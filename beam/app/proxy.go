@@ -12,22 +12,32 @@ import (
 	"strings"
 )
 
-// beamConnectExtra returns the extra connect-src source for the configured
-// Panel: the Panel's own origin (scheme://host), so a Panel build whose
-// config.js targets an absolute API URL on the Panel host is reachable from the
-// wails:// webview. Same-origin /api is already covered by 'self' (the Panel is
-// proxied on the wails:// origin). Returns "" (a leading space is included when
-// present) when the URL is unset/unparseable. NO vendor host is baked in - the
-// only cross-origin connect target is whatever Panel the operator configured. A
-// Panel served with its API on a SEPARATE host (api.example.com != the Panel
-// host) would need that host added here too; the same-origin /api layout, which
-// the Panel recommends, needs nothing.
-func beamConnectExtra(panelURL string) string {
-	u, err := url.Parse(strings.TrimSpace(panelURL))
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
+// beamConnectExtra returns the extra connect-src sources for the proxied Panel:
+// the configured Panel origin AND the configured Core API origin (each
+// scheme://host), space-prefixed and de-duplicated. The Panel is proxied on the
+// wails:// origin, so same-origin /api is already covered by 'self'; these entries
+// cover a Panel that fetches an ABSOLUTE API URL - including the official split
+// where panel.dylaris.com talks to api.dylaris.com, a different origin that 'self'
+// and the Panel origin alone would not permit. Both inputs are optional: an unset
+// or unparseable URL is skipped, and "" is returned when neither yields an origin.
+// No vendor host is hardcoded - the origins come from the operator's configured /
+// build-time Panel and API URLs.
+func beamConnectExtra(panelURL, apiURL string) string {
+	seen := map[string]bool{}
+	extra := ""
+	for _, raw := range []string{panelURL, apiURL} {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			continue
+		}
+		origin := u.Scheme + "://" + u.Host
+		if seen[origin] {
+			continue
+		}
+		seen[origin] = true
+		extra += " " + origin
 	}
-	return " " + u.Scheme + "://" + u.Host
+	return extra
 }
 
 // beamPanelCSP is the Content-Security-Policy beam sets on proxied Panel
@@ -238,7 +248,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 				// (nonce-strict), else fall back to the pragmatic beamPanelCSP.
 				// The Panel's own CSP is still on resp.Header here - we overwrite
 				// it immediately below.
-				connectExtra := beamConnectExtra(app.GetPanelURL())
+				connectExtra := beamConnectExtra(app.GetPanelURL(), app.GetAPIURL())
 				csp, nonce := beamCSPForPanel(resp.Header.Get("Content-Security-Policy"), connectExtra)
 				resp.Header.Set("Content-Security-Policy", csp)
 				body, err := io.ReadAll(resp.Body)

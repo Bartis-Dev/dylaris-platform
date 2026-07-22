@@ -38,6 +38,7 @@ type App struct {
 	relayAddr   string          // cached relay address from GetBeamConfig
 	connMode    string          // active transport for the live tunnel: "lan-fastpath" | "relay" | "direct"; "" when not connected
 	panelURL    string          // URL the webview navigates to on startup (Panel)
+	apiURL      string          // Core API origin for the proxied Panel's CSP connect-src ("" = same-origin /api)
 
 	// Active chunked uploads, keyed by an opaque JS-supplied uploadID.
 	// Each value is the open gRPC stream session — the FileBrowser
@@ -100,6 +101,7 @@ type App struct {
 // Panel URL choice survives reinstalls of the same major version.
 type userSettings struct {
 	PanelURL string `json:"panelUrl"`
+	APIURL   string `json:"apiUrl"` // Core API origin ("" = same-origin /api)
 }
 
 // settingsPath returns the OS-appropriate config file location:
@@ -125,6 +127,7 @@ func loadSettings() userSettings {
 	}
 	_ = json.Unmarshal(data, &s)
 	s.PanelURL = strings.TrimSpace(s.PanelURL)
+	s.APIURL = strings.TrimSpace(s.APIURL)
 	return s
 }
 
@@ -170,7 +173,8 @@ func (a *App) GetDefaultPanelURL() string {
 // Pass an empty string to clear the override (falls back to the
 // build-time default on the next launch). Requires the shell capability
 // token (broker isolation): a compromised proxied Panel does not hold it,
-// so it cannot repoint the app at an attacker origin.
+// so it cannot repoint the app at an attacker origin. Load-modify-save so a
+// co-existing APIURL override is preserved.
 func (a *App) SavePanelURL(token, url string) error {
 	if !a.checkShellToken(token) {
 		return fmt.Errorf("unauthorized")
@@ -179,7 +183,47 @@ func (a *App) SavePanelURL(token, url string) error {
 	// Trim a trailing slash so the redirector's later concatenation
 	// (e.g. "/login") never produces a double-slash.
 	url = strings.TrimRight(url, "/")
-	return saveSettings(userSettings{PanelURL: url})
+	s := loadSettings()
+	s.PanelURL = url
+	return saveSettings(s)
+}
+
+// GetAPIURL returns the Core API origin the proxied Panel is allowed to reach
+// (CSP connect-src). Same priority as GetPanelURL: saved setting, then the
+// launch/build-time default (DYLARIS_API_URL / ldflags), then defaultAPIURL.
+// "" means the Panel talks to the API same-origin (/api) and needs no extra
+// connect-src entry.
+func (a *App) GetAPIURL() string {
+	if saved := strings.TrimSpace(loadSettings().APIURL); saved != "" {
+		return saved
+	}
+	if a.apiURL != "" {
+		return a.apiURL
+	}
+	return defaultAPIURL
+}
+
+// GetDefaultAPIURL returns the API origin the app would use absent a saved
+// override. The Settings dialog uses it for the "Use default" button. May be
+// "" when no default is compiled in (same-origin build).
+func (a *App) GetDefaultAPIURL() string {
+	if a.apiURL != "" {
+		return a.apiURL
+	}
+	return defaultAPIURL
+}
+
+// SaveAPIURL persists the Core API origin chosen via the Settings dialog. Empty
+// clears the override (same-origin /api). Shell-token gated like SavePanelURL,
+// and load-modify-save so the PanelURL override is preserved.
+func (a *App) SaveAPIURL(token, url string) error {
+	if !a.checkShellToken(token) {
+		return fmt.Errorf("unauthorized")
+	}
+	url = strings.TrimRight(strings.TrimSpace(url), "/")
+	s := loadSettings()
+	s.APIURL = url
+	return saveSettings(s)
 }
 
 func NewApp() *App {

@@ -52,7 +52,11 @@ jobs:
       - name: Build beam (linux/amd64)
         working-directory: beam/app
         # Uses the vendored + BC3-patched Wails CLI via the module replace (no
-        # separate wails install). AppVersion is injected for the updater.
+        # separate wails install). AppVersion is injected for the updater. A FORK
+        # rebrands its default targets here by appending to -ldflags, no source
+        # change: -X main.defaultPanelURL=... -X main.defaultAPIURL=...
+        # -X main.updateRepoURL=https://github.com/<owner>/<repo> (see main.go /
+        # updater.go). The stock build keeps the official Dylaris defaults.
         run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform linux/amd64 -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
 
       - name: Build beam (windows/amd64 cross)

@@ -24,15 +24,23 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// defaultPanelURL is the Panel address a fresh install starts on before the
-// user configures one. It is EMPTY by default so the open-source build hardcodes
-// no vendor host: an unconfigured Beam lands on the in-app Settings page to enter
-// a Panel URL. A branded distribution can ship its own default two ways, without
-// touching source: the DYLARIS_PANEL_URL env var at launch, or
-// `-ldflags "-X main.defaultPanelURL=https://panel.example.com"` at build time
-// (hence a var, not a const). Per-install overrides are saved to config.json in
-// the user's config dir via the Settings page.
-var defaultPanelURL = ""
+// defaultPanelURL / defaultAPIURL are the Panel (frontend) and Core API (backend)
+// addresses a fresh install starts on. They ship as the official Dylaris hosts so
+// the stock binary "just works", but are BUILD-CONFIGURABLE so a fork can ship its
+// own branded defaults to its users WITHOUT touching source: pass
+//
+//	wails build -ldflags "-X main.defaultPanelURL=https://panel.acme.com \
+//	                      -X main.defaultAPIURL=https://api.acme.com"
+//
+// (hence vars, not consts), or set the DYLARIS_PANEL_URL / DYLARIS_API_URL env
+// vars at launch. The API host feeds the proxied Panel's CSP connect-src so a
+// cross-origin API (the official panel.dylaris.com <-> api.dylaris.com split) is
+// reachable. Per-install overrides are saved to config.json via the Settings
+// page. Leave defaultAPIURL empty for a same-origin /api Panel.
+var (
+	defaultPanelURL = "https://panel.dylaris.com"
+	defaultAPIURL   = "https://api.dylaris.com"
+)
 
 func main() {
 	app := NewApp()
@@ -41,6 +49,11 @@ func main() {
 		panelURL = defaultPanelURL
 	}
 	app.panelURL = panelURL
+	apiURL := os.Getenv("DYLARIS_API_URL")
+	if apiURL == "" {
+		apiURL = defaultAPIURL
+	}
+	app.apiURL = apiURL
 
 	err := wails.Run(&options.App{
 		Title:  "Dylaris Beam",
