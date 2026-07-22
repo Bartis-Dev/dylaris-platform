@@ -23,12 +23,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Wails Linux build deps
-        # GTK3 + WebKit2GTK 4.0 for the linux/amd64 webview build; makensis (nsis)
-        # so the best-effort Windows installer step can produce the .exe installer.
-        # The Windows cross-build itself is pure-Go and needs none of these.
+        # GTK3 + WebKit2GTK 4.0 for the linux/amd64 webview build. The Windows
+        # cross-build itself is pure-Go and needs none of these.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev nsis
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
 
       - name: Derive version from tag
         id: ver
@@ -72,18 +71,6 @@ jobs:
         # generated the (platform-agnostic) frontend bindings, so reuse them.
         run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -skipbindings -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
 
-      - name: Build Windows NSIS installer (best-effort)
-        working-directory: beam/app
-        # Best-effort. Re-runs the windows build with -nsis so the windows/amd64
-        # target is present in the same invocation (Wails needs it to build the
-        # installer). If makensis is absent, Wails logs a warning and skips the
-        # installer WITHOUT failing; if makensis errors, this step fails and
-        # continue-on-error keeps the raw .exe shipping. On success it writes
-        # build/bin/DylarisBeam-amd64-installer.exe. -skipbindings for the same
-        # cross-build reason as above.
-        continue-on-error: true
-        run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -nsis -skipbindings -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
-
       - name: Stage + sign release assets
         working-directory: beam/app
         env:
@@ -96,10 +83,6 @@ jobs:
           # extension (assetName), so the signed + published bytes are one file - no
           # byte-identical extensionless duplicate.
           cp build/bin/DylarisBeam.exe dist-release/DylarisBeam-windows-amd64.exe
-          # NSIS installer only if the best-effort step produced one.
-          if [ -f build/bin/DylarisBeam-amd64-installer.exe ]; then
-            cp build/bin/DylarisBeam-amd64-installer.exe dist-release/DylarisBeam-windows-amd64-installer.exe
-          fi
           go run ./cmd/beam-release sign \
             -version "${{ steps.ver.outputs.VERSION }}" \
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download" \
@@ -121,9 +104,6 @@ jobs:
           mkdir -p dist-dev
           cp dist-release/DylarisBeam-linux-amd64 dist-dev/
           cp dist-release/DylarisBeam-windows-amd64.exe dist-dev/
-          if [ -f dist-release/DylarisBeam-windows-amd64-installer.exe ]; then
-            cp dist-release/DylarisBeam-windows-amd64-installer.exe dist-dev/
-          fi
           go run ./cmd/beam-release sign \
             -version "${{ steps.ver.outputs.VERSION }}" \
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/download/beam-dev" \
@@ -133,8 +113,6 @@ jobs:
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
-        # fail_on_unmatched_files defaults to false, so the installer line is a
-        # no-op when the best-effort NSIS step did not produce one.
         with:
           tag_name: ${{ github.ref_name }}
           name: Beam ${{ steps.ver.outputs.VERSION }}
@@ -147,7 +125,6 @@ jobs:
             beam/app/dist-release/DylarisBeam-linux-amd64.sig
             beam/app/dist-release/DylarisBeam-windows-amd64.exe
             beam/app/dist-release/DylarisBeam-windows-amd64.exe.sig
-            beam/app/dist-release/DylarisBeam-windows-amd64-installer.exe
             beam/app/dist-release/latest.json
             beam/app/dist-release/latest.json.sig
 
@@ -169,6 +146,5 @@ jobs:
             beam/app/dist-dev/DylarisBeam-linux-amd64.sig
             beam/app/dist-dev/DylarisBeam-windows-amd64.exe
             beam/app/dist-dev/DylarisBeam-windows-amd64.exe.sig
-            beam/app/dist-dev/DylarisBeam-windows-amd64-installer.exe
             beam/app/dist-dev/latest.json
             beam/app/dist-dev/latest.json.sig
