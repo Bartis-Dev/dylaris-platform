@@ -605,7 +605,22 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 
 	switch action {
 	case "start":
-		return dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
+		err := dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
+		if err != nil && strings.Contains(err.Error(), "already exists") {
+			// A stale network endpoint left by an ungraceful prior exit blocks the
+			// start ("endpoint with name mc_... already exists in network ..."),
+			// which otherwise wedges the reconciler's crash-restart loop. Force-
+			// disconnect the container from every network it is attached to (that
+			// clears the dangling endpoint) and retry once; ContainerStart re-creates
+			// the endpoint from the container's own network config.
+			if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
+				for netName := range info.NetworkSettings.Networks {
+					_ = dm.cli.NetworkDisconnect(dm.ctx, netName, mcName, true)
+				}
+			}
+			err = dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
+		}
+		return err
 	case "stop":
 		timeout := 30
 		return dm.cli.ContainerStop(dm.ctx, mcName, container.StopOptions{Timeout: &timeout})
