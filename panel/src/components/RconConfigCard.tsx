@@ -7,16 +7,20 @@ import {
 } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon } from '@/lib/api/rcon';
 
-// RCON enable/password card. Lives at the top of the existing
-// Network top-level tab. Generates a 24-byte hex password on first enable,
-// supports manual override + regenerate, and ships a "Test command" mini-
-// console so the operator can verify connectivity without leaving the tab.
+// RCON enable/password card. Lives as the RCON sub-section of the Players
+// tab. Generates a 24-byte hex password on first enable, supports manual
+// override + regenerate, and ships a "Test command" mini-console so the
+// operator can verify connectivity without leaving the tab. Enabling writes
+// enable-rcon + the password into server.properties on the node (Core does
+// this) so the operator never hand-edits the file. onEnabledChange lets the
+// parent Players tab unlock/lock its other sections as RCON flips.
 
 interface RconConfigCardProps {
     serverId: number;
+    onEnabledChange?: (enabled: boolean) => void;
 }
 
-export default function RconConfigCard({ serverId }: RconConfigCardProps) {
+export default function RconConfigCard({ serverId, onEnabledChange }: RconConfigCardProps) {
     const [loaded, setLoaded] = useState(false);
     const [enabled, setEnabled] = useState(false);
     const [port, setPort] = useState(25575);
@@ -42,7 +46,8 @@ export default function RconConfigCard({ serverId }: RconConfigCardProps) {
         setHasSecret(res.hasSecret);
         setLoaded(true);
         setDirty(false);
-    }, [serverId]);
+        onEnabledChange?.(res.enabled);
+    }, [serverId, onEnabledChange]);
 
     useEffect(() => { refresh(); }, [refresh]);
 
@@ -58,13 +63,14 @@ export default function RconConfigCard({ serverId }: RconConfigCardProps) {
         setPort(res.port);
         setHasSecret(res.hasSecret);
         setDirty(false);
+        onEnabledChange?.(res.enabled);
         if (res.password) {
             setRevealed(res.password);
             showToast('Password regenerated. Copy it now — it won\'t be shown again.', true);
         } else {
             showToast(res.message || 'Saved.', true);
         }
-    }, [serverId, enabled, port, showToast]);
+    }, [serverId, enabled, port, showToast, onEnabledChange]);
 
     const handleTest = useCallback(async () => {
         const cmd = testCmd.trim();
@@ -93,8 +99,8 @@ export default function RconConfigCard({ serverId }: RconConfigCardProps) {
                 <div className="min-w-0 flex-1">
                     <h2 className="text-base font-display font-semibold text-(--base-09)">RCON</h2>
                     <p className="text-xs text-(--base-06) mt-0.5">
-                        Remote console. Required for the Players tab + Scheduled Tasks &ldquo;say&rdquo; jobs.
-                        Server.properties must have <code className="font-mono">enable-rcon=true</code> + this password — toggle below.
+                        Remote console. Powers live player management (kick / ban / op) and Scheduled Tasks &ldquo;say&rdquo; jobs.
+                        Enabling writes <code className="font-mono">enable-rcon=true</code> + this password into server.properties for you — restart the server to apply.
                     </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

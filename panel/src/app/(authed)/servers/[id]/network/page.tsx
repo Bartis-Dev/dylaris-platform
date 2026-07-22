@@ -3,8 +3,9 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 import NetworkView from '@/views/NetworkView';
-import RconConfigCard from '@/components/RconConfigCard';
 
+// RCON configuration moved to the Players tab's RCON sub-section (it gates live
+// player management), so the Network tab is now purely proxy/endpoint wiring.
 export default function ServerNetworkPage() {
     const params = useParams();
     const router = useRouter();
@@ -13,7 +14,6 @@ export default function ServerNetworkPage() {
     if (!server) return null;
     return (
         <div className="space-y-6">
-            <RconConfigCard serverId={server.id} />
             <NetworkView
                 server={server}
                 allServers={servers}

@@ -5,15 +5,16 @@ import { useParams } from 'next/navigation';
 import {
     Users, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2,
     RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks,
-    CircleCheck, CircleAlert, X, ListPlus, MessageSquare,
+    CircleCheck, CircleAlert, X, ListPlus, MessageSquare, Terminal, Lock,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     rconList, rconKick, rconBan, rconUnban, rconOp, rconDeop,
-    rconWhitelistAdd, rconWhitelistRemove, rconTell,
+    rconWhitelistAdd, rconWhitelistRemove, rconTell, getRconConfig,
     parsePlayerList, type OnlinePlayer,
 } from '@/lib/api/rcon';
 import { getFileContent } from '@/lib/api';
+import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 
 // Player Management. All operations are RCON underneath. Online
@@ -33,14 +34,19 @@ interface JsonPlayerEntry {
     bypassesPlayerLimit?: boolean;
 }
 
-type Section = 'online' | 'bans' | 'whitelist' | 'ops';
+type Section = 'online' | 'bans' | 'whitelist' | 'ops' | 'rcon';
 
 const SECTIONS: { id: Section; label: string; Icon: React.ComponentType<{ size?: number }> }[] = [
     { id: 'online',    label: 'Online',    Icon: Users },
     { id: 'bans',      label: 'Bans',      Icon: ShieldX },
     { id: 'whitelist', label: 'Whitelist', Icon: ListChecks },
     { id: 'ops',       label: 'Operators', Icon: Crown },
+    { id: 'rcon',      label: 'RCON',      Icon: Terminal },
 ];
+
+// Every section except RCON itself needs a live RCON connection. When RCON is
+// off we force the RCON section and lock the rest until the operator enables it.
+const RCON_DEPENDENT: Section[] = ['online', 'bans', 'whitelist', 'ops'];
 
 export default function ServerPlayersPage() {
     const params = useParams();
@@ -56,6 +62,8 @@ export default function ServerPlayersPage() {
     const [ops, setOps] = useState<JsonPlayerEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
+    const [rconEnabled, setRconEnabled] = useState(false);
+    const [rconLoaded, setRconLoaded] = useState(false);
 
     const [confirm, setConfirm] = useState<{
         title: string;
@@ -75,6 +83,23 @@ export default function ServerPlayersPage() {
     const activeSub = server?.activeSubServer || '';
     const uuid = server?.uuid || '';
 
+    // With RCON off, the effective section is always 'rcon' (the only usable
+    // one); the user's chosen section resumes once RCON is enabled.
+    const effectiveSection: Section = rconEnabled ? section : 'rcon';
+
+    // Load the RCON state once so we know whether to lock the other sections.
+    // RconConfigCard also reports flips live via onEnabledChange below.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const res = await getRconConfig(serverId);
+            if (cancelled) return;
+            if (res.success) setRconEnabled(res.enabled);
+            setRconLoaded(true);
+        })();
+        return () => { cancelled = true; };
+    }, [serverId]);
+
     const loadJsonList = useCallback(async (filename: string): Promise<JsonPlayerEntry[]> => {
         if (!activeSub || !uuid) return [];
         const res = await getFileContent(`${activeSub}/${filename}`, uuid);
@@ -86,11 +111,11 @@ export default function ServerPlayersPage() {
     }, [activeSub, uuid]);
 
     const refresh = useCallback(async () => {
-        if (!serverId) return;
+        if (!serverId || effectiveSection === 'rcon') return;
         setLoading(true);
         setActionError(null);
 
-        if (section === 'online') {
+        if (effectiveSection === 'online') {
             const res = await rconList(serverId);
             if (!res.success) {
                 setActionError(res.error || 'RCON unavailable');
@@ -99,22 +124,22 @@ export default function ServerPlayersPage() {
                 setOnline(parsePlayerList(res.output || ''));
             }
         }
-        if (section === 'bans')      setBans(await loadJsonList('banned-players.json'));
-        if (section === 'whitelist') setWhitelist(await loadJsonList('whitelist.json'));
-        if (section === 'ops')       setOps(await loadJsonList('ops.json'));
+        if (effectiveSection === 'bans')      setBans(await loadJsonList('banned-players.json'));
+        if (effectiveSection === 'whitelist') setWhitelist(await loadJsonList('whitelist.json'));
+        if (effectiveSection === 'ops')       setOps(await loadJsonList('ops.json'));
 
         setLoading(false);
-    }, [serverId, section, loadJsonList]);
+    }, [serverId, effectiveSection, loadJsonList]);
 
     useEffect(() => { refresh(); }, [refresh]);
 
     // Online list auto-poll every 10s. Other sections are file-backed and
     // change only on user-initiated RCON commands — refresh on action.
     useEffect(() => {
-        if (section !== 'online') return;
+        if (effectiveSection !== 'online') return;
         const id = setInterval(refresh, 10_000);
         return () => clearInterval(id);
-    }, [section, refresh]);
+    }, [effectiveSection, refresh]);
 
     const runRcon = async (label: string, fn: () => Promise<{ success: boolean; error?: string; output?: string }>) => {
         const res = await fn();
@@ -173,12 +198,12 @@ export default function ServerPlayersPage() {
         const q = search.trim().toLowerCase();
         const filter = <T extends { name: string }>(rows: T[]) =>
             q ? rows.filter(p => p.name.toLowerCase().includes(q)) : rows;
-        if (section === 'online') return filter(online);
-        if (section === 'bans') return filter(bans);
-        if (section === 'whitelist') return filter(whitelist);
-        if (section === 'ops') return filter(ops);
+        if (effectiveSection === 'online') return filter(online);
+        if (effectiveSection === 'bans') return filter(bans);
+        if (effectiveSection === 'whitelist') return filter(whitelist);
+        if (effectiveSection === 'ops') return filter(ops);
         return [];
-    }, [section, search, online, bans, whitelist, ops]);
+    }, [effectiveSection, search, online, bans, whitelist, ops]);
 
     if (!server) return null;
 
@@ -187,44 +212,57 @@ export default function ServerPlayersPage() {
             <header className="flex items-center gap-3 shrink-0">
                 <Users size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Players</h1>
-                <span className="text-xs text-(--base-06)">Online list polls every 10s</span>
-                <div className="ml-auto flex items-center gap-2">
-                    <div className="relative">
-                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-05)" />
-                        <input
-                            type="text"
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            placeholder="Search…"
-                            className="input-field pl-7 w-48 text-xs py-1"
-                        />
+                {effectiveSection === 'online' && (
+                    <span className="text-xs text-(--base-06)">Online list polls every 10s</span>
+                )}
+                {effectiveSection !== 'rcon' && (
+                    <div className="ml-auto flex items-center gap-2">
+                        <div className="relative">
+                            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-05)" />
+                            <input
+                                type="text"
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder="Search…"
+                                className="input-field pl-7 w-48 text-xs py-1"
+                            />
+                        </div>
+                        <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
+                            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                            Refresh
+                        </button>
                     </div>
-                    <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
-                        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-                        Refresh
-                    </button>
-                </div>
+                )}
             </header>
 
             {/* Section strip */}
             <nav className="flex gap-1 shrink-0 border-b border-(--base-03)">
-                {SECTIONS.map(({ id, label, Icon }) => (
-                    <button
-                        key={id}
-                        onClick={() => setSection(id)}
-                        className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                            section === id
-                                ? 'border-(--accent) text-(--accent-light)'
-                                : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'
-                        }`}
-                    >
-                        <Icon size={12} />
-                        {label}
-                        {id === 'online' && online.length > 0 && (
-                            <span className="ml-1 mono-label bg-(--base-03) px-1 rounded-sm">{online.length}</span>
-                        )}
-                    </button>
-                ))}
+                {SECTIONS.map(({ id, label, Icon }) => {
+                    const locked = !rconEnabled && RCON_DEPENDENT.includes(id);
+                    const active = effectiveSection === id;
+                    return (
+                        <button
+                            key={id}
+                            onClick={() => { if (!locked) setSection(id); }}
+                            disabled={locked}
+                            title={locked ? 'Enable RCON to unlock this section' : undefined}
+                            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                                active
+                                    ? 'border-(--accent) text-(--accent-light)'
+                                    : locked
+                                        ? 'border-transparent text-(--base-05) opacity-50 cursor-not-allowed'
+                                        : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'
+                            }`}
+                        >
+                            <Icon size={12} />
+                            {label}
+                            {locked && <Lock size={10} className="opacity-70" />}
+                            {id === 'online' && !locked && online.length > 0 && (
+                                <span className="ml-1 mono-label bg-(--base-03) px-1 rounded-sm">{online.length}</span>
+                            )}
+                        </button>
+                    );
+                })}
             </nav>
 
             {actionError && (
@@ -236,14 +274,35 @@ export default function ServerPlayersPage() {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto">
+                {!rconLoaded ? (
+                    <div className="space-y-1.5">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                            <Skeleton key={i} className="h-12 rounded-md" />
+                        ))}
+                    </div>
+                ) : effectiveSection === 'rcon' ? (
+                    <div className="space-y-3">
+                        {!rconEnabled && (
+                            <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent)/30 text-(--base-08) text-xs">
+                                <Lock size={13} className="shrink-0 mt-0.5 text-(--accent-light)" />
+                                <span>
+                                    RCON is off. Enable it below to unlock Online, Bans, Whitelist and Operators — live
+                                    player management runs over RCON.
+                                </span>
+                            </div>
+                        )}
+                        <RconConfigCard serverId={serverId} onEnabledChange={setRconEnabled} />
+                    </div>
+                ) : (
+                    <>
                 {/* "Add to whitelist/ops" affordance for those sections */}
-                {(section === 'whitelist' || section === 'ops') && (
+                {(effectiveSection === 'whitelist' || effectiveSection === 'ops') && (
                     <button
-                        onClick={() => setAddPrompt({ target: section, name: '' })}
+                        onClick={() => setAddPrompt({ target: effectiveSection as 'whitelist' | 'ops', name: '' })}
                         className="btn btn-secondary btn-sm mb-3"
                     >
                         <ListPlus size={12} />
-                        Add player to {section === 'whitelist' ? 'whitelist' : 'operators'}
+                        Add player to {effectiveSection === 'whitelist' ? 'whitelist' : 'operators'}
                     </button>
                 )}
 
@@ -323,6 +382,8 @@ export default function ServerPlayersPage() {
                             </article>
                         ))}
                     </div>
+                )}
+                    </>
                 )}
             </div>
 
