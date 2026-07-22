@@ -30,11 +30,23 @@ describe('buildCsp', () => {
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     expect(csp).toContain("img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com");
     expect(csp).toContain("font-src 'self'");
-    expect(csp).toContain("connect-src 'self' https://api.dylaris.com");
+    expect(csp).toContain("connect-src 'self'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'none'");
     expect(csp).toContain("form-action 'self'");
     expect(csp).toContain('frame-src https: http:');
     expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it('no apiOrigin: connect-src is self-only (no vendor host)', () => {
+    const csp = buildCsp(nonce, false);
+    const connectSrc = csp.split('; ').find(d => d.startsWith('connect-src '))!;
+    expect(connectSrc).toBe("connect-src 'self'");
+  });
+
+  it('cross-origin apiOrigin is appended to connect-src', () => {
+    const csp = buildCsp(nonce, false, 'http://localhost:25500');
+    const connectSrc = csp.split('; ').find(d => d.startsWith('connect-src '))!;
+    expect(connectSrc).toBe("connect-src 'self' http://localhost:25500");
   });
 });

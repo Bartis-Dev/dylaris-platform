@@ -8,7 +8,17 @@
 // https://cdnjs.cloudflare.com is kept as a belt-and-suspenders host-source for
 // jszip (injected at runtime by trusted code; ignored by CSP3 browsers under
 // 'strict-dynamic', honored by older ones).
-export function buildCsp(nonce: string, isDev: boolean): string {
+//
+// apiOrigin is the origin of a cross-origin Core API (PANEL_API_URL /
+// NEXT_PUBLIC_API_URL). When the panel is served on a different origin than
+// Core - a self-hoster whose API lives on api.example.com, or a split-port dev
+// setup - connect-src must allow it, otherwise the browser blocks every API
+// fetch before it leaves the page. Empty / same-origin deployments leave it
+// unset and rely on 'self'. connect-src carries NO hardcoded vendor host: the
+// only cross-origin target is whatever the operator configures, so a self-host
+// build's policy lists solely its own origins. The hosted deployment sets
+// PANEL_API_URL like any other operator and is covered by the same path.
+export function buildCsp(nonce: string, isDev: boolean, apiOrigin?: string): string {
   const scriptSrc = [
     "'self'",
     `'nonce-${nonce}'`,
@@ -16,13 +26,17 @@ export function buildCsp(nonce: string, isDev: boolean): string {
     'https://cdnjs.cloudflare.com',
     ...(isDev ? ["'unsafe-eval'"] : []),
   ].join(' ');
+  const connectSrc = [
+    "'self'",
+    ...(apiOrigin ? [apiOrigin] : []),
+  ].join(' ');
   return [
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com",
     "font-src 'self'",
-    "connect-src 'self' https://api.dylaris.com",
+    `connect-src ${connectSrc}`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
