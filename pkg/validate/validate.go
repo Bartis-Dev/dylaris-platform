@@ -34,10 +34,13 @@ var (
 	// carry path metacharacters.
 	SubServerName = regexp.MustCompile(`^[a-zA-Z0-9\-_+]{1,50}$`)
 
-	// ServerUUID is a canonical lowercase-or-upper hex UUID. Enforced because the
-	// value is client-supplied at CreateServer and becomes the %s in every
-	// dylaris:server:<uuid>:* Redis key and the node's server directory name.
-	ServerUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	// ServerUUID guards the client-supplied server identifier that becomes the %s
+	// in every dylaris:server:<uuid>:* Redis key and the node's server directory
+	// name. The goal is to reject injection characters (':' '/' '..' whitespace),
+	// NOT to mandate a canonical UUID: the panel mints a non-canonical
+	// "<ownerUUID>_<random>" id and existing servers already use it, so accept any
+	// safe identifier of hex/alnum plus '-' and '_'. Length bounds keep it sane.
+	ServerUUID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,80}$`)
 
 	// Slug is a pack slug: length 2-64, lowercase alphanumeric, inner - / _ .
 	// (Was packs.go packSlugRe.)

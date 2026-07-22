@@ -84,12 +84,15 @@ func TestServerUUID(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"84087ad8-e332-44f2-adec-75869b8c1ee1", true},
-		{"84087AD8-E332-44F2-ADEC-75869B8C1EE1", true},
-		{"not-a-uuid", false},
-		{"84087ad8e33244f2adec75869b8c1ee1", false}, // no dashes
-		{"a:b", false},
-		{"", false},
+		{"84087ad8-e332-44f2-adec-75869b8c1ee1", true},              // canonical UUID
+		{"84087AD8-E332-44F2-ADEC-75869B8C1EE1", true},              // upper hex
+		{"d10612d3-5a6c-4dce-99a3-18644d192bb4_k3j2h1x9p0qr", true}, // panel <ownerUUID>_<random>
+		{"84087ad8e33244f2adec75869b8c1ee1", true},                  // no-dash id, still safe
+		{"a:b:c:d:e:f:gg", false},                                   // colon = injection
+		{"survival/../etc", false},                                  // slash/traversal
+		{"has space here", false},                                   // whitespace
+		{"short", false},                                            // < 8 chars
+		{"", false},                                                 // empty
 	}
 	for _, c := range cases {
 		if got := IsServerUUID(c.in); got != c.want {
