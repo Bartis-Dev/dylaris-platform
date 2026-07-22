@@ -91,14 +91,11 @@ jobs:
         run: |
           mkdir -p dist-release
           cp build/bin/DylarisBeam dist-release/DylarisBeam-linux-amd64
-          # Windows: a human double-click artifact (.exe) AND a byte-identical
-          # extensionless copy. beam-release sign derives the manifest download
-          # URL as "<base-url>/DylarisBeam-<slug>" (no extension), so updater.go
-          # fetches DylarisBeam-windows-amd64; the release must carry that exact
-          # name. Signing the extensionless copy makes the signed bytes equal the
-          # fetched bytes.
+          # Windows ships as a SINGLE .exe: the human double-click artifact AND the
+          # updater target. beam-release sign derives the manifest URL WITH the .exe
+          # extension (assetName), so the signed + published bytes are one file - no
+          # byte-identical extensionless duplicate.
           cp build/bin/DylarisBeam.exe dist-release/DylarisBeam-windows-amd64.exe
-          cp build/bin/DylarisBeam.exe dist-release/DylarisBeam-windows-amd64
           # NSIS installer only if the best-effort step produced one.
           if [ -f build/bin/DylarisBeam-amd64-installer.exe ]; then
             cp build/bin/DylarisBeam-amd64-installer.exe dist-release/DylarisBeam-windows-amd64-installer.exe
@@ -108,7 +105,7 @@ jobs:
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download" \
             -out dist-release \
             linux-amd64=dist-release/DylarisBeam-linux-amd64 \
-            windows-amd64=dist-release/DylarisBeam-windows-amd64
+            windows-amd64=dist-release/DylarisBeam-windows-amd64.exe
 
       - name: Sign dev-channel manifest (beam-dev)
         # Only for -dev prereleases. The dev channel reads a FIXED manifest URL,
@@ -123,7 +120,6 @@ jobs:
         run: |
           mkdir -p dist-dev
           cp dist-release/DylarisBeam-linux-amd64 dist-dev/
-          cp dist-release/DylarisBeam-windows-amd64 dist-dev/
           cp dist-release/DylarisBeam-windows-amd64.exe dist-dev/
           if [ -f dist-release/DylarisBeam-windows-amd64-installer.exe ]; then
             cp dist-release/DylarisBeam-windows-amd64-installer.exe dist-dev/
@@ -133,7 +129,7 @@ jobs:
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/download/beam-dev" \
             -out dist-dev \
             linux-amd64=dist-dev/DylarisBeam-linux-amd64 \
-            windows-amd64=dist-dev/DylarisBeam-windows-amd64
+            windows-amd64=dist-dev/DylarisBeam-windows-amd64.exe
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -149,9 +145,8 @@ jobs:
           files: |
             beam/app/dist-release/DylarisBeam-linux-amd64
             beam/app/dist-release/DylarisBeam-linux-amd64.sig
-            beam/app/dist-release/DylarisBeam-windows-amd64
             beam/app/dist-release/DylarisBeam-windows-amd64.exe
-            beam/app/dist-release/DylarisBeam-windows-amd64.sig
+            beam/app/dist-release/DylarisBeam-windows-amd64.exe.sig
             beam/app/dist-release/DylarisBeam-windows-amd64-installer.exe
             beam/app/dist-release/latest.json
             beam/app/dist-release/latest.json.sig
@@ -172,9 +167,8 @@ jobs:
           files: |
             beam/app/dist-dev/DylarisBeam-linux-amd64
             beam/app/dist-dev/DylarisBeam-linux-amd64.sig
-            beam/app/dist-dev/DylarisBeam-windows-amd64
             beam/app/dist-dev/DylarisBeam-windows-amd64.exe
-            beam/app/dist-dev/DylarisBeam-windows-amd64.sig
+            beam/app/dist-dev/DylarisBeam-windows-amd64.exe.sig
             beam/app/dist-dev/DylarisBeam-windows-amd64-installer.exe
             beam/app/dist-dev/latest.json
             beam/app/dist-dev/latest.json.sig

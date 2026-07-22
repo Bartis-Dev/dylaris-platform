@@ -94,8 +94,8 @@ func runSign(args []string) error {
 			return fmt.Errorf("read binary %s (%s): %w", slug, path, err)
 		}
 		bins = append(bins, binInput{Slug: slug, Data: data})
-		// Detached per-binary signature (consumed by Phase 3's self-apply).
-		sigPath := *outDir + "/DylarisBeam-" + slug + ".sig"
+		// Detached per-binary signature, named after the asset it signs.
+		sigPath := *outDir + "/" + assetName(slug) + ".sig"
 		if err := os.WriteFile(sigPath, []byte(signDetached(priv, data)), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", sigPath, err)
 		}
@@ -118,6 +118,19 @@ func runSign(args []string) error {
 		return fmt.Errorf("write latest.json.sig: %w", err)
 	}
 	return nil
+}
+
+// assetName is the release-asset filename for a platform slug. Windows carries a
+// .exe extension so GitHub serves it as an executable and users can double-click
+// it; every other OS is extensionless. The updater fetches exactly this name via
+// the manifest URL, so the signed + published Windows binary is a SINGLE file -
+// no byte-identical extensionless duplicate.
+func assetName(slug string) string {
+	name := "DylarisBeam-" + slug
+	if strings.HasPrefix(slug, "windows-") {
+		name += ".exe"
+	}
+	return name
 }
 
 type platformEntry struct {
@@ -145,7 +158,7 @@ func buildManifest(version, minVersion, baseURL string, priv ed25519.PrivateKey,
 	m := manifest{Version: version, MinVersion: minVersion, Platforms: map[string]platformEntry{}}
 	for _, b := range bins {
 		m.Platforms[b.Slug] = platformEntry{
-			URL:    baseURL + "/DylarisBeam-" + b.Slug,
+			URL:    baseURL + "/" + assetName(b.Slug),
 			Sha256: sha256Hex(b.Data),
 			Sig:    signDetached(priv, b.Data),
 		}

@@ -78,7 +78,14 @@ func TestRunSignMultiTargetWindows(t *testing.T) {
 			if !ok {
 				t.Fatalf("latest.json missing %q entry", c.slug)
 			}
-			wantURL := baseURL + "/DylarisBeam-" + c.slug
+			// Windows is the single .exe (no extensionless duplicate); other OSes
+			// stay extensionless. Hardcoded here so the test independently pins the
+			// naming instead of echoing assetName.
+			wantName := "DylarisBeam-" + c.slug
+			if c.slug == "windows-amd64" {
+				wantName += ".exe"
+			}
+			wantURL := baseURL + "/" + wantName
 			if entry.URL != wantURL {
 				t.Errorf("url = %q, want %q", entry.URL, wantURL)
 			}
@@ -93,8 +100,9 @@ func TestRunSignMultiTargetWindows(t *testing.T) {
 			if !ed25519.Verify(pub, c.data, sig) {
 				t.Errorf("manifest sig for %q did not verify", c.slug)
 			}
-			// Detached per-binary sig file uses the DylarisBeam-<slug>.sig scheme.
-			sigPath := filepath.Join(out, "DylarisBeam-"+c.slug+".sig")
+			// Detached per-binary sig file is named after the asset it signs
+			// (<assetName>.sig), so Windows is DylarisBeam-windows-amd64.exe.sig.
+			sigPath := filepath.Join(out, wantName+".sig")
 			if _, err := os.Stat(sigPath); err != nil {
 				t.Errorf("missing detached sig file %s: %v", sigPath, err)
 			}
