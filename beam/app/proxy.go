@@ -12,6 +12,24 @@ import (
 	"strings"
 )
 
+// beamConnectExtra returns the extra connect-src source for the configured
+// Panel: the Panel's own origin (scheme://host), so a Panel build whose
+// config.js targets an absolute API URL on the Panel host is reachable from the
+// wails:// webview. Same-origin /api is already covered by 'self' (the Panel is
+// proxied on the wails:// origin). Returns "" (a leading space is included when
+// present) when the URL is unset/unparseable. NO vendor host is baked in - the
+// only cross-origin connect target is whatever Panel the operator configured. A
+// Panel served with its API on a SEPARATE host (api.example.com != the Panel
+// host) would need that host added here too; the same-origin /api layout, which
+// the Panel recommends, needs nothing.
+func beamConnectExtra(panelURL string) string {
+	u, err := url.Parse(strings.TrimSpace(panelURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return " " + u.Scheme + "://" + u.Host
+}
+
 // beamPanelCSP is the Content-Security-Policy beam sets on proxied Panel
 // HTML. The Panel ships no CSP of its own, so this is the only policy in
 // force. It is pragmatic, not nonce-strict: 'unsafe-inline' on script-src
@@ -25,20 +43,22 @@ import (
 // (jszip, loaded at runtime for client-side upload zipping); cravatar.eu +
 // cdn.modrinth.com (player avatars, mod icons); frame-src stays broad so
 // operator custom-tab / module iframes (already sandboxed) keep loading;
-// frame-ancestors 'self' replaces the removed X-Frame-Options. connect-src
-// includes https://api.dylaris.com to cover a Panel build that targets an
-// absolute API origin; same-origin /api is already covered by 'self'.
-const beamPanelCSP = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; " +
-	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com; " +
-	"font-src 'self'; " +
-	"connect-src 'self' https://api.dylaris.com; " +
-	"object-src 'none'; " +
-	"base-uri 'none'; " +
-	"form-action 'self'; " +
-	"frame-src https: http:; " +
-	"frame-ancestors 'self'"
+// frame-ancestors 'self' replaces the removed X-Frame-Options. connectExtra
+// (the configured Panel origin, "" for same-origin /api) is the only
+// cross-origin connect target - no vendor host is hardcoded.
+func beamPanelCSP(connectExtra string) string {
+	return "default-src 'self'; " +
+		"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com; " +
+		"font-src 'self'; " +
+		"connect-src 'self'" + connectExtra + "; " +
+		"object-src 'none'; " +
+		"base-uri 'none'; " +
+		"form-action 'self'; " +
+		"frame-src https: http:; " +
+		"frame-ancestors 'self'"
+}
 
 // scriptNonceRe matches a CSP nonce source ('nonce-<value>'). The value charset
 // covers base64 std (+ / =) and base64url (- _). The Panel emits a nonce only on
@@ -62,13 +82,13 @@ func extractScriptNonce(csp string) string {
 // wails:// origin). Reusing Next's nonce is safe: Next stamped only its own
 // legitimate inline scripts with it, and an XSS-injected inline script cannot
 // predict the per-request value.
-func beamNonceCSP(nonce string) string {
+func beamNonceCSP(nonce, connectExtra string) string {
 	return "default-src 'self'; " +
 		"script-src 'self' 'nonce-" + nonce + "' 'strict-dynamic' https://cdnjs.cloudflare.com; " +
 		"style-src 'self' 'unsafe-inline'; " +
 		"img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com; " +
 		"font-src 'self'; " +
-		"connect-src 'self' https://api.dylaris.com; " +
+		"connect-src 'self'" + connectExtra + "; " +
 		"object-src 'none'; " +
 		"base-uri 'none'; " +
 		"form-action 'self'; " +
@@ -82,11 +102,11 @@ func beamNonceCSP(nonce string) string {
 // stamped to match); otherwise it falls back to the pragmatic beamPanelCSP with
 // an empty nonce - byte-identical to the pre-nonce behavior, so a mixed
 // old-Panel/new-Beam pair keeps working (graceful degradation).
-func beamCSPForPanel(panelCSP string) (csp, nonce string) {
+func beamCSPForPanel(panelCSP, connectExtra string) (csp, nonce string) {
 	if n := extractScriptNonce(panelCSP); n != "" {
-		return beamNonceCSP(n), n
+		return beamNonceCSP(n, connectExtra), n
 	}
-	return beamPanelCSP, ""
+	return beamPanelCSP(connectExtra), ""
 }
 
 // wailsRuntimeTags returns the two runtime <script> tags, stamping each with a
@@ -144,9 +164,12 @@ const beamSettingsRoute = "/__beam/"
 // change via the Settings page takes effect on the very next request
 // with zero locking.
 func (a *App) resolvePanelTarget() *url.URL {
-	u, err := url.Parse(a.GetPanelURL())
+	u, err := url.Parse(strings.TrimSpace(a.GetPanelURL()))
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		u, _ = url.Parse("https://panel.dylaris.com")
+		// No usable Panel URL configured. Return an empty target so the reverse
+		// proxy fails into ErrorHandler, which points the user at the Settings
+		// page - never a hardcoded vendor host.
+		return &url.URL{}
 	}
 	return u
 }
@@ -215,7 +238,8 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 				// (nonce-strict), else fall back to the pragmatic beamPanelCSP.
 				// The Panel's own CSP is still on resp.Header here - we overwrite
 				// it immediately below.
-				csp, nonce := beamCSPForPanel(resp.Header.Get("Content-Security-Policy"))
+				connectExtra := beamConnectExtra(app.GetPanelURL())
+				csp, nonce := beamCSPForPanel(resp.Header.Get("Content-Security-Policy"), connectExtra)
 				resp.Header.Set("Content-Security-Policy", csp)
 				body, err := io.ReadAll(resp.Body)
 				resp.Body.Close()

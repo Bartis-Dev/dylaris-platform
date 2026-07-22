@@ -372,3 +372,27 @@ func resolveTabProxyOrigin(rawOrigin, frontendURL string) (origin string, active
 	}
 	return u.Scheme + "://" + u.Host, true
 }
+
+// IsLocalOrigin reports whether a CORS Origin header points at the local machine
+// or a private LAN address: localhost, 127.0.0.0/8, ::1, the RFC1918 ranges
+// (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and IPv6 ULA (fc00::/7), on ANY
+// port. Such origins are always allowed so a self-hoster reaches the panel over
+// localhost or a LAN IP without configuring FRONTEND_URL. It never matches a
+// public hostname - those must be named explicitly in FRONTEND_URL - so an empty
+// configuration never implicitly trusts a public (vendor) origin. An unparseable
+// or opaque origin (e.g. "null") returns false.
+func IsLocalOrigin(origin string) bool {
+	u, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
+}

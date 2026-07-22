@@ -35,20 +35,47 @@ func TestExtractScriptNonce(t *testing.T) {
 	}
 }
 
+func TestBeamConnectExtra(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"https://panel.example.com", " https://panel.example.com"},
+		{"https://panel.example.com/", " https://panel.example.com"},
+		{"http://192.168.1.5:25510", " http://192.168.1.5:25510"},
+		{"  https://p.example.com  ", " https://p.example.com"}, // trimmed
+		{"", ""},
+		{"not a url", ""},
+		{"/relative/path", ""},
+	}
+	for _, c := range cases {
+		if got := beamConnectExtra(c.in); got != c.want {
+			t.Errorf("beamConnectExtra(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestBeamNonceCSP(t *testing.T) {
-	csp := beamNonceCSP("N0nCe")
-	// Beam's desktop-context directives must survive.
+	csp := beamNonceCSP("N0nCe", " https://panel.example.com")
+	// Beam's desktop-context directives must survive, and connect-src carries
+	// the configured Panel origin - never a hardcoded vendor host.
 	for _, want := range []string{
 		"'nonce-N0nCe'",
 		"'strict-dynamic'",
 		"frame-src https: http:",
 		"frame-ancestors 'self'",
-		"connect-src 'self' https://api.dylaris.com",
+		"connect-src 'self' https://panel.example.com",
 		"img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com",
 	} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("beamNonceCSP missing %q in %q", want, csp)
 		}
+	}
+	if strings.Contains(csp, "dylaris.com") {
+		t.Errorf("beamNonceCSP must not hardcode a vendor host: %q", csp)
+	}
+	// Empty connectExtra -> connect-src is self-only.
+	if got := directive(beamNonceCSP("N", ""), "connect-src"); got != "connect-src 'self'" {
+		t.Errorf("empty connectExtra: connect-src = %q, want \"connect-src 'self'\"", got)
 	}
 	// script-src must be strict: nonce + strict-dynamic, never 'unsafe-inline'.
 	scriptSrc := directive(csp, "script-src")
@@ -61,25 +88,30 @@ func TestBeamNonceCSP(t *testing.T) {
 }
 
 func TestBeamCSPForPanel(t *testing.T) {
-	// Nonce present -> nonce CSP + the returned nonce, strict script-src.
-	csp, nonce := beamCSPForPanel("default-src 'self'; script-src 'self' 'nonce-AbC' 'strict-dynamic'")
+	// Nonce present -> nonce CSP + the returned nonce, strict script-src, and the
+	// passed-through connect-src origin.
+	csp, nonce := beamCSPForPanel("default-src 'self'; script-src 'self' 'nonce-AbC' 'strict-dynamic'", " https://panel.example.com")
 	if nonce != "AbC" {
 		t.Fatalf("nonce = %q, want AbC", nonce)
 	}
 	if !strings.Contains(csp, "'nonce-AbC'") || !strings.Contains(csp, "'strict-dynamic'") {
 		t.Errorf("nonce CSP not built: %q", csp)
 	}
+	if directive(csp, "connect-src") != "connect-src 'self' https://panel.example.com" {
+		t.Errorf("connect-src not passed through: %q", directive(csp, "connect-src"))
+	}
 	if strings.Contains(directive(csp, "script-src"), "'unsafe-inline'") {
 		t.Errorf("nonce script-src must not carry unsafe-inline: %q", csp)
 	}
 
-	// No nonce -> exact fallback, byte-identical to today's beamPanelCSP.
-	csp2, nonce2 := beamCSPForPanel("")
+	// No nonce -> exact fallback, byte-identical to beamPanelCSP with the same
+	// connectExtra.
+	csp2, nonce2 := beamCSPForPanel("", " https://panel.example.com")
 	if nonce2 != "" {
 		t.Errorf("fallback nonce = %q, want empty", nonce2)
 	}
-	if csp2 != beamPanelCSP {
-		t.Errorf("fallback CSP = %q, want beamPanelCSP", csp2)
+	if csp2 != beamPanelCSP(" https://panel.example.com") {
+		t.Errorf("fallback CSP = %q, want beamPanelCSP(...)", csp2)
 	}
 }
 

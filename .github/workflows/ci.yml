@@ -204,9 +204,12 @@ jobs:
       component: panel
       dockerfile: ./panel/Dockerfile
       context: .
-      # Owner's published image keeps its baked SaaS URL (the ARG now defaults
-      # to empty for a self-hoster's own build).
-      extra_build_args: "NEXT_PUBLIC_API_URL=https://api.dylaris.com/api"
+      # No baked API URL: NEXT_PUBLIC_API_URL stays empty so the published image
+      # resolves the Core API same-origin (/api) by default and never falls back
+      # to a vendor host. EVERY deployment - hosted included - points the panel at
+      # its Core by setting PANEL_API_URL at runtime (config.js shim), which also
+      # drives the CSP connect-src. Empty PANEL_API_URL = same-origin, so a
+      # self-hoster reaching the panel over localhost / a LAN IP just works.
     secrets: inherit
 
   build-log-shipper:

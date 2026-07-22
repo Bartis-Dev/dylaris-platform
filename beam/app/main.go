@@ -24,11 +24,15 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// defaultPanelURL is the production Panel address. Overridable per
-// install through the in-app Settings page (saved to a config.json in
-// the user's config dir), or per build via the DYLARIS_PANEL_URL env
-// var so dev / staging installs can ship with their own default.
-const defaultPanelURL = "https://panel.dylaris.com"
+// defaultPanelURL is the Panel address a fresh install starts on before the
+// user configures one. It is EMPTY by default so the open-source build hardcodes
+// no vendor host: an unconfigured Beam lands on the in-app Settings page to enter
+// a Panel URL. A branded distribution can ship its own default two ways, without
+// touching source: the DYLARIS_PANEL_URL env var at launch, or
+// `-ldflags "-X main.defaultPanelURL=https://panel.example.com"` at build time
+// (hence a var, not a const). Per-install overrides are saved to config.json in
+// the user's config dir via the Settings page.
+var defaultPanelURL = ""
 
 func main() {
 	app := NewApp()

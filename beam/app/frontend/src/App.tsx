@@ -64,7 +64,9 @@ const UPDATE_LABELS: Record<string, string> = {
 };
 
 export default function App() {
-  const [defaultUrl, setDefaultUrl] = useState('https://panel.dylaris.com');
+  // No vendor default: the compiled-in default (GetDefaultPanelURL) fills this on
+  // mount; an open-source build ships empty and the user enters their Panel URL.
+  const [defaultUrl, setDefaultUrl] = useState('');
   const [inputUrl, setInputUrl] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
@@ -96,7 +98,7 @@ export default function App() {
     const load = async () => {
       try {
         const bindings = getBindings();
-        const fallback = (await bindings?.GetDefaultPanelURL?.()) || 'https://panel.dylaris.com';
+        const fallback = (await bindings?.GetDefaultPanelURL?.()) || '';
         setDefaultUrl(fallback);
         const url = (await bindings?.GetPanelURL?.()) || fallback;
         setInputUrl(url);
@@ -104,7 +106,7 @@ export default function App() {
         bindings?.GetUpdateGate?.().then(g => setGate(g)).catch(() => {});
       } catch (err) {
         console.warn('Panel URL resolve failed:', err);
-        setInputUrl('https://panel.dylaris.com');
+        setInputUrl('');
       } finally {
         setLoaded(true);
       }
@@ -271,7 +273,7 @@ export default function App() {
           className="url-input"
           value={inputUrl}
           onChange={e => setInputUrl(e.target.value)}
-          placeholder="https://panel.dylaris.com"
+          placeholder="https://panel.example.com"
           autoFocus
           disabled={!loaded}
           onKeyDown={e => {

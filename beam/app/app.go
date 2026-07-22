@@ -143,8 +143,9 @@ func saveSettings(s userSettings) error {
 // GetPanelURL is exposed to the frontend stub so the embedded redirector
 // knows where to point its window.location. Resolution priority:
 //   1. Saved user setting (Settings dialog wrote it)
-//   2. Build-time env var (DYLARIS_PANEL_URL set on the App struct)
-//   3. Hard-coded default
+//   2. Launch/build-time default (DYLARIS_PANEL_URL env or ldflags, on the App struct)
+//   3. The compiled-in defaultPanelURL (empty in the open-source build)
+// May return "" when nothing is configured; the redirector then shows Settings.
 func (a *App) GetPanelURL() string {
 	if saved := strings.TrimSpace(loadSettings().PanelURL); saved != "" {
 		return saved
@@ -152,17 +153,17 @@ func (a *App) GetPanelURL() string {
 	if a.panelURL != "" {
 		return a.panelURL
 	}
-	return "https://panel.dylaris.com"
+	return defaultPanelURL
 }
 
 // GetDefaultPanelURL returns the URL the redirector would use absent a
 // saved override. The Settings dialog uses it to pre-fill the input
-// and to offer a "Reset" button.
+// and to offer a "Reset" button. May be "" when no default is compiled in.
 func (a *App) GetDefaultPanelURL() string {
 	if a.panelURL != "" {
 		return a.panelURL
 	}
-	return "https://panel.dylaris.com"
+	return defaultPanelURL
 }
 
 // SavePanelURL persists a new Panel URL chosen via the Settings dialog.

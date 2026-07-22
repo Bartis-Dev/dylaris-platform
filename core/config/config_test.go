@@ -203,3 +203,36 @@ func TestValidateAdminSecret(t *testing.T) {
 		})
 	}
 }
+
+func TestIsLocalOrigin(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"http://localhost:25510", true},
+		{"http://localhost", true},
+		{"https://localhost:8443", true},
+		{"http://127.0.0.1:25510", true},
+		{"http://127.5.6.7", true},
+		{"http://[::1]:25510", true},
+		{"http://10.0.0.5:25510", true},
+		{"http://172.16.4.9:3000", true},
+		{"http://172.31.255.1", true},
+		{"http://192.168.1.50:25510", true},
+		{"http://[fd12:3456::1]:25510", true}, // IPv6 ULA
+		// Public / non-local must NOT match - only FRONTEND_URL allowlists those.
+		{"https://api.dylaris.com", false},
+		{"https://panel.example.com", false},
+		{"http://8.8.8.8", false},
+		{"http://172.32.0.1", false}, // just outside 172.16/12
+		{"http://169.254.1.1", false}, // link-local, not covered
+		{"null", false},               // opaque origin
+		{"", false},
+		{"not a url", false},
+	}
+	for _, tc := range cases {
+		if got := IsLocalOrigin(tc.in); got != tc.want {
+			t.Errorf("IsLocalOrigin(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}

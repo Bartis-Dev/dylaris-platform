@@ -542,15 +542,25 @@ func main() {
 	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.
 	services.StartSetupRecoveryLoop(bgCtx, pgStore, cfg.FrontendURL)
 
-	// allowedOrigin gates CORS. Beyond the configured Panel and the
-	// local dev origin, the Beam Desktop App is allowed through: it
-	// runs the Panel inside a Wails webview whose origin is
-	// http://wails.localhost (Windows) or wails://wails.localhost
-	// (macOS/Linux). Same Core API, just a native shell — and auth is
-	// Bearer-token (no cookies), so a wider CORS surface grants no
+	// allowedOrigin gates CORS. Three classes are allowed, and NO vendor host is
+	// ever trusted implicitly - an empty FRONTEND_URL never falls back to a
+	// dylaris.com origin:
+	//   1. The explicitly configured public Panel origin (FRONTEND_URL). The
+	//      operator sets this per deployment; it is the ONLY way a public origin
+	//      is trusted.
+	//   2. Any localhost / private-LAN origin (localhost, 127/8, ::1, RFC1918,
+	//      IPv6 ULA) on any port, so a self-hoster reaches the panel over
+	//      localhost or a LAN IP without configuring anything.
+	//   3. The Beam Desktop App, which runs the Panel inside a Wails webview
+	//      whose origin is http://wails.localhost (Windows) or wails://wails.localhost
+	//      (macOS/Linux).
+	// Auth is Bearer-token (no cookies), so a wider CORS surface grants no
 	// ambient privilege.
 	allowedOrigin := func(origin string) bool {
-		if origin == cfg.FrontendURL || origin == "http://localhost:25510" {
+		if origin != "" && origin == cfg.FrontendURL {
+			return true
+		}
+		if config.IsLocalOrigin(origin) {
 			return true
 		}
 		if strings.HasPrefix(origin, "wails://") {
