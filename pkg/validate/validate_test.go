@@ -111,6 +111,9 @@ func TestSlugLabelEmailMcVersion(t *testing.T) {
 	if !IsMcVersion("1.21") || !IsMcVersion("1.21.4") || IsMcVersion("1") || IsMcVersion("1.x") {
 		t.Error("McVersion cases failed")
 	}
+	if !IsMinecraftUsername("Notch_99") || IsMinecraftUsername("ab") || IsMinecraftUsername("has space") || IsMinecraftUsername("has:colon") {
+		t.Error("MinecraftUsername cases failed")
+	}
 }
 
 func TestSanitizeServerName(t *testing.T) {

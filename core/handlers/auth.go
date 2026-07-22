@@ -5,6 +5,7 @@ import (
 	"database/sql" // Import Models
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -544,14 +545,30 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 
 	// Update Fields in Struct (non-username fields)
 	if req.NewPassword != nil && *req.NewPassword != "" {
+		// Enforce the same length policy the register + reset paths apply; this
+		// self-service field previously accepted any non-empty password.
+		if min := LoadAuthPolicy(h.state).PasswordMinLength; len(*req.NewPassword) < min {
+			sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
+			return
+		}
 		hashed, _ := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
 		user.Password = string(hashed)
 	}
 	if req.Email != nil {
-		user.Email = *req.Email
+		email := strings.TrimSpace(*req.Email)
+		if email != "" && !validate.IsEmail(email) {
+			sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+			return
+		}
+		user.Email = email
 	}
 	if req.MinecraftUsername != nil {
-		user.MinecraftUsername = *req.MinecraftUsername
+		mc := strings.TrimSpace(*req.MinecraftUsername)
+		if mc != "" && !validate.IsMinecraftUsername(mc) {
+			sendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
+			return
+		}
+		user.MinecraftUsername = mc
 	}
 
 	// Username column is idempotent here — RenameUser already wrote it (plus

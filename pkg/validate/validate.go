@@ -53,18 +53,22 @@ var (
 	// McVersion is a Minecraft version like 1.21 or 1.21.4.
 	McVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
 
+	// MinecraftUsername is a Mojang account name: 3-16 chars, letters/digits/_.
+	MinecraftUsername = regexp.MustCompile(`^[a-zA-Z0-9_]{3,16}$`)
+
 	// serverNameStrip removes any character outside the ServerName alphabet.
 	serverNameStrip = regexp.MustCompile(`[^a-zA-Z0-9 \-+_]`)
 )
 
-func IsUsername(s string) bool      { return Username.MatchString(s) }
-func IsServerName(s string) bool    { return ServerName.MatchString(s) }
-func IsSubServerName(s string) bool { return SubServerName.MatchString(s) }
-func IsServerUUID(s string) bool    { return ServerUUID.MatchString(s) }
-func IsSlug(s string) bool          { return Slug.MatchString(s) }
-func IsLabel(s string) bool         { return Label.MatchString(s) }
-func IsEmail(s string) bool         { return Email.MatchString(s) }
-func IsMcVersion(s string) bool     { return McVersion.MatchString(s) }
+func IsUsername(s string) bool          { return Username.MatchString(s) }
+func IsServerName(s string) bool        { return ServerName.MatchString(s) }
+func IsSubServerName(s string) bool     { return SubServerName.MatchString(s) }
+func IsServerUUID(s string) bool        { return ServerUUID.MatchString(s) }
+func IsSlug(s string) bool              { return Slug.MatchString(s) }
+func IsLabel(s string) bool             { return Label.MatchString(s) }
+func IsEmail(s string) bool             { return Email.MatchString(s) }
+func IsMcVersion(s string) bool         { return McVersion.MatchString(s) }
+func IsMinecraftUsername(s string) bool { return MinecraftUsername.MatchString(s) }
 
 // SanitizeServerName coerces a raw name into the ServerName alphabet: invalid
 // characters are stripped (spaces are kept, they are allowed), the result is

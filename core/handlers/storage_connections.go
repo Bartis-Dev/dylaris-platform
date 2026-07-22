@@ -47,6 +47,22 @@ type storageConnectionConfig struct {
 
 // validStorageConnectionProvider allowlists the providers a connection may use.
 // Only s3 is credentialed today; the table has room for others later.
+// validateStorageConnectionEndpoint runs the same fail-closed S3-endpoint check
+// core-storage and modpacks use (reject a credential-bearing '@', require a
+// parseable URL). Storage-connections previously skipped it, so a credentialed
+// endpoint could be stored here though rejected everywhere else. Empty config is
+// allowed (a metadata-only update).
+func validateStorageConnectionEndpoint(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var cfg storageConnectionConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return fmt.Errorf("invalid config JSON")
+	}
+	return validateS3Endpoint("storage connection", cfg.Endpoint)
+}
+
 func validStorageConnectionProvider(p string) bool {
 	return p == "s3"
 }
@@ -81,6 +97,10 @@ func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *h
 		sendJSONError(w, "invalid provider (expected s3)", 400)
 		return
 	}
+	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
+		sendJSONError(w, err.Error(), 400)
+		return
+	}
 	conn := models.StorageConnection{
 		Name:            req.Name,
 		Provider:        req.Provider,
@@ -113,6 +133,10 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 	}
 	if !validStorageConnectionProvider(req.Provider) {
 		sendJSONError(w, "invalid provider (expected s3)", 400)
+		return
+	}
+	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
+		sendJSONError(w, err.Error(), 400)
 		return
 	}
 	conn := models.StorageConnection{

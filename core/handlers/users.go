@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"dylaris-core/models"
+	"dylaris-pkg/validate"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
@@ -55,7 +57,7 @@ type createUserRequest struct {
 	// user defaults to all-regions access — matches the grandfather behavior
 	// applied to existing users at migration time, and avoids creating users
 	// who can see nothing.
-	AllRegions    *bool    `json:"allRegions,omitempty"`
+	AllRegions      *bool    `json:"allRegions,omitempty"`
 	RegionsExplicit []string `json:"regionsExplicit,omitempty"`
 }
 
@@ -71,8 +73,22 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The admin create-user path historically validated neither the username nor
+	// the password. A username is interpolated into Redis keys (the beam daily
+	// counter dylaris:beam:daily:<username>), so a ':'/space must be rejected here
+	// exactly like the register + rename paths.
+	req.Username = strings.TrimSpace(req.Username)
+	if !validate.IsUsername(req.Username) {
+		sendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", 400)
+		return
+	}
 	if req.Password == "" {
 		sendJSONError(w, "Password is required", 400)
+		return
+	}
+	// Enforce the same password-length policy the register + reset paths apply.
+	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
+		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -173,6 +189,10 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
 		sendJSONError(w, "Password is required", 400)
+		return
+	}
+	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
+		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
 

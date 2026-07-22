@@ -896,8 +896,10 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.RAM < 256 {
-		sendJSONError(w, "RAM must be at least 256 MB", 400)
+	// Bound all three resources: the update path used to check only RAM, so a
+	// negative CPU or disk was forwarded to the node's docker config.
+	if msg := validate.ResourceBounds(req.RAM, req.CPULimit, req.DiskLimit, 0); msg != "" {
+		sendJSONError(w, msg, 400)
 		return
 	}
 
