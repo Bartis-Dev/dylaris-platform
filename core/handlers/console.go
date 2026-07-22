@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-pkg/validate"
+
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 )
@@ -42,6 +44,10 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	subServer := r.URL.Query().Get("sub_server")
+	if subServer != "" && !validate.IsSubServerName(subServer) {
+		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
+		return
+	}
 	streamKey := fmt.Sprintf("dylaris:server:%s:logs", srv.UUID)
 	if subServer != "" {
 		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", srv.UUID, subServer)
@@ -102,6 +108,10 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	subServer := r.URL.Query().Get("sub_server")
+	if subServer != "" && !validate.IsSubServerName(subServer) {
+		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
+		return
+	}
 	streamKey := fmt.Sprintf("dylaris:server:%s:logs", srv.UUID)
 	if subServer != "" {
 		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", srv.UUID, subServer)

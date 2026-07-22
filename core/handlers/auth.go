@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dylaris-core/store"
+	"dylaris-pkg/validate"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -147,6 +148,7 @@ var setupTokenAllowedPaths = map[string]bool{
 	// Used by the forced-setup page to load the user's username.
 	"/api/auth/profile": true,
 }
+
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -444,7 +446,7 @@ func dbUnavailable(err error) bool {
 		"bad connection", "connection reset", "broken pipe",
 		"i/o timeout", "server closed the connection",
 		"the database system is", // starting up / shutting down / in recovery
-		"does not exist",          // schema not rebuilt yet
+		"does not exist",         // schema not rebuilt yet
 	} {
 		if strings.Contains(msg, n) {
 			return true
@@ -499,6 +501,14 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		newName := strings.TrimSpace(*req.NewUsername)
 		if newName == "" {
 			sendJSONError(w, "Username cannot be empty", http.StatusBadRequest)
+			return
+		}
+		// The rename path historically skipped the charset regex the register/
+		// setup paths apply. A username is interpolated into Redis keys (e.g. the
+		// beam daily-upload counter dylaris:beam:daily:<username>:<date>), so a ':'
+		// or space here lets a user collide/hijack another user's key namespace.
+		if !validate.IsUsername(newName) {
+			sendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", http.StatusBadRequest)
 			return
 		}
 		allow, cooldownDays, _ := h.state.Store.GetUserAccountPolicy()

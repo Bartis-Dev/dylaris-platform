@@ -5,11 +5,11 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-pkg/validate"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +28,21 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	var req CreateServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	// The client supplies the UUID and it becomes the %s in every
+	// dylaris:server:<uuid>:* Redis key and the node's server directory name, so
+	// reject anything that is not a canonical UUID (also rejects an empty UUID,
+	// which used to create an unroutable server).
+	if !validate.IsServerUUID(req.UUID) {
+		sendJSONError(w, "Invalid server UUID", http.StatusBadRequest)
+		return
+	}
+	// Bound the requested resources (create had no check; negative/zero were
+	// accepted and forwarded to the node). Host CPU ceiling is enforced node-side.
+	if msg := validate.ResourceBounds(req.Docker.RAM, req.Docker.CPULimit, req.Docker.DiskLimit, 0); msg != "" {
+		sendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 
@@ -812,11 +827,11 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Sanitize: only a-zA-Z0-9 - + space, collapse multiple spaces
+	// Collapse whitespace, then validate against the shared server-name rule so
+	// create and rename agree on one alphabet.
 	name := strings.Join(strings.Fields(req.Name), " ")
-	validName := regexp.MustCompile(`^[a-zA-Z0-9\-+ ]{1,50}$`)
-	if !validName.MatchString(name) {
-		sendJSONError(w, "Invalid name: use a-z A-Z 0-9 - + and single spaces, max 50 chars", 400)
+	if !validate.IsServerName(name) {
+		sendJSONError(w, "Invalid name: 1-50 characters, start with a letter or digit, then letters, digits, space, '-', '+' or '_'", 400)
 		return
 	}
 
@@ -1263,6 +1278,12 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	subServerName := vars["subServerName"]
 	if subServerName == "" {
 		sendJSONError(w, "Sub-server name required", 400)
+		return
+	}
+	// The create path sanitizes this; delete did not, yet it is forwarded to the
+	// node as a filesystem delete target. Validate the charset (no path metachars).
+	if !validate.IsSubServerName(subServerName) {
+		sendJSONError(w, "Invalid sub-server name", 400)
 		return
 	}
 

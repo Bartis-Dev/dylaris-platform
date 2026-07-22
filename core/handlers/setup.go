@@ -1,10 +1,10 @@
 package handlers
 
 import (
+	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"dylaris-core/models"
@@ -31,8 +31,6 @@ type SetupHandler struct {
 func NewSetupHandler(state *AppState, auth *AuthHandler) *SetupHandler {
 	return &SetupHandler{state: state, auth: auth}
 }
-
-var setupUsernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 
 type setupStatusResp struct {
 	Success               bool   `json:"success"`
@@ -120,7 +118,7 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Username = strings.TrimSpace(req.Username)
-	if !setupUsernameRegex.MatchString(req.Username) {
+	if !validate.IsUsername(req.Username) {
 		sendSetupError(w, http.StatusBadRequest, "invalid_username", "Username must be 3-32 chars (alphanumeric, _ or -).")
 		return
 	}

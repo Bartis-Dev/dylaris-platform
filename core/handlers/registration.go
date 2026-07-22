@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/mailer"
 	"dylaris-core/models"
+	"dylaris-pkg/validate"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -24,11 +25,6 @@ type RegistrationHandler struct {
 func NewRegistrationHandler(state *AppState) *RegistrationHandler {
 	return &RegistrationHandler{state: state}
 }
-
-// usernameRegex enforces what the legacy create-user form already accepts —
-// alphanumerics + a few separators. Tight enough to keep URLs/log lines
-// readable, loose enough for normal handles.
-var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]{2,31}$`)
 
 // emailRegex is intentionally cheap — full RFC 5322 validation is a rabbit
 // hole. We accept anything that looks roughly like local@host.tld; SMTP
@@ -86,7 +82,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	password := req.Password
 
-	if !usernameRegex.MatchString(username) {
+	if !validate.IsUsername(username) {
 		sendJSONError(w, "Invalid username (3–32 chars, letters/digits/._- only)", http.StatusBadRequest)
 		return
 	}

@@ -17,6 +17,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-pkg/beam/quota"
+	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
@@ -321,6 +322,11 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validate.IsSafeRelPath(req.Path) {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)
@@ -415,6 +421,10 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !validate.IsSafeRelPath(req.Path) {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
 	dir, file := filepath.Split(req.Path)
 	cleanFile := sanitizeFilename(file)
 	req.Path = filepath.Join(dir, cleanFile)
@@ -569,6 +579,10 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !validate.IsSafeRelPath(req.Path) {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
 	resp, err := h.sendGRPCMsg(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
@@ -756,6 +770,10 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	path := r.FormValue("path")
+	if !validate.IsSafeRelPath(path) {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusForbidden)

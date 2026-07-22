@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"dylaris-pkg/validate"
 )
 
 type UsernameHistoryHandler struct {
@@ -67,6 +69,12 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" {
 		sendJSONError(w, "username required", http.StatusBadRequest)
+		return
+	}
+	// Same charset guard as the self-service rename: a username is interpolated
+	// into Redis keys, so ':'/space must be rejected here too.
+	if !validate.IsUsername(req.Username) {
+		sendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", http.StatusBadRequest)
 		return
 	}
 	// Uniqueness check
