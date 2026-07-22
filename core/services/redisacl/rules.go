@@ -38,6 +38,12 @@ func globalReadKeys() []string {
 func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules, "~dylaris:node:"+token+":*", "~dylaris:discovery:"+token, "~beam:node-endpoint:"+token)
+	// The per-server storage-path mapping lives under the UN-prefixed
+	// node:<token>:server:<uuid>:storage namespace (core handlers/servers_storage.go
+	// writes it, node/storage.go reads+writes it) - NOT dylaris:node:*. Without this
+	// grant the node gets NOPERM persisting/reading the storage mapping, which the
+	// install + reconcile paths hit on every server. Scoped to this node's token.
+	rules = append(rules, "~node:"+token+":*")
 	// The node reads its own SFTP server list (sftp:node:<nodeName>:user:<user>,
 	// nodeName == token) to resolve which server a virtual SFTP path targets.
 	// Without this getUserServers gets NOPERM and every SFTP session sees an

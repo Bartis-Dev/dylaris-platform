@@ -18,6 +18,10 @@ func TestBuildNodeACLRules(t *testing.T) {
 	for _, want := range []string{
 		"on", ">pw", "resetkeys", "resetchannels",
 		"~dylaris:node:n1:*", "~dylaris:discovery:n1",
+		// The un-prefixed node:<token>:* namespace holds the per-server
+		// storage-path mapping (node:n1:server:<uuid>:storage); without it the
+		// node gets NOPERM on every install + reconcile.
+		"~node:n1:*",
 		"~dylaris:server:uuid-a:*", "~dylaris:core:*", "~sftp:auth:*",
 		// Upload-limit enforcement needs the node to read the config keys and
 		// read+write the shared per-user daily counter; SFTP needs its own

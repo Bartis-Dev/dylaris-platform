@@ -107,8 +107,15 @@ func getSecret(key, fallback string) string {
 // uuidRegex / subServerRegex validate the env vars that get interpolated into
 // Redis keys. Only Node sets these today, but unvalidated input could collide
 // key namespaces (e.g. SUB_SERVER=foo:logs) or inject separators.
+//
+// serverUUID is NOT a canonical UUID: the panel mints server ids as
+// "<ownerUUID>_<random>", so the check accepts any safe identifier (hex/alnum
+// plus '-' and '_', length-bounded) - the goal is to reject Redis-key injection
+// characters (':' '/' whitespace), not to mandate RFC-4122. This mirrors the
+// core-side rule in platform/pkg/validate (ServerUUID); a strict canonical regex
+// here rejected every panel-created server and crash-looped its container.
 var (
-	uuidRegex      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	uuidRegex      = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,80}$`)
 	subServerRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 )
 

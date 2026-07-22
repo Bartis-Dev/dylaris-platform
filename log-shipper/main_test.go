@@ -112,3 +112,24 @@ func TestIsUnifiedGCLine(t *testing.T) {
 		})
 	}
 }
+
+func TestUUIDRegex(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"84087ad8-e332-44f2-adec-75869b8c1ee1", true},            // canonical UUID
+		{"d10612d3-5a6c-4dce-99a3-18644d192bb4_xijavblknx", true}, // panel <ownerUUID>_<random>
+		{"84087ad8e33244f2adec75869b8c1ee1", true},                // no-dash id
+		{"a:b:c:d:e:f:gg", false},                                 // colon = Redis-key injection
+		{"survival/../etc", false},                                // slash / traversal
+		{"has space here", false},                                 // whitespace
+		{"short", false},                                          // < 8 chars
+		{"", false},                                               // empty
+	}
+	for _, c := range cases {
+		if got := uuidRegex.MatchString(c.in); got != c.want {
+			t.Errorf("uuidRegex.MatchString(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

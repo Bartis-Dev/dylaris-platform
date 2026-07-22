@@ -116,10 +116,14 @@ services:
       # The Node drives the host Docker daemon to launch MC server containers.
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data
-    # MC server host ports (ip_port / both routing modes) are published from the
-    # container by the Node. Expose the configured range on the host:
+    # The Node launches MC server containers as SIBLINGS on the host Docker daemon
+    # (via the mounted docker.sock); in direct-port mode each MC container binds
+    # its OWN host port from the 25600-25699 range (0.0.0.0:<port>). The range must
+    # therefore NOT be re-published on the Node container: doing so grabs the whole
+    # range for the Node, and every MC container's bind then fails with
+    # "port is already allocated" (routing_mode=gateway publishes no host port at
+    # all). Only the Node's own service ports are published here.
     ports:
-      - "25600-25699:25600-25699"
       - "25520:25520"   # SFTP (when file access = sftp/both)
       # Beam LAN fast-path: the node's pinned-TLS, fingerprint-verified beam port.
       # Published here (self-host / BYON only) so a co-located Beam Desktop client on
