@@ -1,27 +1,29 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
-    Package, Search, Settings2, Download, Trash2, ExternalLink,
-    CircleCheck, CircleAlert, AlertTriangle, RefreshCw, Filter,
-    ChevronDown, Box,
+    Package, Search, Download, Trash2, ExternalLink,
+    CircleCheck, CircleAlert, AlertTriangle, Filter, Box, X,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAppData } from '@/lib/AppDataContext';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
 import {
-    searchModrinth, getModrinthProject, getModrinthVersions,
+    searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
     listInstalledMods, installMod, uninstallMod, pickPrimaryFile,
     getServerModpackContents,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
-    type ModrinthVersion, type InstalledMod,
+    type ModrinthVersion, type ModrinthCategory, type InstalledMod,
 } from '@/lib/api/modrinth';
 
-// Modrinth Content tab. Default mode auto-filters to the server's
-// loader + MC version; an "Advanced" toggle reveals the full Modrinth-style
-// filter sidebar. Installed mods are listed inline so the user can uninstall
-// without flipping tabs.
+// Modrinth Content tab, Modrinth-style layout: an always-visible category
+// sidebar (with the loader + MC-version filters below it, gated behind an
+// "Advanced" toggle), a single-column result list, and a detail column on the
+// right (description with a short/full switch, plus the version list with the
+// newest build for this server's MC version highlighted).
 
 type Section = 'browse' | 'installed';
 
@@ -54,6 +56,11 @@ export default function ServerContentPage() {
     const [searchResult, setSearchResult] = useState<ModrinthSearchResult | null>(null);
     const [searchLoading, setSearchLoading] = useState(false);
 
+    // Category sidebar (single-select). Categories are proxied from Modrinth.
+    const [categories, setCategories] = useState<ModrinthCategory[]>([]);
+    const [categoriesLoading, setCategoriesLoading] = useState(true);
+    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
     const [installed, setInstalled] = useState<InstalledMod[]>([]);
     const installedById = useMemo(() => new Set(installed.map(m => m.modrinthProjectId)), [installed]);
 
@@ -61,9 +68,11 @@ export default function ServerContentPage() {
     // only for a server installed from a modpack; drives the banner + warnings.
     const [packByProject, setPackByProject] = useState<Map<string, { versionId: string; versionNumber: string }>>(new Map());
 
+    const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
     const [projectDetail, setProjectDetail] = useState<ModrinthProject | null>(null);
     const [projectVersions, setProjectVersions] = useState<ModrinthVersion[]>([]);
     const [projectLoading, setProjectLoading] = useState(false);
+    const [descMode, setDescMode] = useState<'short' | 'full'>('short');
 
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -77,6 +86,29 @@ export default function ServerContentPage() {
         return PROJECT_TYPE_FOR_LOADER[defaultLoader];
     }, [advanced, defaultLoader]);
 
+    // ----- Categories -----
+
+    useEffect(() => {
+        let cancelled = false;
+        setCategoriesLoading(true);
+        getModrinthCategories().then(cats => {
+            if (cancelled) return;
+            setCategories(cats);
+            setCategoriesLoading(false);
+        });
+        return () => { cancelled = true; };
+    }, []);
+
+    // Show the categories for this server's content type (mod/plugin), falling
+    // back to the full list if none match, and de-duplicate by name.
+    const browseProjectType = PROJECT_TYPE_FOR_LOADER[defaultLoader] || 'mod';
+    const visibleCategories = useMemo(() => {
+        const forType = categories.filter(c => c.project_type === browseProjectType);
+        const list = forType.length ? forType : categories;
+        const seen = new Set<string>();
+        return list.filter(c => (seen.has(c.name) ? false : (seen.add(c.name), true)));
+    }, [categories, browseProjectType]);
+
     // ----- Browse search -----
 
     const runSearch = useCallback(async () => {
@@ -85,15 +117,16 @@ export default function ServerContentPage() {
             query: query.trim() || undefined,
             loaders: filterLoaders.length ? filterLoaders : undefined,
             versions: filterVersions.length ? filterVersions : undefined,
+            categories: selectedCategory ? [selectedCategory] : undefined,
             projectType,
             limit: 20,
             index: 'relevance',
         });
         setSearchResult(res);
         setSearchLoading(false);
-    }, [query, filterLoaders, filterVersions, projectType]);
+    }, [query, filterLoaders, filterVersions, selectedCategory, projectType]);
 
-    // Debounce typed search input.
+    // Debounce typed search input (and category/filter changes).
     useEffect(() => {
         const t = setTimeout(runSearch, 350);
         return () => clearTimeout(t);
@@ -135,28 +168,42 @@ export default function ServerContentPage() {
         return () => { unsub(); };
     }, [serverId, refreshInstalled]);
 
-    // ----- Project detail modal -----
+    // ----- Project detail column -----
 
     const openProjectDetail = useCallback(async (slug: string) => {
+        setSelectedSlug(slug);
+        setDescMode('short');
         setProjectLoading(true);
         setProjectDetail(null);
         setProjectVersions([]);
+        // Fetch versions filtered by the active loader only (not MC version), so
+        // the full version history for this loader is visible and we can
+        // highlight the newest build matching the server's MC version.
         const [p, versions] = await Promise.all([
             getModrinthProject(slug),
-            getModrinthVersions(slug, {
-                loaders: advanced ? undefined : filterLoaders,
-                versions: advanced ? undefined : filterVersions,
-            }),
+            getModrinthVersions(slug, { loaders: advanced ? undefined : filterLoaders }),
         ]);
         setProjectDetail(p);
         setProjectVersions(versions);
         setProjectLoading(false);
-    }, [advanced, filterLoaders, filterVersions]);
+    }, [advanced, filterLoaders]);
 
     const closeProjectDetail = () => {
+        setSelectedSlug(null);
         setProjectDetail(null);
         setProjectVersions([]);
     };
+
+    const sortedVersions = useMemo(
+        () => [...projectVersions].sort((a, b) => b.date_published.localeCompare(a.date_published)),
+        [projectVersions],
+    );
+    // Newest build (they are date-sorted) whose game_versions covers this
+    // server's MC version — the one we recommend + highlight.
+    const highlightVersionId = useMemo(() => {
+        if (!defaultMcVersion) return null;
+        return sortedVersions.find(v => v.game_versions.includes(defaultMcVersion))?.id ?? null;
+    }, [sortedVersions, defaultMcVersion]);
 
     // ----- Install / uninstall -----
 
@@ -208,6 +255,8 @@ export default function ServerContentPage() {
 
     if (!server) return null;
 
+    const unknownLoader = !advanced && defaultLoader && PROJECT_TYPE_FOR_LOADER[defaultLoader] === undefined;
+
     return (
         <main className="flex-1 flex flex-col p-6 gap-4 overflow-hidden">
             <header className="flex items-center gap-3 shrink-0">
@@ -223,7 +272,7 @@ export default function ServerContentPage() {
                     <button
                         onClick={() => setAdvanced(a => !a)}
                         className={`btn btn-secondary btn-sm ${advanced ? 'text-(--accent-light)' : ''}`}
-                        title="Toggle advanced filters"
+                        title="Toggle loader / version filters"
                     >
                         <Filter size={12} />
                         {advanced ? 'Simple' : 'Advanced'}
@@ -263,43 +312,82 @@ export default function ServerContentPage() {
             )}
 
             {section === 'browse' && (
-                <div className="flex-1 flex gap-4 overflow-hidden">
-                    {/* Sidebar (Advanced only) */}
-                    {advanced && (
-                        <aside className="w-56 shrink-0 overflow-y-auto card p-3 space-y-4">
-                            <div>
-                                <label className="input-label">Loaders</label>
-                                <div className="mt-1 space-y-1 max-h-44 overflow-y-auto">
-                                    {LOADER_OPTIONS.map(l => {
-                                        const on = filterLoaders.includes(l);
+                <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
+                    {/* Category sidebar (always visible) + Advanced-gated filters */}
+                    <aside className="w-52 shrink-0 overflow-y-auto card p-3 space-y-4">
+                        <div>
+                            <label className="input-label">Categories</label>
+                            <div className="mt-1.5 space-y-0.5">
+                                {categoriesLoading ? (
+                                    <div className="space-y-1.5 py-1">
+                                        {[0, 1, 2, 3, 4, 5].map(i => <SkeletonText key={i} width="w-full" className="h-3.5" />)}
+                                    </div>
+                                ) : visibleCategories.length === 0 ? (
+                                    <p className="text-xs text-(--base-06) italic">Categories unavailable.</p>
+                                ) : (
+                                    visibleCategories.map(cat => {
+                                        const on = selectedCategory === cat.name;
                                         return (
-                                            <label key={l} className="flex items-center gap-2 text-xs cursor-pointer hover:text-(--base-09)">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={on}
-                                                    onChange={() => setFilterLoaders(prev => on ? prev.filter(x => x !== l) : [...prev, l])}
+                                            <button
+                                                key={cat.name}
+                                                onClick={() => setSelectedCategory(on ? null : cat.name)}
+                                                className={`w-full flex items-center gap-2 px-2 py-1 rounded-md text-xs capitalize transition-colors ${
+                                                    on
+                                                        ? 'bg-(--accent-ghost) text-(--accent-light)'
+                                                        : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
+                                                }`}
+                                            >
+                                                {/* Category icon is a trusted inline SVG proxied from Modrinth. */}
+                                                <span
+                                                    className="shrink-0 [&_svg]:w-3.5 [&_svg]:h-3.5"
+                                                    aria-hidden="true"
+                                                    dangerouslySetInnerHTML={{ __html: cat.icon }}
                                                 />
-                                                {l}
-                                            </label>
+                                                <span className="truncate">{cat.name.replace(/-/g, ' ')}</span>
+                                            </button>
                                         );
-                                    })}
-                                </div>
+                                    })
+                                )}
                             </div>
-                            <div>
-                                <label className="input-label">Game versions (comma)</label>
-                                <input
-                                    type="text"
-                                    value={filterVersions.join(',')}
-                                    onChange={e => setFilterVersions(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                                    className="input-field input-mono w-full text-xs"
-                                    placeholder="1.20.2, 1.21"
-                                />
-                            </div>
-                        </aside>
-                    )}
+                        </div>
 
-                    {/* Main column */}
-                    <div className="flex-1 flex flex-col overflow-hidden">
+                        {/* Loader + MC-version filters, greyed until Advanced is on. */}
+                        <div className={`border-t border-(--base-03) pt-3 ${advanced ? '' : 'opacity-50 pointer-events-none select-none'}`}>
+                            <div className="flex items-center justify-between">
+                                <label className="input-label mb-0">Loaders</label>
+                                {!advanced && <span className="mono-label text-(--base-05)">Advanced</span>}
+                            </div>
+                            <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto">
+                                {LOADER_OPTIONS.map(l => {
+                                    const on = filterLoaders.includes(l);
+                                    return (
+                                        <label key={l} className="flex items-center gap-2 text-xs cursor-pointer hover:text-(--base-09)">
+                                            <input
+                                                type="checkbox"
+                                                checked={on}
+                                                disabled={!advanced}
+                                                onChange={() => setFilterLoaders(prev => on ? prev.filter(x => x !== l) : [...prev, l])}
+                                                className="accent-(--accent)"
+                                            />
+                                            {l}
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                            <label className="input-label mt-3">Game versions (comma)</label>
+                            <input
+                                type="text"
+                                value={filterVersions.join(',')}
+                                onChange={e => setFilterVersions(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                                disabled={!advanced}
+                                className="input-field input-mono w-full text-xs"
+                                placeholder="1.20.2, 1.21"
+                            />
+                        </div>
+                    </aside>
+
+                    {/* Result list (single column) */}
+                    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
                         <div className="relative shrink-0 mb-3">
                             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
                             <input
@@ -311,32 +399,142 @@ export default function ServerContentPage() {
                             />
                         </div>
 
-                        {!advanced && defaultLoader && PROJECT_TYPE_FOR_LOADER[defaultLoader] === undefined && (
+                        {unknownLoader && (
                             <div className="shrink-0 mb-2 px-3 py-2 rounded-md bg-(--warning-ghost) border border-(--warning)/30 text-(--warning-light) text-xs flex items-start gap-2">
                                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                                 Unknown loader <code className="font-mono">{defaultLoader}</code> — results aren't pre-filtered by mod/plugin type.
                             </div>
                         )}
 
-                        <div className="flex-1 overflow-y-auto">
+                        <div className="flex-1 overflow-y-auto space-y-2">
                             {searchLoading ? (
                                 <div className="text-center py-12 text-sm text-(--base-06)">Searching…</div>
                             ) : !searchResult || searchResult.hits.length === 0 ? (
                                 <div className="text-center py-12 text-sm text-(--base-06)">No projects match.</div>
                             ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {searchResult.hits.map(hit => (
-                                        <ProjectCard
-                                            key={hit.project_id}
-                                            hit={hit}
-                                            installed={installedById.has(hit.project_id)}
-                                            onClick={() => openProjectDetail(hit.slug)}
-                                        />
-                                    ))}
-                                </div>
+                                searchResult.hits.map(hit => (
+                                    <ModListRow
+                                        key={hit.project_id}
+                                        hit={hit}
+                                        installed={installedById.has(hit.project_id)}
+                                        selected={selectedSlug === hit.slug}
+                                        onClick={() => openProjectDetail(hit.slug)}
+                                    />
+                                ))
                             )}
                         </div>
                     </div>
+
+                    {/* Detail column */}
+                    {(projectDetail || projectLoading) && (
+                        <aside className="w-96 shrink-0 flex flex-col card overflow-hidden">
+                            {projectLoading || !projectDetail ? (
+                                <div className="p-4 space-y-3">
+                                    <div className="flex items-start gap-3">
+                                        <Skeleton className="w-12 h-12 rounded-md shrink-0" />
+                                        <div className="flex-1 space-y-2">
+                                            <SkeletonText width="w-1/2" className="h-4" />
+                                            <SkeletonText width="w-3/4" className="h-2.5" />
+                                        </div>
+                                    </div>
+                                    <SkeletonCard height="h-40" />
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="shrink-0 p-4 border-b border-(--base-03) flex items-start gap-3">
+                                        {projectDetail.icon_url && (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img src={projectDetail.icon_url} alt="" className="w-12 h-12 rounded-md shrink-0" />
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                            <h3 className="text-sm font-semibold text-(--base-09) truncate">{projectDetail.title}</h3>
+                                            <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-(--base-06)">
+                                                <span>{projectDetail.downloads.toLocaleString()} downloads</span>
+                                                <a href={`https://modrinth.com/project/${projectDetail.slug}`} target="_blank" rel="noopener noreferrer" className="text-(--accent-light) flex items-center gap-1">
+                                                    modrinth.com <ExternalLink size={9} />
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <button onClick={closeProjectDetail} className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0" title="Close">
+                                            <X size={16} />
+                                        </button>
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                        {/* Description with a short/full switch */}
+                                        <div>
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <label className="input-label mb-0">Description</label>
+                                                <div className="flex bg-(--base-03)/60 rounded-md p-0.5">
+                                                    {(['short', 'full'] as const).map(m => (
+                                                        <button
+                                                            key={m}
+                                                            onClick={() => setDescMode(m)}
+                                                            className={`px-2 py-0.5 rounded-sm text-[10px] font-medium capitalize transition-colors ${
+                                                                descMode === m ? 'bg-(--base-02) text-(--base-09)' : 'text-(--base-06) hover:text-(--base-09)'
+                                                            }`}
+                                                        >
+                                                            {m}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            {descMode === 'short' ? (
+                                                <p className="text-sm text-(--base-07) leading-relaxed">{projectDetail.description}</p>
+                                            ) : projectDetail.body ? (
+                                                <div className="text-sm text-(--base-08) leading-relaxed wrap-break-word [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-(--base-09) [&_h1]:mt-3 [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-(--base-09) [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:font-semibold [&_h3]:text-(--base-09) [&_h3]:mt-2 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-2 [&_a]:text-(--accent-light) [&_a]:underline [&_code]:font-mono [&_code]:text-xs [&_code]:bg-(--base-03) [&_code]:px-1 [&_code]:rounded [&_pre]:bg-(--base-01) [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto [&_pre]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-3 [&_hr]:border-(--base-03) [&_blockquote]:border-l-2 [&_blockquote]:border-(--base-04) [&_blockquote]:pl-3 [&_blockquote]:text-(--base-06) [&_table]:text-xs">
+                                                    <ReactMarkdown
+                                                        remarkPlugins={[remarkGfm]}
+                                                        components={{ a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
+                                                    >
+                                                        {projectDetail.body}
+                                                    </ReactMarkdown>
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs text-(--base-06) italic">No full description provided.</p>
+                                            )}
+                                        </div>
+
+                                        {/* Versions — newest build for this MC version highlighted */}
+                                        <div>
+                                            <label className="input-label">Versions</label>
+                                            <div className="mt-1.5 space-y-1.5">
+                                                {sortedVersions.length === 0 ? (
+                                                    <p className="text-xs text-(--base-06)">No compatible versions found.</p>
+                                                ) : (
+                                                    sortedVersions.slice(0, 30).map(v => {
+                                                        const highlight = v.id === highlightVersionId;
+                                                        return (
+                                                            <div
+                                                                key={v.id}
+                                                                className={`flex items-center gap-2 p-2 rounded-md border ${
+                                                                    highlight ? 'border-(--accent-border) bg-(--accent-ghost)' : 'border-(--base-04)'
+                                                                }`}
+                                                            >
+                                                                <div className="min-w-0 flex-1">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <span className="text-sm font-medium text-(--base-09) truncate">{v.version_number}</span>
+                                                                        {highlight && <span className="mono-label text-(--accent-light) shrink-0">newest · {defaultMcVersion}</span>}
+                                                                    </div>
+                                                                    <div className="text-[10px] font-mono text-(--base-06) truncate">
+                                                                        {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
+                                                                    </div>
+                                                                </div>
+                                                                <button onClick={() => handleInstall(projectDetail, v)} className="btn btn-primary btn-sm shrink-0">
+                                                                    <Download size={11} />
+                                                                    Install
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </aside>
+                    )}
                 </div>
             )}
 
@@ -380,74 +578,6 @@ export default function ServerContentPage() {
                 </div>
             )}
 
-            {/* Project detail modal */}
-            {(projectDetail || projectLoading) && (
-                <div className="modal-overlay animate-fade-in" onClick={closeProjectDetail}>
-                    <div className="modal-panel w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                        {projectLoading || !projectDetail ? (
-                            <div className="modal-body py-6 space-y-3">
-                                <div className="flex items-start gap-3">
-                                    <Skeleton className="w-12 h-12 rounded-md shrink-0" />
-                                    <div className="flex-1 space-y-2">
-                                        <SkeletonText width="w-1/2" className="h-4" />
-                                        <SkeletonText width="w-3/4" className="h-2.5" />
-                                    </div>
-                                </div>
-                                <SkeletonCard height="h-32" />
-                            </div>
-                        ) : (
-                            <>
-                                <div className="modal-header flex items-start gap-3">
-                                    {projectDetail.icon_url && (
-                                        // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={projectDetail.icon_url} alt="" className="w-12 h-12 rounded-md shrink-0" />
-                                    )}
-                                    <div className="min-w-0 flex-1">
-                                        <h3 className="modal-title">{projectDetail.title}</h3>
-                                        <p className="text-xs text-(--base-06) line-clamp-2">{projectDetail.description}</p>
-                                        <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-(--base-06)">
-                                            <span>{projectDetail.downloads.toLocaleString()} downloads</span>
-                                            <a href={`https://modrinth.com/project/${projectDetail.slug}`} target="_blank" rel="noopener noreferrer" className="text-(--accent-light) flex items-center gap-1">
-                                                modrinth.com <ExternalLink size={9} />
-                                            </a>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="modal-body overflow-y-auto">
-                                    <div className="space-y-2">
-                                        <h4 className="input-label">Versions</h4>
-                                        {projectVersions.length === 0 ? (
-                                            <p className="text-xs text-(--base-06)">No compatible versions match the filter.</p>
-                                        ) : (
-                                            projectVersions.slice(0, 15).map(v => (
-                                                <div key={v.id} className="flex items-center gap-2 p-2 rounded-md border border-(--base-04)">
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="text-sm font-medium text-(--base-09)">{v.version_number}</div>
-                                                        <div className="text-[10px] font-mono text-(--base-06)">
-                                                            {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => handleInstall(projectDetail, v)}
-                                                        className="btn btn-primary btn-sm"
-                                                    >
-                                                        <Download size={11} />
-                                                        Install
-                                                    </button>
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="modal-footer">
-                                    <button onClick={closeProjectDetail} className="btn btn-secondary">Close</button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
-
             {toast && (
                 <div className="toast-container">
                     <div className="toast">
@@ -461,38 +591,45 @@ export default function ServerContentPage() {
     );
 }
 
-function ProjectCard({
+function ModListRow({
     hit,
     installed,
+    selected,
     onClick,
 }: {
     hit: ModrinthSearchHit;
     installed: boolean;
+    selected: boolean;
     onClick: () => void;
 }) {
     return (
-        <button onClick={onClick} className="card p-3 text-left hover:border-(--accent-border) transition-colors group flex flex-col gap-2">
-            <div className="flex items-start gap-2">
-                {hit.icon_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={hit.icon_url} alt="" className="w-10 h-10 rounded-md shrink-0" />
-                ) : (
-                    <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                        <Package size={14} className="text-(--base-05)" />
-                    </div>
-                )}
-                <div className="min-w-0 flex-1">
-                    <div className="font-medium text-sm text-(--base-09) truncate">{hit.title}</div>
-                    <div className="text-[10px] font-mono text-(--base-06) truncate">by {hit.author}</div>
+        <button
+            onClick={onClick}
+            className={`card p-3 text-left w-full flex items-start gap-3 transition-colors ${
+                selected ? 'border-(--accent-border)' : 'hover:border-(--base-04)'
+            }`}
+        >
+            {hit.icon_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={hit.icon_url} alt="" className="w-11 h-11 rounded-md shrink-0" />
+            ) : (
+                <div className="w-11 h-11 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                    <Package size={16} className="text-(--base-05)" />
                 </div>
-                {installed && (
-                    <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm shrink-0">installed</span>
-                )}
-            </div>
-            <p className="text-xs text-(--base-07) line-clamp-2">{hit.description}</p>
-            <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-2 mt-auto">
-                <Download size={10} />
-                {hit.downloads.toLocaleString()}
+            )}
+            <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm text-(--base-09) truncate">{hit.title}</span>
+                    <span className="text-[10px] font-mono text-(--base-06) truncate">by {hit.author}</span>
+                    {installed && (
+                        <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm shrink-0 ml-auto">installed</span>
+                    )}
+                </div>
+                <p className="text-xs text-(--base-07) line-clamp-2 mt-0.5">{hit.description}</p>
+                <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 mt-1">
+                    <Download size={10} />
+                    {hit.downloads.toLocaleString()}
+                </div>
             </div>
         </button>
     );

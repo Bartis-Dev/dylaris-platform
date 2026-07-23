@@ -22,9 +22,10 @@ import (
 // override with DYLARIS_MODRINTH_UA in the future if needed.
 
 const (
-	modrinthBaseURL    = "https://api.modrinth.com/v2"
-	modrinthSearchTTL  = 5 * time.Minute
-	modrinthProjectTTL = 1 * time.Hour
+	modrinthBaseURL     = "https://api.modrinth.com/v2"
+	modrinthSearchTTL   = 5 * time.Minute
+	modrinthProjectTTL  = 1 * time.Hour
+	modrinthCategoryTTL = 24 * time.Hour
 )
 
 type ModrinthHandler struct {
@@ -206,4 +207,13 @@ func (h *ModrinthHandler) Version(w http.ResponseWriter, r *http.Request) {
 	}
 	upstream := fmt.Sprintf("%s/version/%s", modrinthBaseURL, url.PathEscape(id))
 	h.proxyJSON(r.Context(), modrinthProjectTTL, upstream, w)
+}
+
+// Categories GET /api/modrinth/categories — the Modrinth category tag list
+// (each entry: name, project_type, header, icon SVG). Very stable, so it is
+// cached for a day; the panel uses it to build the always-visible category
+// sidebar in the Content tab.
+func (h *ModrinthHandler) Categories(w http.ResponseWriter, r *http.Request) {
+	upstream := modrinthBaseURL + "/tag/category"
+	h.proxyJSON(r.Context(), modrinthCategoryTTL, upstream, w)
 }

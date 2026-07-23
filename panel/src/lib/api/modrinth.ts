@@ -136,6 +136,25 @@ export async function getModrinthVersions(
     } catch { return []; }
 }
 
+// --- Category tags (Content-tab sidebar) ---
+
+export interface ModrinthCategory {
+    icon: string;         // inline SVG markup
+    name: string;         // machine name, e.g. "optimization"
+    project_type: string; // "mod" | "plugin" | "resourcepack" | "shader" | ...
+    header: string;       // grouping header, e.g. "categories" | "resolutions"
+}
+
+// Modrinth's category tag list, proxied + day-cached by Core. Fail-open to []
+// so the tab still works (without the category sidebar) if it can't load.
+export async function getModrinthCategories(): Promise<ModrinthCategory[]> {
+    try {
+        const res = await fetch(`${API_URL}/modrinth/categories`, { headers: getAuthHeader() });
+        if (!res.ok) return [];
+        return res.json();
+    } catch { return []; }
+}
+
 // --- Installed mods per server ---
 
 export interface InstalledMod {

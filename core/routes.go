@@ -695,6 +695,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/modrinth/project/{slug}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Project))).Methods("GET")
 	api.HandleFunc("/modrinth/project/{slug}/versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.ProjectVersions))).Methods("GET")
 	api.HandleFunc("/modrinth/version/{id}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Version))).Methods("GET")
+	api.HandleFunc("/modrinth/categories", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Categories))).Methods("GET")
 	// Per-server installed mods + install/uninstall dispatch.
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.List))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Install))).Methods("POST")
