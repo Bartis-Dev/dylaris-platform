@@ -45,7 +45,7 @@ function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
     const commit = (next: string | boolean | number) => onChange(def.key, stringifyValue(def, next));
 
     return (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-6 items-start py-3 border-b border-(--base-03) last:border-b-0 max-w-3xl">
+        <div className="grid grid-cols-[20rem_auto] gap-6 items-start py-3 border-b border-(--base-03) last:border-b-0">
             <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                     <label htmlFor={`prop-${def.key}`} className="text-sm font-medium text-(--base-09)">{def.label}</label>
@@ -58,7 +58,7 @@ function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
                     <p className="text-xs text-(--base-06) mt-0.5">{def.description}</p>
                 )}
             </div>
-            <div className="flex justify-end items-center">
+            <div className="flex items-center">
                 {def.type === 'toggle' && (
                     <button
                         id={`prop-${def.key}`}
@@ -566,11 +566,11 @@ export default function ServerPropertiesView() {
                             </p>
                             <div className="pl-3 border-l border-(--warning-border)">
                                 {unknownEntries.map(entry => (
-                                    <div key={entry.key} className="grid grid-cols-[minmax(0,1fr)_auto] gap-6 items-center py-3 border-b border-(--base-03) last:border-b-0 max-w-3xl">
+                                    <div key={entry.key} className="grid grid-cols-[20rem_auto] gap-6 items-center py-3 border-b border-(--base-03) last:border-b-0">
                                         <div className="min-w-0">
                                             <code className="font-mono text-xs text-(--base-08) break-all">{entry.key}</code>
                                         </div>
-                                        <div className="flex justify-end items-center">
+                                        <div className="flex items-center">
                                             <input
                                                 type="text"
                                                 defaultValue={entry.value}

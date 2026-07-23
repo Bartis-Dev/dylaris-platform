@@ -440,18 +440,20 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
     };
 
-    // "Reload" sends the console `reload confirm` command to a running server.
-    // `confirm` is required on modern Paper/Purpur (plain `reload` only prints a
-    // hint there) and is harmlessly ignored on Spigot/Bukkit, so it is the
-    // universal form. On a plugin server it fires immediately; otherwise
-    // (modloader/modpack/unknown, where reload is unstable) it routes through a
-    // one-time confirm with a persisted opt-out. Sending is fire-and-forget to
-    // the server's stdin — reload output shows up in the Console tab.
+    // "Reload" sends the console reload command to a running server. The exact
+    // command differs by dispatcher: Bukkit/Paper need `reload confirm` (Paper
+    // gates plain `reload` behind a confirm), while the vanilla/Brigadier
+    // dispatcher used by Fabric/Forge/vanilla rejects the extra `confirm` arg,
+    // so those get a plain `reload`. On a plugin server it fires immediately;
+    // otherwise (modloader/modpack/unknown, where reload is unstable) it routes
+    // through a one-time confirm with a persisted opt-out. Sending is
+    // fire-and-forget to stdin — reload output shows up in the Console tab.
     const RELOAD_WARN_ACK_KEY = 'dylaris:reloadModloaderWarnAck';
     const sendReload = async () => {
         setReloadBusy(true);
+        const cmd = isPluginLoader(selectedServer.installerType) ? 'reload confirm' : 'reload';
         try {
-            const res: any = await sendConsoleCommand(selectedServer.id, 'reload confirm');
+            const res: any = await sendConsoleCommand(selectedServer.id, cmd);
             if (res && (res.success === false || res.error)) {
                 setPowerError(res.error || res.message || 'Reload command was rejected');
             } else {
@@ -618,7 +620,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 title={`Owner ID: ${selectedServer.ownerId} — click to copy`}
                                 className="font-medium text-(--base-09) hover:text-(--accent-light) transition-colors cursor-pointer"
                             >
-                                {selectedServer.ownerName === user?.username ? 'You' : (selectedServer.ownerName || selectedServer.ownerId)}
+                                {selectedServer.owner === user?.username ? 'You' : (selectedServer.owner || selectedServer.ownerId)}
                             </button>
                             {ownerCopied && <span className="ml-1 text-(--success-light)">copied</span>}
                         </span>
