@@ -96,7 +96,7 @@ const TAB_GROUPS: SettingsGroup[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Inner layout — sits inside the provider so it can read context
+// Inner layout - sits inside the provider so it can read context
 // ---------------------------------------------------------------------------
 
 interface PendingNav { href: string }
@@ -195,7 +195,7 @@ function SettingsLayoutInner({
                         {children}
                     </div>
 
-                    {/* Sticky bottom save/discard bar — only visible when dirty */}
+                    {/* Sticky bottom save/discard bar - only visible when dirty */}
                     {dirty && (
                         <div className="shrink-0 flex items-center justify-between gap-4 border-t border-(--base-03) bg-(--base-02) px-5 py-3 mt-4">
                             <span className="mono-label text-[11px]">

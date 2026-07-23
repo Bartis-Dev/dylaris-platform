@@ -321,7 +321,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Beam Desktop Client</h2>
                 <p className="text-sm text-(--base-07)">
                     Beam is DYLARIS&apos;s built-in desktop client for file transfer and server console. It always works
-                    over the local network or a direct connection, with no gateway required — Core mints the connection
+                    over the local network or a direct connection, with no gateway required - Core mints the connection
                     ticket and the node authenticates it. The gateway only adds an optional encrypted relay so users can
                     reach their servers remotely.
                 </p>
@@ -336,7 +336,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                         <label className="input-label">Offer Beam to users</label>
                         <p className="text-xs text-(--base-06) mt-0.5">
                             Advisory only. Shows or hides the Download Beam button and reports availability to the desktop
-                            app. It does not disable Beam itself — Core still mints connection tickets and the node still
+                            app. It does not disable Beam itself - Core still mints connection tickets and the node still
                             authenticates, so clients that already have Beam keep working either way.
                         </p>
                     </div>
@@ -353,7 +353,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                     <label className="input-label">Relay Address</label>
                     <p className="text-xs text-(--base-06) mb-1">
                         Public address of the Beam relay (e.g. <span className="font-mono">beam.example.com:25550</span>).
-                        Only used for remote access in gateway routing mode — the desktop app fetches it on login. LAN and
+                        Only used for remote access in gateway routing mode - the desktop app fetches it on login. LAN and
                         direct connections work without it.
                     </p>
                     <input
