@@ -884,7 +884,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 <div className="border-t border-(--base-03) pt-5">
                     <h3 className="mono-label mb-3">Disk I/O Fair-Share</h3>
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">blkio weight per server (10–1000, 0 = off)</label>
+                        <label className="input-label">blkio weight for all MC containers (10-1000, 0 = off)</label>
                         <div className="relative w-32">
                             <input
                                 type="number"
@@ -896,7 +896,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                             />
                         </div>
                         <p className="text-xs text-(--base-06)">
-                            Relative disk-I/O priority between server containers (applies on next (re)start), so one noisy server can&apos;t starve the others. <span className="font-mono">0</span> = off; valid range <span className="font-mono">10–1000</span>. This is a <strong>relative weight, not a hard cap</strong>, and only takes effect with a blkio-weight I/O scheduler (BFQ/CFQ); it is a harmless no-op otherwise.
+                            One global relative disk-I/O share applied to <strong>every</strong> MC container on this node (not a per-server value; applies on next (re)start), so one noisy server can&apos;t starve the others. It only has any effect <strong>under disk contention</strong>, and only with a weight-aware I/O scheduler (<span className="font-mono">BFQ</span>, or legacy <span className="font-mono">CFQ</span>). On typical NVMe/SSD nodes (<span className="font-mono">none</span>/<span className="font-mono">mq-deadline</span>) it is a harmless no-op. <span className="font-mono">0</span> = off; valid range <span className="font-mono">10-1000</span>. This is a <strong>relative weight, not a hard cap</strong>.
                         </p>
                     </div>
                 </div>

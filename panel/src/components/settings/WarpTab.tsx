@@ -140,12 +140,12 @@ export default function WarpTab() {
                 </div>
 
                 {/* Add region */}
-                <div className="flex flex-col md:flex-row gap-2 md:items-end border-t border-(--base-04) pt-4">
-                    <div className="flex-1">
+                <div className="flex flex-col md:flex-row gap-3 md:items-end border-t border-(--base-04) pt-4">
+                    <div className="flex-1 flex flex-col gap-[5px]">
                         <label className="input-label">Region id</label>
                         <input className="input-field" value={newRegion.region} onChange={e => setNewRegion(s => ({ ...s, region: e.target.value }))} placeholder="eu-central" />
                     </div>
-                    <div className="flex-1">
+                    <div className="flex-1 flex flex-col gap-[5px]">
                         <label className="input-label">Subnet (CIDR)</label>
                         <input className="input-field" value={newRegion.subnet} onChange={e => setNewRegion(s => ({ ...s, subnet: e.target.value }))} placeholder="10.99.1.0/24" />
                     </div>
@@ -194,18 +194,18 @@ export default function WarpTab() {
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Connect External Node</h3>
                 <fieldset disabled={!gateOpen} className="space-y-4 disabled:opacity-50">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
+                        <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Name</label>
                             <input className="input-field" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="home-desktop" />
                         </div>
-                        <div>
+                        <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Region</label>
                             <select className="input-field" value={form.region} onChange={e => setForm(f => ({ ...f, region: e.target.value }))}>
                                 <option value="">Auto (least-loaded live region)</option>
                                 {regions.map(r => <option key={r.region} value={r.region}>{r.region}</option>)}
                             </select>
                         </div>
-                        <div>
+                        <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Policy</label>
                             <select className="input-field" value={form.policy} onChange={e => setForm(f => ({ ...f, policy: e.target.value as 'fixed' | 'general' }))}>
                                 <option value="general">General (N connections)</option>
@@ -213,12 +213,12 @@ export default function WarpTab() {
                             </select>
                         </div>
                         {form.policy === 'general' ? (
-                            <div>
+                            <div className="flex flex-col gap-[5px]">
                                 <label className="input-label">Max Connections</label>
                                 <input type="number" min={1} className="input-field" value={form.max_conns} onChange={e => setForm(f => ({ ...f, max_conns: parseInt(e.target.value) || 1 }))} />
                             </div>
                         ) : (
-                            <div>
+                            <div className="flex flex-col gap-[5px]">
                                 <label className="input-label">On New Connection</label>
                                 <select className="input-field" value={form.on_new_conn} onChange={e => setForm(f => ({ ...f, on_new_conn: e.target.value as 'kill_old' | 'block' }))}>
                                     <option value="block">Block new</option>
@@ -300,8 +300,8 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
                 </div>
             </div>
 
-            <div className="flex items-end gap-2">
-                <div className="flex-1">
+            <div className="flex items-end gap-3">
+                <div className="flex-1 flex flex-col gap-[5px]">
                     <label className="input-label">Subnet</label>
                     <input className="input-field input-mono" value={subnet} onChange={e => setSubnet(e.target.value)} />
                 </div>
@@ -328,13 +328,13 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
                         </div>
                     </div>
                 ))}
-                <div className="flex flex-col md:flex-row gap-2 md:items-end">
-                    <div className="flex-1">
-                        <label className="mono-label">Leader id</label>
+                <div className="flex flex-col md:flex-row gap-3 md:items-end">
+                    <div className="flex-1 flex flex-col gap-[5px]">
+                        <label className="input-label">Leader id</label>
                         <input className="input-field" value={newLeader.leaderId} onChange={e => setNewLeader(s => ({ ...s, leaderId: e.target.value }))} placeholder={`${region.region}-01`} />
                     </div>
-                    <div className="flex-1">
-                        <label className="mono-label">Endpoint (host:port)</label>
+                    <div className="flex-1 flex flex-col gap-[5px]">
+                        <label className="input-label">Endpoint (host:port)</label>
                         <input className="input-field" value={newLeader.endpoint} onChange={e => setNewLeader(s => ({ ...s, endpoint: e.target.value }))} placeholder="vpn-eu1.example.com:25599" />
                     </div>
                     <button

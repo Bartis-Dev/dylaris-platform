@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { CircleCheck, CircleAlert, Plus, Pencil, Trash2, X, ShieldCheck, UserCog } from 'lucide-react';
+import { CircleCheck, CircleAlert, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye } from 'lucide-react';
 import { getCatalog, getPermissionsMode, type CatalogScope, type PermissionsMode } from '@/lib/api/authzCatalog';
 import {
     listPanelRoles,
@@ -49,6 +49,7 @@ export default function RolesTab() {
     const [roleModal, setRoleModal] = useState<{ role: PanelRole | null } | null>(null);
     const [deletingRole, setDeletingRole] = useState<PanelRole | null>(null);
     const [assignUser, setAssignUser] = useState<User | null>(null);
+    const [viewingRole, setViewingRole] = useState<PanelRole | null>(null);
 
     const [toast, setToast] = useState<Toast>(null);
     const showToast = useCallback((msg: string, ok = true) => {
@@ -175,28 +176,39 @@ export default function RolesTab() {
                                     </div>
                                     <span className="mono-label">{role.capabilities.length} capabilities</span>
                                 </div>
-                                {!role.isSystem && (
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <button
-                                            type="button"
-                                            onClick={() => setRoleModal({ role })}
-                                            className="btn btn-secondary btn-sm"
-                                            title="Edit role"
-                                        >
-                                            <Pencil size={12} />
-                                            Edit
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setDeletingRole(role)}
-                                            className="btn btn-danger btn-sm"
-                                            title="Delete role"
-                                        >
-                                            <Trash2 size={12} />
-                                            Delete
-                                        </button>
-                                    </div>
-                                )}
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                        type="button"
+                                        onClick={() => setViewingRole(role)}
+                                        className="btn btn-secondary btn-sm"
+                                        title="View capabilities"
+                                    >
+                                        <Eye size={12} />
+                                        View
+                                    </button>
+                                    {!role.isSystem && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => setRoleModal({ role })}
+                                                className="btn btn-secondary btn-sm"
+                                                title="Edit role"
+                                            >
+                                                <Pencil size={12} />
+                                                Edit
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDeletingRole(role)}
+                                                className="btn btn-danger btn-sm"
+                                                title="Delete role"
+                                            >
+                                                <Trash2 size={12} />
+                                                Delete
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -273,6 +285,15 @@ export default function RolesTab() {
                 </div>
             )}
 
+            {/* Read-only capability viewer (system + custom roles) */}
+            {viewingRole && (
+                <ViewCapabilitiesModal
+                    role={viewingRole}
+                    catalog={catalog}
+                    onClose={() => setViewingRole(null)}
+                />
+            )}
+
             {/* Assign panel role to user */}
             {assignUser && (
                 <AssignRoleModal
@@ -294,6 +315,106 @@ export default function RolesTab() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+// ---------------------------------------------
+// Read-only capability viewer (system + custom roles)
+// ---------------------------------------------
+function ViewCapabilitiesModal({
+    role,
+    catalog,
+    onClose,
+}: {
+    role: PanelRole;
+    catalog: CatalogScope[];
+    onClose: () => void;
+}) {
+    const capSet = new Set(role.capabilities);
+    // The seeded 'admin' system role carries every panel capability; flag it so
+    // we can add the "full access" note. The resolver still short-circuits admin
+    // via the JWT claim, so this list is descriptive, not the source of power.
+    const isAdmin = role.isSystem && role.name.toLowerCase() === 'admin';
+
+    // Group the role's held capabilities by scope -> category using the catalog
+    // labels. Only scopes/categories with at least one held capability render.
+    const groups = catalog
+        .map(scope => ({
+            scope: scope.scope,
+            categories: scope.categories
+                .map(cat => ({ category: cat.category, caps: cat.capabilities.filter(c => capSet.has(c.id)) }))
+                .filter(cat => cat.caps.length > 0),
+        }))
+        .filter(scope => scope.categories.length > 0);
+
+    // Capabilities held by the role but absent from the catalog (e.g. a cap
+    // retired from the registry). Surfaced verbatim so nothing is hidden.
+    const known = new Set(catalog.flatMap(s => s.categories.flatMap(c => c.capabilities.map(cap => cap.id))));
+    const unknown = role.capabilities.filter(id => !known.has(id));
+    const multiScope = groups.length > 1;
+
+    return (
+        <div className="modal-overlay animate-fade-in" onClick={onClose}>
+            <div className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="modal-header flex items-center justify-between">
+                    <div>
+                        <h3 className="modal-title flex items-center gap-2">
+                            {role.name}
+                            {role.isSystem && <span className="badge badge-neutral">system</span>}
+                        </h3>
+                        <p className="text-xs font-mono text-(--base-06)">{role.capabilities.length} capabilities</p>
+                    </div>
+                    <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
+                        <X size={16} />
+                    </button>
+                </div>
+                <div className="modal-body overflow-y-auto flex-1 space-y-5">
+                    {isAdmin && (
+                        <div className="alert alert-info text-xs flex items-start gap-2">
+                            <ShieldCheck size={14} className="shrink-0 mt-0.5" />
+                            <span>Admins have full, unrestricted access to every panel capability. The complete list is shown below.</span>
+                        </div>
+                    )}
+                    {groups.length === 0 && unknown.length === 0 ? (
+                        <p className="text-sm text-(--base-06)">This role holds no capabilities.</p>
+                    ) : (
+                        groups.map(scope => (
+                            <div key={scope.scope} className="space-y-3">
+                                {multiScope && (
+                                    <div className="text-sm font-display font-semibold text-(--base-08) capitalize">{scope.scope}</div>
+                                )}
+                                {scope.categories.map(cat => (
+                                    <div key={`${scope.scope}.${cat.category}`}>
+                                        <div className="mono-label text-(--base-06) mb-1.5">{cat.category}</div>
+                                        <ul className="space-y-1">
+                                            {cat.caps.map(c => (
+                                                <li key={c.id} className="flex items-center gap-2 text-sm text-(--base-09)">
+                                                    <CircleCheck size={13} className="shrink-0 text-(--success-light)" />
+                                                    {c.label}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        ))
+                    )}
+                    {unknown.length > 0 && (
+                        <div>
+                            <div className="mono-label text-(--base-06) mb-1.5">Other</div>
+                            <ul className="space-y-1">
+                                {unknown.map(id => (
+                                    <li key={id} className="text-sm font-mono text-(--base-07)">{id}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+                <div className="modal-footer">
+                    <button type="button" onClick={onClose} className="btn btn-primary">Close</button>
+                </div>
+            </div>
         </div>
     );
 }

@@ -74,6 +74,9 @@ export default function CoreStorageTab() {
   // inline Test are then hidden (the connection has its own test on the Storage
   // Connections page).
   const usingConnection = settings.backend === 's3' && (settings.connectionId ?? 0) > 0;
+  // Concrete path used in the copyable docker-stack example below. Falls back to
+  // the placeholder so the snippet is still valid before anything is typed.
+  const exampleStoragePath = settings.path.trim() || '/mnt/dylaris-shared';
 
   const handleSave = async () => {
     if (!canSave) {
@@ -216,14 +219,29 @@ export default function CoreStorageTab() {
 
           <div className="alert alert-warning text-xs">
             <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-            <span>
-              Must be reachable by <strong>every</strong> Core, and must be a <strong>mounted volume</strong> - a plain
-              directory lives inside the container and is erased when it is recreated. A host-local directory therefore
-              only works with a single Core. For multiple Cores, mount a shared filesystem (NFS/SMB) at this path on
-              every host and bind-mount it into the Core container, or use S3. The commented recipe in{' '}
-              <code className="font-mono text-[11px]">docker-stack.yml</code> covers the mount options and the
-              bind-propagation setting that a share mounted after container start requires.
-            </span>
+            <div className="min-w-0 space-y-2.5">
+              <p>
+                Must be reachable by <strong>every</strong> Core, and must be a <strong>mounted volume</strong> - a plain
+                directory lives inside the container and is erased when it is recreated. A host-local directory therefore
+                only works with a single Core. For multiple Cores, mount a shared filesystem (NFS/SMB) at this path on
+                every host and bind-mount it into the Core container, or use S3. The commented recipe in{' '}
+                <code className="font-mono text-[11px]">docker-stack.yml</code> covers the mount options and the
+                bind-propagation setting that a share mounted after container start requires.
+              </p>
+              <div>
+                <p className="mb-1 text-(--base-07)">
+                  Example <code className="font-mono text-[11px]">docker-stack.yml</code> volume mapping for this path:
+                </p>
+                <pre className="p-2.5 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-[11px] leading-relaxed overflow-x-auto text-(--base-08)">{`services:
+  core:
+    volumes:
+      - ${exampleStoragePath}:${exampleStoragePath}`}</pre>
+                <p className="mt-1.5 text-(--base-06)">
+                  Bind-mount the same host path identically into <strong>every</strong> Core replica, matching the path
+                  entered above.
+                </p>
+              </div>
+            </div>
           </div>
 
           <label className="flex items-start gap-2 cursor-pointer select-none group">

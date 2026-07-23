@@ -289,7 +289,7 @@ export default function ServerContentPage() {
                     <button
                         key={id}
                         onClick={() => setSection(id)}
-                        className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                             section === id
                                 ? 'border-(--accent) text-(--accent-light)'
                                 : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'

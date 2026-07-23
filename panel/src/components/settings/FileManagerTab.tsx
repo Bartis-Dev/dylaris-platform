@@ -141,7 +141,7 @@ export default function FileManagerTab() {
         <div className="max-w-2xl space-y-6">
             <div>
                 <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Transfer Limits</h2>
-                <p className="text-sm text-(--base-07)">Configure maximum file sizes for uploads and downloads. Separate limits for admins and regular users.</p>
+                <p className="text-sm text-(--base-07)">Maximum file sizes for uploads and downloads in the web browser file manager only. Separate limits for admins and regular users. The Beam desktop app is not governed by these limits; it enforces its own separate upload limits.</p>
             </div>
 
             {/* Admin Limits */}

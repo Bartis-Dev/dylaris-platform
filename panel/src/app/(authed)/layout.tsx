@@ -117,24 +117,36 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <div className="relative profile-dropdown-container border-l border-(--base-03) pl-3">
                         <button
                             onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                            className={`flex items-center space-x-2 px-2 py-1.5 rounded-md transition-colors border border-transparent ${isProfileDropdownOpen ? 'bg-(--base-03)' : 'hover:bg-(--base-03)'}`}
+                            className={`flex items-center gap-2.5 pl-1.5 pr-2.5 py-1.5 rounded-md transition-colors border border-transparent ${isProfileDropdownOpen ? 'bg-(--base-03)' : 'hover:bg-(--base-03)'}`}
                         >
-                            <div className="w-8 h-8 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04)">
+                            <div className="w-8 h-8 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
                                 {user.minecraftUsername ? (
                                     <img src={`https://cravatar.eu/helmavatar/${user.minecraftUsername}/32.png`} alt="" className="w-full h-full object-cover" />
                                 ) : (
                                     user.username.charAt(0).toUpperCase()
                                 )}
                             </div>
-                            <span className="font-medium hidden md:block text-sm max-w-[100px] truncate text-(--base-09)">{user.username}</span>
-                            <ChevronDown size={20} className="text-(--base-06) transition-transform duration-200" style={{ transform: isProfileDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+                            <span className="font-medium hidden md:block text-sm max-w-[120px] truncate text-(--base-09)">{user.username}</span>
+                            <ChevronDown size={18} className="text-(--base-06) transition-transform duration-200 shrink-0" style={{ transform: isProfileDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                         </button>
 
                         {isProfileDropdownOpen && (
-                            <div className="dropdown-menu right-0 mt-3 w-48 animate-fade-in origin-top-right">
-                                <div className="px-4 py-2 border-b border-(--base-03) mb-1">
-                                    <div className="dropdown-label">Logged in as</div>
-                                    <div className="font-medium truncate text-(--base-09)">{user.username}</div>
+                            <div className="dropdown-menu right-0 mt-3 w-60 animate-fade-in origin-top-right">
+                                <div className="flex items-center gap-3 px-3 py-3 border-b border-(--base-03) mb-1.5">
+                                    <div className="w-9 h-9 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
+                                        {user.minecraftUsername ? (
+                                            <img src={`https://cravatar.eu/helmavatar/${user.minecraftUsername}/36.png`} alt="" className="w-full h-full object-cover" />
+                                        ) : (
+                                            user.username.charAt(0).toUpperCase()
+                                        )}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="dropdown-label">Signed in as</div>
+                                        <div className="font-medium truncate text-(--base-09) leading-tight">{user.username}</div>
+                                        {user.isAdmin && (
+                                            <div className="mt-1"><span className="badge badge-accent">Admin</span></div>
+                                        )}
+                                    </div>
                                 </div>
                                 <button onClick={() => { setIsProfileDropdownOpen(false); setShowProfilePopup(true); }} className="dropdown-item">
                                     <UserCog size={20} className="mr-3" /> Edit Profile

@@ -7,7 +7,7 @@ import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload 
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle } from 'lucide-react';
+import { CircleCheck, CircleAlert, Network, Globe, Radio, LifeBuoy, Package, Move, AlertTriangle, Server } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { useAppData } from '@/lib/AppDataContext';
@@ -34,7 +34,7 @@ export default function FeaturesTab() {
     // /api/admin/settings/features and save-on-click independently of the
     // proxy/gateway settings above. Each flip persists immediately so the
     // admin doesn't have to remember a Save bar for a dangerous gate.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false, byon: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
     // Tickets requires Core file storage (attachments + backups need a durable
@@ -348,6 +348,38 @@ export default function FeaturesTab() {
                         <span>Requires gateway routing. Switch Game Traffic to Gateway or Both first.</span>
                     </p>
                 )}
+            </div>
+
+            {/* BYON (Bring Your Own Node). Platform-wide subsystem toggle wired
+                exactly like tickets/modpacks/auto-move above: same read of the
+                feature-settings payload, same save-on-click via savePlatformFlag.
+                The PUT publishes features.changed, which AppDataContext consumes
+                to refresh featureFlags, so the Settings nav's BYON group
+                (Usage/Billing/Plans) appears/disappears without a manual reload. */}
+            <div className="card p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Server size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">BYON (Bring Your Own Node)</div>
+                            <div className="text-xs text-(--base-06)">
+                                Enabling BYON turns on tenant node enrollment, traffic metering and the Usage, Billing and Plans admin settings (which stay hidden while it is off).
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={platformFlags.byon}
+                        disabled={platformSaving !== null}
+                        onClick={() => savePlatformFlag('byon', !platformFlags.byon)}
+                        className={`toggle-track ${platformFlags.byon ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+                    >
+                        <span className={`toggle-knob ${platformFlags.byon ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
             </div>
 
             {/* WS5 custom-tab reverse proxy */}
