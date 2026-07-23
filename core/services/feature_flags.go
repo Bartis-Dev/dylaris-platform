@@ -86,10 +86,11 @@ func (f *FeatureFlags) GetInt(_ context.Context, key string, defaultV int) int {
 	return n
 }
 
-// IsModpacksEnabled is a convenience wrapper for the most-checked flag.
-// Default = true (features ship enabled; admins opt out).
+// IsModpacksEnabled gates the modpack authoring subsystem. Default = false (the
+// feature ships OFF and the admin opts in via Settings -> Features). Existing
+// installs keep their stored value; only a brand-new/unset install lands off.
 func (f *FeatureFlags) IsModpacksEnabled(ctx context.Context) bool {
-	return f.Get(ctx, "feature_modpacks_enabled", true)
+	return f.Get(ctx, "feature_modpacks_enabled", false)
 }
 
 // IsTicketsEnabled gates the ticket subsystem (tickets, categories, canned

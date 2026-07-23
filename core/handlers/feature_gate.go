@@ -20,6 +20,10 @@ const FeatureShareLinks = "modpack_share_links"
 // body when a WRITE is attempted before Core file storage is configured.
 const FeatureCoreStorage = "core_storage"
 
+// FeatureBYON is the canonical name used in X-Feature-Disabled headers + JSON
+// error responses for the bring-your-own-node multi-tenancy subsystem.
+const FeatureBYON = "byon"
+
 // RequireModpacksEnabled blocks the request with 503 feature_disabled when
 // the platform-wide modpacks toggle is off. Use on every WRITE endpoint that
 // touches modpack data (modpacks CRUD, versions, mods, publish, mrpack PAT
@@ -56,6 +60,20 @@ func (s *AppState) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsTicketsEnabled(r.Context()) {
 			featureDisabledResponse(w, FeatureTickets, "The ticket system is disabled by the platform admin.")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// RequireBYONEnabled blocks the request with 503 feature_disabled when the
+// platform-wide BYON toggle is off. Wrap the ADMIN usage/billing/plans routes
+// so they refuse cleanly while the platform runs as today's single-operator
+// panel. Additive to the plans.* capability checks already on those routes.
+func (s *AppState) RequireBYONEnabled(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.FeatureFlags.IsBYONEnabled(r.Context()) {
+			featureDisabledResponse(w, FeatureBYON, "BYON (bring-your-own-node) is disabled by the platform admin.")
 			return
 		}
 		next(w, r)

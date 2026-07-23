@@ -195,8 +195,8 @@ func (h *SettingsHandler) LoadFeatureSettings() FeatureSettings {
 	proxyVal, _ := h.state.Store.GetSetting("feature_proxy_enabled")
 	gatewayVal, _ := h.state.Store.GetSetting("feature_gateway_enabled")
 	return FeatureSettings{
-		ProxyEnabled:   proxyVal != "false",   // default true
-		GatewayEnabled: gatewayVal != "false", // default true
+		ProxyEnabled:   proxyVal != "false",  // default true
+		GatewayEnabled: gatewayVal == "true", // default false
 	}
 }
 

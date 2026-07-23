@@ -43,7 +43,7 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return v
 	}
 	out := modpackSettings{
-		FeatureEnabled: get("feature_modpacks_enabled") != "false",
+		FeatureEnabled: get("feature_modpacks_enabled") == "true",
 		Provider:       get("modpack_storage_provider"),
 		S3Endpoint:     get("modpack_storage_s3_endpoint"),
 		S3Bucket:       get("modpack_storage_s3_bucket"),

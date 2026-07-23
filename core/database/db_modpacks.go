@@ -48,9 +48,11 @@ func applyPhase16Schema(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_modpacks BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
 		return fmt.Errorf("phase 16: add can_create_modpacks: %w", err)
 	}
-	// Seed default settings rows. ON CONFLICT keeps existing values on re-boot.
+	// Seed default settings rows. ON CONFLICT keeps existing values on re-boot,
+	// so this only sets the default for a brand-new/unset install; existing
+	// instances keep whatever they already stored.
 	for _, kv := range []struct{ k, v string }{
-		{"feature_modpacks_enabled", "true"},
+		{"feature_modpacks_enabled", "false"},
 		{"modpack_storage_provider", "local"},
 		{"modpack_storage_paths", "[]"},
 		{"modpack_storage_s3_endpoint", ""},
