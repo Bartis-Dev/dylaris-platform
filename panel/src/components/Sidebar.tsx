@@ -167,6 +167,11 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           <div className={`font-medium truncate text-sm transition-colors ${isActive ? 'text-(--base-09)' : 'text-(--base-07) group-hover:text-(--base-09)'}`}>
             {server.name}
           </div>
+          {server.activeSubServer && (
+            <div className="text-[11px] text-(--base-06) truncate leading-tight mt-0.5">
+              {server.activeSubServer}
+            </div>
+          )}
           <div className="mono-label mt-0.5 flex items-center gap-1">
             <span>{roleLabel}</span>
             <RegionBadge region={server.region} className="ml-1" />
@@ -196,6 +201,11 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             <div className={`font-medium truncate text-sm transition-colors ${isProxyActive ? 'text-(--base-09)' : 'text-(--base-07) group-hover:text-(--base-09)'}`}>
               {group.proxy.name}
             </div>
+            {group.proxy.activeSubServer && (
+              <div className="text-[11px] text-(--base-06) truncate leading-tight mt-0.5">
+                {group.proxy.activeSubServer}
+              </div>
+            )}
             <div className="mono-label mt-0.5 flex items-center gap-1">
               <span>Proxy</span>
               <RegionBadge region={group.proxy.region} className="ml-1" />

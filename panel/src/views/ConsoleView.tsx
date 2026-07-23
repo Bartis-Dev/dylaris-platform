@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { createEventSource } from '@/lib/sse';
+import { logLineClass } from '@/lib/consoleLog';
 import { Power, Send, Cpu, MemoryStick } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
@@ -236,7 +237,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           <p className="text-(--base-06) italic">Waiting for server output...</p>
         ) : (
           lines.map((line, i) => (
-            <div key={i} className="text-(--base-09) whitespace-pre-wrap break-all leading-5">
+            <div key={i} className={`whitespace-pre-wrap break-all leading-5 ${logLineClass(line)}`}>
               {parseAnsiLine(line)}
             </div>
           ))
