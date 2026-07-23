@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -48,7 +48,7 @@ async function checkBeamRelayMissing(): Promise<Notification | null> {
             title: 'Beam relay address not set',
             message:
                 'The Beam desktop app gets the relay address from Core after login. Without it, file transfers can\'t connect.',
-            href: '/settings/gateway#beam',
+            href: '/settings/beam',
             cta: 'Open Beam settings',
         };
     } catch {

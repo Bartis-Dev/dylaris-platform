@@ -55,6 +55,7 @@ const TAB_GROUPS: SettingsGroup[] = [
             { slug: 'nodes', label: 'Nodes', always: true },
             { slug: 'gateway', label: 'Gateway', always: true },
             { slug: 'warp', label: 'Warp', always: true },
+            { slug: 'beam', label: 'Beam', always: true },
         ],
     },
     {
