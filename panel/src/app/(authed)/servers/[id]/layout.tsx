@@ -12,9 +12,10 @@ import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
     getInstallCooldown, moveServer, transferServer, setServerDemo, getMigrationStatus, cancelMigration, type MigrationStatus, type Node,
-    GatewayRoute, StoragePathInfo, TabPermissions,
+    GatewayRoute, StoragePathInfo, TabPermissions, sendConsoleCommand,
 } from '@/lib/api';
 import { getNodes } from '@/lib/api/resources';
+import { isPluginLoader } from '@/lib/serverSoftware';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
 import RegionBadge from '@/components/RegionBadge';
@@ -74,6 +75,16 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [showKillConfirm, setShowKillConfirm] = useState(false);
     const [powerError, setPowerError] = useState<string>('');
 
+    // Software-aware "Reload" (console `reload`). Fires directly on plugin
+    // servers; on modloaders/modpacks (where reload is unstable) it routes
+    // through a confirm modal with a persisted "don't warn again" opt-out.
+    const [showReloadConfirm, setShowReloadConfirm] = useState(false);
+    const [reloadDontWarn, setReloadDontWarn] = useState(false);
+    const [reloadBusy, setReloadBusy] = useState(false);
+    const [reloadNotice, setReloadNotice] = useState('');
+    // Brief "copied" feedback for the owner-id click-to-copy in the info bar.
+    const [ownerCopied, setOwnerCopied] = useState(false);
+
     // Admins bypass the install cooldown on the backend, but we still warn
     // them client-side so a Kill mid world-generation isn't a silent footgun.
     // Holds the action the admin is trying to perform; null = no prompt.
@@ -85,6 +96,13 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         const t = setTimeout(() => setPowerError(''), 4500);
         return () => clearTimeout(t);
     }, [powerError]);
+
+    // Auto-clear the reload success notice on the same cadence.
+    useEffect(() => {
+        if (!reloadNotice) return;
+        const t = setTimeout(() => setReloadNotice(''), 4000);
+        return () => clearTimeout(t);
+    }, [reloadNotice]);
 
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
@@ -422,6 +440,52 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         }
     };
 
+    // "Reload" sends the console `reload confirm` command to a running server.
+    // `confirm` is required on modern Paper/Purpur (plain `reload` only prints a
+    // hint there) and is harmlessly ignored on Spigot/Bukkit, so it is the
+    // universal form. On a plugin server it fires immediately; otherwise
+    // (modloader/modpack/unknown, where reload is unstable) it routes through a
+    // one-time confirm with a persisted opt-out. Sending is fire-and-forget to
+    // the server's stdin — reload output shows up in the Console tab.
+    const RELOAD_WARN_ACK_KEY = 'dylaris:reloadModloaderWarnAck';
+    const sendReload = async () => {
+        setReloadBusy(true);
+        try {
+            const res: any = await sendConsoleCommand(selectedServer.id, 'reload confirm');
+            if (res && (res.success === false || res.error)) {
+                setPowerError(res.error || res.message || 'Reload command was rejected');
+            } else {
+                setReloadNotice('Reload command sent to the console.');
+            }
+        } catch {
+            setPowerError('Reload request failed');
+        }
+        setReloadBusy(false);
+    };
+    const handleReloadClick = () => {
+        const acked = typeof window !== 'undefined' && localStorage.getItem(RELOAD_WARN_ACK_KEY) === '1';
+        if (isPluginLoader(selectedServer.installerType) || acked) {
+            void sendReload();
+        } else {
+            setReloadDontWarn(false);
+            setShowReloadConfirm(true);
+        }
+    };
+    const handleConfirmReload = () => {
+        if (reloadDontWarn && typeof window !== 'undefined') {
+            localStorage.setItem(RELOAD_WARN_ACK_KEY, '1');
+        }
+        setShowReloadConfirm(false);
+        void sendReload();
+    };
+
+    const copyOwnerId = () => {
+        navigator.clipboard.writeText(selectedServer.ownerId).then(() => {
+            setOwnerCopied(true);
+            setTimeout(() => setOwnerCopied(false), 1200);
+        }).catch(() => { /* clipboard blocked — nothing to surface */ });
+    };
+
     // Admin-only: abort an in-flight migration. The backend rolls the server back
     // to its current node (safe pre-cutover; a no-op 409 once cut over). The
     // migration poll picks up the 'cancelled' terminal phase and refreshes state.
@@ -524,8 +588,9 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             </span>
                         )}
                         {selectedServer.activeSubServer && (
-                            <span className="mono-label bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07)">
-                                {selectedServer.activeSubServer}
+                            <span className="mono-label bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07) flex items-center gap-1.5">
+                                <span className="text-(--base-05)">Active Server</span>
+                                <span className="text-(--base-08)">{selectedServer.activeSubServer}</span>
                             </span>
                         )}
                         {selectedServer.serverType === 'proxy' && (
@@ -546,7 +611,16 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         })()}
                         <RegionBadge region={selectedServer.region} size="sm" displayName />
                         <span className="text-xs text-(--base-07)">
-                            Owner: <span className="font-medium text-(--base-09)">{selectedServer.ownerName === user?.username ? 'You' : (selectedServer.ownerName || `ID: ${selectedServer.ownerId}`)}</span>
+                            Owner:{' '}
+                            <button
+                                type="button"
+                                onClick={copyOwnerId}
+                                title={`Owner ID: ${selectedServer.ownerId} — click to copy`}
+                                className="font-medium text-(--base-09) hover:text-(--accent-light) transition-colors cursor-pointer"
+                            >
+                                {selectedServer.ownerName === user?.username ? 'You' : (selectedServer.ownerName || selectedServer.ownerId)}
+                            </button>
+                            {ownerCopied && <span className="ml-1 text-(--success-light)">copied</span>}
                         </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -603,6 +677,17 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 <RotateCcw size={16} className="text-(--warning)" />
                                 <span className="text-xs font-semibold text-(--warning)">Restart</span>
                             </button>
+                            {selectedServer.serverType !== 'proxy' && (
+                                <button
+                                    onClick={handleReloadClick}
+                                    disabled={!canPower || selectedServer.status !== 'online' || powerWaiting || uploadLocked || isMigrating || reloadBusy}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--accent-ghost) hover:bg-(--accent)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--accent)/15"
+                                    title={selectedServer.status !== 'online' ? 'Reload is only available while the server is online' : canPower ? 'Reload plugins/config (sends the console reload command)' : 'No permission'}
+                                >
+                                    <RefreshCw size={16} className={`text-(--accent-light) ${reloadBusy ? 'animate-spin' : ''}`} />
+                                    <span className="text-xs font-semibold text-(--accent-light)">Reload</span>
+                                </button>
+                            )}
                             <button
                                 onClick={() => handlePower('stop')}
                                 disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
@@ -928,6 +1013,43 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 </div>
             )}
 
+            {/* Reload Confirmation (modloader / modpack servers). A live reload
+                is unstable on Fabric/Forge/NeoForge/Quilt and imported modpacks,
+                so warn once with a persisted opt-out. */}
+            {showReloadConfirm && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setShowReloadConfirm(false)}>
+                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
+                                <AlertTriangle size={20} />
+                                Reload this server?
+                            </h3>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">
+                                This server runs a mod loader or an imported modpack. A live
+                                <span className="font-mono text-(--accent-light)"> reload </span>
+                                is unstable there and can leave mods half-initialised or corrupt
+                                loaded chunks. A full <span className="font-semibold text-(--base-09)">Restart</span> is safer.
+                            </p>
+                            <label className="flex items-center gap-2 text-xs text-(--base-07) cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={reloadDontWarn}
+                                    onChange={e => setReloadDontWarn(e.target.checked)}
+                                    className="accent-(--accent) w-3.5 h-3.5"
+                                />
+                                Don&apos;t warn me again on this browser
+                            </label>
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => setShowReloadConfirm(false)} className="btn btn-secondary flex-1">Cancel</button>
+                            <button onClick={handleConfirmReload} className="btn btn-danger flex-1">Reload anyway</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Transfer Popup (BYON owners). Admins use the Resources popup. */}
             {showTransferPopup && (
                 <div className="modal-overlay animate-fade-in">
@@ -1216,6 +1338,15 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 <div className="fixed bottom-6 right-6 z-50 flex items-start gap-2.5 px-4 py-3 rounded-md bg-(--error-ghost) border border-(--error)/30 text-(--error-light) text-sm shadow-lg max-w-sm">
                     <AlertTriangle size={16} className="shrink-0 mt-0.5" />
                     <span>{powerError}</span>
+                </div>
+            )}
+
+            {/* Success notice for a sent reload command. Offset above the error
+                toast so the two never overlap if both are visible. */}
+            {reloadNotice && (
+                <div className="fixed bottom-20 right-6 z-50 flex items-start gap-2.5 px-4 py-3 rounded-md bg-(--success-ghost) border border-(--success)/30 text-(--success-light) text-sm shadow-lg max-w-sm">
+                    <RefreshCw size={16} className="shrink-0 mt-0.5" />
+                    <span>{reloadNotice}</span>
                 </div>
             )}
         </main>

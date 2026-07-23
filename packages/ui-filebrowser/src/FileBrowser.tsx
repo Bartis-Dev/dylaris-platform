@@ -86,6 +86,12 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const [selectiveLoading, setSelectiveLoading] = useState(false);
   const [selectiveDownloading, setSelectiveDownloading] = useState(false);
 
+  // Inline multi-select for the current folder: checked entry names (files or
+  // folders) that a single "Download as ZIP" action bundles via the same
+  // selective-download endpoint. Reset on any navigation so it never spans
+  // folders (the endpoint keys names off the current base_path).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
   // JSZip is now a bundled dependency (no CDN/SRI/StrictMode concerns); just
   // fetch the transfer limits up front.
   useEffect(() => {
@@ -101,6 +107,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const fetchFiles = async (path: string) => {
     setLoading(true);
     setError('');
+    setSelected(new Set());
     const result = await adapter.getFiles(path, serverUuid);
     if (result.success) {
       setFiles(result.files);
@@ -182,6 +189,33 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }
     setDownloadProgress(null);
     setSelectiveDownloading(false);
+  };
+
+  const toggleSelected = (name: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  // Bundle the checked current-folder entries into one zip via the selective
+  // endpoint (base_path = current folder, selected = checked names). Selection
+  // is only cleared on success so a failed transfer can be retried.
+  const downloadSelectedAsZip = async () => {
+    if (selected.size === 0 || downloadProgress) return;
+    const names = Array.from(selected);
+    setDownloadProgress({ filename: 'selection.zip', loaded: 0, total: 0 });
+    try {
+      const onProgress = (loaded: number, total: number) =>
+        setDownloadProgress(prev => prev ? { ...prev, loaded, total: total || prev.total } : null);
+      await adapter.selectiveDownload(currentPath, names, false, serverUuid, onProgress);
+      setSelected(new Set());
+    } catch (err) {
+      console.error('Zip download failed:', err);
+      setToastMessage({ message: 'Download failed.', type: 'error' });
+    }
+    setDownloadProgress(null);
   };
 
   useEffect(() => {
@@ -366,6 +400,9 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   };
 
   const handleFileClick = (name: string, isDir: boolean, path?: string) => {
+    // Clicking any entry (navigate in, jump to folder, or open a file) clears
+    // the multi-select so it never carries across a folder change.
+    setSelected(new Set());
      if(path && path !== currentPath) {
         const parentPath = path.substring(0, path.lastIndexOf('/'));
         setGlobalSearchTerm('');
@@ -796,6 +833,21 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       {isSearching && <p className="text-center text-xl text-(--warning)">Searching...</p>}
       {showLoading && !showUploadPopup && <p className="text-center text-xl text-(--warning)">Loading...</p>}
       {error && <p className="text-(--error) text-center text-xl mb-4">{error}</p>}
+      {!readOnly && !globalSearchTerm && selected.size > 0 && (
+        <div className="flex items-center justify-between gap-3 mb-3 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent-border)">
+          <span className="text-sm font-medium text-(--accent-light)">{selected.size} selected</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())} className="btn btn-secondary btn-sm">Clear</button>
+            <button
+              onClick={downloadSelectedAsZip}
+              disabled={!!downloadProgress}
+              className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download size={14} /> Download as ZIP
+            </button>
+          </div>
+        </div>
+      )}
       <ul className="space-y-2">
         {currentPath && !globalSearchTerm && (
           <li onClick={handleGoUp} className="server-row justify-between">
@@ -808,6 +860,16 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         {sortedFiles.map((file) => (
           <li key={file.path || file.name} onClick={() => handleFileClick(file.name, file.is_dir, file.path)} className="server-row justify-between">
             <span className="flex items-center flex-1 min-w-0 truncate pr-4 text-(--base-09)">
+              {!readOnly && !globalSearchTerm && (
+                <input
+                  type="checkbox"
+                  checked={selected.has(file.name)}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => { e.stopPropagation(); toggleSelected(file.name); }}
+                  className="accent-(--accent) w-4 h-4 mr-3 shrink-0 cursor-pointer"
+                  title="Select for bulk download"
+                />
+              )}
               {renderFileRepresentation(file)}
               <div>
                   <span className="text-lg">{file.name}</span>

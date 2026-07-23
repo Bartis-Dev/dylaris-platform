@@ -54,6 +54,71 @@ export const dylarisTheme = EditorView.theme(
     '.cm-searchMatch.cm-searchMatch-selected': {
       backgroundColor: 'var(--warning-ghost)',
     },
+    // Ctrl+F search / replace panel. CodeMirror ships no theme for the panel
+    // chrome, so without these it renders with stock light-gray defaults
+    // against the dark editor. Keyed to the Dylaris tokens instead.
+    '.cm-panels': {
+      backgroundColor: 'var(--base-02)',
+      color: 'var(--base-08)',
+    },
+    '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--base-03)' },
+    '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--base-03)' },
+    '.cm-panel.cm-search': {
+      padding: '8px 10px',
+      fontFamily: 'var(--font-mono)',
+      fontSize: '12px',
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: '6px',
+    },
+    '.cm-panel.cm-search label': {
+      fontSize: '11px',
+      color: 'var(--base-07)',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '3px',
+    },
+    '.cm-panel.cm-search input[type=checkbox]': {
+      accentColor: 'var(--accent)',
+    },
+    '.cm-textfield': {
+      backgroundColor: 'var(--base-01)',
+      color: 'var(--base-09)',
+      border: '1px solid var(--base-04)',
+      borderRadius: '6px',
+      padding: '3px 8px',
+      fontFamily: 'var(--font-mono)',
+      fontSize: '12px',
+      outline: 'none',
+    },
+    '.cm-textfield:focus': {
+      borderColor: 'var(--accent)',
+      boxShadow: '0 0 0 3px rgba(112,72,200,0.15)',
+    },
+    '.cm-button': {
+      backgroundColor: 'var(--base-03)',
+      color: 'var(--base-08)',
+      backgroundImage: 'none',
+      border: '1px solid var(--base-04)',
+      borderRadius: '6px',
+      padding: '3px 10px',
+      fontSize: '12px',
+      cursor: 'pointer',
+    },
+    '.cm-button:hover': {
+      backgroundColor: 'var(--base-04)',
+      color: 'var(--base-09)',
+    },
+    '.cm-panel.cm-search [name=close]': {
+      color: 'var(--base-06)',
+      cursor: 'pointer',
+      fontSize: '16px',
+      padding: '0 6px',
+    },
+    '.cm-panel.cm-search [name=close]:hover': {
+      color: 'var(--base-09)',
+    },
     '.cm-scroller': {
       fontFamily: 'var(--font-mono)',
       lineHeight: '1.55',
