@@ -1,27 +1,210 @@
 "use client";
 
-import React from 'react';
-import { Network } from 'lucide-react';
+import { useCallback, useEffect, useState, lazy, Suspense } from 'react';
+import { useParams } from 'next/navigation';
+import { Save, AlertTriangle, Network, Copy, Info } from 'lucide-react';
+import { useAppData } from '@/lib/AppDataContext';
+import { getFileContent, saveFile } from '@/lib/api';
+import { proxyConfigFilename, backendAddress, proxyPrereqHint } from '@/lib/proxyConfig';
 
-// Placeholder for BungeeCord/Velocity config editing. Only reachable when
-// serverType=='proxy' — the sub-tab strip in the parent layout hides it
-// otherwise. Editor lands in a later phase (config.yml is YAML, needs a
-// careful per-mode editor and isn't on the P8 critical path).
+// Proxy Config tab: a raw text editor for the proxy's own config file
+// (config.yml for BungeeCord/Waterfall, velocity.toml for Velocity) plus a
+// right-hand column of the linked backend servers with their stable in-network
+// address to paste into that file. There is no simple/form mode - proxy config
+// is edited as raw text on purpose.
+
+const CodeMirrorEditor = lazy(() => import('@dylaris/ui-filebrowser').then(m => ({ default: m.CodeMirrorEditor })));
+
 export default function ServerConfigProxyPage() {
+    const params = useParams();
+    const { servers } = useAppData();
+    const serverId = Number(params?.id);
+    const server = servers.find(s => s.id === serverId);
+
+    const serverUuid = server?.uuid ?? '';
+    const activeSubServer = server?.activeSubServer ?? '';
+    const installerType = server?.installerType ?? '';
+    const filename = proxyConfigFilename(installerType);
+    // The file lives in the active sub-server dir; the node resolves paths
+    // relative to the server root, so we prepend the sub-server ourselves.
+    const filePath = activeSubServer ? `${activeSubServer}/${filename}` : '';
+
+    const [text, setText] = useState('');
+    const [dirty, setDirty] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [notFound, setNotFound] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+    const showToast = useCallback((msg: string, ok = true) => {
+        setToast({ msg, ok });
+        setTimeout(() => setToast(null), 3500);
+    }, []);
+
+    const reload = useCallback(async () => {
+        if (!serverUuid) return;
+        setNotFound(false);
+        setError(null);
+        // No active sub-server -> nothing to load yet. Soft empty state.
+        if (!filePath) { setLoading(false); setNotFound(true); return; }
+        setLoading(true);
+        try {
+            const res = await getFileContent(filePath, serverUuid);
+            if (res?.success === false) {
+                // A proxy writes its config on first boot, so file-not-found is
+                // the expected pre-launch state, not an error.
+                const msg = (res.message || '').toLowerCase();
+                if (msg.includes('not found') || msg.includes('no such file') || msg.includes('does not exist') || msg.includes('enoent')) {
+                    setNotFound(true);
+                } else {
+                    setError(res.message || `Could not load ${filename}.`);
+                }
+            } else {
+                const content: string = res.content ?? res.text ?? '';
+                setText(content);
+                setDirty(false);
+            }
+        } catch {
+            setError(`Network error while loading ${filename}.`);
+        }
+        setLoading(false);
+    }, [serverUuid, filePath, filename]);
+
+    useEffect(() => { reload(); }, [reload]);
+
+    const save = useCallback(async () => {
+        if (!serverUuid || !filePath) return;
+        setSaving(true);
+        try {
+            const res = await saveFile(filePath, text, serverUuid);
+            if (res?.success === false) {
+                showToast(res.message || 'Save failed.', false);
+            } else {
+                setDirty(false);
+                setNotFound(false);
+                showToast(`Saved ${filename}`);
+            }
+        } catch {
+            showToast('Network error', false);
+        }
+        setSaving(false);
+    }, [serverUuid, filePath, text, filename, showToast]);
+
+    const copy = (key: string, val: string) => {
+        navigator.clipboard.writeText(val);
+        setCopiedKey(key);
+        setTimeout(() => setCopiedKey(null), 1500);
+    };
+
+    const backends = server ? servers.filter(s => s.proxyId === server.id && s.serverType !== 'proxy') : [];
+
+    if (!server) return null;
+
     return (
-        <div className="max-w-2xl">
-            <div className="card p-6 flex items-start gap-4">
-                <div className="w-10 h-10 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                    <Network size={18} className="text-(--accent-light)" />
+        <div className="flex flex-col lg:flex-row gap-4 h-full min-h-0">
+            {/* Config file editor */}
+            <div className="flex-1 flex flex-col min-h-0 min-w-0">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2 text-xs text-(--base-06) min-w-0">
+                        <span className="truncate">
+                            Raw <code className="font-mono text-(--base-08)">{filename}</code>. Changes are not applied until you save and restart the proxy.
+                        </span>
+                        {dirty && <span className="mono-label text-(--warning-light) shrink-0">unsaved</span>}
+                    </div>
+                    <button
+                        onClick={save}
+                        disabled={saving || !dirty || notFound}
+                        className="btn btn-primary btn-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                        <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+                    </button>
                 </div>
-                <div className="min-w-0">
-                    <h2 className="text-base font-display font-semibold text-(--base-09) mb-1">Proxy Configuration</h2>
-                    <p className="text-sm text-(--base-07)">
-                        BungeeCord / Velocity config editor lands in a later phase.
-                        For now use the Files tab to edit <code className="font-mono text-xs">config.yml</code> directly.
+
+                {loading ? (
+                    <div className="flex-1 flex items-center justify-center text-sm text-(--base-07)">Loading…</div>
+                ) : error ? (
+                    <div className="card card-pad flex items-start gap-2 text-sm text-(--error-light)">
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                        <span>{error}</span>
+                    </div>
+                ) : notFound ? (
+                    <div className="card card-pad text-sm text-(--base-07) space-y-2">
+                        <p>The <code className="font-mono text-(--base-08)">{filename}</code> file doesn&apos;t exist yet.</p>
+                        <p className="text-(--base-06)">
+                            A proxy writes its config on first launch. Start the proxy once to generate it, then reload
+                            this tab. You can also create it from the Files tab.
+                        </p>
+                        <button onClick={reload} className="btn btn-secondary btn-sm">Reload</button>
+                    </div>
+                ) : (
+                    <div className="flex-1 min-h-0 rounded-md bg-(--base-01) border border-(--base-03) overflow-hidden">
+                        <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-(--base-07)">Loading editor…</div>}>
+                            <CodeMirrorEditor
+                                value={text}
+                                onChange={next => { setText(next); setDirty(true); }}
+                                filename={filename}
+                                className="h-full"
+                            />
+                        </Suspense>
+                    </div>
+                )}
+            </div>
+
+            {/* Backend servers column */}
+            <div className="lg:w-80 shrink-0 flex flex-col gap-3">
+                <div className="card card-pad">
+                    <h3 className="modal-title text-sm mb-1 flex items-center gap-2">
+                        <Network size={16} className="text-(--accent-light)" />
+                        Backend Servers
+                    </h3>
+                    <p className="text-xs text-(--base-06) mb-3">
+                        Servers linked to this proxy. Paste each stable address into your server list in <code className="font-mono text-(--base-08)">{filename}</code>.
                     </p>
+                    {backends.length === 0 ? (
+                        <p className="text-xs text-(--base-06) italic">No servers assigned yet. Link them in the Network tab.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {backends.map(b => {
+                                const addr = backendAddress(b.uuid, b.containerPort);
+                                return (
+                                    <div key={b.id} className="bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="text-sm font-medium text-(--base-09) truncate">{b.name}</span>
+                                            {b.activeSubServer && (
+                                                <span className="mono-label bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-06) shrink-0">{b.activeSubServer}</span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 mt-1">
+                                            <code className="font-mono text-xs text-(--base-08) bg-(--base-03) px-1.5 py-0.5 rounded truncate">{addr}</code>
+                                            <button
+                                                onClick={() => copy(`b-${b.id}`, addr)}
+                                                className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0"
+                                                title="Copy address"
+                                            >
+                                                <Copy size={11} />
+                                            </button>
+                                            {copiedKey === `b-${b.id}` && <span className="mono-label text-(--success-light) shrink-0">copied</span>}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-start gap-2.5 bg-(--base-03) border border-(--base-04) rounded-xl px-3 py-2.5">
+                    <Info size={14} className="text-(--base-06) mt-0.5 shrink-0" />
+                    <p className="text-xs text-(--base-07)">{proxyPrereqHint(installerType)}</p>
                 </div>
             </div>
+
+            {toast && (
+                <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-md text-sm shadow-lg max-w-sm border ${toast.ok ? 'bg-(--success-ghost) border-(--success)/30 text-(--success-light)' : 'bg-(--error-ghost) border-(--error)/30 text-(--error-light)'}`}>
+                    {toast.msg}
+                </div>
+            )}
         </div>
     );
 }

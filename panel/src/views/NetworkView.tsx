@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { Server, linkServerToProxy, unlinkServerFromProxy, getProxyEndpoint, ProxyEndpoint } from '@/lib/api';
+import { useState } from 'react';
+import { Server, linkServerToProxy, unlinkServerFromProxy } from '@/lib/api';
+import { backendAddress } from '@/lib/proxyConfig';
 import { Network, Link, Unlink, Info, Copy, Server as ServerIcon } from 'lucide-react';
 
 function getStatusDot(status: string) {
@@ -22,23 +23,7 @@ interface NetworkViewProps {
 export default function NetworkView({ server, allServers, onServerSelect, onRefreshServers }: NetworkViewProps) {
   const [selectedId, setSelectedId] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
-  const [endpoints, setEndpoints] = useState<ProxyEndpoint[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  // Refresh endpoints when link state or server changes — the connect command
-  // is async, so we poll a few times to catch the IP assignment.
-  useEffect(() => {
-    let cancelled = false;
-    const fetchOnce = async () => {
-      try {
-        const res = await getProxyEndpoint(server.id);
-        if (!cancelled && res.success && res.endpoints) setEndpoints(res.endpoints);
-      } catch { /* ignore */ }
-    };
-    fetchOnce();
-    const interval = setInterval(fetchOnce, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [server.id, server.proxyId]);
 
   const copyToClipboard = (key: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -64,6 +49,13 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
   const availableGameServers = isProxy
     ? allServers.filter(s => s.serverType !== 'proxy' && !s.proxyId && s.id !== server.id)
     : [];
+
+  // Stable in-network addresses to paste into a proxy config: on a proxy, the
+  // linked backends; on a linked game server, itself (so its address can be
+  // added to the proxy). Derived client-side from the loaded server list -
+  // there is no per-server tenant IP to fetch, and the mc_<uuid> hostname is
+  // the reliable address on the shared network.
+  const backendList = isProxy ? linkedChildren : (server.proxyId ? [server] : []);
 
   const handleLink = async (serverId: number, proxyId: number) => {
     setLinkLoading(true);
@@ -216,40 +208,39 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
         )}
       </div>
 
-      {/* Internal Endpoints — only meaningful inside a proxy network. */}
-      {((isProxy && endpoints.length > 0) || (isGameServer && server.proxyId && endpoints.length > 0)) && (
+      {/* Backend addresses — stable in-network hostnames for the proxy config. */}
+      {backendList.length > 0 && (
         <div className="card p-6">
           <h2 className="modal-title mb-1 flex items-center gap-2">
             <ServerIcon size={18} className="text-(--accent-light)" />
-            Internal Endpoints
+            {isProxy ? 'Backend Addresses' : 'Internal Address'}
           </h2>
           <p className="text-sm text-(--base-06) mb-5">
-            Private IPs inside the proxy overlay network. Use these in your Bungee/Velocity <code className="font-mono text-xs text-(--base-08)">config.yml</code>.
+            {isProxy
+              ? 'Stable in-network hostnames for the linked servers. Paste these into your proxy config; they survive restarts and sub-server switches.'
+              : 'Paste this stable hostname into the proxy config so it can reach this server.'}
           </p>
           <div className="space-y-2">
-            {endpoints.map(ep => (
-              <div key={ep.serverId} className="flex flex-col gap-1 bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-(--base-09)">{ep.serverName}</span>
-                  {!ep.ip && <span className="mono-label text-(--warning-light)">waiting for connect…</span>}
-                </div>
-                {ep.ip && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="mono-label">IP</span>
-                    <code className="font-mono text-xs text-(--base-08) bg-(--base-03) px-1.5 py-0.5 rounded">{ep.ip}</code>
-                    <button onClick={() => copyToClipboard(`ip-${ep.serverId}`, ep.ip)} className="text-(--base-06) hover:text-(--base-09) transition-colors" title="Copy IP">
-                      <Copy size={11} />
-                    </button>
-                    {copiedKey === `ip-${ep.serverId}` && <span className="mono-label text-(--success-light)">copied</span>}
-                    <span className="mono-label ml-3">Hostname</span>
-                    <code className="font-mono text-xs text-(--base-08) bg-(--base-03) px-1.5 py-0.5 rounded">{ep.hostname}</code>
-                    <button onClick={() => copyToClipboard(`host-${ep.serverId}`, ep.hostname)} className="text-(--base-06) hover:text-(--base-09) transition-colors" title="Copy hostname">
-                      <Copy size={11} />
-                    </button>
+            {backendList.map(b => {
+              const addr = backendAddress(b.uuid, b.containerPort);
+              return (
+                <div key={b.id} className="flex items-center justify-between gap-2 flex-wrap bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium text-(--base-09) truncate">{b.name}</span>
+                    {b.activeSubServer && (
+                      <span className="mono-label bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-06) shrink-0">{b.activeSubServer}</span>
+                    )}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="flex items-center gap-1.5">
+                    <code className="font-mono text-xs text-(--base-08) bg-(--base-03) px-1.5 py-0.5 rounded">{addr}</code>
+                    <button onClick={() => copyToClipboard(`addr-${b.id}`, addr)} className="text-(--base-06) hover:text-(--base-09) transition-colors" title="Copy address">
+                      <Copy size={11} />
+                    </button>
+                    {copiedKey === `addr-${b.id}` && <span className="mono-label text-(--success-light)">copied</span>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
