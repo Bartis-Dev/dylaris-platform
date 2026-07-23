@@ -1,5 +1,12 @@
 "use client";
 
-import UserManagementTab from '@/components/settings/UserManagementTab';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
-export default function SettingsUserManagementPage() { return <UserManagementTab />; }
+// User Management is now a subtab of Users. Keep this route alive as a thin
+// redirect so any bookmarked/deep link still resolves.
+export default function SettingsUserManagementRedirect() {
+    const router = useRouter();
+    useEffect(() => { router.replace('/settings/users'); }, [router]);
+    return null;
+}
