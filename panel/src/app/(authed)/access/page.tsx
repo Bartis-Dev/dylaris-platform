@@ -12,7 +12,7 @@ import { listServerRoles, type ServerRole } from '@/lib/api/serverRoles';
 import { SkeletonList } from '@/components/Skeleton';
 import AccessServerRoles from '@/components/access/AccessServerRoles';
 import AccessGrantForm from '@/components/access/AccessGrantForm';
-import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode } from '@/lib/access/accessMode';
+import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode, isProxyScope } from '@/lib/access/accessMode';
 
 // Owner-facing delegation UI, master-detail layout. Behavior branches on the
 // account's permissions_mode:
@@ -135,10 +135,11 @@ export default function AccessPage() {
                                 <span className="mono-label">Invited</span>
                                 <button
                                     onClick={() => setPanel({ kind: 'form', editing: null })}
-                                    className="text-(--accent-light) hover:text-(--accent)"
+                                    className="flex items-center gap-1 text-xs text-(--accent-light) hover:text-(--accent)"
                                     aria-label="Invite"
                                 >
                                     <Plus size={14} />
+                                    Invite
                                 </button>
                             </div>
 
@@ -190,11 +191,18 @@ export default function AccessPage() {
 
                     <div className="flex-1 min-w-0">
                         {panel.kind === 'empty' && (
-                            <div className="card p-8 flex flex-col items-center text-center gap-2">
+                            <div className="card p-8 flex flex-col items-center text-center gap-3">
                                 <ShieldCheck size={28} className="text-(--base-05)" />
                                 <p className="text-sm text-(--base-07)">
                                     Select an invited user on the left, or invite a new one.
                                 </p>
+                                <button
+                                    onClick={() => setPanel({ kind: 'form', editing: null })}
+                                    className="btn btn-primary btn-sm"
+                                >
+                                    <Plus size={14} />
+                                    Invite a friend
+                                </button>
                             </div>
                         )}
 
@@ -212,7 +220,7 @@ export default function AccessPage() {
                                     <p className="text-sm text-(--base-07) mb-1">
                                         Access: {describeGrantAccess(g, fullCaps)}
                                     </p>
-                                    {g.inherit && (
+                                    {isProxyScope(ownedServers, g.serverId) && g.inherit && (
                                         <p className="text-xs text-(--base-06) mb-1">
                                             Cascades to the servers behind this proxy
                                         </p>

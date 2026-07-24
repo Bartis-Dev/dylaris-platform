@@ -15,9 +15,9 @@ import { SkeletonList } from '@/components/Skeleton';
 // validateServerOwnerCaps rule); assignment of a role to a friend happens in
 // the advanced grants section (task 10), not here.
 //
-// The role list itself lives in the parent page (access/page.tsx) so both
-// this component and AccessAdvancedGrants share one up-to-date copy;
-// onRolesChanged() asks the parent to re-fetch after a create/update/delete.
+// The role list lives in the parent page (access/page.tsx) so this component
+// and the grant form share one up-to-date copy; onRolesChanged() asks the
+// parent to re-fetch after a create/update/delete.
 
 interface AccessServerRolesProps {
     catalog: CatalogScope[];

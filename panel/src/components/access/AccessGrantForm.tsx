@@ -129,6 +129,7 @@ export default function AccessGrantForm({ mode, ownedServers, catalog, roles, pr
                         onChange={handleScopeChange}
                         options={scopeOptions}
                         ariaLabel="Scope"
+                        disabled={!!editing}
                     />
                 </div>
 
