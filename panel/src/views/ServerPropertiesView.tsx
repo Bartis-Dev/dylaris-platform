@@ -60,7 +60,8 @@ function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
             </div>
             <div className="flex items-center">
                 {def.type === 'toggle' && (
-                    <div className="flex items-center gap-2">
+                    <div className="w-72 flex items-center justify-end gap-2">
+                        <span className="mono-label">{value ? 'On' : 'Off'}</span>
                         <button
                             id={`prop-${def.key}`}
                             type="button"
@@ -71,7 +72,6 @@ function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
                         >
                             <span className={`toggle-knob ${value ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                         </button>
-                        <span className="mono-label">{value ? 'On' : 'Off'}</span>
                     </div>
                 )}
                 {def.type === 'text' && (
