@@ -78,7 +78,7 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                 </div>
             </div>
             <div className="flex items-center gap-2">
-                {/* Role toggle — Servers is hard-locked to "all", Admin and
+                {/* Role toggle - Servers is hard-locked to "all", Admin and
                     Infrastructure to "admin" (Infrastructure's own page
                     hard-gates isAdmin, so the "all" option would never take
                     effect anyway - the toggle is locked to avoid a misleading
