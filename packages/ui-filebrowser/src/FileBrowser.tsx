@@ -88,9 +88,13 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   // Inline multi-select for the current folder: checked entry names (files or
   // folders) that a single "Download as ZIP" action bundles via the same
-  // selective-download endpoint. Reset on any navigation so it never spans
-  // folders (the endpoint keys names off the current base_path).
+  // selective-download endpoint. Cleared whenever select mode is left (see
+  // toggleSelectMode) rather than on every navigation, so browsing around
+  // while picking files doesn't lose the selection.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Explicit select mode: checkboxes (their own leading column) only render
+  // while this is on, so a normal row click can never mis-click a checkbox.
+  const [selectMode, setSelectMode] = useState(false);
 
   // JSZip is now a bundled dependency (no CDN/SRI/StrictMode concerns); just
   // fetch the transfer limits up front.
@@ -107,7 +111,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const fetchFiles = async (path: string) => {
     setLoading(true);
     setError('');
-    setSelected(new Set());
+    // Outside select mode there is no persistent selection to protect, so
+    // reset it on every load. In select mode the selection is only cleared by
+    // leaving select mode (toggleSelectMode), so it survives navigation.
+    if (!selectMode) setSelected(new Set());
     const result = await adapter.getFiles(path, serverUuid);
     if (result.success) {
       setFiles(result.files);
@@ -195,6 +202,18 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  // Select mode owns the selection lifecycle: turning it on starts empty
+  // (already guaranteed since turning it off just cleared it below), turning
+  // it off clears whatever was picked so no hidden selection lingers and the
+  // bulk bar disappears.
+  const toggleSelectMode = () => {
+    setSelectMode(prev => {
+      const next = !prev;
+      if (!next) setSelected(new Set());
       return next;
     });
   };
@@ -400,9 +419,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   };
 
   const handleFileClick = (name: string, isDir: boolean, path?: string) => {
-    // Clicking any entry (navigate in, jump to folder, or open a file) clears
-    // the multi-select so it never carries across a folder change.
-    setSelected(new Set());
+    // Outside select mode there is no selection to worry about, so clear it
+    // defensively. In select mode a normal row click must never wipe the
+    // selection — only leaving select mode does that (toggleSelectMode).
+    if (!selectMode) setSelected(new Set());
      if(path && path !== currentPath) {
         const parentPath = path.substring(0, path.lastIndexOf('/'));
         setGlobalSearchTerm('');
@@ -827,13 +847,22 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
           <button title="New File/Folder" onClick={() => { if (blockReadOnly()) return; setPopupMode('create'); setNewName(''); setPopupError(''); }} className="btn btn-secondary p-2">
             <Plus size={20} />
           </button>
+          {!readOnly && (
+            <button
+              title="Toggle select mode"
+              onClick={toggleSelectMode}
+              className={`btn ${selectMode ? 'btn-primary' : 'btn-secondary'} px-3 h-[37px] text-sm`}
+            >
+              {selectMode ? 'Done' : 'Select'}
+            </button>
+          )}
         </div>
       </div>
       
       {isSearching && <p className="text-center text-xl text-(--warning)">Searching...</p>}
       {showLoading && !showUploadPopup && <p className="text-center text-xl text-(--warning)">Loading...</p>}
       {error && <p className="text-(--error) text-center text-xl mb-4">{error}</p>}
-      {!readOnly && !globalSearchTerm && selected.size > 0 && (
+      {selectMode && !readOnly && !globalSearchTerm && selected.size > 0 && (
         <div className="flex items-center justify-between gap-3 mb-3 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent-border)">
           <span className="text-sm font-medium text-(--accent-light)">{selected.size} selected</span>
           <div className="flex items-center gap-2">
@@ -851,6 +880,9 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       <ul className="space-y-2">
         {currentPath && !globalSearchTerm && (
           <li onClick={handleGoUp} className="server-row justify-between">
+            {selectMode && !readOnly && (
+              <span className="w-6 shrink-0" aria-hidden="true" />
+            )}
             <span className="flex flex-1 items-center min-w-0 truncate pr-4 text-(--base-09)">
               <CornerDownLeft size={36} className="mr-3 text-(--primary-light)" />
                <span className="text-lg">..</span>
@@ -859,17 +891,21 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         )}
         {sortedFiles.map((file) => (
           <li key={file.path || file.name} onClick={() => handleFileClick(file.name, file.is_dir, file.path)} className="server-row justify-between">
-            <span className="flex items-center flex-1 min-w-0 truncate pr-4 text-(--base-09)">
-              {!readOnly && !globalSearchTerm && (
+            {selectMode && !readOnly && !globalSearchTerm && (
+              <span
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center justify-center w-6 shrink-0"
+              >
                 <input
                   type="checkbox"
                   checked={selected.has(file.name)}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => { e.stopPropagation(); toggleSelected(file.name); }}
-                  className="accent-(--accent) w-4 h-4 mr-3 shrink-0 cursor-pointer"
+                  onChange={() => toggleSelected(file.name)}
+                  className="accent-(--accent) w-4 h-4 cursor-pointer"
                   title="Select for bulk download"
                 />
-              )}
+              </span>
+            )}
+            <span className="flex items-center flex-1 min-w-0 truncate pr-4 text-(--base-09)">
               {renderFileRepresentation(file)}
               <div>
                   <span className="text-lg">{file.name}</span>
