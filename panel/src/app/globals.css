@@ -619,6 +619,11 @@ input[type="number"] {
   z-index: 50;
 }
 .dropdown-item {
+  /* Flex keeps the leading icon inline with the label; without it the
+     Tailwind preflight `svg { display: block }` stacks the icon above the
+     text. The items carry their own `mr-3` for the icon-to-label gap. */
+  display: flex;
+  align-items: center;
   text-align: left;
   padding: 8px 10px;
   border-radius: var(--radius-md);
