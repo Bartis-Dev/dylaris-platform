@@ -164,11 +164,17 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 // them just causes confusion + the next restart re-creates them.
 // Note: "Gateway" is intentionally absent — it was retired as a standalone
 // module and its content moved into Infrastructure's Routes tab.
+// Note: "Tickets" is deliberately is_system=false (see database/db_tables.go
+// seedSystemModules) so it stays toggle-able (enable/disable) via the
+// !is_system path in ToggleModuleHandler; its delete protection therefore
+// has to come from this name-based guard, same as Library, rather than from
+// flipping is_system=true (which would also block disabling it).
 var builtInModules = map[string]bool{
 	"Servers":        true,
 	"Admin":          true,
 	"Infrastructure": true,
 	"Library":        true,
+	"Tickets":        true,
 }
 
 // DeleteModuleHandler DELETE /modules/{id} - RequireCap("settings.write") at the

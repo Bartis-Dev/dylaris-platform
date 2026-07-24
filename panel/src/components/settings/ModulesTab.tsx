@@ -27,8 +27,11 @@ interface ModulesTabProps {
 
 // Built-in modules cannot be deleted (kept in sync with Core's seed list +
 // builtInModules check in handlers/modules.go). Gateway was retired and its
-// content moved into Infrastructure's Routes tab.
-const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library']);
+// content moved into Infrastructure's Routes tab. Tickets is included here
+// even though it is_system=false server-side (it stays toggle-able) - only
+// deletion is blocked, both here (hides the button) and in Core (rejects the
+// request), same as Library.
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets']);
 
 interface SortableModuleCardProps {
     module: AppModule;
@@ -75,17 +78,24 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                 </div>
             </div>
             <div className="flex items-center gap-2">
-                {/* Role toggle — Servers is hard-locked to "all", Admin to "admin" */}
+                {/* Role toggle — Servers is hard-locked to "all", Admin and
+                    Infrastructure to "admin" (Infrastructure's own page
+                    hard-gates isAdmin, so the "all" option would never take
+                    effect anyway - the toggle is locked to avoid a misleading
+                    control) */}
                 {m.name === 'Servers' ? (
                     <div className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)" title="Always visible to all users">
                         <Users size={11} /> All
                     </div>
-                ) : m.name === 'Admin' ? (
+                ) : m.name === 'Admin' || m.name === 'Infrastructure' ? (
                     <div className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)" title="Always admin-only">
                         <ShieldCheck size={11} /> Admin
                     </div>
                 ) : (
-                    <div className="flex bg-(--base-03) p-0.5 rounded-md" title="Who can see this module">
+                    <div
+                        className="flex bg-(--base-03) p-0.5 rounded-md"
+                        title={m.name === 'Library' ? "All: Library becomes a browsable/downloadable tab for users (upload/delete stay admin-only). Admin: hidden from users." : "Who can see this module"}
+                    >
                         <button
                             type="button"
                             onClick={() => onRoleChange(m.id, 'all')}
