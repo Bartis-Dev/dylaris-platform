@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useParams } from 'next/navigation';
 import {
     Package, Search, Download, Trash2, ExternalLink,
-    CircleCheck, CircleAlert, AlertTriangle, Filter, Box, X,
+    CircleCheck, CircleAlert, AlertTriangle, Filter, Box, X, RefreshCw,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -18,6 +18,7 @@ import {
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
     type ModrinthVersion, type ModrinthCategory, type InstalledMod,
 } from '@/lib/api/modrinth';
+import { pickNewestMatchingVersion, compareInstalledVsLatest, type ModStatus } from '@/lib/modVersionCompare';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -26,6 +27,10 @@ import {
 // newest build for this server's MC version highlighted).
 
 type Section = 'browse' | 'installed';
+// Row status shown in the browse list: 'checking' is a UI-only state (the
+// matching-version fetch for an installed row is still in flight) layered on
+// top of the pure ModStatus from lib/modVersionCompare.
+type RowStatus = ModStatus | 'checking';
 
 const LOADER_OPTIONS = [
     'paper', 'spigot', 'bukkit', 'purpur',
@@ -62,7 +67,22 @@ export default function ServerContentPage() {
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
     const [installed, setInstalled] = useState<InstalledMod[]>([]);
-    const installedById = useMemo(() => new Set(installed.map(m => m.modrinthProjectId)), [installed]);
+    const installedByProject = useMemo(() => {
+        const m = new Map<string, InstalledMod>();
+        for (const im of installed) m.set(im.modrinthProjectId, im);
+        return m;
+    }, [installed]);
+
+    // Per-row "is there a newer matching build" state for BROWSE rows that are
+    // already installed. Keyed by Modrinth project id; a missing entry means
+    // "not fetched yet" (renders as 'checking'), distinct from an empty array
+    // (fetched, nothing matched the current filter). Only installed rows are
+    // fetched eagerly — not-installed rows resolve their install target
+    // on-click, same lazy pattern as opening the detail column.
+    const [installedRowVersions, setInstalledRowVersions] = useState<Map<string, ModrinthVersion[]>>(new Map());
+    // Project ids with an install/remove/update request in flight, for
+    // per-row spinner + disabled state.
+    const [busyProjects, setBusyProjects] = useState<Set<string>>(new Set());
 
     // Modpack cross-check: projectId -> the pack's version of that mod. Non-empty
     // only for a server installed from a modpack; drives the banner + warnings.
@@ -168,6 +188,46 @@ export default function ServerContentPage() {
         return () => { unsub(); };
     }, [serverId, refreshInstalled]);
 
+    // For browse rows that are already installed, fetch the version list
+    // filtered by the current loader + MC-version filter, so the row can show
+    // "Update available" without the user having to open the mod first. Scoped
+    // to the (small) installed-and-currently-visible subset — NOT every
+    // visible row — since Modrinth version lists are otherwise only fetched
+    // on demand (mod-open / install-click), and eagerly fetching for all ~20
+    // search hits on every keystroke would be a heavy, mostly-wasted burst of
+    // calls against not-yet-installed projects nobody asked about.
+    useEffect(() => {
+        if (!searchResult) return;
+        const hitsToCheck = searchResult.hits.filter(h => installedByProject.has(h.project_id));
+        if (hitsToCheck.length === 0) return;
+
+        // Drop stale entries for these ids immediately so a filter change
+        // shows 'checking' rather than a stale (possibly wrong) status while
+        // the refetch is in flight.
+        setInstalledRowVersions(prev => {
+            const next = new Map(prev);
+            for (const h of hitsToCheck) next.delete(h.project_id);
+            return next;
+        });
+
+        let cancelled = false;
+        const loaders = filterLoaders.length ? filterLoaders : undefined;
+        const versions = filterVersions.length ? filterVersions : undefined;
+        (async () => {
+            const entries = await Promise.all(hitsToCheck.map(async h => {
+                const list = await getModrinthVersions(h.slug, { loaders, versions });
+                return [h.project_id, list] as const;
+            }));
+            if (cancelled) return;
+            setInstalledRowVersions(prev => {
+                const next = new Map(prev);
+                for (const [id, list] of entries) next.set(id, list);
+                return next;
+            });
+        })();
+        return () => { cancelled = true; };
+    }, [searchResult, installedByProject, filterLoaders, filterVersions]);
+
     // ----- Project detail column -----
 
     const openProjectDetail = useCallback(async (slug: string) => {
@@ -207,25 +267,33 @@ export default function ServerContentPage() {
 
     // ----- Install / uninstall -----
 
-    const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
-        const file = pickPrimaryFile(version);
-        if (!file) { showToast('Version has no downloadable file', false); return; }
-
-        // Advisory, non-blocking modpack cross-check. Differentiated by wording
-        // (window.confirm cannot carry visual tone): the same-version case is
-        // informational, the other two lead with "Warning:".
+    // Advisory, non-blocking modpack cross-check. Differentiated by wording
+    // (window.confirm cannot carry visual tone): the same-version case is
+    // informational, the other two lead with "Warning:". Returns false if the
+    // user cancels (or the confirm should block the install). Shared by every
+    // install path (detail-pane version list, row Install, row Update) so a
+    // cancelled confirm is always evaluated BEFORE any destructive action
+    // (e.g. the row Update flow must not remove the old file first).
+    const confirmModpackCrossCheck = (project: ModrinthProject, version: ModrinthVersion): boolean => {
         const inPack = packByProject.get(project.id);
         if (inPack) {
             if (inPack.versionId === version.id) {
-                if (!window.confirm(`"${project.title}" is already in this server's modpack at this version. Install it again anyway?`)) return;
-            } else {
-                const packVer = inPack.versionNumber || 'a different version';
-                if (!window.confirm(`Warning: this server's modpack ships ${packVer} of "${project.title}". Installing ${version.version_number} may stop the server from starting, or leave players on the pack version unable to connect. Install anyway?`)) return;
+                return window.confirm(`"${project.title}" is already in this server's modpack at this version. Install it again anyway?`);
             }
-        } else if (packByProject.size > 0 && project.client_side === 'required') {
-            if (!window.confirm(`Warning: "${project.title}" must run on each player's client too, or they will not be able to connect. It is not part of the distributed modpack. Install anyway?`)) return;
+            const packVer = inPack.versionNumber || 'a different version';
+            return window.confirm(`Warning: this server's modpack ships ${packVer} of "${project.title}". Installing ${version.version_number} may stop the server from starting, or leave players on the pack version unable to connect. Install anyway?`);
         }
+        if (packByProject.size > 0 && project.client_side === 'required') {
+            return window.confirm(`Warning: "${project.title}" must run on each player's client too, or they will not be able to connect. It is not part of the distributed modpack. Install anyway?`);
+        }
+        return true;
+    };
 
+    // Fires the actual install call (no confirm — callers run
+    // confirmModpackCrossCheck first).
+    const doInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
+        const file = pickPrimaryFile(version);
+        if (!file) { showToast('Version has no downloadable file', false); return; }
         const res = await installMod(serverId, {
             projectId: project.id,
             projectSlug: project.slug,
@@ -243,6 +311,11 @@ export default function ServerContentPage() {
         }
     };
 
+    const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
+        if (!confirmModpackCrossCheck(project, version)) return;
+        await doInstall(project, version);
+    };
+
     const handleUninstall = async (m: InstalledMod) => {
         const res = await uninstallMod(serverId, m.id);
         if (res.success) {
@@ -251,6 +324,73 @@ export default function ServerContentPage() {
         } else {
             showToast(res.message || 'Uninstall failed', false);
         }
+    };
+
+    // ----- Per-row browse actions (install / remove / update) -----
+
+    const withBusy = async (projectId: string, fn: () => Promise<void>) => {
+        setBusyProjects(prev => new Set(prev).add(projectId));
+        try {
+            await fn();
+        } finally {
+            setBusyProjects(prev => {
+                const next = new Set(prev);
+                next.delete(projectId);
+                return next;
+            });
+        }
+    };
+
+    // Row "Install": resolve the newest version matching the current filter
+    // for this project (fetched lazily, on click — not eagerly for every
+    // browse row) and install it.
+    const handleRowInstall = (hit: ModrinthSearchHit) => withBusy(hit.project_id, async () => {
+        const loaders = filterLoaders.length ? filterLoaders : undefined;
+        const versions = filterVersions.length ? filterVersions : undefined;
+        const [project, candidates] = await Promise.all([
+            getModrinthProject(hit.slug),
+            getModrinthVersions(hit.slug, { loaders, versions }),
+        ]);
+        if (!project) { showToast('Failed to load project details', false); return; }
+        const latest = pickNewestMatchingVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions });
+        if (!latest) { showToast(`No version of "${hit.title}" matches the current loader / MC-version filter`, false); return; }
+        await handleInstall(project, latest);
+    });
+
+    const handleRowRemove = (installedMod: InstalledMod) => withBusy(installedMod.modrinthProjectId, async () => {
+        await handleUninstall(installedMod);
+    });
+
+    // Row "Update": remove the old file THEN install the newer one, so the
+    // mods/plugins folder never ends up holding both jars for the same
+    // project. The modpack cross-check confirm runs BEFORE the removal so a
+    // cancelled confirm never leaves the server with the mod uninstalled.
+    const handleRowUpdate = (hit: ModrinthSearchHit, installedMod: InstalledMod, latest: ModrinthVersion) =>
+        withBusy(hit.project_id, async () => {
+            const project = await getModrinthProject(hit.slug);
+            if (!project) { showToast('Failed to load project details', false); return; }
+            if (!confirmModpackCrossCheck(project, latest)) return;
+            const removeRes = await uninstallMod(serverId, installedMod.id);
+            if (!removeRes.success) {
+                showToast(removeRes.message || 'Update failed: could not remove the old version', false);
+                return;
+            }
+            await doInstall(project, latest);
+        });
+
+    // ----- Advanced toggle -----
+
+    const handleAdvancedToggle = () => {
+        setAdvanced(prev => {
+            const next = !prev;
+            if (!next) {
+                // Turning Advanced off resets the loader + MC-version filters
+                // back to the server's stored values (not just "clears" them).
+                setFilterLoaders(defaultLoader ? [defaultLoader] : []);
+                setFilterVersions(defaultMcVersion ? [defaultMcVersion] : []);
+            }
+            return next;
+        });
     };
 
     if (!server) return null;
@@ -268,16 +408,6 @@ export default function ServerContentPage() {
                         <> · auto-filter: <code className="font-mono">{[defaultLoader, defaultMcVersion].filter(Boolean).join(' · ')}</code></>
                     )}
                 </span>
-                <div className="ml-auto flex items-center gap-2">
-                    <button
-                        onClick={() => setAdvanced(a => !a)}
-                        className={`btn btn-secondary btn-sm ${advanced ? 'text-(--accent-light)' : ''}`}
-                        title="Toggle loader / version filters"
-                    >
-                        <Filter size={12} />
-                        {advanced ? 'Simple' : 'Advanced'}
-                    </button>
-                </div>
             </header>
 
             {/* Section strip */}
@@ -351,12 +481,31 @@ export default function ServerContentPage() {
                             </div>
                         </div>
 
-                        {/* Loader + MC-version filters, greyed until Advanced is on. */}
-                        <div className={`border-t border-(--base-03) pt-3 ${advanced ? '' : 'opacity-50 pointer-events-none select-none'}`}>
-                            <div className="flex items-center justify-between">
-                                <label className="input-label mb-0">Loaders</label>
-                                {!advanced && <span className="mono-label text-(--base-05)">Advanced</span>}
+                        {/* Advanced toggle — gates the loader / MC-version filters below.
+                            Turning it off resets both back to the server's stored values. */}
+                        <div className="border-t border-(--base-03) pt-3 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 text-xs font-medium text-(--base-09)">
+                                    <Filter size={11} className="text-(--base-06)" />
+                                    Advanced
+                                </div>
+                                <p className="text-[10px] text-(--base-06) mt-0.5">Edit loader / MC-version filters</p>
                             </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={advanced}
+                                onClick={handleAdvancedToggle}
+                                className={`toggle-track shrink-0 ${advanced ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                title="Toggle loader / version filters"
+                            >
+                                <span className={`toggle-knob ${advanced ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                            </button>
+                        </div>
+
+                        {/* Loader + MC-version filters, greyed until Advanced is on. */}
+                        <div className={advanced ? '' : 'opacity-50 pointer-events-none select-none'}>
+                            <label className="input-label mb-0">Loaders</label>
                             <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto">
                                 {LOADER_OPTIONS.map(l => {
                                     const on = filterLoaders.includes(l);
@@ -386,8 +535,9 @@ export default function ServerContentPage() {
                         </div>
                     </aside>
 
-                    {/* Result list (single column) */}
-                    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+                    {/* Result list (single column). Real min-width so it never
+                        collapses to unusable once the detail column claims its share. */}
+                    <div className="flex-1 min-w-[360px] flex flex-col overflow-hidden">
                         <div className="relative shrink-0 mb-3">
                             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
                             <input
@@ -412,22 +562,42 @@ export default function ServerContentPage() {
                             ) : !searchResult || searchResult.hits.length === 0 ? (
                                 <div className="text-center py-12 text-sm text-(--base-06)">No projects match.</div>
                             ) : (
-                                searchResult.hits.map(hit => (
-                                    <ModListRow
-                                        key={hit.project_id}
-                                        hit={hit}
-                                        installed={installedById.has(hit.project_id)}
-                                        selected={selectedSlug === hit.slug}
-                                        onClick={() => openProjectDetail(hit.slug)}
-                                    />
-                                ))
+                                searchResult.hits.map(hit => {
+                                    const installedMod = installedByProject.get(hit.project_id);
+                                    const candidates = installedMod ? installedRowVersions.get(hit.project_id) : undefined;
+                                    const status: RowStatus = !installedMod
+                                        ? 'not-installed'
+                                        : candidates === undefined
+                                            ? 'checking'
+                                            : compareInstalledVsLatest(installedMod.modrinthVersionId, candidates, { loaders: filterLoaders, mcVersions: filterVersions });
+                                    return (
+                                        <ModListRow
+                                            key={hit.project_id}
+                                            hit={hit}
+                                            status={status}
+                                            busy={busyProjects.has(hit.project_id)}
+                                            selected={selectedSlug === hit.slug}
+                                            onOpen={() => openProjectDetail(hit.slug)}
+                                            onInstall={() => handleRowInstall(hit)}
+                                            onRemove={() => installedMod && handleRowRemove(installedMod)}
+                                            onUpdate={() => {
+                                                if (!installedMod || !candidates) return;
+                                                const latest = pickNewestMatchingVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions });
+                                                if (latest) handleRowUpdate(hit, installedMod, latest);
+                                            }}
+                                        />
+                                    );
+                                })
                             )}
                         </div>
                     </div>
 
-                    {/* Detail column */}
+                    {/* Detail column — hidden below `lg` so it never squeezes the
+                        list to unusable on narrow windows; roughly half the
+                        remaining width from `lg` up, capped so it doesn't grow
+                        absurdly wide on very large screens. */}
                     {(projectDetail || projectLoading) && (
-                        <aside className="w-96 shrink-0 flex flex-col card overflow-hidden">
+                        <aside className="hidden lg:flex lg:w-[46%] lg:max-w-2xl shrink-0 flex-col card overflow-hidden">
                             {projectLoading || !projectDetail ? (
                                 <div className="p-4 space-y-3">
                                     <div className="flex items-start gap-3">
@@ -593,19 +763,45 @@ export default function ServerContentPage() {
 
 function ModListRow({
     hit,
-    installed,
+    status,
+    busy,
     selected,
-    onClick,
+    onOpen,
+    onInstall,
+    onRemove,
+    onUpdate,
 }: {
     hit: ModrinthSearchHit;
-    installed: boolean;
+    status: RowStatus;
+    busy: boolean;
     selected: boolean;
-    onClick: () => void;
+    onOpen: () => void;
+    onInstall: () => void;
+    onRemove: () => void;
+    onUpdate: () => void;
 }) {
+    // The row opens the detail column on click, but also hosts a nested real
+    // <button> for install/remove/update — a <button> can't nest another
+    // <button>, so the row itself is a div with button semantics (role +
+    // keyboard handling) and the action button stops propagation.
+    const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+        }
+    };
+    const stopAnd = (fn: () => void) => (e: MouseEvent) => {
+        e.stopPropagation();
+        fn();
+    };
+
     return (
-        <button
-            onClick={onClick}
-            className={`card p-3 text-left w-full flex items-start gap-3 transition-colors ${
+        <div
+            role="button"
+            tabIndex={0}
+            onClick={onOpen}
+            onKeyDown={handleKeyDown}
+            className={`card p-3 w-full flex items-start gap-3 transition-colors cursor-pointer focus:outline-none focus:border-(--accent-border) ${
                 selected ? 'border-(--accent-border)' : 'hover:border-(--base-04)'
             }`}
         >
@@ -621,9 +817,6 @@ function ModListRow({
                 <div className="flex items-center gap-2">
                     <span className="font-medium text-sm text-(--base-09) truncate">{hit.title}</span>
                     <span className="text-[10px] font-mono text-(--base-06) truncate">by {hit.author}</span>
-                    {installed && (
-                        <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm shrink-0 ml-auto">installed</span>
-                    )}
                 </div>
                 <p className="text-xs text-(--base-07) line-clamp-2 mt-0.5">{hit.description}</p>
                 <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 mt-1">
@@ -631,6 +824,37 @@ function ModListRow({
                     {hit.downloads.toLocaleString()}
                 </div>
             </div>
-        </button>
+
+            <div className="flex flex-col items-end gap-1.5 shrink-0">
+                {status === 'up-to-date' && (
+                    <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm">installed</span>
+                )}
+                {status === 'update-available' && (
+                    <span className="mono-label bg-(--warning-ghost) text-(--warning-light) px-1.5 rounded-sm">update available</span>
+                )}
+                {status === 'checking' && (
+                    <span className="mono-label bg-(--base-03) text-(--base-06) px-1.5 rounded-sm">checking…</span>
+                )}
+
+                {status === 'not-installed' && (
+                    <button onClick={stopAnd(onInstall)} disabled={busy} className="btn btn-primary btn-sm">
+                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
+                        Install
+                    </button>
+                )}
+                {status === 'update-available' && (
+                    <button onClick={stopAnd(onUpdate)} disabled={busy} className="btn btn-primary btn-sm">
+                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
+                        Update
+                    </button>
+                )}
+                {(status === 'up-to-date' || status === 'update-available') && (
+                    <button onClick={stopAnd(onRemove)} disabled={busy} className="btn btn-secondary btn-sm" title="Remove">
+                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} className="text-(--error)" />}
+                        Remove
+                    </button>
+                )}
+            </div>
+        </div>
     );
 }
