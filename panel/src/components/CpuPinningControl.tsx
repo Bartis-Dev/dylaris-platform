@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Layers, Wand2, Grid3x3 } from 'lucide-react';
 import { getNodeCpu, type NodeCpuTopology } from '@/lib/api';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
+import { groupCoresByCache, formatL3, formatClock } from '@/lib/cpuTopology';
 
 interface CpuPinningControlProps {
     nodeId?: number;            // node to fetch topology for; undefined => grid hidden (e.g. tag-targeted create)
@@ -87,6 +88,10 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
         ? topology.cores.filter(c => (!allowed || allowed.has(c.id)) && (load[String(c.id)] ?? 0) > 0).length
         : 0;
 
+    // Cache-domain grouping for the manual grid. Empty when no topology; a single
+    // synthetic group when the node reported no cache data (renders as a flat grid).
+    const cacheGroups = topology ? groupCoresByCache(topology.cores) : [];
+
     return (
         <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-3">
@@ -121,42 +126,66 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
                 <>
                     {topology ? (
                         <div className="flex flex-col gap-2">
-                            <div className="flex flex-wrap gap-1.5">
-                                {topology.cores.map(core => {
-                                    const isSel = selected.has(core.id);
-                                    const coreLoad = load[String(core.id)] ?? 0;
-                                    const inPool = !allowed || allowed.has(core.id);
-                                    return (
-                                        <button
-                                            key={core.id}
-                                            type="button"
-                                            disabled={disabled || !inPool}
-                                            onClick={() => toggleCore(core.id)}
-                                            title={inPool
-                                                ? `Core ${core.id}${topology.hybrid ? ` (${core.type === 'P' ? 'Performance' : core.type === 'E' ? 'Efficiency' : 'standard'})` : ''}${coreLoad > 0 ? ` · ${coreLoad} pinned` : ''}`
-                                                : "Outside this node's core pool"}
-                                            className={`relative w-12 h-12 rounded-md border flex flex-col items-center justify-center transition-colors disabled:cursor-not-allowed ${
-                                                !inPool
-                                                    ? 'border-(--base-04) text-(--base-07) opacity-40 cursor-not-allowed'
-                                                    : isSel
-                                                    ? 'border-(--accent) bg-(--accent-ghost) text-(--accent-light)'
-                                                    : 'border-(--base-04) text-(--base-07) hover:border-(--base-05) hover:text-(--base-09)'
-                                            } disabled:opacity-40`}
-                                        >
-                                            <span className="font-mono text-sm leading-none">{core.id}</span>
-                                            {topology.hybrid && core.type !== 'standard' && (
-                                                <span className={`font-mono text-[9px] leading-none mt-0.5 ${core.type === 'P' ? 'text-(--accent-light)' : 'text-(--base-06)'}`}>
-                                                    {core.type}
+                            <div className="flex flex-col gap-3">
+                                {cacheGroups.map(group => (
+                                    <div key={group.cacheGroup} className="flex flex-col gap-1.5">
+                                        {cacheGroups.length > 1 && (
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+                                                    L3 {formatL3(group.l3KB)}
                                                 </span>
-                                            )}
-                                            {coreLoad > 0 && (
-                                                <span className="absolute top-0.5 right-1 font-mono text-[9px] text-(--base-06)" title={`${coreLoad} server(s) pinned here`}>
-                                                    x{coreLoad}
-                                                </span>
-                                            )}
-                                        </button>
-                                    );
-                                })}
+                                                {group.isVCache && (
+                                                    <span className="font-mono text-[9px] uppercase tracking-[0.08em] px-1.5 py-0.5 rounded-sm bg-(--accent-ghost) text-(--accent-light)">
+                                                        3D V-Cache
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {group.cores.map(core => {
+                                                const isSel = selected.has(core.id);
+                                                const coreLoad = load[String(core.id)] ?? 0;
+                                                const inPool = !allowed || allowed.has(core.id);
+                                                const clock = formatClock(core.maxClockMHz);
+                                                return (
+                                                    <button
+                                                        key={core.id}
+                                                        type="button"
+                                                        disabled={disabled || !inPool}
+                                                        onClick={() => toggleCore(core.id)}
+                                                        title={inPool
+                                                            ? `Core ${core.id}${topology.hybrid ? ` (${core.type === 'P' ? 'Performance' : core.type === 'E' ? 'Efficiency' : 'standard'})` : ''}${clock ? ` · ${clock}Hz` : ''}${coreLoad > 0 ? ` · ${coreLoad} pinned` : ''}`
+                                                            : "Outside this node's core pool"}
+                                                        className={`relative w-12 h-12 rounded-md border flex flex-col items-center justify-center transition-colors disabled:cursor-not-allowed ${
+                                                            !inPool
+                                                                ? 'border-(--base-04) text-(--base-07) opacity-40 cursor-not-allowed'
+                                                                : isSel
+                                                                ? 'border-(--accent) bg-(--accent-ghost) text-(--accent-light)'
+                                                                : 'border-(--base-04) text-(--base-07) hover:border-(--base-05) hover:text-(--base-09)'
+                                                        } disabled:opacity-40`}
+                                                    >
+                                                        <span className="font-mono text-sm leading-none">{core.id}</span>
+                                                        {topology.hybrid && core.type !== 'standard' && (
+                                                            <span className={`font-mono text-[9px] leading-none mt-0.5 ${core.type === 'P' ? 'text-(--accent-light)' : 'text-(--base-06)'}`}>
+                                                                {core.type}
+                                                            </span>
+                                                        )}
+                                                        {clock && (
+                                                            <span className="font-mono text-[8px] leading-none mt-0.5 text-(--base-06)">
+                                                                {clock}
+                                                            </span>
+                                                        )}
+                                                        {coreLoad > 0 && (
+                                                            <span className="absolute top-0.5 right-1 font-mono text-[9px] text-(--base-06)" title={`${coreLoad} server(s) pinned here`}>
+                                                                x{coreLoad}
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                             <p className="text-[11px] text-(--base-06)">
                                 {selected.size === 0
