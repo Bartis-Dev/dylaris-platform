@@ -36,20 +36,23 @@ export function logLineClass(line: string): string {
     return levelClass(detectLevel(line) ?? DEFAULT_LEVEL);
 }
 
-const TIMESTAMP_PREFIX = /^\[\d{2}:\d{2}:\d{2}\]/;
 const STACK_FRAME = /^\s*at\s/;
 const EXCEPTION_SHAPE = /^[\w.$]+(Exception|Error)(:|$)/;
+const CAUSED_BY = /^Caused by:/;
 
 // A line with no level token of its own is a continuation of the previous
-// record (exception header / `at ...` stack frame) rather than a fresh
-// default-level record when it looks like one of these shapes, or - the
-// broadest signal - simply lacks the `[HH:MM:SS]` timestamp prefix that real
-// log records start with.
+// record only when it has a recognised stack-trace shape: an indented line
+// (`\tat ...`, `\t... N more`), a bare stack frame, an exception header
+// (`java.x.FooException: ...`), or a `Caused by:` chain. We deliberately do
+// NOT treat every line lacking a `[HH:MM:SS]` prefix as a continuation:
+// proxy consoles (Velocity/Waterfall/BungeeCord) use different timestamp
+// formats, so a broad "no timestamp" rule would bleed a record's colour into
+// unrelated fresh lines for the rest of the stream.
 function isContinuationLine(line: string): boolean {
     return /^\s/.test(line)
         || STACK_FRAME.test(line)
         || EXCEPTION_SHAPE.test(line)
-        || !TIMESTAMP_PREFIX.test(line);
+        || CAUSED_BY.test(line);
 }
 
 // Single-pass fold over a batch of console lines: lines that match a level

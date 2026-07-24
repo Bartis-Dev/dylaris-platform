@@ -31,9 +31,21 @@ describe('computeLineLevels', () => {
             '[12:00:00] [Server/ERROR]: boom',
             'java.nio.file.NoSuchFileException: /x',
             '\tat com.foo.Bar',
+            'Caused by: java.lang.NullPointerException',
+            '\t... 3 more',
             '[12:00:01] [Server/INFO]: ok',
         ];
-        expect(computeLineLevels(lines)).toEqual(['error', 'error', 'error', 'info']);
+        expect(computeLineLevels(lines)).toEqual(['error', 'error', 'error', 'error', 'error', 'info']);
+    });
+    it('does not bleed a level into a fresh non-timestamped record (proxy consoles)', () => {
+        // A plain line that is not an indented / stack-frame / exception /
+        // Caused-by shape is its own default-level record, even without a
+        // [HH:MM:SS] prefix - guards against proxy console formats.
+        const lines = [
+            '[12:00:00] [Server/ERROR]: boom',
+            'Player connected: Steve',
+        ];
+        expect(computeLineLevels(lines)).toEqual(['error', 'info']);
     });
 });
 
