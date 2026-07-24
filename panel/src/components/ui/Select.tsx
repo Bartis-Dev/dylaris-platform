@@ -25,7 +25,7 @@ export interface SelectProps {
 // `.input-field` class so it matches every other input pixel-for-pixel
 // (including the focus ring), and the menu reuses `.dropdown-menu` /
 // `.dropdown-item`. Keyboard navigation is delegated to the pure
-// `selectKeyReducer` — that logic is unit-tested there since this component
+// `selectKeyReducer`; that logic is unit-tested there since this component
 // has no DOM test tooling to exercise it directly.
 export default function Select({
     value,
@@ -42,7 +42,7 @@ export default function Select({
     const selectedIndex = options.findIndex(o => o.value === value);
     const selected = selectedIndex >= 0 ? options[selectedIndex] : undefined;
 
-    // Click-outside closes the dropdown — same pattern as NotificationsDropdown.
+    // Click-outside closes the dropdown, same pattern as NotificationsDropdown.
     useEffect(() => {
         const handler = (e: MouseEvent) => {
             if (!wrapRef.current?.contains(e.target as Node)) {
