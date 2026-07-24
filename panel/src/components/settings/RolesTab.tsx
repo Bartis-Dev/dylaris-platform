@@ -16,6 +16,7 @@ import {
 import { getUsers, type User } from '@/lib/api';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { MODE_LABELS, MODE_HELP } from '@/lib/access/accessMode';
 
 // Panel-admin Settings tab (F6): (A) the global permissions_mode 3-state
 // switch, (B) panel-role CRUD, (C) assigning a panel role + grant/deny
@@ -24,16 +25,10 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 // catalog endpoint - no hardcoded permission arrays.
 
 const MODE_OPTIONS: { value: PermissionsMode; label: string }[] = [
-    { value: 'off', label: 'Off' },
-    { value: 'simple', label: 'Simple' },
-    { value: 'advanced', label: 'Advanced' },
+    { value: 'off', label: MODE_LABELS.off },
+    { value: 'simple', label: MODE_LABELS.simple },
+    { value: 'advanced', label: MODE_LABELS.advanced },
 ];
-
-const MODE_HELP: Record<PermissionsMode, string> = {
-    off: 'Owners cannot delegate server access to invited friends at all. Only the owner and panel staff act on a server.',
-    simple: 'Owners assign ready-made preset roles to friends. Assign-only; no custom role creation.',
-    advanced: 'Owners can create custom server roles and apply granular per-friend capability overrides.',
-};
 
 type Toast = { msg: string; ok: boolean } | null;
 
