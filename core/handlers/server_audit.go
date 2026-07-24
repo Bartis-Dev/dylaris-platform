@@ -14,18 +14,19 @@ import (
 // Server audit event types — kept in one block so producers and consumers
 // share a single vocabulary. New events get appended here.
 const (
-	ServerAuditEventPowerAction        = "power_action"
-	ServerAuditEventMemberInvited      = "member_invited"
-	ServerAuditEventMemberRemoved      = "member_removed"
-	ServerAuditEventMemberPermsChanged = "member_perms_changed"
-	ServerAuditEventResourcesChanged   = "resources_changed"
-	ServerAuditEventNameChanged        = "name_changed"
-	ServerAuditEventSetup              = "setup"
-	ServerAuditEventReinstall          = "reinstall"
-	ServerAuditEventSubServerDeleted   = "subserver_deleted"
-	ServerAuditEventSubServerSwitched  = "subserver_switched"
-	ServerAuditEventDeleted            = "deleted"
-	ServerAuditEventForceOnChanged     = "audit_force_on_changed"
+	ServerAuditEventPowerAction            = "power_action"
+	ServerAuditEventMemberInvited          = "member_invited"
+	ServerAuditEventMemberRemoved          = "member_removed"
+	ServerAuditEventMemberPermsChanged     = "member_perms_changed"
+	ServerAuditEventResourcesChanged       = "resources_changed"
+	ServerAuditEventNameChanged            = "name_changed"
+	ServerAuditEventSetup                  = "setup"
+	ServerAuditEventReinstall              = "reinstall"
+	ServerAuditEventSubServerDeleted       = "subserver_deleted"
+	ServerAuditEventSubServerSwitched      = "subserver_switched"
+	ServerAuditEventDeleted                = "deleted"
+	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
+	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
 )
 
 // LogServerAudit appends one audit row when the server has audit enabled

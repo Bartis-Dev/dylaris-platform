@@ -27,6 +27,13 @@ type serverMetadataFakeStore struct {
 
 	updateErr error
 	updated   []loaderMetadataUpdate
+
+	// Audit observability: GetServerAuditState reports auditEnabled so
+	// LogServerAudit reaches InsertServerAudit (recorded here) instead of
+	// no-op'ing early, letting tests assert the audit event without wiring a
+	// real store.
+	auditEnabled bool
+	auditEvents  []*models.ServerAuditEvent
 }
 
 type loaderMetadataUpdate struct {
@@ -43,6 +50,15 @@ func (f *serverMetadataFakeStore) GetServerByID(id int) (*models.Server, error) 
 func (f *serverMetadataFakeStore) UpdateServerLoaderMetadata(id int, installerType, minecraftVersion, buildNumber string) error {
 	f.updated = append(f.updated, loaderMetadataUpdate{id, installerType, minecraftVersion, buildNumber})
 	return f.updateErr
+}
+
+func (f *serverMetadataFakeStore) GetServerAuditState(serverID int) (bool, bool, int, error) {
+	return f.auditEnabled, false, 0, nil
+}
+
+func (f *serverMetadataFakeStore) InsertServerAudit(ev *models.ServerAuditEvent) error {
+	f.auditEvents = append(f.auditEvents, ev)
+	return nil
 }
 
 // Events is left nil - SystemEventsPublisher.Publish is nil-safe on both the
@@ -78,7 +94,10 @@ func decodeMetadataErr(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 func TestDeclareServerLoaderMetadata_ValidPersists(t *testing.T) {
-	fs := &serverMetadataFakeStore{server: &models.Server{ID: 1, Status: "online", InstallerType: "upload", MinecraftVersion: ""}}
+	fs := &serverMetadataFakeStore{
+		server:       &models.Server{ID: 1, Status: "online", InstallerType: "upload", MinecraftVersion: ""},
+		auditEnabled: true,
+	}
 	rec := declareMetadataReqWithStore(fs, 1, map[string]interface{}{
 		"installerType":    "paper",
 		"minecraftVersion": "1.20.4",
@@ -101,6 +120,20 @@ func TestDeclareServerLoaderMetadata_ValidPersists(t *testing.T) {
 	got := fs.updated[0]
 	if got.id != 1 || got.installerType != "paper" || got.minecraftVersion != "1.20.4" {
 		t.Fatalf("update = %+v, want {1 paper 1.20.4 }", got)
+	}
+
+	if len(fs.auditEvents) != 1 {
+		t.Fatalf("audit events = %d, want 1: %+v", len(fs.auditEvents), fs.auditEvents)
+	}
+	ev := fs.auditEvents[0]
+	if ev.ServerID != 1 || ev.EventType != ServerAuditEventLoaderMetadataDeclared {
+		t.Fatalf("audit event = %+v, want serverID=1 eventType=%q", ev, ServerAuditEventLoaderMetadataDeclared)
+	}
+	if ev.Metadata["from_installer_type"] != "upload" || ev.Metadata["to_installer_type"] != "paper" {
+		t.Fatalf("audit metadata installer_type = %+v", ev.Metadata)
+	}
+	if ev.Metadata["from_minecraft_version"] != "" || ev.Metadata["to_minecraft_version"] != "1.20.4" {
+		t.Fatalf("audit metadata minecraft_version = %+v", ev.Metadata)
 	}
 }
 
@@ -130,6 +163,23 @@ func TestDeclareServerLoaderMetadata_PassesThroughOptionalBuildNumber(t *testing
 	}
 	if len(fs.updated) != 1 || fs.updated[0].buildNumber != "47.2.0" {
 		t.Fatalf("update = %+v, want buildNumber=47.2.0", fs.updated)
+	}
+}
+
+// A repeat declare that omits buildNumber must not clobber one set by an
+// earlier declare/install - the handler substitutes the server's current
+// value before calling the store.
+func TestDeclareServerLoaderMetadata_PreservesBuildNumberWhenOmitted(t *testing.T) {
+	fs := &serverMetadataFakeStore{server: &models.Server{ID: 1, Status: "online", BuildNumber: "47.2.0"}}
+	rec := declareMetadataReqWithStore(fs, 1, map[string]interface{}{
+		"installerType":    "neoforge",
+		"minecraftVersion": "1.21.1",
+	})
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.updated) != 1 || fs.updated[0].buildNumber != "47.2.0" {
+		t.Fatalf("update = %+v, want buildNumber preserved as 47.2.0", fs.updated)
 	}
 }
 

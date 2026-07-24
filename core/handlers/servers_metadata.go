@@ -66,10 +66,25 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// A repeat declare with no build number must not clobber one set by an
+	// earlier declare (or by SetupServer/ReinstallServer) - preserve the
+	// server's current value when the request omits it.
+	if buildNumber == "" {
+		buildNumber = srv.BuildNumber
+	}
+
 	if err := h.state.Store.UpdateServerLoaderMetadata(serverID, installerType, minecraftVersion, buildNumber); err != nil {
 		sendJSONError(w, "Failed to update server metadata", 500)
 		return
 	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventLoaderMetadataDeclared, actorID, "", map[string]interface{}{
+		"from_installer_type":    srv.InstallerType,
+		"to_installer_type":      installerType,
+		"from_minecraft_version": srv.MinecraftVersion,
+		"to_minecraft_version":   minecraftVersion,
+	})
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 

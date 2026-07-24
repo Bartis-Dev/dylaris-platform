@@ -128,14 +128,17 @@ export default function ServerContentPage() {
         }
         setDeclareSubmitting(true);
         setDeclareError(null);
-        const res = await declareServerLoaderMetadata(serverId, loader, mcVersion);
-        setDeclareSubmitting(false);
-        if (res.success) {
-            setDeclareOpen(false);
-            await refreshServers();
-            showToast('Loader and Minecraft version declared', true);
-        } else {
-            setDeclareError(res.message || 'Failed to declare loader/version');
+        try {
+            const res = await declareServerLoaderMetadata(serverId, loader, mcVersion);
+            if (res.success) {
+                setDeclareOpen(false);
+                await refreshServers();
+                showToast('Loader and Minecraft version declared', true);
+            } else {
+                showToast(res.message || 'Failed to declare loader/version', false);
+            }
+        } finally {
+            setDeclareSubmitting(false);
         }
     };
 
