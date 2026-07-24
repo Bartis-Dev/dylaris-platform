@@ -27,6 +27,9 @@ export const NODE_LABEL = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 // Semver-ish version (e.g. the beam minVersion): 1.2.3 with optional pre/build.
 export const SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
+// Minecraft version, e.g. 1.21 or 1.21.4. Mirrors validate.McVersion.
+export const MC_VERSION = /^[0-9]+\.[0-9]+(\.[0-9]+)?$/;
+
 // Length limits [min, max] (or a single max) used across free-text forms.
 export const LIMITS = {
     ticketTitle: [3, 200],
@@ -42,6 +45,7 @@ export const isEmail = (s: string) => EMAIL.test(s);
 export const isServerName = (s: string) => SERVER_NAME.test(s);
 export const isPackSlug = (s: string) => PACK_SLUG.test(s);
 export const isSemver = (s: string) => SEMVER.test(s);
+export const isMcVersion = (s: string) => MC_VERSION.test(s);
 
 // sanitizeServerName coerces a raw name into the SERVER_NAME alphabet (the
 // create-time behaviour): strip invalid chars (spaces are kept), trim to 50,

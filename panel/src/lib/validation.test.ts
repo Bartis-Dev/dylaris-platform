@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isUsername, isEmail, isServerName, isPackSlug, isSemver, sanitizeServerName, clampInt } from './validation';
+import { isUsername, isEmail, isServerName, isPackSlug, isSemver, isMcVersion, sanitizeServerName, clampInt } from './validation';
 
 describe('isUsername (mirrors validate.Username)', () => {
     it('accepts valid handles', () => {
@@ -23,6 +23,16 @@ describe('isPackSlug / isEmail / isSemver', () => {
     it('slug', () => { expect(isPackSlug('my-pack_1')).toBe(true); expect(isPackSlug('My Pack')).toBe(false); expect(isPackSlug('a/b')).toBe(false); });
     it('email', () => { expect(isEmail('a@b.co')).toBe(true); expect(isEmail('no-at')).toBe(false); });
     it('semver', () => { expect(isSemver('1.2.3')).toBe(true); expect(isSemver('1.2')).toBe(false); expect(isSemver('1.x.0')).toBe(false); });
+});
+
+describe('isMcVersion (mirrors validate.McVersion)', () => {
+    it('accepts a bare major.minor or major.minor.patch', () => {
+        expect(isMcVersion('1.21')).toBe(true);
+        expect(isMcVersion('1.21.4')).toBe(true);
+    });
+    it('rejects empty, non-numeric, and 4-segment versions', () => {
+        for (const s of ['', 'latest', '1', '1.20.4.5']) expect(isMcVersion(s)).toBe(false);
+    });
 });
 
 describe('sanitizeServerName', () => {

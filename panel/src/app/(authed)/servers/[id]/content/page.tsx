@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type Mou
 import { useParams } from 'next/navigation';
 import {
     Package, Search, Download, Trash2, ExternalLink,
-    CircleCheck, CircleAlert, AlertTriangle, Filter, Box, X, RefreshCw,
+    CircleCheck, CircleAlert, AlertTriangle, Filter, Box, X, RefreshCw, Info,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -19,6 +19,9 @@ import {
     type ModrinthVersion, type ModrinthCategory, type InstalledMod,
 } from '@/lib/api/modrinth';
 import { pickNewestMatchingVersion, compareInstalledVsLatest, type ModStatus } from '@/lib/modVersionCompare';
+import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
+import { isMcVersion } from '@/lib/validation';
+import { declareServerLoaderMetadata } from '@/lib/api';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -32,12 +35,6 @@ type Section = 'browse' | 'installed';
 // top of the pure ModStatus from lib/modVersionCompare.
 type RowStatus = ModStatus | 'checking';
 
-const LOADER_OPTIONS = [
-    'paper', 'spigot', 'bukkit', 'purpur',
-    'fabric', 'forge', 'quilt', 'neoforge',
-    'velocity', 'waterfall', 'bungeecord',
-];
-
 const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
     paper: 'plugin', spigot: 'plugin', bukkit: 'plugin', purpur: 'plugin',
     velocity: 'plugin', waterfall: 'plugin', bungeecord: 'plugin',
@@ -46,7 +43,7 @@ const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
 
 export default function ServerContentPage() {
     const params = useParams();
-    const { servers } = useAppData();
+    const { servers, refreshServers } = useAppData();
     const serverId = Number(params?.id);
     const server = servers.find(s => s.id === serverId);
 
@@ -100,6 +97,47 @@ export default function ServerContentPage() {
         setToast({ msg, ok });
         setTimeout(() => setToast(null), 3500);
     }, []);
+
+    // ----- Optional "declare loader + MC version" flow (imported servers) -----
+    // Recommended, never forced: an imported/uploaded server keeps a blank
+    // MinecraftVersion and a non-loader InstallerType, which silently disables
+    // auto-filtering + version highlighting above. Declaring them here is a
+    // metadata-only PATCH (core DeclareServerLoaderMetadata) - it never
+    // reinstalls anything, and skipping it leaves the manual/Advanced filters
+    // from Task 8 fully usable.
+    const [declareDismissed, setDeclareDismissed] = useState(false);
+    const [declareOpen, setDeclareOpen] = useState(false);
+    const [declareLoader, setDeclareLoader] = useState('');
+    const [declareMcVersion, setDeclareMcVersion] = useState('');
+    const [declareSubmitting, setDeclareSubmitting] = useState(false);
+    const [declareError, setDeclareError] = useState<string | null>(null);
+
+    const handleDeclareOpen = () => {
+        setDeclareLoader(defaultLoader && isKnownLoader(defaultLoader) ? defaultLoader : '');
+        setDeclareMcVersion(defaultMcVersion || '');
+        setDeclareError(null);
+        setDeclareOpen(true);
+    };
+
+    const handleDeclareSubmit = async () => {
+        const loader = declareLoader.trim().toLowerCase();
+        const mcVersion = declareMcVersion.trim();
+        if (!isKnownLoader(loader) || !isMcVersion(mcVersion)) {
+            setDeclareError('Pick a loader and a valid Minecraft version (e.g. 1.20.4).');
+            return;
+        }
+        setDeclareSubmitting(true);
+        setDeclareError(null);
+        const res = await declareServerLoaderMetadata(serverId, loader, mcVersion);
+        setDeclareSubmitting(false);
+        if (res.success) {
+            setDeclareOpen(false);
+            await refreshServers();
+            showToast('Loader and Minecraft version declared', true);
+        } else {
+            setDeclareError(res.message || 'Failed to declare loader/version');
+        }
+    };
 
     const projectType = useMemo<'mod' | 'plugin' | undefined>(() => {
         if (advanced || !defaultLoader) return undefined;
@@ -396,6 +434,7 @@ export default function ServerContentPage() {
     if (!server) return null;
 
     const unknownLoader = !advanced && defaultLoader && PROJECT_TYPE_FOR_LOADER[defaultLoader] === undefined;
+    const imported = isImportedServer(server);
 
     return (
         <main className="flex-1 flex flex-col p-6 gap-4 overflow-hidden">
@@ -430,6 +469,82 @@ export default function ServerContentPage() {
                     </button>
                 ))}
             </nav>
+
+            {imported && !declareDismissed && (
+                <div className="shrink-0 flex items-start gap-2 px-3 py-2.5 rounded-md border border-(--accent-border) bg-(--accent-ghost) text-xs text-(--base-07)">
+                    <Info size={13} className="mt-0.5 shrink-0 text-(--accent-light)" />
+                    <div className="flex-1 min-w-0">
+                        {!declareOpen ? (
+                            <>
+                                <p className="text-(--base-09) font-medium">Declare this server's loader + Minecraft version</p>
+                                <p className="mt-0.5">
+                                    This looks like an imported server - it's missing loader/version info, so auto-filtering and
+                                    version highlighting above are off. Declaring them is optional, recommended, and does not
+                                    reinstall anything; manual/Advanced filtering keeps working either way.
+                                </p>
+                                <button onClick={handleDeclareOpen} className="btn btn-primary btn-sm mt-2">
+                                    Declare now
+                                </button>
+                            </>
+                        ) : (
+                            <form
+                                onSubmit={e => { e.preventDefault(); handleDeclareSubmit(); }}
+                                className="space-y-2"
+                            >
+                                <div className="flex items-end gap-2 flex-wrap">
+                                    <div>
+                                        <label className="input-label mb-0">Loader</label>
+                                        <select
+                                            value={declareLoader}
+                                            onChange={e => setDeclareLoader(e.target.value)}
+                                            disabled={declareSubmitting}
+                                            className="input-field text-xs mt-1"
+                                        >
+                                            <option value="">Select…</option>
+                                            {LOADER_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="input-label mb-0">Minecraft version</label>
+                                        <input
+                                            type="text"
+                                            value={declareMcVersion}
+                                            onChange={e => setDeclareMcVersion(e.target.value)}
+                                            disabled={declareSubmitting}
+                                            placeholder="1.20.4"
+                                            className="input-field input-mono text-xs mt-1 w-28"
+                                        />
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        disabled={declareSubmitting || !declareLoader || !isMcVersion(declareMcVersion.trim())}
+                                        className="btn btn-primary btn-sm"
+                                    >
+                                        {declareSubmitting && <RefreshCw size={11} className="animate-spin" />}
+                                        Save
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setDeclareOpen(false)}
+                                        disabled={declareSubmitting}
+                                        className="btn btn-secondary btn-sm"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                                {declareError && <p className="text-(--error-light)">{declareError}</p>}
+                            </form>
+                        )}
+                    </div>
+                    <button
+                        onClick={() => setDeclareDismissed(true)}
+                        className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0"
+                        title="Dismiss"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
 
             {packByProject.size > 0 && (
                 <div className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md border border-(--base-04) bg-(--base-03) text-xs text-(--base-07)">

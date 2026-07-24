@@ -755,6 +755,17 @@ func (s *PostgresStore) UpdateServerSetup(id int, image, command, activeSubServe
 	return err
 }
 
+// UpdateServerLoaderMetadata persists ONLY installer_type/minecraft_version/
+// build_number, unlike UpdateServerSetup which also rewrites game_image/
+// start_command/active_sub_server/extra_jvm_flags. Used by the metadata-only
+// "declare loader/version" path for an imported server, which must never touch
+// those other columns or trigger an install.
+func (s *PostgresStore) UpdateServerLoaderMetadata(id int, installerType, minecraftVersion, buildNumber string) error {
+	_, err := s.db.Exec("UPDATE servers SET installer_type = $1, minecraft_version = $2, build_number = $3 WHERE id = $4",
+		installerType, minecraftVersion, buildNumber, id)
+	return err
+}
+
 func (s *PostgresStore) UpdateServerActiveSubServer(id int, subServer string) error {
 	_, err := s.db.Exec("UPDATE servers SET active_sub_server = $1 WHERE id = $2", subServer, id)
 	return err

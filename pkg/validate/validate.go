@@ -120,6 +120,23 @@ var installerTypes = map[string]bool{
 // IsInstallerType reports whether t is a known server source/installer type.
 func IsInstallerType(t string) bool { return installerTypes[t] }
 
+// modrinthLoaders is the allowlist of Modrinth "loader" facet values a
+// server's declared InstallerType may carry when used to drive the Content
+// tab's auto-filtering (platform/panel .../servers/[id]/content/page.tsx
+// LOADER_OPTIONS - kept in sync here). Deliberately broader than
+// installerTypes above: that set is an install SOURCE (paper/vanilla/fabric/
+// ...), this is every server platform mods/plugins can target, including
+// bukkit/spigot/purpur/quilt and the proxy platforms (velocity/waterfall/
+// bungeecord) which are never an install source but are valid loader tags.
+var modrinthLoaders = map[string]bool{
+	"paper": true, "spigot": true, "bukkit": true, "purpur": true,
+	"fabric": true, "forge": true, "quilt": true, "neoforge": true,
+	"velocity": true, "waterfall": true, "bungeecord": true,
+}
+
+// IsModrinthLoader reports whether t is a known Modrinth loader tag.
+func IsModrinthLoader(t string) bool { return modrinthLoaders[t] }
+
 // ResourceBounds validates a server's requested resources. ramMB is megabytes,
 // cpu is cores (may be fractional), diskMB is megabytes, hostCPU is the node's
 // core count (0 = unknown, so the CPU ceiling is skipped). Returns "" when the

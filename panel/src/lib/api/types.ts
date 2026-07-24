@@ -328,6 +328,19 @@ export const migrateServerStorage = (id: number, targetPath: string) =>
 export const updateServerName = (id: number, name: string) =>
     fetchAPI(`/servers/${id}/name`, { method: 'PATCH', body: JSON.stringify({ name }) });
 
+// Metadata-only declare (no reinstall): persists installerType/minecraftVersion/
+// buildNumber for an imported/uploaded server so the Content tab's loader/
+// version auto-filtering starts working. See core DeclareServerLoaderMetadata.
+export const declareServerLoaderMetadata = (
+    id: number,
+    installerType: string,
+    minecraftVersion: string,
+    buildNumber?: string,
+) => fetchAPI(`/servers/${id}/loader-metadata`, {
+    method: 'PATCH',
+    body: JSON.stringify({ installerType, minecraftVersion, buildNumber: buildNumber || '' }),
+});
+
 export const updateServerResources = (
     id: number,
     ram: number,

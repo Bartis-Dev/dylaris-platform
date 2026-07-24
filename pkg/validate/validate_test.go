@@ -178,6 +178,19 @@ func TestIsInstallerType(t *testing.T) {
 	}
 }
 
+func TestIsModrinthLoader(t *testing.T) {
+	for _, ok := range []string{"paper", "spigot", "bukkit", "purpur", "fabric", "forge", "quilt", "neoforge", "velocity", "waterfall", "bungeecord"} {
+		if !IsModrinthLoader(ok) {
+			t.Errorf("IsModrinthLoader(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "PAPER", "vanilla", "upload", "modpack", "rm -rf"} {
+		if IsModrinthLoader(bad) {
+			t.Errorf("IsModrinthLoader(%q) = true, want false", bad)
+		}
+	}
+}
+
 func TestResourceBounds(t *testing.T) {
 	if r := ResourceBounds(1024, 2, 5120, 8); r != "" {
 		t.Errorf("valid resources rejected: %q", r)

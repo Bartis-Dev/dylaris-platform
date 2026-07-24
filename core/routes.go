@@ -49,6 +49,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/switch":                      "server.settings.write",
 	"/api/servers/{id:[0-9]+}/name":                        "server.settings.write",
 	"/api/servers/{id:[0-9]+}/resources":                   "server.settings.write",
+	"/api/servers/{id:[0-9]+}/loader-metadata":             "server.settings.write",
 	"/api/servers/{id:[0-9]+}":                             "server.delete",
 	"/api/servers/{id:[0-9]+}/sub-servers/{subServerName}": "server.delete",
 	"/api/servers/{id:[0-9]+}/proxy":                       "network.write",
@@ -1123,6 +1124,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SwitchSubServer))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/name", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerName))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/resources", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerResources))).Methods("PATCH")
+	// Metadata-only declare (no reinstall): persists installerType/minecraftVersion/
+	// buildNumber for an imported server so the Content tab's loader/version
+	// auto-filtering starts working. See servers_metadata.go.
+	api.HandleFunc("/servers/{id:[0-9]+}/loader-metadata", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.DeclareServerLoaderMetadata))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.read")(consoleHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/stream", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.read")(consoleHandler.StreamConsole))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/console/command", authHandler.AuthMiddleware(appState.Authz.RequireCap("console.send")(consoleHandler.SendCommand))).Methods("POST")

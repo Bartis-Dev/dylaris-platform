@@ -108,6 +108,12 @@ type Store interface {
 	UpdateServerStatus(id int, status string) error
 	UpdateServerDesiredState(id int, desiredState string) error
 	UpdateServerSetup(id int, image, command, activeSubServer, extraJvmFlags, installerType, minecraftVersion, buildNumber string) error
+	// UpdateServerLoaderMetadata persists ONLY installer_type/minecraft_version/
+	// build_number - the "declare metadata" path for an imported server. Unlike
+	// UpdateServerSetup it never touches game_image/start_command/
+	// active_sub_server/extra_jvm_flags and the caller never dispatches an
+	// install/reinstall command, so this cannot trigger a reinstall.
+	UpdateServerLoaderMetadata(id int, installerType, minecraftVersion, buildNumber string) error
 	UpdateServerActiveSubServer(id int, subServer string) error
 	UpdateServerName(id int, name string) error
 	UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error
