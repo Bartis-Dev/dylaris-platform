@@ -11,7 +11,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import {
     rconList, rconKick, rconBan, rconUnban, rconOp, rconDeop,
     rconWhitelistAdd, rconWhitelistRemove, rconTell, getRconConfig,
-    parsePlayerList, type OnlinePlayer,
+    parsePlayerList, friendlyRconError, type OnlinePlayer,
 } from '@/lib/api/rcon';
 import { getFileContent } from '@/lib/api';
 import RconConfigCard from '@/components/RconConfigCard';
@@ -84,7 +84,12 @@ export default function ServerPlayersPage() {
     const uuid = server?.uuid || '';
 
     // With RCON off, the effective section is always 'rcon' (the only usable
-    // one); the user's chosen section resumes once RCON is enabled.
+    // one); the user's chosen section resumes once RCON is enabled. This is
+    // also what gates the auto rconList below against a server that has been
+    // enabled but not yet restarted: RconConfigCard only reports enabled=true
+    // through onEnabledChange once it has confirmed (post-restart) that RCON
+    // is actually reachable, so rconEnabled here stays false - and this
+    // section stays forced to 'rcon' - until then.
     const effectiveSection: Section = rconEnabled ? section : 'rcon';
 
     // Load the RCON state once so we know whether to lock the other sections.
@@ -118,7 +123,11 @@ export default function ServerPlayersPage() {
         if (effectiveSection === 'online') {
             const res = await rconList(serverId);
             if (!res.success) {
-                setActionError(res.error || 'RCON unavailable');
+                // A dial/connection error here means RCON was enabled but the
+                // server has not restarted since (or crashed after) - never
+                // show the raw Go dial string (it also leaks the internal
+                // mc_<uuid> container hostname).
+                setActionError(friendlyRconError(res.error, 'RCON unavailable'));
                 setOnline([]);
             } else {
                 setOnline(parsePlayerList(res.output || ''));

@@ -179,6 +179,14 @@ type rconConfigResponse struct {
 	HasSecret bool   `json:"hasSecret"`
 	Password  string `json:"password,omitempty"` // populated only when regenerated
 	Message   string `json:"message,omitempty"`
+	// RestartRequired is true whenever this call actually rewrote
+	// server.properties (srv.ActiveSubServer != ""). MC only opens/re-reads the
+	// RCON listener at JVM start, so the change is inert until the server
+	// restarts - this lets the panel render that state deterministically
+	// instead of inferring it from a later connection-refused error. Set
+	// regardless of enabled/disabled direction: disabling also rewrites the
+	// file and is equally inert until restart. No auto-restart happens here.
+	RestartRequired bool `json:"restartRequired"`
 }
 
 // GetConfig GET /api/servers/{id}/rcon/config — returns enabled/port +
@@ -270,12 +278,13 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(rconConfigResponse{
-		Success:   true,
-		Enabled:   req.Enabled,
-		Port:      port,
-		HasSecret: password != "",
-		Password:  exposeNew,
-		Message:   "RCON config saved and written to server.properties. Restart the server to apply.",
+		Success:         true,
+		Enabled:         req.Enabled,
+		Port:            port,
+		HasSecret:       password != "",
+		Password:        exposeNew,
+		Message:         "RCON config saved and written to server.properties. Restart the server to apply.",
+		RestartRequired: srv.ActiveSubServer != "",
 	})
 }
 

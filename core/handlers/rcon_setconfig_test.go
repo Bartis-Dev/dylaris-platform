@@ -390,3 +390,58 @@ func TestRconSetConfig_DisableSkipsPropsWhenNoSubServer(t *testing.T) {
 		t.Fatalf("setRconCalls = %+v, want one call with enabled=false", fs.setRconCalls)
 	}
 }
+
+// --- restartRequired signal (the "raw connection-refused" fix) ---
+//
+// MC only opens/re-reads the RCON listener at JVM start, so a server.properties
+// write against a server that is already running is inert until it restarts.
+// SetConfig must NEVER trigger that restart itself (owner decision: no
+// auto-restart) - it only has to report whether one is needed, so the panel
+// can render a deterministic "restart required" state instead of inferring it
+// from a later connection-refused error. restartRequired must track exactly
+// whether server.properties was actually touched (srv.ActiveSubServer != ""),
+// independent of the enabled/disabled direction, and the DB flag/properties
+// must still be persisted exactly as before - with no restart triggered from
+// this handler.
+func TestRconSetConfig_RestartRequired(t *testing.T) {
+	cases := []struct {
+		name            string
+		activeSubServer string
+		enabled         bool
+		wantRestart     bool
+	}{
+		{"enabling on an installed server needs a restart", "survival", true, true},
+		{"disabling on an installed server still rewrites the file, so it needs a restart too", "survival", false, true},
+		{"disabling on a not-yet-installed server touches nothing, no restart needed", "", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &rconConfigFakeStore{
+				server:       &models.Server{ID: 1, OwnerName: "alice", UUID: "srv-uuid", NodeID: 7, ActiveSubServer: c.activeSubServer},
+				rconPassword: "kept-secret",
+			}
+			h := newRconConfigHandler(fs)
+			rec := httptest.NewRecorder()
+			h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": c.enabled, "port": 25575}))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+			resp := decodeRconConfigResp(t, rec)
+			if resp.RestartRequired != c.wantRestart {
+				t.Fatalf("RestartRequired = %v, want %v", resp.RestartRequired, c.wantRestart)
+			}
+			// The DB flag is still persisted exactly as before - this endpoint
+			// reports the need for a restart, it does not perform one.
+			if len(fs.setRconCalls) != 1 || fs.setRconCalls[0].enabled != c.enabled {
+				t.Fatalf("setRconCalls = %+v, want one call with enabled=%v", fs.setRconCalls, c.enabled)
+			}
+			wantPropsCalls := 0
+			if c.activeSubServer != "" {
+				wantPropsCalls = 1
+			}
+			if len(fs.applyPropsCalls) != wantPropsCalls {
+				t.Fatalf("applyPropsCalls = %+v, want %d call(s)", fs.applyPropsCalls, wantPropsCalls)
+			}
+		})
+	}
+}

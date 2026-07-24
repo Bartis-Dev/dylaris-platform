@@ -17,6 +17,11 @@ export interface RconConfig {
     hasSecret: boolean;
     password?: string;
     message?: string;
+    // True when this SetConfig call rewrote server.properties. MC only opens
+    // the RCON listener at JVM start, so the change is inert until the server
+    // restarts - the panel uses this instead of guessing from a later
+    // connection-refused error.
+    restartRequired?: boolean;
 }
 
 export async function execRcon(serverId: number, command: string, timeoutMs?: number): Promise<RconResponse> {
@@ -76,6 +81,23 @@ export function parsePlayerList(out: string): OnlinePlayer[] {
     const tail = out.slice(idx + 1).trim();
     if (!tail) return [];
     return tail.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name }));
+}
+
+// A raw Go dial error (e.g. "dial mc_xxx:25575: dial tcp ...: connect:
+// connection refused") is technical noise to an end user and leaks the
+// internal container hostname. Almost always it means the RCON config was
+// just saved but the server has not restarted yet (MC only opens the
+// listener at JVM start), so any RCON call fails until then. Map that class
+// of error to one clear, actionable message instead of showing the raw string.
+const RCON_DIAL_ERROR_PATTERN = /dial tcp|connection refused|no such host|i\/o timeout/i;
+
+export function isRconDialError(error?: string): boolean {
+    return !!error && RCON_DIAL_ERROR_PATTERN.test(error);
+}
+
+export function friendlyRconError(error?: string, fallback = 'RCON unavailable'): string {
+    if (isRconDialError(error)) return 'RCON not reachable yet - restart the server.';
+    return error || fallback;
 }
 
 export const rconList = (serverId: number) => execRcon(serverId, 'list');

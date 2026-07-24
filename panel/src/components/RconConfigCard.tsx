@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Terminal, Copy, RefreshCw, Eye, EyeOff, Save, AlertTriangle,
-    CircleCheck, CircleAlert, Play,
+    CircleCheck, CircleAlert, Play, RotateCcw,
 } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon } from '@/lib/api/rcon';
+import { serverPower } from '@/lib/api';
 
 // RCON enable/password card. Lives as the RCON sub-section of the Players
 // tab. Generates a 24-byte hex password on first enable, supports manual
@@ -32,6 +33,17 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
     const [testing, setTesting] = useState(false);
     const [testOutput, setTestOutput] = useState<{ ok: boolean; text: string } | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // Set when a Save actually rewrote server.properties (Core's
+    // restartRequired) while enabled=true - the running server (if any) has
+    // not picked it up yet, so we hold off treating RCON as live until an
+    // explicit restart + reachability check succeed. No auto-restart (owner
+    // decision) - the operator drives it via the button below.
+    const [needsRestart, setNeedsRestart] = useState(false);
+    const [restarting, setRestarting] = useState(false);
+    // Guards the post-restart reachability poll against setting state after
+    // the card has unmounted (e.g. the operator navigates away mid-poll).
+    const restartPollRef = useRef<{ cancelled: boolean } | null>(null);
+    useEffect(() => () => { if (restartPollRef.current) restartPollRef.current.cancelled = true; }, []);
 
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -63,14 +75,61 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
         setPort(res.port);
         setHasSecret(res.hasSecret);
         setDirty(false);
-        onEnabledChange?.(res.enabled);
         if (res.password) {
             setRevealed(res.password);
             showToast('Password regenerated. Copy it now — it won\'t be shown again.', true);
         } else {
             showToast(res.message || 'Saved.', true);
         }
+        if (res.enabled && res.restartRequired) {
+            // server.properties changed but MC has not reopened the RCON
+            // listener yet - do NOT optimistically unlock the Players tabs.
+            // Wait for the operator to restart and for a reachability check
+            // to actually confirm RCON is live.
+            setNeedsRestart(true);
+        } else {
+            setNeedsRestart(false);
+            onEnabledChange?.(res.enabled);
+        }
     }, [serverId, enabled, port, showToast, onEnabledChange]);
+
+    const handleRestart = useCallback(async () => {
+        setRestarting(true);
+        try {
+            const powerRes: any = await serverPower(serverId, 'restart');
+            if (powerRes && (powerRes.success === false || powerRes.error)) {
+                showToast(powerRes.error || powerRes.message || 'Restart failed', false);
+                setRestarting(false);
+                return;
+            }
+        } catch {
+            showToast('Restart request failed', false);
+            setRestarting(false);
+            return;
+        }
+        // MC needs a few seconds to boot before the RCON listener is up; poll
+        // reachability instead of guessing a fixed delay. Re-runs the same
+        // exec path the Test command uses (no new endpoint).
+        const token = { cancelled: false };
+        restartPollRef.current = token;
+        const maxAttempts = 12;
+        const delayMs = 5000;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            if (token.cancelled) return;
+            const test = await execRcon(serverId, 'list');
+            if (token.cancelled) return;
+            if (test.success) {
+                setNeedsRestart(false);
+                setRestarting(false);
+                onEnabledChange?.(true);
+                showToast('Server restarted. RCON is live.', true);
+                return;
+            }
+        }
+        setRestarting(false);
+        showToast('Server restarted but RCON is still not reachable. Check the console.', false);
+    }, [serverId, onEnabledChange, showToast]);
 
     const handleTest = useCallback(async () => {
         const cmd = testCmd.trim();
@@ -176,6 +235,19 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                     Save
                 </button>
             </div>
+
+            {needsRestart && (
+                <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-md bg-(--warning-ghost) border border-(--warning)/30 text-(--base-08) text-xs">
+                    <span className="flex items-center gap-1.5">
+                        <AlertTriangle size={13} className="shrink-0 text-(--warning-light)" />
+                        RCON enabled - restart the server to apply.
+                    </span>
+                    <button onClick={handleRestart} className="btn btn-secondary btn-sm shrink-0" disabled={restarting}>
+                        <RotateCcw size={12} className={restarting ? 'animate-spin' : ''} />
+                        {restarting ? 'Restarting…' : 'Restart now'}
+                    </button>
+                </div>
+            )}
 
             {/* Test command — quick sanity check from inside the panel */}
             <div className="border-t border-(--base-03) pt-3">
