@@ -480,11 +480,11 @@ export default function BackupsTab() {
                                         <button
                                             type="button"
                                             onClick={() => setEditing({ ...editing, config: { ...(editing.config as object), forcePathStyle: !(editing.config as unknown as S3Config).forcePathStyle } })}
-                                            className="toggle-track"
+                                            className={`toggle-track ${(editing.config as unknown as S3Config).forcePathStyle ? 'toggle-track-on' : 'toggle-track-off'}`}
                                             role="switch"
                                             aria-checked={(editing.config as unknown as S3Config).forcePathStyle}
                                         >
-                                            <span className={`toggle-knob ${(editing.config as unknown as S3Config).forcePathStyle ? 'translate-x-5 bg-(--accent)' : 'translate-x-0.5 bg-(--base-05)'}`} />
+                                            <span className={`toggle-knob ${(editing.config as unknown as S3Config).forcePathStyle ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                         </button>
                                     </div>
                                     <p className="text-xs text-(--base-06)">Hetzner Object Storage needs path-style ON. AWS S3 / Cloudflare R2 typically OFF.</p>
@@ -496,11 +496,11 @@ export default function BackupsTab() {
                                 <button
                                     type="button"
                                     onClick={() => setEditing({ ...editing, isDefault: !editing.isDefault })}
-                                    className="toggle-track"
+                                    className={`toggle-track ${editing.isDefault ? 'toggle-track-on' : 'toggle-track-off'}`}
                                     role="switch"
                                     aria-checked={editing.isDefault}
                                 >
-                                    <span className={`toggle-knob ${editing.isDefault ? 'translate-x-5 bg-(--accent)' : 'translate-x-0.5 bg-(--base-05)'}`} />
+                                    <span className={`toggle-knob ${editing.isDefault ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                 </button>
                             </div>
                         </div>

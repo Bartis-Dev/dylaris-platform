@@ -60,16 +60,19 @@ function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
             </div>
             <div className="flex items-center">
                 {def.type === 'toggle' && (
-                    <button
-                        id={`prop-${def.key}`}
-                        type="button"
-                        onClick={() => commit(!(value as boolean))}
-                        className="toggle-track"
-                        role="switch"
-                        aria-checked={value as boolean}
-                    >
-                        <span className={`toggle-knob ${value ? 'translate-x-5 bg-(--accent)' : 'translate-x-0.5 bg-(--base-05)'}`} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            id={`prop-${def.key}`}
+                            type="button"
+                            onClick={() => commit(!(value as boolean))}
+                            className={`toggle-track ${value ? 'toggle-track-on' : 'toggle-track-off'}`}
+                            role="switch"
+                            aria-checked={value as boolean}
+                        >
+                            <span className={`toggle-knob ${value ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                        </button>
+                        <span className="mono-label">{value ? 'On' : 'Off'}</span>
+                    </div>
                 )}
                 {def.type === 'text' && (
                     <input
@@ -87,19 +90,21 @@ function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
                         value={value as string}
                         maxLength={def.maxLength}
                         onChange={e => commit(e.target.value)}
-                        className="input-field w-80 min-h-20 font-mono text-xs leading-relaxed"
+                        className="input-field w-72 min-h-20 font-mono text-xs leading-relaxed"
                     />
                 )}
                 {def.type === 'number' && (
-                    <input
-                        id={`prop-${def.key}`}
-                        type="number"
-                        value={value as number}
-                        min={def.min}
-                        max={def.max}
-                        onChange={e => commit(Number(e.target.value))}
-                        className="input-field w-32 text-right tabular-nums"
-                    />
+                    <div className="w-72 flex justify-end">
+                        <input
+                            id={`prop-${def.key}`}
+                            type="number"
+                            value={value as number}
+                            min={def.min}
+                            max={def.max}
+                            onChange={e => commit(Number(e.target.value))}
+                            className="input-field w-32 text-right tabular-nums"
+                        />
+                    </div>
                 )}
                 {def.type === 'slider' && (
                     <div className="flex items-center gap-3 w-72">

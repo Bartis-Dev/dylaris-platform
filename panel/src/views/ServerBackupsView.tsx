@@ -169,11 +169,11 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
                         <button
                             type="button"
                             onClick={() => updateField('enabled', !job.enabled)}
-                            className="toggle-track"
+                            className={`toggle-track ${(job.enabled !== false) ? 'toggle-track-on' : 'toggle-track-off'}`}
                             role="switch"
                             aria-checked={job.enabled !== false}
                         >
-                            <span className={`toggle-knob ${(job.enabled !== false) ? 'translate-x-5 bg-(--accent)' : 'translate-x-0.5 bg-(--base-05)'}`} />
+                            <span className={`toggle-knob ${(job.enabled !== false) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                         </button>
                     </div>
                 </div>

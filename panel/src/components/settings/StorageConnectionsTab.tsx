@@ -223,11 +223,11 @@ export default function StorageConnectionsTab() {
                                 <button
                                     type="button"
                                     onClick={() => setConfig({ forcePathStyle: !editing.config.forcePathStyle })}
-                                    className="toggle-track"
+                                    className={`toggle-track ${editing.config.forcePathStyle ? 'toggle-track-on' : 'toggle-track-off'}`}
                                     role="switch"
                                     aria-checked={!!editing.config.forcePathStyle}
                                 >
-                                    <span className={`toggle-knob ${editing.config.forcePathStyle ? 'translate-x-5 bg-(--accent)' : 'translate-x-0.5 bg-(--base-05)'}`} />
+                                    <span className={`toggle-knob ${editing.config.forcePathStyle ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                 </button>
                             </div>
                             <p className="text-xs text-(--base-06)">Hetzner Object Storage needs path-style ON. AWS S3 / Cloudflare R2 typically OFF.</p>
