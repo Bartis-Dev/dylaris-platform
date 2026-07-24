@@ -30,6 +30,12 @@ interface AccessGrantFormProps {
     onCancel: () => void;
 }
 
+// State is seeded once from `editing` via the useState initializers below.
+// A caller that reuses one instance across edit targets (edit A, then edit B,
+// then a new invite) MUST pass a `key` that changes per target
+// (e.g. key={editing ? `edit-${editing.username}-${editing.serverId ?? 'acct'}` : 'new'})
+// so React remounts the form and the fields refresh; otherwise it keeps
+// showing the previous target's values.
 export default function AccessGrantForm({ mode, ownedServers, catalog, roles, presets, editing, showToast, onSaved, onCancel }: AccessGrantFormProps) {
     const [username, setUsername] = useState(editing?.username ?? '');
     const [serverId, setServerId] = useState(editing?.serverId != null ? String(editing.serverId) : '');
