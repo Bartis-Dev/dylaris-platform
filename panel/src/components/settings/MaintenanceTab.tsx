@@ -117,7 +117,8 @@ export default function MaintenanceTab() {
                         type="datetime-local"
                         value={state.expectedEnd ? toLocalInput(state.expectedEnd) : ''}
                         onChange={e => setState({ ...state, expectedEnd: e.target.value ? fromLocalInput(e.target.value) : '' })}
-                        className="input-field w-full"
+                        style={{ colorScheme: 'dark' }}
+                        className="input-field maintenance-datetime w-full"
                     />
                     <p className="text-xs text-(--base-06)">Used in the banner as a countdown + as a Retry-After hint on 503 responses.</p>
                 </div>

@@ -161,7 +161,7 @@ function SettingsLayoutInner({
         <>
             <div className="flex-1 flex gap-6 min-h-0 overflow-hidden">
                 {/* Left vertical grouped settings sidebar */}
-                <nav className="w-52 shrink-0 overflow-y-auto border-r border-(--base-03) pr-3 flex flex-col gap-5 pt-1">
+                <nav className="w-52 shrink-0 overflow-y-auto border-r border-(--base-03) pr-3 flex flex-col gap-7 pt-1">
                     {groups.map(group => (
                         <div key={group.group} className="flex flex-col gap-1">
                             <span className="mono-label px-3">{group.group}</span>
@@ -175,10 +175,10 @@ function SettingsLayoutInner({
                                         href={href}
                                         replace
                                         onClick={e => handleTabClick(e, href)}
-                                        className={`px-3 py-2 rounded-md text-sm font-medium transition-colors text-left ${
+                                        className={`px-3 py-2 rounded-r-md text-sm font-medium transition-colors text-left border-l-[3px] ${
                                             isActive
-                                                ? 'bg-(--accent)/10 text-(--accent-light)'
-                                                : 'text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
+                                                ? 'border-(--accent) bg-(--accent)/10 text-(--accent-light)'
+                                                : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
                                         }`}
                                     >
                                         {tab.label}
