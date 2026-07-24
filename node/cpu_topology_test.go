@@ -77,6 +77,9 @@ func TestUniformTopology(t *testing.T) {
 		if c.ID != i || c.Type != "standard" || c.Sibling != -1 {
 			t.Fatalf("core %d unexpected: %+v", i, c)
 		}
+		if c.MaxClockMHz != 0 || c.CacheGroup != -1 || c.L3KB != 0 {
+			t.Fatalf("core %d display fields must be absent (0/-1/0): %+v", i, c)
+		}
 	}
 	if topo.Hybrid {
 		t.Fatal("uniform topology must not be hybrid")

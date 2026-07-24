@@ -16,9 +16,12 @@ import (
 // Type is "P" (performance), "E" (efficiency) or "standard" (uniform / unknown).
 // Sibling is the hyperthread partner's logical id, or -1 when none / unknown.
 type CPUCore struct {
-	ID      int    `json:"id"`
-	Type    string `json:"type"`
-	Sibling int    `json:"sibling"`
+	ID          int    `json:"id"`
+	Type        string `json:"type"`
+	Sibling     int    `json:"sibling"`
+	MaxClockMHz int    `json:"maxClockMHz"` // HW max clock, from cpuinfo_max_freq; 0 = unknown
+	CacheGroup  int    `json:"cacheGroup"`  // 0-based L3 cache-domain index; -1 = unknown
+	L3KB        int    `json:"l3KB"`        // L3 size of that domain in KB; 0 = unknown
 }
 
 // CPUTopology is the host CPU layout reported to Core for the pinning UI.
@@ -133,6 +136,21 @@ func scanCPUTopology() *CPUTopology {
 		cores = append(cores, CPUCore{ID: id, Type: ctype, Sibling: sibling})
 	}
 
+	// Best-effort display enrichment (X3D / V-Cache grouping + max clock). Every
+	// read is independent and degrades only its own field to the absent value on
+	// error, so the scan itself never fails because of these.
+	cacheKeys := make([]string, len(cores))
+	for i, c := range cores {
+		if khz, ok := readIntFile(fmt.Sprintf("%s/cpu%d/cpufreq/cpuinfo_max_freq", base, c.ID)); ok {
+			cores[i].MaxClockMHz = khzToMHz(khz)
+		}
+		cores[i].L3KB = parseCacheSize(readFileTrim(fmt.Sprintf("%s/cpu%d/cache/index3/size", base, c.ID)))
+		cacheKeys[i] = compactCPUList(parseCPUList(readFileTrim(fmt.Sprintf("%s/cpu%d/cache/index3/shared_cpu_list", base, c.ID))))
+	}
+	for i, g := range cacheGroupIndices(cacheKeys) {
+		cores[i].CacheGroup = g
+	}
+
 	return &CPUTopology{
 		LogicalCount:  len(ids),
 		PhysicalCount: len(physical),
@@ -146,7 +164,7 @@ func uniformTopology() *CPUTopology {
 	n := runtime.NumCPU()
 	cores := make([]CPUCore, n)
 	for i := 0; i < n; i++ {
-		cores[i] = CPUCore{ID: i, Type: "standard", Sibling: -1}
+		cores[i] = CPUCore{ID: i, Type: "standard", Sibling: -1, MaxClockMHz: 0, CacheGroup: -1, L3KB: 0}
 	}
 	return &CPUTopology{
 		LogicalCount:  n,
