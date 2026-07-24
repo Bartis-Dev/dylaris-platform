@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { createEventSource } from '@/lib/sse';
-import { logLineClass } from '@/lib/consoleLog';
+import { levelClass, computeLineLevels } from '@/lib/consoleLog';
 import { Power, Send, Cpu, MemoryStick } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
@@ -79,6 +79,11 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
 
   const activeSubServer = server.activeSubServer || '';
+
+  // Continuation lines (exception header + `at ...` stack frames) carry no
+  // level token of their own, so they inherit the level of the record they
+  // follow - computed in one pass so the render loop below stays a simple map.
+  const lineLevels = useMemo(() => computeLineLevels(lines), [lines]);
 
   // Stats stream (was passed as prop from Dashboard previously)
   useEffect(() => {
@@ -237,7 +242,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           <p className="text-(--base-06) italic">Waiting for server output...</p>
         ) : (
           lines.map((line, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-all leading-5 ${logLineClass(line)}`}>
+            <div key={i} className={`whitespace-pre-wrap break-all leading-5 ${levelClass(lineLevels[i])}`}>
               {parseAnsiLine(line)}
             </div>
           ))
