@@ -153,7 +153,7 @@ export default function ServerPlayersPage() {
     const runRcon = async (label: string, fn: () => Promise<{ success: boolean; error?: string; output?: string }>) => {
         const res = await fn();
         if (!res.success) {
-            showToast(`${label}: ${res.error || 'failed'}`, false);
+            showToast(`${label}: ${friendlyRconError(res.error, 'failed')}`, false);
         } else {
             showToast(`${label} ✓`, true);
             refresh();

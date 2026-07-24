@@ -5,7 +5,7 @@ import {
     Terminal, Copy, RefreshCw, Eye, EyeOff, Save, AlertTriangle,
     CircleCheck, CircleAlert, Play, RotateCcw,
 } from 'lucide-react';
-import { getRconConfig, setRconConfig, execRcon } from '@/lib/api/rcon';
+import { getRconConfig, setRconConfig, execRcon, friendlyRconError } from '@/lib/api/rcon';
 import { serverPower } from '@/lib/api';
 
 // RCON enable/password card. Lives as the RCON sub-section of the Players
@@ -140,7 +140,7 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
         setTesting(false);
         setTestOutput({
             ok: res.success,
-            text: res.success ? (res.output || '(no output)') : (res.error || 'RCON request failed'),
+            text: res.success ? (res.output || '(no output)') : friendlyRconError(res.error, 'RCON request failed'),
         });
     }, [serverId, testCmd]);
 
@@ -263,12 +263,12 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                         onKeyDown={e => { if (e.key === 'Enter') handleTest(); }}
                         placeholder="e.g. list"
                         className="input-field input-mono flex-1"
-                        disabled={!enabled || !hasSecret}
+                        disabled={!enabled || !hasSecret || needsRestart}
                     />
                     <button
                         onClick={handleTest}
                         className="btn btn-secondary btn-sm"
-                        disabled={testing || !enabled || !hasSecret}
+                        disabled={testing || !enabled || !hasSecret || needsRestart}
                     >
                         {testing ? 'Running…' : 'Run'}
                     </button>
