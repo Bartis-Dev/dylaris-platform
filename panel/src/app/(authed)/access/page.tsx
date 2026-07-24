@@ -1,25 +1,37 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ShieldCheck, Plus, Trash2, CircleCheck, CircleAlert } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, CircleCheck, CircleAlert } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getPermissionsMode, getCatalog, getPresets,
     type PermissionsMode, type CatalogScope, type Preset,
 } from '@/lib/api/authzCatalog';
-import { listGrants, assignGrant, revokeGrant, type Grant } from '@/lib/api/grants';
+import { listGrants, revokeGrant, type Grant } from '@/lib/api/grants';
 import { listServerRoles, type ServerRole } from '@/lib/api/serverRoles';
 import { SkeletonList } from '@/components/Skeleton';
 import AccessServerRoles from '@/components/access/AccessServerRoles';
-import AccessAdvancedGrants from '@/components/access/AccessAdvancedGrants';
+import AccessGrantForm from '@/components/access/AccessGrantForm';
+import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode } from '@/lib/access/accessMode';
 
-// Owner-facing delegation UI. Behavior branches on the account's
-// permissions_mode:
+// Owner-facing delegation UI, master-detail layout. Behavior branches on the
+// account's permissions_mode:
 //   off      - delegation is disabled platform-wide; informational only.
-//   simple   - assign-only preset grants.
-//   advanced - per-server custom roles (AccessServerRoles) plus per-friend
-//              grant/deny assignment (AccessAdvancedGrants).
-// The grants list + revoke is shared across simple and advanced.
+//   simple   - "Full-only": invite a friend as a complete server admin.
+//   advanced - "Admin-roles": named per-server roles plus per-friend
+//              grant/deny capability overrides.
+// The sidebar mirrors settings/layout.tsx's grouped-nav style; the right
+// pane is a single detail panel driven by the `panel` state machine below.
+
+type Panel =
+    | { kind: 'empty' }
+    | { kind: 'detail'; grant: Grant }
+    | { kind: 'form'; editing: Grant | null }
+    | { kind: 'roles' };
+
+function sameGrant(a: Grant, username: string, serverId: number | null): boolean {
+    return a.username === username && a.serverId === serverId;
+}
 
 export default function AccessPage() {
     const { servers } = useAppData();
@@ -35,7 +47,7 @@ export default function AccessPage() {
     const [serverRoles, setServerRoles] = useState<ServerRole[]>([]);
     const [serverRolesLoading, setServerRolesLoading] = useState(true);
 
-    const [form, setForm] = useState({ username: '', serverId: '', presetId: '', inherit: false });
+    const [panel, setPanel] = useState<Panel>({ kind: 'empty' });
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     const showToast = useCallback((msg: string, ok = true) => {
@@ -74,33 +86,12 @@ export default function AccessPage() {
         refreshServerRoles();
     }, [refreshGrants, refreshServerRoles]);
 
-    const handleAssign = async () => {
-        const username = form.username.trim();
-        if (!username) { showToast('Username required', false); return; }
-        const preset = presets.find(p => p.id === form.presetId);
-        if (!preset) { showToast('Pick a preset', false); return; }
-        const res = await assignGrant({
-            username,
-            serverId: form.serverId ? Number(form.serverId) : null,
-            serverRoleId: null,
-            grantCaps: preset.capabilities,
-            denyCaps: [],
-            inherit: form.inherit,
-        });
-        if (res.success) {
-            showToast('Grant created.', true);
-            setForm({ username: '', serverId: '', presetId: '', inherit: false });
-            refreshGrants();
-        } else {
-            showToast(res.message || 'Assign failed', false);
-        }
-    };
-
     const handleRevoke = async (g: Grant) => {
         const res = await revokeGrant(g.username, g.serverId);
         if (res.success) {
             showToast('Grant revoked.', true);
             refreshGrants();
+            setPanel({ kind: 'empty' });
         } else {
             showToast(res.message || 'Revoke failed', false);
         }
@@ -115,138 +106,170 @@ export default function AccessPage() {
         );
     }
 
+    const fullCaps = fullAccessCaps(presets);
+
     return (
-        <main className="flex-1 overflow-y-auto p-6 max-w-4xl">
-            <h1 className="h-page mb-6">Access</h1>
+        <main className="flex-1 overflow-y-auto p-6">
+            <div className="flex items-center gap-3 mb-6">
+                <h1 className="h-page">Access</h1>
+                <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 py-0.5 rounded-sm">
+                    {modeLabel(mode)}
+                </span>
+                <span className="mono-label text-(--base-05)">Managed in Settings -&gt; Roles</span>
+            </div>
 
             {mode === 'off' && (
-                <div className="card p-8 flex flex-col items-center text-center gap-2 mb-4">
+                <div className="card p-8 flex flex-col items-center text-center gap-2 max-w-4xl">
                     <ShieldCheck size={28} className="text-(--base-05)" />
                     <p className="text-sm text-(--base-07)">
-                        Delegation is disabled. Ask an admin to enable it in Settings -&gt; Roles.
+                        Delegation is off. Only you and panel staff can act on your servers. An admin can enable it in Settings -&gt; Roles.
                     </p>
                 </div>
             )}
 
-            {mode === 'simple' && (
-                <div className="card p-6 mb-4">
-                    <h2 className="text-sm font-medium text-(--base-09) mb-4">New grant</h2>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="input-label">Friend&apos;s username</label>
-                            <input
-                                type="text"
-                                value={form.username}
-                                onChange={e => setForm({ ...form, username: e.target.value })}
-                                className="input-field w-full"
-                                placeholder="friend-username"
-                                maxLength={64}
+            {mode !== 'off' && (
+                <div className="flex gap-6">
+                    <nav className="w-52 shrink-0 border-r border-(--base-03) pr-3 flex flex-col gap-7">
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center justify-between px-3">
+                                <span className="mono-label">Invited</span>
+                                <button
+                                    onClick={() => setPanel({ kind: 'form', editing: null })}
+                                    className="text-(--accent-light) hover:text-(--accent)"
+                                    aria-label="Invite"
+                                >
+                                    <Plus size={14} />
+                                </button>
+                            </div>
+
+                            {grantsLoading ? (
+                                <div className="px-3">
+                                    <SkeletonList rows={3} />
+                                </div>
+                            ) : grants.length === 0 ? (
+                                <p className="px-3 text-xs text-(--base-06)">No one invited yet.</p>
+                            ) : (
+                                grants.map(g => {
+                                    const isActive = panel.kind === 'detail' && sameGrant(panel.grant, g.username, g.serverId);
+                                    return (
+                                        <button
+                                            key={`${g.username}:${g.serverId ?? 'account'}`}
+                                            onClick={() => setPanel({ kind: 'detail', grant: g })}
+                                            className={`px-3 py-2 rounded-r-md text-left border-l-[3px] transition-colors ${
+                                                isActive
+                                                    ? 'border-(--accent) bg-(--accent)/10 text-(--accent-light)'
+                                                    : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
+                                            }`}
+                                        >
+                                            <div className="text-sm font-medium truncate">{g.username}</div>
+                                            <div className="mono-label text-(--base-06) truncate">
+                                                {g.accountWide ? 'Account-wide' : g.serverName} &middot; {describeGrantAccess(g, fullCaps)}
+                                            </div>
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        {mode === 'advanced' && (
+                            <div className="flex flex-col gap-1">
+                                <span className="mono-label px-3">Manage</span>
+                                <button
+                                    onClick={() => setPanel({ kind: 'roles' })}
+                                    className={`px-3 py-2 rounded-r-md text-left text-sm font-medium border-l-[3px] transition-colors ${
+                                        panel.kind === 'roles'
+                                            ? 'border-(--accent) bg-(--accent)/10 text-(--accent-light)'
+                                            : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
+                                    }`}
+                                >
+                                    Roles
+                                </button>
+                            </div>
+                        )}
+                    </nav>
+
+                    <div className="flex-1 min-w-0">
+                        {panel.kind === 'empty' && (
+                            <div className="card p-8 flex flex-col items-center text-center gap-2">
+                                <ShieldCheck size={28} className="text-(--base-05)" />
+                                <p className="text-sm text-(--base-07)">
+                                    Select an invited user on the left, or invite a new one.
+                                </p>
+                            </div>
+                        )}
+
+                        {panel.kind === 'detail' && (() => {
+                            const g = panel.grant;
+                            const editable = canEditInMode(g, mode, fullCaps);
+                            return (
+                                <div className="card p-6 max-w-xl">
+                                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                                        <h2 className="text-sm font-medium text-(--base-09)">{g.username}</h2>
+                                        <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">
+                                            {g.accountWide ? 'Account-wide' : g.serverName}
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-(--base-07) mb-1">
+                                        Access: {describeGrantAccess(g, fullCaps)}
+                                    </p>
+                                    {g.inherit && (
+                                        <p className="text-xs text-(--base-06) mb-1">
+                                            Cascades to the servers behind this proxy
+                                        </p>
+                                    )}
+                                    {!editable && (
+                                        <p className="text-xs text-(--base-06) mb-3">
+                                            This grant predates full-only mode; revoke and re-invite to change it.
+                                        </p>
+                                    )}
+                                    <div className="flex items-center gap-2 mt-4">
+                                        {editable && (
+                                            <button
+                                                onClick={() => setPanel({ kind: 'form', editing: g })}
+                                                className="btn btn-secondary btn-sm"
+                                            >
+                                                <Pencil size={12} />
+                                                Edit
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => handleRevoke(g)}
+                                            className="btn btn-secondary btn-sm"
+                                        >
+                                            <Trash2 size={12} className="text-(--error)" />
+                                            Revoke
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        {panel.kind === 'form' && (mode === 'simple' || mode === 'advanced') && (
+                            <AccessGrantForm
+                                key={panel.editing ? `edit-${panel.editing.username}-${panel.editing.serverId ?? 'acct'}` : 'new'}
+                                mode={mode}
+                                ownedServers={ownedServers}
+                                catalog={catalog}
+                                roles={serverRoles}
+                                presets={presets}
+                                editing={panel.editing}
+                                showToast={showToast}
+                                onSaved={() => { refreshGrants(); setPanel({ kind: 'empty' }); }}
+                                onCancel={() => setPanel({ kind: 'empty' })}
                             />
-                        </div>
+                        )}
 
-                        <div>
-                            <label className="input-label">Scope</label>
-                            <select
-                                value={form.serverId}
-                                onChange={e => setForm({ ...form, serverId: e.target.value })}
-                                className="input-field w-full"
-                            >
-                                <option value="">Account-wide (all servers)</option>
-                                {ownedServers.map(s => (
-                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="input-label">Preset</label>
-                            <select
-                                value={form.presetId}
-                                onChange={e => setForm({ ...form, presetId: e.target.value })}
-                                className="input-field w-full"
-                            >
-                                <option value="">Select a preset...</option>
-                                {presets.map(p => (
-                                    <option key={p.id} value={p.id}>{p.label}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <label className="flex items-center gap-2 text-sm text-(--base-08) cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={form.inherit}
-                                onChange={e => setForm({ ...form, inherit: e.target.checked })}
+                        {panel.kind === 'roles' && (
+                            <AccessServerRoles
+                                catalog={catalog}
+                                roles={serverRoles}
+                                loading={serverRolesLoading}
+                                onRolesChanged={refreshServerRoles}
+                                showToast={showToast}
                             />
-                            Inherit future capability additions to this preset
-                        </label>
-
-                        <div>
-                            <button onClick={handleAssign} className="btn btn-primary btn-sm">
-                                <Plus size={12} />
-                                Add grant
-                            </button>
-                        </div>
+                        )}
                     </div>
                 </div>
-            )}
-
-            {mode === 'advanced' && (
-                <>
-                    <AccessServerRoles
-                        catalog={catalog}
-                        roles={serverRoles}
-                        loading={serverRolesLoading}
-                        onRolesChanged={refreshServerRoles}
-                        showToast={showToast}
-                    />
-
-                    <AccessAdvancedGrants
-                        catalog={catalog}
-                        roles={serverRoles}
-                        ownedServers={ownedServers}
-                        showToast={showToast}
-                        onAssigned={refreshGrants}
-                    />
-                </>
-            )}
-
-            {mode !== 'off' && (
-                <>
-                    <h2 className="text-sm font-medium text-(--base-09) mb-2 mt-2">Grants</h2>
-                    {grantsLoading ? (
-                        <SkeletonList rows={3} />
-                    ) : grants.length === 0 ? (
-                        <div className="card p-8 flex flex-col items-center text-center gap-2">
-                            <ShieldCheck size={28} className="text-(--base-05)" />
-                            <p className="text-sm text-(--base-07)">No grants yet.</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-2">
-                            {grants.map(g => (
-                                <article key={`${g.username}:${g.serverId ?? 'account'}`} className="card p-3 flex items-center gap-3">
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-medium text-sm text-(--base-09)">{g.username}</span>
-                                            {g.accountWide ? (
-                                                <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">Account-wide</span>
-                                            ) : (
-                                                <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">{g.serverName}</span>
-                                            )}
-                                        </div>
-                                        <div className="mt-1 text-xs text-(--base-06)">
-                                            <span className="text-(--base-07)">Role:</span> {g.serverRoleName || 'custom'}
-                                        </div>
-                                    </div>
-                                    <button onClick={() => handleRevoke(g)} className="btn btn-secondary btn-sm shrink-0">
-                                        <Trash2 size={12} className="text-(--error)" />
-                                        Revoke
-                                    </button>
-                                </article>
-                            ))}
-                        </div>
-                    )}
-                </>
             )}
 
             {toast && (
