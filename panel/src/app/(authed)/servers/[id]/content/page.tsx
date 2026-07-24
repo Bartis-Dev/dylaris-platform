@@ -132,6 +132,11 @@ export default function ServerContentPage() {
             const res = await declareServerLoaderMetadata(serverId, loader, mcVersion);
             if (res.success) {
                 setDeclareOpen(false);
+                // Re-sync the active filters to the just-declared values so browse
+                // and per-row install work immediately, without waiting for a reload
+                // to re-seed them from the refreshed server defaults.
+                setFilterLoaders([loader]);
+                setFilterVersions([mcVersion]);
                 await refreshServers();
                 showToast('Loader and Minecraft version declared', true);
             } else {
