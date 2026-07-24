@@ -13,7 +13,7 @@ import { SkeletonList } from '@/components/Skeleton';
 // Advanced-mode owner UI: custom per-server capability bundles. Bundles
 // SERVER + OWNER scope capabilities only (matches the backend
 // validateServerOwnerCaps rule); assignment of a role to a friend happens in
-// the advanced grants section (task 10), not here.
+// the grant form (AccessGrantForm), not here.
 //
 // The role list lives in the parent page (access/page.tsx) so this component
 // and the grant form share one up-to-date copy; onRolesChanged() asks the

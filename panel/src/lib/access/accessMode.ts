@@ -41,9 +41,16 @@ export function fullAccessCaps(presets: Preset[]): string[] {
 }
 
 function sameSet(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false;
+    // Compare as sets, not by raw length: a grant whose caps carry a duplicate
+    // (e.g. a crafted API payload) must not read as "Full access" just because
+    // its length happens to match.
+    const as = new Set(a);
     const bs = new Set(b);
-    return a.every(x => bs.has(x));
+    if (as.size !== bs.size) return false;
+    for (const x of as) {
+        if (!bs.has(x)) return false;
+    }
+    return true;
 }
 
 // Honest label for a grant's access level. Only reports "Full access" when the

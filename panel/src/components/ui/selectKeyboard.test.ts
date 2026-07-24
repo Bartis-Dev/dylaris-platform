@@ -15,6 +15,9 @@ describe('selectKeyReducer - closed', () => {
     it('Enter opens', () => {
         expect(selectKeyReducer(closed, 'Enter', 3, 0).state.open).toBe(true);
     });
+    it('Space opens and highlights the selected index', () => {
+        expect(selectKeyReducer(closed, ' ', 3, 1).state).toEqual({ open: true, highlight: 1 });
+    });
     it('Escape stays closed', () => {
         expect(selectKeyReducer(closed, 'Escape', 3, 0).state).toEqual(closed);
     });
@@ -39,6 +42,19 @@ describe('selectKeyReducer - open', () => {
         const r = selectKeyReducer(open, 'Escape', 3, 1);
         expect(r.commit).toBeUndefined();
         expect(r.state.open).toBe(false);
+    });
+    it('Space commits the highlight and closes', () => {
+        const r = selectKeyReducer({ open: true, highlight: 2 }, ' ', 3, 2);
+        expect(r.commit).toBe(2);
+        expect(r.state.open).toBe(false);
+    });
+    it('Tab closes without committing', () => {
+        const r = selectKeyReducer(open, 'Tab', 3, 1);
+        expect(r.commit).toBeUndefined();
+        expect(r.state.open).toBe(false);
+    });
+    it('ArrowDown with an empty option list yields no highlight', () => {
+        expect(selectKeyReducer({ open: true, highlight: -1 }, 'ArrowDown', 0, -1).state.highlight).toBe(-1);
     });
     it('an unhandled key is a no-op', () => {
         expect(selectKeyReducer(open, 'x', 3, 1)).toEqual({ state: open });

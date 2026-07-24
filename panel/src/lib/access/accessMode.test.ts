@@ -69,6 +69,9 @@ describe('describeGrantAccess', () => {
     it('shows Custom for a partial cap set', () => {
         expect(describeGrantAccess(grant({ grantCaps: ['files.read'] }), FULL)).toBe('Custom');
     });
+    it('shows Custom for a partial set padded with duplicate caps to the full length', () => {
+        expect(describeGrantAccess(grant({ grantCaps: ['files.read', 'files.read', 'files.write'] }), FULL)).toBe('Custom');
+    });
     it('shows Custom when a deny is present even if grant caps match', () => {
         expect(describeGrantAccess(grant({ grantCaps: [...FULL], denyCaps: ['files.write'] }), FULL)).toBe('Custom');
     });
