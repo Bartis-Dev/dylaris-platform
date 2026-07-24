@@ -274,7 +274,7 @@ export const getUserRouteLimit = (id: string) => fetchAPI(`/users/${id}/route-li
 export const setUserRouteLimit = (id: string, data: { mode: string; maxRoutes: number }) => fetchAPI(`/users/${id}/route-limit`, { method: 'PUT', body: JSON.stringify(data) });
 
 // --- NODES ---
-export interface CpuCore { id: number; type: 'P' | 'E' | 'standard'; sibling: number; }
+export interface CpuCore { id: number; type: 'P' | 'E' | 'standard'; sibling: number; maxClockMHz: number; cacheGroup: number; l3KB: number; }
 export interface NodeCpuTopology { logicalCount: number; physicalCount: number; hybrid: boolean; cores: CpuCore[]; scannedAt: number; }
 // Returns { success, topology: NodeCpuTopology | null, load: { [coreId]: number } }.
 export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
