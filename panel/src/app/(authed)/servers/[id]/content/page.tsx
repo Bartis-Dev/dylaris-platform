@@ -77,7 +77,7 @@ export default function ServerContentPage() {
     // already installed. Keyed by Modrinth project id; a missing entry means
     // "not fetched yet" (renders as 'checking'), distinct from an empty array
     // (fetched, nothing matched the current filter). Only installed rows are
-    // fetched eagerly — not-installed rows resolve their install target
+    // fetched eagerly - not-installed rows resolve their install target
     // on-click, same lazy pattern as opening the detail column.
     const [installedRowVersions, setInstalledRowVersions] = useState<Map<string, ModrinthVersion[]>>(new Map());
     // Project ids with an install/remove/update request in flight, for
@@ -191,8 +191,8 @@ export default function ServerContentPage() {
     // For browse rows that are already installed, fetch the version list
     // filtered by the current loader + MC-version filter, so the row can show
     // "Update available" without the user having to open the mod first. Scoped
-    // to the (small) installed-and-currently-visible subset — NOT every
-    // visible row — since Modrinth version lists are otherwise only fetched
+    // to the (small) installed-and-currently-visible subset - NOT every
+    // visible row - since Modrinth version lists are otherwise only fetched
     // on demand (mod-open / install-click), and eagerly fetching for all ~20
     // search hits on every keystroke would be a heavy, mostly-wasted burst of
     // calls against not-yet-installed projects nobody asked about.
@@ -289,7 +289,7 @@ export default function ServerContentPage() {
         return true;
     };
 
-    // Fires the actual install call (no confirm — callers run
+    // Fires the actual install call (no confirm - callers run
     // confirmModpackCrossCheck first).
     const doInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
         const file = pickPrimaryFile(version);
@@ -342,7 +342,7 @@ export default function ServerContentPage() {
     };
 
     // Row "Install": resolve the newest version matching the current filter
-    // for this project (fetched lazily, on click — not eagerly for every
+    // for this project (fetched lazily, on click - not eagerly for every
     // browse row) and install it.
     const handleRowInstall = (hit: ModrinthSearchHit) => withBusy(hit.project_id, async () => {
         const loaders = filterLoaders.length ? filterLoaders : undefined;
@@ -481,7 +481,7 @@ export default function ServerContentPage() {
                             </div>
                         </div>
 
-                        {/* Advanced toggle — gates the loader / MC-version filters below.
+                        {/* Advanced toggle - gates the loader / MC-version filters below.
                             Turning it off resets both back to the server's stored values. */}
                         <div className="border-t border-(--base-03) pt-3 flex items-center justify-between gap-2">
                             <div className="min-w-0">
@@ -575,6 +575,7 @@ export default function ServerContentPage() {
                                             key={hit.project_id}
                                             hit={hit}
                                             status={status}
+                                            installed={!!installedMod}
                                             busy={busyProjects.has(hit.project_id)}
                                             selected={selectedSlug === hit.slug}
                                             onOpen={() => openProjectDetail(hit.slug)}
@@ -592,12 +593,12 @@ export default function ServerContentPage() {
                         </div>
                     </div>
 
-                    {/* Detail column — hidden below `lg` so it never squeezes the
+                    {/* Detail column - hidden below `xl` so it never squeezes the
                         list to unusable on narrow windows; roughly half the
-                        remaining width from `lg` up, capped so it doesn't grow
+                        remaining width from `xl` up, capped so it doesn't grow
                         absurdly wide on very large screens. */}
                     {(projectDetail || projectLoading) && (
-                        <aside className="hidden lg:flex lg:w-[46%] lg:max-w-2xl shrink-0 flex-col card overflow-hidden">
+                        <aside className="hidden xl:flex xl:w-[46%] xl:max-w-2xl shrink-0 flex-col card overflow-hidden">
                             {projectLoading || !projectDetail ? (
                                 <div className="p-4 space-y-3">
                                     <div className="flex items-start gap-3">
@@ -764,6 +765,7 @@ export default function ServerContentPage() {
 function ModListRow({
     hit,
     status,
+    installed,
     busy,
     selected,
     onOpen,
@@ -773,6 +775,7 @@ function ModListRow({
 }: {
     hit: ModrinthSearchHit;
     status: RowStatus;
+    installed: boolean;
     busy: boolean;
     selected: boolean;
     onOpen: () => void;
@@ -781,7 +784,7 @@ function ModListRow({
     onUpdate: () => void;
 }) {
     // The row opens the detail column on click, but also hosts a nested real
-    // <button> for install/remove/update — a <button> can't nest another
+    // <button> for install/remove/update - a <button> can't nest another
     // <button>, so the row itself is a div with button semantics (role +
     // keyboard handling) and the action button stops propagation.
     const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -848,7 +851,7 @@ function ModListRow({
                         Update
                     </button>
                 )}
-                {(status === 'up-to-date' || status === 'update-available') && (
+                {installed && (
                     <button onClick={stopAnd(onRemove)} disabled={busy} className="btn btn-secondary btn-sm" title="Remove">
                         {busy ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} className="text-(--error)" />}
                         Remove

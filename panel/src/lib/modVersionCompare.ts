@@ -1,6 +1,6 @@
 // Pure helpers for the Content tab's per-row install/remove/update state:
 // picking the newest Modrinth version matching the active loader + MC-version
-// filter, and comparing an installed version against it. No I/O here — the
+// filter, and comparing an installed version against it. No I/O here - the
 // caller fetches the candidate version list (see getModrinthVersions in
 // lib/api/modrinth) and passes it in.
 
