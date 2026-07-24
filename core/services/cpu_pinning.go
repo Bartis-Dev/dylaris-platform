@@ -17,9 +17,12 @@ import (
 // CPUCore / CPUTopology mirror the JSON the node publishes to
 // dylaris:node:{token}:cpu. Type is "P" | "E" | "standard".
 type CPUCore struct {
-	ID      int    `json:"id"`
-	Type    string `json:"type"`
-	Sibling int    `json:"sibling"`
+	ID          int    `json:"id"`
+	Type        string `json:"type"`
+	Sibling     int    `json:"sibling"`
+	MaxClockMHz int    `json:"maxClockMHz"` // display only; never part of TopologySignature
+	CacheGroup  int    `json:"cacheGroup"`  // display only; never part of TopologySignature
+	L3KB        int    `json:"l3KB"`        // display only; never part of TopologySignature
 }
 
 type CPUTopology struct {

@@ -113,3 +113,43 @@ func TestTopologySignature_StableExceptHardware(t *testing.T) {
 		t.Fatal("different hardware must yield a different signature")
 	}
 }
+
+func TestTopologySignature_ExcludesDisplayFields(t *testing.T) {
+	base := &CPUTopology{LogicalCount: 16, PhysicalCount: 16, Hybrid: false,
+		Cores: []CPUCore{
+			{ID: 0, Type: "standard", Sibling: 8},
+			{ID: 8, Type: "standard", Sibling: 0},
+		}}
+	want := TopologySignature(base)
+
+	cases := []struct {
+		name string
+		topo *CPUTopology
+	}{
+		{"maxClock differs", &CPUTopology{LogicalCount: 16, PhysicalCount: 16, Hybrid: false,
+			Cores: []CPUCore{
+				{ID: 0, Type: "standard", Sibling: 8, MaxClockMHz: 5700},
+				{ID: 8, Type: "standard", Sibling: 0, MaxClockMHz: 5200},
+			}}},
+		{"cacheGroup differs", &CPUTopology{LogicalCount: 16, PhysicalCount: 16, Hybrid: false,
+			Cores: []CPUCore{
+				{ID: 0, Type: "standard", Sibling: 8, CacheGroup: 0},
+				{ID: 8, Type: "standard", Sibling: 0, CacheGroup: 1},
+			}}},
+		{"l3KB differs", &CPUTopology{LogicalCount: 16, PhysicalCount: 16, Hybrid: false,
+			Cores: []CPUCore{
+				{ID: 0, Type: "standard", Sibling: 8, L3KB: 98304},
+				{ID: 8, Type: "standard", Sibling: 0, L3KB: 32768},
+			}}},
+		{"all three differ", &CPUTopology{LogicalCount: 16, PhysicalCount: 16, Hybrid: false,
+			Cores: []CPUCore{
+				{ID: 0, Type: "standard", Sibling: 8, MaxClockMHz: 5700, CacheGroup: 0, L3KB: 98304},
+				{ID: 8, Type: "standard", Sibling: 0, MaxClockMHz: 5200, CacheGroup: 1, L3KB: 32768},
+			}}},
+	}
+	for _, c := range cases {
+		if got := TopologySignature(c.topo); got != want {
+			t.Errorf("%s: signature changed by a display field: got %q, want %q", c.name, got, want)
+		}
+	}
+}
