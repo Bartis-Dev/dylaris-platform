@@ -88,9 +88,9 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   // Inline multi-select for the current folder: checked entry names (files or
   // folders) that a single "Download as ZIP" action bundles via the same
-  // selective-download endpoint. Cleared whenever select mode is left (see
-  // toggleSelectMode) rather than on every navigation, so browsing around
-  // while picking files doesn't lose the selection.
+  // selective-download endpoint. Names are bare and folder-scoped, so this is
+  // cleared on folder change (see the currentPath effect below) and whenever
+  // select mode is left (toggleSelectMode) - opening a file does not clear it.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Explicit select mode: checkboxes (their own leading column) only render
   // while this is on, so a normal row click can never mis-click a checkbox.
@@ -107,14 +107,27 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     });
   }, []);
 
+  // Selected names are bare filenames scoped to the current folder, so an
+  // actual folder change (subfolder click, breadcrumb, go-up) invalidates
+  // them - clear here. Opening a file does not change currentPath, so the
+  // selection survives that (intended).
+  useEffect(() => {
+    setSelected(new Set());
+  }, [currentPath]);
+
+  // Checkboxes and the bulk bar are hidden during a global search, so an
+  // active select mode would otherwise sit there empty and inert.
+  useEffect(() => {
+    if (globalSearchTerm) {
+      setSelectMode(false);
+      setSelected(new Set());
+    }
+  }, [globalSearchTerm]);
+
 
   const fetchFiles = async (path: string) => {
     setLoading(true);
     setError('');
-    // Outside select mode there is no persistent selection to protect, so
-    // reset it on every load. In select mode the selection is only cleared by
-    // leaving select mode (toggleSelectMode), so it survives navigation.
-    if (!selectMode) setSelected(new Set());
     const result = await adapter.getFiles(path, serverUuid);
     if (result.success) {
       setFiles(result.files);
@@ -419,10 +432,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   };
 
   const handleFileClick = (name: string, isDir: boolean, path?: string) => {
-    // Outside select mode there is no selection to worry about, so clear it
-    // defensively. In select mode a normal row click must never wipe the
-    // selection — only leaving select mode does that (toggleSelectMode).
-    if (!selectMode) setSelected(new Set());
      if(path && path !== currentPath) {
         const parentPath = path.substring(0, path.lastIndexOf('/'));
         setGlobalSearchTerm('');
@@ -847,7 +856,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
           <button title="New File/Folder" onClick={() => { if (blockReadOnly()) return; setPopupMode('create'); setNewName(''); setPopupError(''); }} className="btn btn-secondary p-2">
             <Plus size={20} />
           </button>
-          {!readOnly && (
+          {!readOnly && !globalSearchTerm && (
             <button
               title="Toggle select mode"
               onClick={toggleSelectMode}
