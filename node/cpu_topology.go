@@ -275,3 +275,84 @@ func readIntFile(path string) (int, bool) {
 	}
 	return n, true
 }
+
+// khzToMHz converts a cpufreq kHz value (e.g. cpuinfo_max_freq) to whole MHz.
+// Non-positive input yields 0 (the absent value).
+func khzToMHz(khz int) int {
+	if khz <= 0 {
+		return 0
+	}
+	return khz / 1000
+}
+
+// parseCacheSize parses a sysfs cache "size" value into kilobytes. A bare number
+// is treated as KB (the kernel convention), a "K"/"KB" suffix is KB, and a "M"/"MB"
+// suffix is KB*1024. Empty or unparsable input yields 0.
+func parseCacheSize(s string) int {
+	up := strings.ToUpper(strings.TrimSpace(s))
+	if up == "" {
+		return 0
+	}
+	up = strings.TrimSuffix(up, "B") // "MB"/"KB" -> "M"/"K"
+	mult := 1
+	switch {
+	case strings.HasSuffix(up, "M"):
+		mult = 1024
+		up = strings.TrimSuffix(up, "M")
+	case strings.HasSuffix(up, "K"):
+		up = strings.TrimSuffix(up, "K")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(up))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n * mult
+}
+
+// cacheGroupIndices assigns a stable 0-based cache-domain group index to each core
+// given that core's canonical L3 shared-cpu-list key (e.g. "0-7"). Cores whose key
+// is empty (no index3 data) get -1. Groups are ordered by ascending lowest cpu id
+// in the shared list, so the domain containing cpu0 is always group 0. The returned
+// slice is parallel to keys.
+func cacheGroupIndices(keys []string) []int {
+	lowest := map[string]int{}
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		if _, seen := lowest[k]; seen {
+			continue
+		}
+		min := -1
+		for _, id := range parseCPUList(k) {
+			if min == -1 || id < min {
+				min = id
+			}
+		}
+		lowest[k] = min
+	}
+	distinct := make([]string, 0, len(lowest))
+	for k := range lowest {
+		distinct = append(distinct, k)
+	}
+	sort.Slice(distinct, func(i, j int) bool {
+		li, lj := lowest[distinct[i]], lowest[distinct[j]]
+		if li != lj {
+			return li < lj
+		}
+		return distinct[i] < distinct[j] // deterministic tie-break (should not occur physically)
+	})
+	index := make(map[string]int, len(distinct))
+	for i, k := range distinct {
+		index[k] = i
+	}
+	out := make([]int, len(keys))
+	for i, k := range keys {
+		if k == "" {
+			out[i] = -1
+			continue
+		}
+		out[i] = index[k]
+	}
+	return out
+}

@@ -82,3 +82,64 @@ func TestUniformTopology(t *testing.T) {
 		t.Fatal("uniform topology must not be hybrid")
 	}
 }
+
+func TestKhzToMHz(t *testing.T) {
+	cases := []struct {
+		in   int
+		want int
+	}{
+		{0, 0},
+		{-5, 0},
+		{999, 0}, // sub-MHz truncates to 0
+		{1000, 1},
+		{3200000, 3200},
+		{4800000, 4800},
+	}
+	for _, c := range cases {
+		if got := khzToMHz(c.in); got != c.want {
+			t.Errorf("khzToMHz(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseCacheSize(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"", 0},
+		{"garbage", 0},
+		{"512", 512}, // bare digits are KB (kernel convention)
+		{"32768K", 32768},
+		{"512KB", 512},
+		{"1M", 1024},
+		{"96M", 98304},
+		{"96MB", 98304},
+		{" 96 MB ", 98304}, // surrounding whitespace tolerated
+	}
+	for _, c := range cases {
+		if got := parseCacheSize(c.in); got != c.want {
+			t.Errorf("parseCacheSize(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCacheGroupIndices(t *testing.T) {
+	cases := []struct {
+		name string
+		keys []string
+		want []int
+	}{
+		{"all empty (no cache data)", []string{"", "", ""}, []int{-1, -1, -1}},
+		{"two even CCDs", []string{"0-3", "0-3", "0-3", "0-3", "4-7", "4-7", "4-7", "4-7"}, []int{0, 0, 0, 0, 1, 1, 1, 1}},
+		{"ordered by lowest member, not appearance", []string{"4-7", "4-7", "0-3", "0-3"}, []int{1, 1, 0, 0}},
+		{"mixed with a missing core", []string{"0-3", "", "0-3"}, []int{0, -1, 0}},
+		{"empty input", nil, []int{}},
+	}
+	for _, c := range cases {
+		got := cacheGroupIndices(c.keys)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: cacheGroupIndices(%v) = %v, want %v", c.name, c.keys, got, c.want)
+		}
+	}
+}
