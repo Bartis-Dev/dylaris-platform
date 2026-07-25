@@ -1002,9 +1002,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings)))).Methods("PUT")
 
 	// --- Tickets: attachments, canned responses, notifications ---
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(ticketAttachmentsHandler.UploadAttachment)))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.UploadAttachment))))).Methods("POST")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.ListAttachments))).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DownloadAttachment))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.DownloadAttachment)))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DeleteAttachment))).Methods("DELETE")
 
 	// Canned responses: support sees the read list (authed-exempt - its own
@@ -1044,7 +1044,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration)))).Methods("POST")
 	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration)))).Methods("POST")
 	// Backups: create, list, download, delete.
-	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(ticketMigrationHandler.CreateBackup))))).Methods("POST")
+	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(ticketMigrationHandler.CreateBackup)))))).Methods("POST")
 	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.ListBackups)))).Methods("GET")
 	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.DownloadBackup)))).Methods("GET")
 	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DeleteBackup)))).Methods("DELETE")
@@ -1221,11 +1221,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// requiredCaps. The four mutations were hard `if !isAdmin` gated in-handler
 	// with no dedicated library-admin cap - that gate is now the chokepoint's
 	// job, so it is removed from library.go in the same commit.
-	api.HandleFunc("/library", authHandler.AuthMiddleware(libraryHandler.GetLibraryHandler)).Methods("GET")
-	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.DeleteLibraryHandler))).Methods("POST")
-	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(libraryHandler.MkdirLibraryHandler)))).Methods("POST")
-	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(libraryHandler.UploadLibraryHandler)))).Methods("POST")
-	api.HandleFunc("/library/download", authHandler.AuthMiddleware(libraryHandler.DownloadLibraryHandler)).Methods("GET")
+	api.HandleFunc("/library", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(libraryHandler.GetLibraryHandler))).Methods("GET")
+	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageReachable(libraryHandler.DeleteLibraryHandler)))).Methods("POST")
+	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(libraryHandler.MkdirLibraryHandler))))).Methods("POST")
+	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(libraryHandler.UploadLibraryHandler))))).Methods("POST")
+	api.HandleFunc("/library/download", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(libraryHandler.DownloadLibraryHandler))).Methods("GET")
 	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.ToggleLibraryPathHandler))).Methods("POST")
 
 	// Settings endpoints (PANEL settings.*; Phase 4 Task 17)

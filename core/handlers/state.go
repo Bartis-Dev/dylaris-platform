@@ -7,6 +7,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	"dylaris-core/store"
 
@@ -83,6 +84,12 @@ type AppState struct {
 	// both backends live rather than mirroring them. Nil-safe, so an AppState
 	// built without one - only ever a test - simply reports both backends ok.
 	StorageStatus *services.StorageStatus
+
+	// StorageReach proves this Core can actually reach the SHARED core file
+	// storage, and gates this Core's storage routes when it cannot. Nil in
+	// tooling and tests, which the gate treats as "not enabled" rather than
+	// "deny".
+	StorageReach *storagereach.Service
 
 	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
 	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the

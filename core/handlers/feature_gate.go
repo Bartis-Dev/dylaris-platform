@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+
+	"dylaris-core/services/storagereach"
 )
 
 // FeatureModpacks is the canonical name used in X-Feature-Disabled headers
@@ -91,6 +93,55 @@ func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.Hand
 			return
 		}
 		next(w, r)
+	}
+}
+
+// RequireCoreStorageReachable blocks a request with 503 when THIS Core's own
+// self-check says it cannot use the shared core file storage.
+//
+// This is the surgical route-gate: the Core stays up and keeps serving auth,
+// server management and the panel, so an operator can still SEE the fault. A
+// hard crash or a failing /healthz would take the control plane down with the
+// storage and leave nobody able to read the error.
+//
+// Wrap it around every route whose handler builds a core storage provider.
+func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.StorageReach == nil || s.StorageReach.Status().Healthy() {
+			next(w, r)
+			return
+		}
+		status, detail := s.StorageReach.Status().Snapshot()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "storage_unreachable",
+			"reason":  string(status),
+			"message": storageReachMessage(status),
+			"detail":  detail,
+		})
+	}
+}
+
+// storageReachMessage is the operator-facing remedy for each taxonomy value.
+// Every Status must have one: an empty body on a 503 is the silent failure
+// this whole feature exists to remove.
+func storageReachMessage(status storagereach.Status) string {
+	switch status {
+	case storagereach.StatusUnreachable:
+		return "This Core cannot reach the shared file storage. Check that the mount is present on this host, or that the S3 endpoint is reachable from it."
+	case storagereach.StatusWriteDenied:
+		return "This Core can reach the shared file storage but cannot write to it. Check that the mount is not read-only and that the credentials allow writes."
+	case storagereach.StatusNotShared:
+		return "This Core cannot see files written by the other Cores, so the storage is not actually shared. Point every Core at the same S3 bucket, or mount the same filesystem at this path on every host."
+	case storagereach.StatusFingerprintMismatch:
+		return "This Core is pointed at a different storage backend than the rest of the deployment. Re-save the Core file storage settings so every Core agrees."
+	case storagereach.StatusCrossWriteDenied:
+		return "This Core cannot write into files owned by the other Cores. Check the share's user mapping (NFS root_squash / uid mapping) so all Cores write as the same user."
+	case storagereach.StatusOffline, storagereach.StatusNoResponse:
+		return "This Core did not confirm access to the shared file storage."
+	default:
+		return "This Core cannot currently use the shared file storage."
 	}
 }
 
