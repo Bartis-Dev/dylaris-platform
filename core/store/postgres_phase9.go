@@ -29,6 +29,17 @@ func (s *PostgresStore) SetServerRconConfig(serverID int, enabled bool, port int
 	return err
 }
 
+func (s *PostgresStore) GetServerRconNeedsRestart(serverID int) (bool, error) {
+	var needs bool
+	err := s.db.QueryRow(`SELECT rcon_needs_restart FROM servers WHERE id=$1`, serverID).Scan(&needs)
+	return needs, err
+}
+
+func (s *PostgresStore) SetServerRconNeedsRestart(serverID int, needsRestart bool) error {
+	_, err := s.db.Exec(`UPDATE servers SET rcon_needs_restart=$2 WHERE id=$1`, serverID, needsRestart)
+	return err
+}
+
 // --- API keys ---
 
 const apiKeyCols = `id, user_id, name, key_hash, scope, last_used_at, expires_at,

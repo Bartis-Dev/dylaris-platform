@@ -112,9 +112,10 @@ func applyPhase10Schema(db *sql.DB) error {
 // Idempotent. Wired from ensureSchema right after the scheduled-tasks schema.
 func applyPhase9Schema(db *sql.DB) error {
 	for _, q := range []string{
-		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_enabled  BOOLEAN     NOT NULL DEFAULT FALSE`,
-		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_port     INTEGER     NOT NULL DEFAULT 0`,
-		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_password TEXT        NOT NULL DEFAULT ''`,
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_enabled       BOOLEAN     NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_port          INTEGER     NOT NULL DEFAULT 0`,
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_password      TEXT        NOT NULL DEFAULT ''`,
+		`ALTER TABLE servers ADD COLUMN IF NOT EXISTS rcon_needs_restart BOOLEAN     NOT NULL DEFAULT FALSE`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("phase 9: alter servers: %w", err)

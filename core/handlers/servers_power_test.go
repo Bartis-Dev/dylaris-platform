@@ -53,6 +53,11 @@ type serverPowerFakeStore struct {
 
 	updateDesiredStateCalls []serverPowerDesiredStateCall
 	updateStatusCalls       []serverPowerStatusCall
+
+	auditEnabled   bool
+	insertedAudits []*models.ServerAuditEvent
+
+	setRconNeedsRestartCalls []bool
 }
 
 // The following satisfy authz.Store (beyond GetServerByID, already overridden
@@ -131,10 +136,20 @@ func (f *serverPowerFakeStore) UpdateServerStatus(id int, status string) error {
 	return nil
 }
 
-// GetServerAuditState always reports audit disabled so LogServerAudit no-ops
-// before ever reaching InsertServerAudit (unimplemented on this fake).
+func (f *serverPowerFakeStore) SetServerRconNeedsRestart(serverID int, needsRestart bool) error {
+	f.setRconNeedsRestartCalls = append(f.setRconNeedsRestartCalls, needsRestart)
+	return nil
+}
+
+// GetServerAuditState reports audit disabled by default (LogServerAudit then
+// no-ops); set auditEnabled to exercise the audit-insert path.
 func (f *serverPowerFakeStore) GetServerAuditState(serverID int) (bool, bool, int, error) {
-	return false, false, 0, nil
+	return f.auditEnabled, false, 0, nil
+}
+
+func (f *serverPowerFakeStore) InsertServerAudit(ev *models.ServerAuditEvent) error {
+	f.insertedAudits = append(f.insertedAudits, ev)
+	return nil
 }
 
 func (f *serverPowerFakeStore) GetSetting(key string) (string, error) {
@@ -363,6 +378,44 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 	})
 }
 
+// A (re)start clears the persisted rcon_needs_restart flag (the server re-reads
+// server.properties at boot, so a pending RCON change is now live), while
+// stop/kill leave it untouched. This is what keeps the panel's RCON banner +
+// Players-tab lock honest across a reload.
+func TestServerPowerHandler_ClearsRconNeedsRestartOnStart(t *testing.T) {
+	cases := []struct {
+		action    string
+		status    string
+		wantClear bool
+	}{
+		{"start", "stopped", true},
+		{"restart", "online", true},
+		{"stop", "online", false},
+		{"kill", "online", false},
+	}
+	for _, c := range cases {
+		t.Run(c.action, func(t *testing.T) {
+			fs := &serverPowerFakeStore{
+				server: &models.Server{ID: 1, UUID: "srv-uuid", Status: c.status, OwnerName: "alice", OwnerID: "u1", NodeID: 5},
+				node:   &models.Node{ID: 5, Token: "node-tok"},
+			}
+			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			rec := httptest.NewRecorder()
+			h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", false, "u1"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+			if c.wantClear {
+				if len(fs.setRconNeedsRestartCalls) != 1 || fs.setRconNeedsRestartCalls[0] {
+					t.Fatalf("setRconNeedsRestartCalls = %+v, want exactly one false-clear", fs.setRconNeedsRestartCalls)
+				}
+			} else if len(fs.setRconNeedsRestartCalls) != 0 {
+				t.Fatalf("setRconNeedsRestartCalls = %+v, want none (stop/kill must not clear)", fs.setRconNeedsRestartCalls)
+			}
+		})
+	}
+}
+
 // --- Server-level suspension (distinct from billing suspension) ---
 
 func TestServerPowerHandler_ServerSuspended(t *testing.T) {
@@ -453,6 +506,51 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("admin override is recorded in the power-action audit", func(t *testing.T) {
+		fs := &serverPowerFakeStore{
+			server:       &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "owner-1", NodeID: 5},
+			billing:      &store.UserBilling{UserID: "owner-1", Status: "suspended"},
+			node:         &models.Node{ID: 5, Token: "node-tok"},
+			auditEnabled: true,
+		}
+		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		rec := httptest.NewRecorder()
+		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.insertedAudits) != 1 {
+			t.Fatalf("want 1 audit event, got %d", len(fs.insertedAudits))
+		}
+		ev := fs.insertedAudits[0]
+		if ev.EventType != ServerAuditEventPowerAction {
+			t.Errorf("event type = %q, want %q", ev.EventType, ServerAuditEventPowerAction)
+		}
+		if ev.Metadata["admin_suspend_override"] != "owner_billing_suspended" {
+			t.Errorf("override marker = %v, want owner_billing_suspended", ev.Metadata["admin_suspend_override"])
+		}
+	})
+
+	t.Run("no override marker on a normal non-suspended admin start", func(t *testing.T) {
+		fs := &serverPowerFakeStore{
+			server:       &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "owner-1", NodeID: 5},
+			node:         &models.Node{ID: 5, Token: "node-tok"},
+			auditEnabled: true,
+		}
+		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		rec := httptest.NewRecorder()
+		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.insertedAudits) != 1 {
+			t.Fatalf("want 1 audit event, got %d", len(fs.insertedAudits))
+		}
+		if _, ok := fs.insertedAudits[0].Metadata["admin_suspend_override"]; ok {
+			t.Error("no override marker expected for a non-suspended start")
 		}
 	})
 }

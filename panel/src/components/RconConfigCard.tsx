@@ -58,7 +58,14 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
         setHasSecret(res.hasSecret);
         setLoaded(true);
         setDirty(false);
-        onEnabledChange?.(res.enabled);
+        // A persisted restartRequired means MC has not reopened the RCON listener
+        // yet: restore the banner and, exactly like the post-save flow, keep the
+        // parent Players tabs locked until a restart confirms RCON is live. This
+        // is what survives a page reload (the flag now comes from the DB, not
+        // just local state).
+        const pending = res.enabled && (res.restartRequired ?? false);
+        setNeedsRestart(pending);
+        onEnabledChange?.(res.enabled && !pending);
     }, [serverId, onEnabledChange]);
 
     useEffect(() => { refresh(); }, [refresh]);

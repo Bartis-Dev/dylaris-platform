@@ -519,6 +519,15 @@ type Store interface {
 	GetServerRconConfig(serverID int) (enabled bool, port int, password string, err error)
 	SetServerRconConfig(serverID int, enabled bool, port int, password string) error
 
+	// rcon_needs_restart tracks whether a server.properties RCON change is still
+	// waiting on a (re)start. MC only reads RCON settings at JVM start, so the
+	// change is inert until then. Persisting it lets the panel restore the
+	// "restart required" banner and keep the RCON-dependent Players tabs locked
+	// across a reload, instead of losing that state to client-only React state.
+	// Set on SetServerRconConfig writes, cleared when the server (re)starts.
+	GetServerRconNeedsRestart(serverID int) (bool, error)
+	SetServerRconNeedsRestart(serverID int, needsRestart bool) error
+
 	// --- Edge transitional MOTD (per-server) ---
 	// Lazy accessors (same rationale as RCON): the two columns stay off the
 	// giant server-list scans. ListServerEdgeMotd is a single bulk query used

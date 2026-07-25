@@ -99,7 +99,11 @@ export default function ServerPlayersPage() {
         (async () => {
             const res = await getRconConfig(serverId);
             if (cancelled) return;
-            if (res.success) setRconEnabled(res.enabled);
+            // Keep the RCON-dependent tabs locked when a restart is still pending
+            // (enabled in the DB but server.properties not yet re-read on a boot):
+            // treat it as not-yet-live, matching the comment above and surviving a
+            // page reload.
+            if (res.success) setRconEnabled(res.enabled && !res.restartRequired);
             setRconLoaded(true);
         })();
         return () => { cancelled = true; };

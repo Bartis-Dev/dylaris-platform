@@ -39,6 +39,10 @@ type rconConfigFakeStore struct {
 
 	applyPropsCalls []applyPropsCall
 	applyPropsErr   error
+
+	needsRestart         bool
+	setNeedsRestartCalls []bool
+	setNeedsRestartErr   error
 }
 
 type rconSetCall struct {
@@ -72,6 +76,15 @@ func (f *rconConfigFakeStore) GetServerRconConfig(serverID int) (bool, int, stri
 func (f *rconConfigFakeStore) SetServerRconConfig(serverID int, enabled bool, port int, password string) error {
 	f.setRconCalls = append(f.setRconCalls, rconSetCall{serverID, enabled, port, password})
 	return f.setRconErr
+}
+
+func (f *rconConfigFakeStore) GetServerRconNeedsRestart(serverID int) (bool, error) {
+	return f.needsRestart, nil
+}
+
+func (f *rconConfigFakeStore) SetServerRconNeedsRestart(serverID int, needsRestart bool) error {
+	f.setNeedsRestartCalls = append(f.setNeedsRestartCalls, needsRestart)
+	return f.setNeedsRestartErr
 }
 
 func newRconConfigHandler(fs *rconConfigFakeStore) *RconHandler {
@@ -430,6 +443,11 @@ func TestRconSetConfig_RestartRequired(t *testing.T) {
 			if resp.RestartRequired != c.wantRestart {
 				t.Fatalf("RestartRequired = %v, want %v", resp.RestartRequired, c.wantRestart)
 			}
+			// The flag is now also PERSISTED (so it survives a panel reload),
+			// matching the value reported in the response.
+			if len(fs.setNeedsRestartCalls) != 1 || fs.setNeedsRestartCalls[0] != c.wantRestart {
+				t.Fatalf("setNeedsRestartCalls = %+v, want one call persisting %v", fs.setNeedsRestartCalls, c.wantRestart)
+			}
 			// The DB flag is still persisted exactly as before - this endpoint
 			// reports the need for a restart, it does not perform one.
 			if len(fs.setRconCalls) != 1 || fs.setRconCalls[0].enabled != c.enabled {
@@ -443,5 +461,49 @@ func TestRconSetConfig_RestartRequired(t *testing.T) {
 				t.Fatalf("applyPropsCalls = %+v, want %d call(s)", fs.applyPropsCalls, wantPropsCalls)
 			}
 		})
+	}
+}
+
+// GetConfig surfaces the PERSISTED needs-restart flag as RestartRequired, so a
+// panel reload restores the banner and keeps the RCON-dependent Players tabs
+// locked instead of silently unlocking them before the restart happens.
+func TestRconGetConfig_SurfacesPersistedNeedsRestart(t *testing.T) {
+	for _, persisted := range []bool{true, false} {
+		fs := &rconConfigFakeStore{
+			server:       &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "survival"},
+			rconEnabled:  true,
+			rconPort:     25575,
+			rconPassword: "secret",
+			needsRestart: persisted,
+		}
+		h := newRconConfigHandler(fs)
+		r := httptest.NewRequest("GET", "/api/servers/1/rcon/config", nil)
+		r = mux.SetURLVars(r, map[string]string{"id": "1"})
+		rec := httptest.NewRecorder()
+		h.GetConfig(rec, r)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		resp := decodeRconConfigResp(t, rec)
+		if resp.RestartRequired != persisted {
+			t.Fatalf("RestartRequired = %v, want %v (the persisted flag)", resp.RestartRequired, persisted)
+		}
+	}
+}
+
+// A failure persisting the needs-restart flag fails the whole SetConfig the
+// same way a config-persist failure does, so the DB never ends up with the
+// rcon_enabled and needs_restart columns out of sync.
+func TestRconSetConfig_NeedsRestartPersistFailure(t *testing.T) {
+	fs := &rconConfigFakeStore{
+		server:             &models.Server{ID: 1, OwnerName: "alice", UUID: "srv-uuid", NodeID: 7, ActiveSubServer: "survival"},
+		rconPassword:       "kept-secret",
+		setNeedsRestartErr: errors.New("db down"),
+	}
+	h := newRconConfigHandler(fs)
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -727,6 +727,23 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Operator override transparency: the two suspend gates above deliberately
+	// let an admin through (a force-suspended server, or a billing-suspended
+	// owner) so support keeps control. Detect such an admin start/restart so the
+	// power-action audit entry below records the override instead of it being
+	// silent.
+	suspendOverride := ""
+	if isAdmin && (req.Action == "start" || req.Action == "restart") {
+		if srv.Status == "suspended" {
+			suspendOverride = "server_suspended"
+		} else if b, err := h.state.Store.GetUserBilling(srv.OwnerID); err == nil && b.Status == "suspended" {
+			suspendOverride = "owner_billing_suspended"
+		}
+		if suspendOverride != "" {
+			log.Printf("Suspend override: admin %s performed %s on server %d (%s)", username, req.Action, srv.ID, suspendOverride)
+		}
+	}
+
 	// Install cooldown: 30s after setup/reinstall the node sets a Redis key
 	// with TTL so the freshly-installed server can boot to a stable state
 	// without a foot-gun start/stop/kill during world generation. The same
@@ -772,6 +789,13 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	case "start", "restart":
 		newStatus = "starting"
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		// A (re)start reloads server.properties, so any pending RCON change is
+		// now live: clear the persisted "restart required" flag that keeps the
+		// panel banner up and the RCON-dependent Players tabs locked. Non-fatal
+		// - failing to clear it must not block the restart itself.
+		if err := h.state.Store.SetServerRconNeedsRestart(srv.ID, false); err != nil {
+			log.Printf("failed to clear rcon needs-restart for server %d: %v", srv.ID, err)
+		}
 	case "stop", "kill":
 		newStatus = "stopping"
 		h.state.Store.UpdateServerDesiredState(srv.ID, "stopped")
@@ -789,9 +813,11 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	LogServerAudit(h.state, r, serverID, ServerAuditEventPowerAction, userID, "", map[string]interface{}{
-		"action": req.Action,
-	})
+	powerMeta := map[string]interface{}{"action": req.Action}
+	if suspendOverride != "" {
+		powerMeta["admin_suspend_override"] = suspendOverride
+	}
+	LogServerAudit(h.state, r, serverID, ServerAuditEventPowerAction, userID, "", powerMeta)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

@@ -202,11 +202,18 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to load rcon config", http.StatusInternalServerError)
 		return
 	}
+	// Surface the persisted "restart required" flag so a panel reload restores
+	// the banner and keeps the RCON-dependent Players tabs locked. Non-fatal:
+	// the column is NOT NULL DEFAULT FALSE, so a read error means a full DB
+	// outage that GetServerRconConfig above would already have caught; fall back
+	// to false rather than blanking the whole config card.
+	needsRestart, _ := h.state.Store.GetServerRconNeedsRestart(serverID)
 	json.NewEncoder(w).Encode(rconConfigResponse{
-		Success:   true,
-		Enabled:   enabled,
-		Port:      port,
-		HasSecret: password != "",
+		Success:         true,
+		Enabled:         enabled,
+		Port:            port,
+		HasSecret:       password != "",
+		RestartRequired: needsRestart,
 	})
 }
 
@@ -277,6 +284,16 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to save rcon config", http.StatusInternalServerError)
 		return
 	}
+	// Persist whether this write left the running server stale: server.properties
+	// was actually rewritten (ActiveSubServer != "") and MC only re-reads it at
+	// start, so a restart is pending. Persisting it keeps the panel banner + the
+	// RCON-dependent Players-tab lock across a reload; the flag clears when the
+	// server (re)starts.
+	needsRestart := srv.ActiveSubServer != ""
+	if err := h.state.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
+		sendJSONError(w, "Failed to save rcon config", http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(rconConfigResponse{
 		Success:         true,
 		Enabled:         req.Enabled,
@@ -284,7 +301,7 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		HasSecret:       password != "",
 		Password:        exposeNew,
 		Message:         "RCON config saved and written to server.properties. Restart the server to apply.",
-		RestartRequired: srv.ActiveSubServer != "",
+		RestartRequired: needsRestart,
 	})
 }
 
