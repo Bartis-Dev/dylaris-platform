@@ -3,6 +3,7 @@ package storagereach
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,24 +154,57 @@ func TestRunRound_OnProgressStaysZeroWhenAPeerNeverAppears(t *testing.T) {
 
 // TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount reuses the
 // TestRunRound_PassesWhenEveryParticipantReports scenario - a peer that does
-// report - and checks the one thing OnProgress promises regardless of how
-// many times it fires: the confirmed count it streams never goes backwards
-// and lands on the full participant count once the round is done.
+// report - and checks what OnProgress actually promises: it fires more than
+// once, the confirmed count it streams never goes backwards, and it lands on
+// the full participant count once the round is done.
 //
-// It does not assert a specific call count above one, and empirically (40
-// runs while developing this test) it is always exactly one, with seen ==
-// [2]: the coordinator's own inline Probe already blocks until it has seen
-// every peer (or the deadline), on the SAME PollEvery cadence the outer
-// polling loop uses, so by the time that loop runs its first iteration,
-// core-b's own report has in practice always landed too. That makes this
-// specific two-participant, both-report scenario structurally unlikely to
-// ever show a genuine partial step; the non-decreasing/final-count
-// invariants below are what actually hold and are what OnProgress's contract
-// commits to.
+// A naive version of this test (every op local and instant against
+// miniredis) empirically always saw exactly one callback: the coordinator's
+// own inline Probe already blocks until it has seen every peer or the
+// deadline, on the same PollEvery cadence the outer polling loop uses, so by
+// the time that loop ran its first iteration, core-b's own report had in
+// practice always already landed. A single-element seen never exercises the
+// non-decreasing loop and can't tell a real streaming counter from one that
+// only ever fires once at the end - exactly the dead-counter bug this test
+// exists to catch.
+//
+// To force a genuine multi-step sequence, core-b's report SET is delayed via
+// the same miniredis pre-hook seam
+// TestRunRound_DeletesTheStagedConfigWhenPublishFailsAfterStagingTheConfig
+// uses, so the write lands well after the coordinator's first poll. Nothing
+// else about core-b is touched: its own local-disk beacon exchange with
+// core-a (what actually decides whether either side is confirmed) still
+// happens at full speed, so the eventual result is still a clean pass - only
+// the Redis write that makes core-b's result visible to the coordinator is
+// held back. The report key embeds the round id, which RunRound only
+// generates once it starts, so the hook matches by key suffix rather than by
+// an exact key (unlike the currentRoundKey match in the publish-fails test,
+// which is known up front).
+//
+// Margins: PollEvery is 20ms; the report delay is 150ms, a 7.5x gap, clear of
+// this file's 5x floor, so at least one poll is guaranteed to run before the
+// delayed report lands. Deadline is 1s, a 6.7x gap over the delay, so the
+// round never expires while waiting for it. RunRound still returns as soon
+// as both reports are in rather than waiting out the deadline, so the real
+// cost of this test is roughly the 150ms delay, not the 1s cap.
 func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing.T) {
-	rdb := newReachTestRedis(t)
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	root := t.TempDir()
 	ctx := context.Background()
+
+	const delayedReportKeySuffix = ":report:core-b"
+	const reportDelay = 150 * time.Millisecond
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		if cmd == "SET" && len(args) > 0 && strings.HasSuffix(args[0], delayedReportKeySuffix) {
+			time.Sleep(reportDelay)
+		}
+		return false
+	})
 
 	done := make(chan error, 1)
 	go func() {
@@ -186,7 +220,7 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 	}()
 
 	var seen []int
-	opts := fastRound()
+	opts := RoundOptions{Deadline: time.Second, PollEvery: 20 * time.Millisecond}
 	opts.OnProgress = func(r RoundResult) { seen = append(seen, r.Confirmed) }
 
 	c := NewCoordinator(rdb, "core-a", sharedFactory(root))
@@ -202,8 +236,12 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 		t.Fatalf("res = %+v, want a passing 2/2 round", res)
 	}
 
-	if len(seen) == 0 {
-		t.Fatal("OnProgress was never called; the panel would have no live counter")
+	// This is the assertion the old, vacuous version could never make: with
+	// core-b's report artificially held back, the counter must move in more
+	// than one step, or a dead OnProgress (fired once, only at the very end)
+	// would pass unnoticed.
+	if len(seen) < 2 {
+		t.Fatalf("seen = %v, want at least 2 OnProgress calls; a counter that only ever fires once at the end is indistinguishable from a dead one", seen)
 	}
 	for i := 1; i < len(seen); i++ {
 		if seen[i] < seen[i-1] {
