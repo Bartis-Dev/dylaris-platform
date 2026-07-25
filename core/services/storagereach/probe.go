@@ -181,9 +181,7 @@ func readBeacon(ctx context.Context, prov storage.StorageProvider, p, roundID, w
 		return false, false
 	}
 	defer rc.Close()
-	// Bounded: a beacon is a few hundred bytes, and this reads a path any
-	// participant can write to.
-	data, err := io.ReadAll(io.LimitReader(rc, 4096))
+	data, err := readLimited(rc)
 	if err != nil {
 		return false, false
 	}
@@ -198,6 +196,13 @@ func readBeacon(ctx context.Context, prov storage.StorageProvider, p, roundID, w
 		return false, true
 	}
 	return true, false
+}
+
+// readLimited bounds a beacon read: a beacon is a few hundred bytes, and this
+// reads a path any participant can write to. Stated once here so the probe's
+// round beacons and the fleet beacon share the same bound.
+func readLimited(rc io.ReadCloser) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(rc, 4096))
 }
 
 // listNames returns the immediate child names under root, with ack
