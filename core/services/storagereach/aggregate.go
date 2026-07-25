@@ -18,12 +18,26 @@ func Aggregate(participants []string, reports map[string]Report, fingerprint str
 		Results:     make([]CoreResult, 0, len(participants)),
 	}
 
+	isParticipant := make(map[string]bool, len(participants))
+	for _, id := range participants {
+		isParticipant[id] = true
+	}
+
 	// A Core can be convicted by a PEER's report: if someone read its beacon
 	// and found a different backend, that is authoritative about it regardless
 	// of what it says about itself (it may be perfectly happy on the wrong
 	// storage). Collected first so the per-Core pass can consult it.
 	mismatchedByPeer := make(map[string]bool)
-	for _, rep := range reports {
+	for reporter, rep := range reports {
+		if !isParticipant[reporter] {
+			// A non-participant's opinion must not decide a participant's
+			// verdict: Aggregate is clockless and cannot tell "this Core left
+			// the round" from "this Core is still valid", so a stale report
+			// from a Core outside this round (e.g. a persistent fleet beacon
+			// left by a Core that has since gone offline) must not convict
+			// anyone.
+			continue
+		}
 		if rep.Fingerprint != fingerprint {
 			// A reporter that is itself on the wrong backend cannot be
 			// trusted to judge anyone else's.

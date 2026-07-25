@@ -143,6 +143,51 @@ func TestAggregate_ClassifiesEveryFailure(t *testing.T) {
 			want:     StatusNotShared,
 			wantList: func(t *testing.T, cr CoreResult) {},
 		},
+		{
+			// Both conditions true at once: a switch that swapped these two
+			// cases would still pass every single-condition test above.
+			name: "fingerprint mismatch outranks unreachable",
+			mutate: func(r *Report) {
+				r.Fingerprint = "fp-STALE"
+				r.Reachable = false
+				r.Wrote = false
+				r.WriteErr = "connection refused"
+				r.SeenPeers = nil
+				r.CrossWroteTo = nil
+			},
+			want:     StatusFingerprintMismatch,
+			wantList: func(t *testing.T, cr CoreResult) {},
+		},
+		{
+			// Both conditions true at once: a switch that swapped these two
+			// cases would still pass every single-condition test above.
+			name: "fingerprint mismatch outranks write-denied",
+			mutate: func(r *Report) {
+				r.Fingerprint = "fp-STALE"
+				r.Wrote = false
+				r.WriteErr = "read-only file system"
+				r.SeenPeers = nil
+				r.CrossWroteTo = nil
+			},
+			want:     StatusFingerprintMismatch,
+			wantList: func(t *testing.T, cr CoreResult) {},
+		},
+		{
+			// Both conditions true at once: a switch that swapped these two
+			// cases would still pass every single-condition test above.
+			name: "not-shared outranks cross-write-denied",
+			mutate: func(r *Report) {
+				r.SeenPeers = []string{}
+				r.CrossWroteTo = []string{}
+				r.CrossWriteDenied = []string{"core-b"}
+			},
+			want: StatusNotShared,
+			wantList: func(t *testing.T, cr CoreResult) {
+				if len(cr.MissingPeers) != 1 || cr.MissingPeers[0] != "core-b" {
+					t.Errorf("MissingPeers = %v, want [core-b]", cr.MissingPeers)
+				}
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -226,5 +271,44 @@ func TestAggregate_ResultsAreSortedByCoreID(t *testing.T) {
 		if res.Results[i].CoreID != want {
 			t.Fatalf("Results[%d] = %s, want %s (map iteration must not leak into the UI order)", i, res.Results[i].CoreID, want)
 		}
+	}
+}
+
+func TestAggregate_EmptyParticipantsFailsClosed(t *testing.T) {
+	res := Aggregate(nil, map[string]Report{}, "fp-1", true)
+	if res.OK {
+		t.Fatal("OK = true with an empty participant list")
+	}
+	if res.Total != 0 || res.Confirmed != 0 || len(res.Results) != 0 {
+		t.Errorf("res = %+v, want an empty, non-OK round", res)
+	}
+}
+
+func TestAggregate_NonParticipantReportCannotConvict(t *testing.T) {
+	// core-x is not in this round's participants (e.g. a stale beacon-derived
+	// report left behind by a Core that has since gone offline, per Task 6's
+	// persistent-fleet-beacon use of Aggregate). Its accusation against
+	// core-b, a real participant that is otherwise perfectly healthy, must be
+	// ignored.
+	parts := []string{"core-a", "core-b"}
+	reports := map[string]Report{
+		"core-a": okReport("core-a", parts),
+		"core-b": okReport("core-b", parts),
+		"core-x": {
+			CoreID:          "core-x",
+			Fingerprint:     "fp-1",
+			Reachable:       true,
+			Wrote:           true,
+			MismatchedPeers: []string{"core-b"},
+		},
+	}
+
+	res := Aggregate(parts, reports, "fp-1", true)
+
+	if got := statusOf(t, res, "core-b").Status; got != StatusOK {
+		t.Fatalf("core-b status = %s, want ok (a non-participant's report must not convict a real participant)", got)
+	}
+	if !res.OK {
+		t.Fatalf("OK = false, want true: %+v", res.Results)
 	}
 }
