@@ -1,6 +1,9 @@
 package storagereach
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFingerprint_StableAcrossCalls(t *testing.T) {
 	cfg := Config{Backend: "path", Path: "/mnt/shared"}
@@ -86,8 +89,34 @@ func TestFingerprint_DistinguishesBackends(t *testing.T) {
 }
 
 func TestFingerprint_CarriesNoSecret(t *testing.T) {
-	cfg := Config{Backend: "s3", S3Bucket: "b", S3SecretKey: "super-secret-value"}
-	if got := Fingerprint(cfg); len(got) != 16 {
-		t.Fatalf("Fingerprint = %q, want a 16-char hex digest", got)
+	cfg := Config{
+		Backend:     "s3",
+		S3Endpoint:  "https://s3.example.com",
+		S3Bucket:    "backups-prod",
+		S3Prefix:    "cluster-a",
+		S3AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		S3SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+	got := Fingerprint(cfg)
+
+	if strings.Contains(got, cfg.S3AccessKey) || strings.Contains(got, cfg.S3SecretKey) {
+		t.Fatalf("Fingerprint = %q, contains a credential", got)
+	}
+
+	// The load-bearing check: swapping credentials must leave the
+	// fingerprint byte-identical, while swapping an identity field (the
+	// bucket) must change it. Without this pair, the test above would still
+	// pass even if a credential were folded into the hash input.
+	sameIdentityOtherCreds := cfg
+	sameIdentityOtherCreds.S3AccessKey = "AKIAI44QH8DHBEXAMPLE"
+	sameIdentityOtherCreds.S3SecretKey = "je7MtGbClwBF/2Zp9utk/h3yCo8nvbEXAMPLEKEY"
+	if want, other := Fingerprint(cfg), Fingerprint(sameIdentityOtherCreds); want != other {
+		t.Fatalf("Fingerprint changed when only credentials changed: %q vs %q", want, other)
+	}
+
+	differentBucket := cfg
+	differentBucket.S3Bucket = "backups-staging"
+	if got, changed := Fingerprint(cfg), Fingerprint(differentBucket); got == changed {
+		t.Fatalf("Fingerprint = %q, did not change when the bucket changed", got)
 	}
 }

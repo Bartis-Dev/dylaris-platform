@@ -30,9 +30,10 @@ func Fingerprint(cfg Config) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// isPathBackend mirrors handlers.isHostPathBackend: "local" is the legacy
+// isPathBackend is close to handlers.isHostPathBackend ("local" is the legacy
 // alias for "path", and a Core configured with either must fingerprint the
-// same as its peers.
+// same as its peers), but differs on the empty string: here it counts as a
+// path backend too, since an unset Backend still needs a stable fingerprint.
 func isPathBackend(backend string) bool {
 	return backend == "path" || backend == "local" || backend == ""
 }
