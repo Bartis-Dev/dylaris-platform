@@ -29,6 +29,12 @@ const (
 	// round gets: both are "prove storage access once", and a backend that has
 	// not answered in 15s is not about to.
 	defaultSelfCheckBudget = 15 * time.Second
+	// defaultRoundParticipationBudget is how long the loop waits for one
+	// round-participation attempt before it stops waiting on it. It matches
+	// RunRound's own default 15s Deadline: a participant that has not answered
+	// by then is legitimately no-response to the coordinator, not something
+	// this loop needs to rule on itself.
+	defaultRoundParticipationBudget = 15 * time.Second
 	// defaultBeaconMaxAge is 2.5 self-check intervals: long enough that one
 	// missed refresh does not evict a healthy Core, short enough that a dead
 	// one stops vouching for the share within five minutes.
@@ -62,12 +68,13 @@ type Service struct {
 	status *LocalStatus
 	coord  *Coordinator
 
-	// These four are fields rather than constants so tests can age beacons out
+	// These five are fields rather than constants so tests can age beacons out
 	// and drive the loop in milliseconds instead of minutes.
 	beaconMaxAge    time.Duration
 	selfCheckEvery  time.Duration
 	selfCheckBudget time.Duration
 	pollEvery       time.Duration
+	roundBudget     time.Duration
 
 	// notSharedStreak counts consecutive not-shared verdicts. Only ever
 	// touched from apply, which the single service loop serialises: a check
@@ -90,6 +97,7 @@ func NewService(deps ServiceDeps) *Service {
 		selfCheckEvery:  defaultSelfCheckEvery,
 		selfCheckBudget: defaultSelfCheckBudget,
 		pollEvery:       defaultPollEvery,
+		roundBudget:     defaultRoundParticipationBudget,
 		doneCh:          make(chan struct{}),
 	}
 }
@@ -119,6 +127,14 @@ type checkOutcome struct {
 	res CoreResult
 	// apply is false when the check produced nothing to commit; see observe.
 	apply bool
+}
+
+// roundOutcome is what one round-participation goroutine hands back to the
+// loop. RunParticipant already commits everything it produces - its own
+// report key in Redis - so there is nothing here to apply, only to log and to
+// let the loop stop waiting on it.
+type roundOutcome struct {
+	err error
 }
 
 // run is the service loop. Every state mutation happens here: the storage work
@@ -157,6 +173,26 @@ func (s *Service) run(ctx context.Context) {
 		}()
 	}
 
+	// Same hazard and the same watchdog shape as the self-check above:
+	// RunParticipant writes through the same provider, so it can wedge on the
+	// same hung syscall. See this function's doc comment for why the child
+	// goroutine cannot be waited on safely and is left to leak instead.
+	roundOutcomes := make(chan roundOutcome, 1)
+	var (
+		roundInFlight     bool
+		roundBudgetExpiry time.Time
+		roundIDInFlight   string
+	)
+	startRound := func(roundID string) {
+		roundInFlight = true
+		roundBudgetExpiry = time.Now().Add(s.roundBudget)
+		roundIDInFlight = roundID
+		go func() {
+			err := RunParticipant(ctx, s.deps.Redis, s.deps.CoreID, roundID, s.deps.NewProvider)
+			roundOutcomes <- roundOutcome{err: err}
+		}()
+	}
+
 	// The boot check starts before the first tick: a Core that cannot see the
 	// shared storage must be gated the moment it joins the load balancer, not
 	// two minutes later.
@@ -184,6 +220,13 @@ func (s *Service) run(ctx context.Context) {
 				s.apply(ctx, out.res)
 			}
 			continue
+		case out := <-roundOutcomes:
+			roundInFlight = false
+			roundBudgetExpiry = time.Time{}
+			if out.err != nil {
+				log.Printf("storagereach: participating in round %s: %v", roundIDInFlight, out.err)
+			}
+			continue
 		case <-ticker.C:
 		}
 
@@ -200,11 +243,24 @@ func (s *Service) run(ctx context.Context) {
 			})
 		}
 
+		// A round attempt that blew its budget is NOT a fault to record: the
+		// coordinator already treats a participant with no report as
+		// no-response, which is the correct, fail-closed verdict for a Core
+		// that cannot reach storage - answering anyway would be dishonest.
+		// Ruled on once, same as the self-check above, so a permanently stuck
+		// attempt does not re-log on every tick.
+		if roundInFlight && !roundBudgetExpiry.IsZero() && time.Now().After(roundBudgetExpiry) {
+			roundBudgetExpiry = time.Time{}
+			log.Printf("storagereach: round %s participation did not finish within %s; the coordinator will see this Core as no-response", roundIDInFlight, s.roundBudget)
+		}
+
 		// Take part in any open config round. This is the fast path: a round
-		// lives for 15s, so it cannot wait for the 120s self-check.
-		if roundID, err := PendingRoundID(ctx, s.deps.Redis); err == nil && roundID != "" {
-			if err := RunParticipant(ctx, s.deps.Redis, s.deps.CoreID, roundID, s.deps.NewProvider); err != nil {
-				log.Printf("storagereach: participating in round %s: %v", roundID, err)
+		// lives for 15s, so it cannot wait for the 120s self-check. Skipped
+		// while one is still in flight, same as startCheck below, so a wedged
+		// mount does not accumulate one more stuck goroutine every tick.
+		if !roundInFlight {
+			if roundID, err := PendingRoundID(ctx, s.deps.Redis); err == nil && roundID != "" {
+				startRound(roundID)
 			}
 		}
 

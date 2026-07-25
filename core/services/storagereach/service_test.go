@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"dylaris-core/storage"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func testDeps(t *testing.T, root, coreID string, online []string) ServiceDeps {
@@ -430,5 +432,76 @@ drain:
 	}
 	if extra != 0 {
 		t.Fatalf("%d further self-check(s) started while the first was still blocked; a hung mount would leak a goroutine per interval", extra)
+	}
+}
+
+// publishPendingRoundFor stages a config round for participantID as if some
+// OTHER Core were coordinating it, so PendingRoundID and RunParticipant see a
+// real round in flight without a second live service. RunRound itself is not
+// used here: it blocks synchronously for the whole round, but this test needs
+// a round already sitting in Redis WHILE the service loop is running, not a
+// coordinator call for the test to wait out.
+func publishPendingRoundFor(t *testing.T, rdb *redis.Client, participantID, coordinatorID string) {
+	t.Helper()
+	cfg := Config{Backend: "path", Path: "/mnt/shared"}
+	meta := roundMeta{
+		RoundID:      "round-under-test",
+		Fingerprint:  Fingerprint(cfg),
+		Participants: []string{participantID},
+		Coordinator:  coordinatorID,
+		// Comfortably longer than this test runs: the hang happens inside the
+		// first WriteFile call, before RunParticipant's own deadline logic ever
+		// gets a chance to matter.
+		DeadlineUnixMilli: time.Now().Add(2 * time.Second).UnixMilli(),
+		PollEveryMillis:   50,
+	}
+	if err := publishRound(context.Background(), rdb, meta, cfg); err != nil {
+		t.Fatalf("publishRound: %v", err)
+	}
+}
+
+func TestStart_AHungStorageBackendDoesNotStallRoundParticipation(t *testing.T) {
+	// Same hazard as TestStart_AHungStorageBackendDoesNotStallTheServiceLoop,
+	// one tick later: RunParticipant writes through the exact same provider, so
+	// a wedged mount can wedge the loop via round participation instead of the
+	// self-check, which already has its own watchdog (see run()'s doc comment
+	// for why the leaked goroutine is the accepted half of that trade).
+	prov := newHangingProvider()
+	deps := testDeps(t, t.TempDir(), "core-a", []string{"core-a"})
+	deps.NewProvider = func(Config) (storage.StorageProvider, error) { return prov, nil }
+
+	svc := NewService(deps)
+	svc.pollEvery = 5 * time.Millisecond
+	// Long enough that the self-check never refires mid-test. Its own hang on
+	// the same provider is harmless here: that watchdog is unchanged and is
+	// already proven by the tests above, so it must not be what this test
+	// depends on.
+	svc.selfCheckEvery = 10 * time.Second
+	svc.selfCheckBudget = 10 * time.Second
+	svc.roundBudget = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// The provider ignores ctx by design, so cancelling is not enough to end
+	// either orphaned goroutine; release it explicitly or it outlives the test.
+	t.Cleanup(func() { cancel(); close(prov.release) })
+	svc.Start(ctx)
+
+	awaitFirstCheck(t, prov) // the boot self-check reaches the provider and hangs
+
+	publishPendingRoundFor(t, deps.Redis, "core-a", "core-other")
+
+	// Round participation now also reaches the same hung provider: a second
+	// entry into the same channel, from a second goroutine.
+	select {
+	case <-prov.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("round participation never reached the storage provider")
+	}
+
+	cancel()
+	select {
+	case <-svc.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the service loop did not stop while round participation was hung; a wedged mount would freeze round answering forever")
 	}
 }
