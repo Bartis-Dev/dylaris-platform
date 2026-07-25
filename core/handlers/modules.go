@@ -120,6 +120,10 @@ func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *htt
 		sendJSONError(w, "Admin module is always admin-only", 400)
 		return
 	}
+	if mod.Name == "Infrastructure" {
+		sendJSONError(w, "Infrastructure module is always admin-only", 400)
+		return
+	}
 	if err := h.state.Store.SetModuleAccessRole(id, req.Role); err != nil {
 		sendJSONError(w, "Update failed", 500)
 		return

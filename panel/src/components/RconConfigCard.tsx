@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Terminal, Copy, RefreshCw, Eye, EyeOff, Save, AlertTriangle,
+    Terminal, Copy, RefreshCw, EyeOff, Save, AlertTriangle,
     CircleCheck, CircleAlert, Play, RotateCcw,
 } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon, friendlyRconError } from '@/lib/api/rcon';

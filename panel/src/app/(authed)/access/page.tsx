@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { ShieldCheck, Plus, Pencil, Trash2, CircleCheck, CircleAlert } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
@@ -34,7 +35,7 @@ function sameGrant(a: Grant, username: string, serverId: number | null): boolean
 }
 
 export default function AccessPage() {
-    const { servers } = useAppData();
+    const { servers, user } = useAppData();
     const ownedServers = servers.filter(s => s.role === 'owner');
 
     const [mode, setMode] = useState<PermissionsMode | null>(null);
@@ -115,7 +116,16 @@ export default function AccessPage() {
                 <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 py-0.5 rounded-sm">
                     {modeLabel(mode)}
                 </span>
-                <span className="mono-label text-(--base-05)">Managed in Settings -&gt; Roles</span>
+                {user?.isAdmin ? (
+                    <Link
+                        href="/settings/roles"
+                        className="mono-label text-(--base-05) hover:text-(--accent-light) focus-visible:text-(--accent-light) outline-none transition-colors"
+                    >
+                        Managed in Settings -&gt; Roles
+                    </Link>
+                ) : (
+                    <span className="mono-label text-(--base-05)">Managed in Settings -&gt; Roles</span>
+                )}
             </div>
 
             {mode === 'off' && (
