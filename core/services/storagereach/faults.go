@@ -3,6 +3,7 @@ package storagereach
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -44,11 +45,23 @@ func faultKey(coreID string) string { return faultKeyPrefix + coreID }
 // "failing since 09:14" instead of resetting to "just now" on every tick. A
 // different status starts a new clock, because it is a different failure.
 func RecordFault(ctx context.Context, rdb *redis.Client, f Fault) error {
-	if prev, err := rdb.Get(ctx, faultKey(f.CoreID)).Result(); err == nil {
+	prev, err := rdb.Get(ctx, faultKey(f.CoreID)).Result()
+	switch {
+	case err == nil:
 		var old Fault
 		if json.Unmarshal([]byte(prev), &old) == nil && old.Status == f.Status && old.Since > 0 {
 			f.Since = old.Since
 		}
+	case errors.Is(err, redis.Nil):
+		// No prior record: the normal first-fault case. Keep f.Since as given.
+	default:
+		// A real Redis failure here must NOT be read as "no previous record" -
+		// that would let one transient error silently overwrite a correct
+		// Since with this tick's value, and every later successful call would
+		// then faithfully preserve the corrupted value forever. The caller
+		// retries on the next tick, and the record's TTL spans several ticks,
+		// so skipping this write is strictly better than corrupting it.
+		return fmt.Errorf("storagereach: read prior fault for %s: %w", f.CoreID, err)
 	}
 	data, err := json.Marshal(f)
 	if err != nil {
