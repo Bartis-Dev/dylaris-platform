@@ -101,9 +101,18 @@ func Faults(ctx context.Context, rdb *redis.Client) ([]Fault, error) {
 			examined++
 			val, err := rdb.Get(ctx, key).Result()
 			if err != nil {
-				// Expired between SCAN and GET: the normal race, and a fault
-				// that just aged out is not one worth reporting.
-				continue
+				if errors.Is(err, redis.Nil) {
+					// Expired between SCAN and GET: the normal race, and a
+					// fault that just aged out is not one worth reporting.
+					continue
+				}
+				// A real Redis failure here must not be swallowed: doing so
+				// would drop this Core's fault from the list and the panel
+				// would render a healthier fleet than actually exists, which
+				// is exactly what this feature exists to prevent. Fail loudly
+				// (mirroring the Scan error above) instead of returning a
+				// quietly-shortened, misleadingly-nil-error result.
+				return nil, fmt.Errorf("storagereach: get fault %s: %w", key, err)
 			}
 			var f Fault
 			if json.Unmarshal([]byte(val), &f) != nil || f.CoreID == "" {

@@ -276,6 +276,42 @@ func TestFaults_RespectsScanBudget(t *testing.T) {
 	}
 }
 
+// TestFaults_RealRedisErrorOnGetIsNotSwallowed injects a real (non-Nil) Redis
+// failure into the per-key GET inside Faults()'s scan loop, using the same
+// miniredis SetPreHook seam TestRecordFault_RealRedisErrorDoesNotOverwriteSince
+// uses. The old code treated every GET error, not just redis.Nil, as "the key
+// expired between SCAN and GET" and silently skipped it, so a real Redis
+// failure would make that Core's fault vanish from the result with Faults()
+// still reporting a nil error - the panel would then render a healthier
+// fleet than actually exists. The fix must surface the error instead.
+func TestFaults_RealRedisErrorOnGetIsNotSwallowed(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	if err := RecordFault(ctx, rdb, Fault{CoreID: "core-a", Status: StatusNotShared, Since: 1, At: 1}); err != nil {
+		t.Fatalf("seed RecordFault: %v", err)
+	}
+
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		if cmd == "GET" && len(args) > 0 && args[0] == faultKey("core-a") {
+			peer.WriteError("SIMULATED: get fault failed")
+			return true
+		}
+		return false
+	})
+	t.Cleanup(func() { mr.Server().SetPreHook(nil) })
+
+	got, err := Faults(ctx, rdb)
+	if err == nil {
+		t.Fatalf("Faults: want an error when a per-key GET fails with a real error, got nil (faults = %+v)", got)
+	}
+}
+
 // TestFaults_SkipsCorruptAndEmptyCoreIDRecords exercises the two defensive
 // skips in Faults()'s loop: a value that does not parse as JSON, and a value
 // that parses fine but carries no CoreID (RecordFault never produces this -
