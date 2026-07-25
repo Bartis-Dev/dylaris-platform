@@ -125,10 +125,11 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 	}
 	// The staged config holds the S3 secret; removing it is not optional, so
 	// this is registered BEFORE publishRound runs. publishRound writes the
-	// config key first and the current-round key last: if it fails partway
-	// through (e.g. Redis drops the connection between those two SETs), the
-	// config key can already be sitting in Redis when we return the error
-	// below, and it still needs to come out rather than wait out its TTL.
+	// meta key, then the config key, then the current-round key last: if it
+	// fails partway through (e.g. Redis drops the connection between those
+	// SETs), the config key can already be sitting in Redis when we return
+	// the error below, and it still needs to come out rather than wait out
+	// its TTL.
 	defer func() {
 		if err := c.rdb.Del(context.WithoutCancel(ctx), roundConfigKey(roundID), currentRoundKey).Err(); err != nil {
 			log.Printf("storagereach: could not clear round %s staging keys: %v", roundID, err)
