@@ -176,10 +176,14 @@ DB_NAME=dylaris
 PANEL_API_URL=http://localhost:25500
 EOF
 
-# 2. Start the stack
+# 2. Seed the Valkey ACL file (mandatory: the --aclfile Valkey refuses to start
+#    against a missing file and is NOT auto-seeded). Dev is passwordless:
+mkdir -p valkey-acl && printf 'user default on nopass ~* &* +@all\n' > valkey-acl/users.acl
+
+# 3. Start the stack
 docker compose up -d
 
-# 3. Open the panel and run the first-run setup wizard
+# 4. Open the panel and run the first-run setup wizard
 #    http://localhost:25510   →   /setup  (creates the first admin)
 ```
 
@@ -210,13 +214,14 @@ Multi-host fleet on an **overlay** network with `deploy:` blocks (replicas, plac
 
 > **Portainer:** paste `docker-stack.yml` into a new Stack and set the variables in the stack's **environment** editor (and secrets via the `*_FILE` pattern above) — the CLI `set -a; . ./.env` step below is only for `docker stack deploy` from a shell.
 
-The full file is [`docker-stack.yml`](docker-stack.yml) at the repo root, see it directly rather than a copy here. Same five services as the single-host file, plus `deploy:` blocks (replicas, placement constraints, `start-first` rolling updates, resource limits) and an `overlay` network.
+The full file is [`docker-stack.yml`](docker-stack.yml) at the repo root, see it directly rather than a copy here. It ships **three active services** (`core`, `node`, `panel`) and points at an external managed Postgres/Redis by default (`DB_HOST` / `REDIS_ADDR`); the bundled `timescaledb`/`redis` are opt-in commented blocks. On top of the single-host layout it adds `deploy:` blocks (replicas, placement constraints, `start-first` rolling updates, resource limits) and an `overlay` network.
 
 ```bash
 # On a manager node:
 docker swarm init                                  # (once)
 
-# Label the host that should run the database (its volume is node-local):
+# Only if you uncomment the bundled timescaledb service: label the DB host so
+# its node-local volume stays put (skip this when using a managed/external Postgres):
 docker node update --label-add dylaris.db=true <manager-node-id>
 
 # Deploy (env from your shell / an env file):
@@ -242,7 +247,7 @@ In the stack, the `node` service is **global** — exactly one Node task runs on
 
 ### The compose files explained
 
-Both files declare the same five services:
+The single-host `docker-compose.yml` declares all five services below. The Swarm `docker-stack.yml` ships only the first three (`core`, `node`, `panel`) active and points at an external managed Postgres/Redis by default; its `timescaledb` and `redis` are opt-in commented blocks (uncomment for a small single-region deploy):
 
 | Service | Image | Role |
 |---|---|---|
@@ -258,7 +263,7 @@ Notable details:
 - **`redis`/Valkey runs in-memory** (`--save "" --appendonly no`) — it is used as a coordination bus, not the source of truth (Postgres is). Losing it loses transient queue state, not your servers.
 - **`timescaledb` has a healthcheck** (single-host) so Core waits for the DB to accept connections on first boot.
 - **The Panel needs a browser-reachable Core URL** via `PANEL_API_URL`, written into `/config.js` by the panel's entrypoint at container **start** (no rebuild needed), because the browser, not the container, calls the API. `NEXT_PUBLIC_API_URL` is the separate build-time fallback baked into the JS bundle (used by the owner's SaaS CI build).
-- **Swarm DB is a single replica** pinned to a labelled host (`dylaris.db=true`) because the named volume is node-local. For real HA, point Core at an external/managed PostgreSQL.
+- **Swarm defaults to an external/managed Postgres** (set `DB_HOST`/`DB_PORT`/`DB_SSLMODE` on `core`). The bundled single-replica DB is an opt-in commented block: uncomment it (and the `timescaledb_data` volume), label the DB host so its node-local volume stays put (`dylaris.db=true`), and leave `DB_HOST` unset so it falls back to `timescaledb`. For real HA, use a managed/replicated PostgreSQL.
 
 ## Configuration reference
 
@@ -307,9 +312,11 @@ secrets:
 | `DB_TYPE` | `timescaledb` | No | Time-series backend for `server_stats`: `timescaledb` (hypertable + native retention, best for larger fleets) or `postgres` (plain table, retention via the hourly sweep — fine for small/medium setups, no extension needed). |
 | `API_PORT` | `25500` | No | Core REST API port. |
 | `DYLARIS_GRPC_PORT` | `25501` | No | Core gRPC mesh port (Core ↔ Node). |
+| `GRPC_TLS_ENABLED` | `false` | No | Server-authenticated TLS + fingerprint pinning on the Core ↔ Node gRPC control channel. Off (default) is plaintext (rely on an encrypted overlay). Must be flipped together on every Core AND every Node. |
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
 | `FRONTEND_URL` | `http://localhost:25510` | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). **Must be externally reachable**: the previous compose default (`http://panel:25510`, an internal Docker-only hostname) made every emailed link unreachable outside the Docker network. For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config, kept as env. |
+| `TRUSTED_PROXY_CIDRS` | *(private ranges)* | No | Which reverse-proxy networks' `X-Forwarded-For` Core believes for rate limiting and the audit log. Unset trusts the private ranges (RFC1918, loopback, IPv6 ULA), correct for the reference proxy on the private Docker network. A CIDR/IP list trusts exactly those (proxy on a public IP); `none` ignores XFF entirely (Core exposed directly). |
 | `TAB_PROXY_PORT` | *(empty)* | No | Origin-isolated custom-tab proxy (spec B5). When set, Core binds a SECOND HTTP listener on this port serving only the tab-proxy data plane. Front it on the SAME host as the panel, a different port (e.g. `25502`). Required for public tab share links; empty = second listener off (same-origin fallback). |
 | `TAB_PROXY_ORIGIN` | *(empty)* | No | Browser-facing absolute base URL of that isolated origin (e.g. `https://panel.example.com:25502`). Its HOST must equal `FRONTEND_URL`'s host (the `dyl_tabproxy` cookie is host-only); a mismatch logs a warning and disables isolation. Empty = same-origin fallback (public shares refused). |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
@@ -318,7 +325,17 @@ secrets:
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
 | `DYLARIS_TELEMETRY` | *(unset = on)* | No | Set to `false` to hard-disable anonymous usage stats (bypasses the in-panel toggle). See [Anonymous usage stats](#anonymous-usage-stats). |
+| `DYLARIS_TELEMETRY_KEY` | *(empty)* | No | Optional bearer key sent with the anonymous heartbeat. Set it to the website's `HEARTBEAT_SECRET` when that endpoint enforces auth; empty sends no header (unauthenticated endpoint). |
+| `BILLING_SUSPEND_GRACE` | `48h` | No | Grace before a `suspended` (BYON) tenant is cut off (servers stopped, link tunnels dropped), so a transient billing/DB fault cannot instantly kick a paying customer. Go duration; `0` enforces on the next hourly tick. |
 | `ADMIN_SECRET` | *(empty)* | No | RAM-only break-glass. When set (>=16 chars), creating an admin via `/setup` requires this exact value in every mode - closes the fresh-install race and re-opens `/setup` to recover or add an admin. Never written to the DB or logs; unset + restart to disable. Supports `ADMIN_SECRET_FILE`. |
+| `DNS_UPDATER_ENABLED` | `false` | No (owner) | Leader-gated reconciler that points each region's edge wildcard A record at the live edge IPs. Only for multi-region Gateway deploys on Cloudflare; most self-hosters leave it off. |
+| `DNS_PROVIDER` | `cloudflare` | No (owner) | DNS provider for the failover reconciler above. |
+| `CF_API_TOKEN` | *(empty)* | No (owner) | Cloudflare API token for the DNS reconciler. Lives only in Core, never on the edges. |
+| `CF_ZONE_ID` | *(empty)* | No (owner) | Cloudflare zone ID the DNS reconciler updates. |
+| `STORE_URL` | *(empty)* | No (SaaS) | Hosted dylaris.com storefront base URL. Set together with `STORE_SHARED_KEY` to enable store-linking + demo showcase; both empty gives a clean open-core build with no store surface. |
+| `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
+| `UPDATES_FEED_URL_PLATFORM` | *(public repo feed)* | No (owner) | Raw URL of the append-only JSONL update feed the admin "what's new" bell diffs against the baked baseline. Defaults to the platform public-repo raw feed. Fails open when unset or unreachable. |
+| `UPDATES_FEED_URL_GATEWAY` | *(empty)* | No (owner) | Raw URL of the gateway update feed. Empty until it is cross-pushed into the public platform repo. Fails open. |
 
 ### Node
 
@@ -330,8 +347,12 @@ secrets:
 | `NODE_TAGS` | *(empty)* | No | Comma-separated placement tags (e.g. `eu,fast`). The tag `external` flags a home/external node. |
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
 | `NODE_EXTERNAL` | `false` | No | If `true` (or `NODE_TAGS` contains `external`), the Node forces `gateway` routing + `beam` file access locally (no host ports, no SFTP). |
+| `NODE_MANAGES_LINK` | *(follows `NODE_EXTERNAL`)* | No | Whether this Node spawns and manages its own Link sidecar. Defaults to the node's external flag when unset; needs `LINK_IMAGE` set to actually spawn one. |
+| `LINK_IMAGE` | *(empty)* | No | Container image for the Link sidecar this Node spawns when it manages Link. Empty means no Link sidecar is spawned. |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `CORE_GRPC_ADDR` | *(empty)* | For first boot | Core gRPC endpoint (`host:25501`). Needed for a first-boot node to bootstrap its per-node Redis secret over gRPC; a node with an already-cached secret can start without it (see the boot warning). Redis ACL is mandatory and there is no static-password fallback. |
+| `GRPC_TLS_ENABLED` | `false` | No | TLS + Core-cert fingerprint pinning on the Node ↔ Core gRPC control channel. Off (default) is plaintext. Must match Core's `GRPC_TLS_ENABLED`. |
+| `GRPC_TLS_FINGERPRINT` | *(empty)* | No | Pins the Core control-channel cert fingerprint for a BYON node that does NOT hold `CLUSTER_SECRET` (in-cluster nodes derive it from `CLUSTER_SECRET` and leave this empty). Public pinning material, delivered out-of-band at enroll time. |
 | `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. |
 | `NODE_RECOVERY_TOKEN` | *(empty)* | For recovery | Single-use, admin-minted token (Settings → Nodes → Reset pairing) to re-pair a node under its EXISTING identity after its secret was reset. Not needed on a normal boot. |
 | `SIDECAR_REDIS_ADDR` | *(falls back to `REDIS_ADDR`)* | No | Redis address handed to MC containers, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. |
@@ -341,10 +362,12 @@ secrets:
 | `PORT_RANGE_END` | `25699` | No | End of host port range for MC servers. Ignored if `PORT_RANGE` is set. |
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
+| `BEAM_LAN_FASTPATH` | `true` (on unless `false`) | No | Toggles the Beam LAN fast-path TLS listener on `:25523` (pinned-TLS, direct client ↔ node). Set `false` to disable; any other value leaves it on. |
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
 | `BEAM_JWT_SECRET` | *(empty — Beam rejects all tickets)* | No (required for Beam) | Must match the gateway beam-relay's JWT secret so relay-validated tickets pass the node-side gate. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
 | `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). |
+| `MODPACK_MIRROR_HOSTS` | *(empty)* | No | Comma-separated extra hosts the Node may download Core-minted pack-build `.mrpack` files from (e.g. the Core public domain / S3 mirror). Merged into the built-in `.mrpack` allowlist (cdn.modrinth.com, github.com, ...). |
 | `DYLARIS_STATS_BUFFER_MAXLEN` | `1800` | No | MaxLen of the per-server stats buffer stream (~1h at 2s). Reduce for very large fleets. |
 | `STATS_STREAM_MAXLEN` | `360` | No | MaxLen of the node system-stats stream (~3h at 30s). |
 
@@ -587,15 +610,20 @@ assets.
 
 ## Development
 
-The backend is a Go workspace (`go.work`) with `core`, `node`, the `log-shipper`, the `agent` library, and shared `pkg`/`proto` modules. The frontend is a Next.js app in `panel/`.
+The backend is a Go workspace (`go.work`) with `core`, `node`, the `log-shipper`, the `agent` library, the Beam desktop app (`beam/app`), and shared `pkg`/`proto` modules. The frontend is a Next.js app in `panel/`.
 
 ```bash
 # Backend (Go workspace)
 go work sync
-go build ./core         # → dylaris-core(.exe)
-go build ./node         # → dylaris-node(.exe)
-go test ./...
-cd log-shipper && ./build_shipper.sh
+
+# Build, vet and test PER MODULE. The workspace root is not a runnable package
+# set (`go test ./...` from the root fails with "directory prefix . does not
+# contain modules listed in go.work"), so run these inside each module.
+# Repeat for core, node, pkg, log-shipper:
+(cd core && go build ./... && go vet ./... && go test -count=1 ./...)
+
+# Build the log-shipper binary baked into the MC container image (from the repo root):
+./build_shipper.sh
 
 # Frontend
 cd panel && npm install
@@ -619,7 +647,7 @@ cd panel && npm run build    # production build
 
 ## Anonymous usage stats
 
-Each Dylaris Core sends a tiny anonymized payload to `dylaris.dev/api/heartbeat` every 10 min so a public live counter on the website can show *"N platforms · N gateways · N containers · N players online"*. The payload contains: a hash of the Core ID (so the hostname is never exposed), instance type, container counts, total players, and version. No user data, no server names, no IPs.
+Each Dylaris Core sends a tiny anonymized payload to `dylaris.dev/api/heartbeat` every 10 min so a public live counter on the website can show *"N platforms · N gateways · N containers · N players online"*. The payload contains: an opaque hash of `CLUSTER_SECRET` (stable per deployment, so a multi-Core cluster counts once), instance type, container counts, total players, and version. No user data, no server names, no IPs.
 
 Disable any time: **Settings → Features → "Anonymous Usage Stats"** toggle, or set `DYLARIS_TELEMETRY=false` (hard kill, bypasses the DB toggle).
 
