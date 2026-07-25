@@ -7,8 +7,12 @@ import (
 
 func TestFingerprint_StableAcrossCalls(t *testing.T) {
 	cfg := Config{Backend: "path", Path: "/mnt/shared"}
-	if Fingerprint(cfg) != Fingerprint(cfg) {
-		t.Fatal("Fingerprint is not deterministic")
+	// Separate variables, not a direct self-comparison: staticcheck SA4000
+	// rejects identical expressions around != and the CI gate runs SA*.
+	first := Fingerprint(cfg)
+	second := Fingerprint(cfg)
+	if first != second {
+		t.Fatalf("Fingerprint is not deterministic: %q vs %q", first, second)
 	}
 }
 
