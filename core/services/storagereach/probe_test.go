@@ -181,7 +181,10 @@ func TestProbe_WriteDenied(t *testing.T) {
 	prov.writeErrPrefix = "core-a"
 	prov.writeErr = errors.New("read-only file system")
 
-	rep := Probe(context.Background(), prov, probeOpts("core-a", "r1", []string{"core-a", "core-b"}))
+	rep := Probe(context.Background(), prov, ProbeOptions{
+		CoreID: "core-a", RoundID: "r1", Fingerprint: "fp-1", Participants: []string{"core-a", "core-b"},
+		Deadline: 60 * time.Millisecond, RetryEvery: 10 * time.Millisecond,
+	})
 
 	if rep.Wrote {
 		t.Fatal("Wrote = true despite a failing write")
@@ -196,7 +199,10 @@ func TestProbe_NotSharedWhenPeerBeaconsAreInvisible(t *testing.T) {
 	peers := []string{"core-a", "core-b"}
 
 	// core-b writes for real...
-	Probe(context.Background(), newProbeProvider(root), probeOpts("core-b", "r1", peers))
+	Probe(context.Background(), newProbeProvider(root), ProbeOptions{
+		CoreID: "core-b", RoundID: "r1", Fingerprint: "fp-1", Participants: peers,
+		Deadline: 60 * time.Millisecond, RetryEvery: 10 * time.Millisecond,
+	})
 
 	// ...but core-a's view hides everything belonging to core-b, which is
 	// what a per-host volume that only looks shared does.
@@ -218,7 +224,10 @@ func TestProbe_NotSharedWhenPeerBeaconsAreInvisible(t *testing.T) {
 func TestProbe_CrossWriteDenied(t *testing.T) {
 	root := sharedRoot(t)
 	peers := []string{"core-a", "core-b"}
-	Probe(context.Background(), newProbeProvider(root), probeOpts("core-b", "r1", peers))
+	Probe(context.Background(), newProbeProvider(root), ProbeOptions{
+		CoreID: "core-b", RoundID: "r1", Fingerprint: "fp-1", Participants: peers,
+		Deadline: 60 * time.Millisecond, RetryEvery: 10 * time.Millisecond,
+	})
 
 	// core-a may write its own beacon but not into core-b's ack namespace:
 	// the NFS uid-squash shape.
@@ -248,7 +257,10 @@ func TestProbe_UnreachableWhenListingFails(t *testing.T) {
 	prov.writeErr = errors.New("connection refused")
 	prov.listErr = errors.New("connection refused")
 
-	rep := Probe(context.Background(), prov, probeOpts("core-a", "r1", []string{"core-a", "core-b"}))
+	rep := Probe(context.Background(), prov, ProbeOptions{
+		CoreID: "core-a", RoundID: "r1", Fingerprint: "fp-1", Participants: []string{"core-a", "core-b"},
+		Deadline: 60 * time.Millisecond, RetryEvery: 10 * time.Millisecond,
+	})
 
 	if rep.Reachable {
 		t.Fatal("Reachable = true although both write and list failed")
@@ -261,7 +273,10 @@ func TestProbe_IgnoresBeaconsFromAnotherRound(t *testing.T) {
 	// later round pass on evidence that proves nothing.
 	root := sharedRoot(t)
 	peers := []string{"core-a", "core-b"}
-	Probe(context.Background(), newProbeProvider(root), probeOpts("core-b", "OLD", peers))
+	Probe(context.Background(), newProbeProvider(root), ProbeOptions{
+		CoreID: "core-b", RoundID: "OLD", Fingerprint: "fp-1", Participants: peers,
+		Deadline: 60 * time.Millisecond, RetryEvery: 10 * time.Millisecond,
+	})
 
 	rep := Probe(context.Background(), newProbeProvider(root), ProbeOptions{
 		CoreID: "core-a", RoundID: "NEW", Fingerprint: "fp-1", Participants: peers,
