@@ -55,7 +55,9 @@ type roundMeta struct {
 
 // ProviderFactory builds a provider for a candidate config. It is injected so
 // this package never imports handlers (which owns config resolution) and so
-// tests can hand every Core a LocalProvider on one root.
+// tests can hand every Core a LocalProvider on one root. It must be safe for
+// concurrent use: the service loop's watchdogs can call it from the check
+// goroutine and the round goroutine at the same time.
 type ProviderFactory func(cfg Config) (storage.StorageProvider, error)
 
 // Coordinator runs a config-time round: stage, publish, probe locally, collect,

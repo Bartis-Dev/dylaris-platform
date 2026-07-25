@@ -231,11 +231,18 @@ func (s *Service) run(ctx context.Context) {
 		}
 
 		// A check that blew its budget IS the fault: the backend has not
-		// answered, which is what unreachable means. Ruled on once - clearing
-		// budgetExpiry - so a permanently stuck check does not re-record it on
-		// every tick.
+		// answered, which is what unreachable means. Re-armed to the next
+		// self-check cadence rather than cleared: inFlight stays true for as
+		// long as the mount stays wedged, so clearing budgetExpiry would rule
+		// on this exactly once for the lifetime of the process. The fault's
+		// Redis record would then sit un-refreshed until its own TTL expired,
+		// after which a Core that is still alive, still gated, and still
+		// failing every storage request would look perfectly healthy on the
+		// fleet page. Re-arming keeps the same synthetic verdict flowing at
+		// the self-check cadence without starting a second goroutine against
+		// the wedged mount - inFlight is untouched.
 		if inFlight && !budgetExpiry.IsZero() && time.Now().After(budgetExpiry) {
-			budgetExpiry = time.Time{}
+			budgetExpiry = time.Now().Add(s.selfCheckEvery)
 			s.apply(ctx, CoreResult{
 				CoreID: s.deps.CoreID,
 				Status: StatusUnreachable,
@@ -247,10 +254,12 @@ func (s *Service) run(ctx context.Context) {
 		// coordinator already treats a participant with no report as
 		// no-response, which is the correct, fail-closed verdict for a Core
 		// that cannot reach storage - answering anyway would be dishonest.
-		// Ruled on once, same as the self-check above, so a permanently stuck
-		// attempt does not re-log on every tick.
+		// Re-armed for the same reason as the self-check ruling above: without
+		// it, a permanently stuck attempt would log exactly once for the life
+		// of the process and then go silent even though roundInFlight is still
+		// blocking every later attempt.
 		if roundInFlight && !roundBudgetExpiry.IsZero() && time.Now().After(roundBudgetExpiry) {
-			roundBudgetExpiry = time.Time{}
+			roundBudgetExpiry = time.Now().Add(s.roundBudget)
 			log.Printf("storagereach: round %s participation did not finish within %s; the coordinator will see this Core as no-response", roundIDInFlight, s.roundBudget)
 		}
 
@@ -285,6 +294,10 @@ func (s *Service) run(ctx context.Context) {
 //
 // It is synchronous, so it blocks for exactly as long as the backend does. The
 // service loop never calls it for that reason; see run.
+//
+// Must not be called concurrently with a running Start: both paths end up in
+// apply, and apply's state (notSharedStreak, lastStatus) is mutated on the
+// assumption of a single caller at a time, not guarded by a mutex.
 func (s *Service) SelfCheck(ctx context.Context) CoreResult {
 	res, ok := s.observe(ctx)
 	if !ok {

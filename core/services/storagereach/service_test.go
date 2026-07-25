@@ -9,6 +9,7 @@ import (
 
 	"dylaris-core/storage"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -341,6 +342,42 @@ func hungServiceUnderTest(t *testing.T, selfCheckEvery, budget time.Duration) (*
 	return svc, prov, deps, cancel
 }
 
+// hungServiceUnderTestWithMiniredis is hungServiceUnderTest plus direct access
+// to the underlying miniredis instance. A test that wants to prove the
+// timeout ruling re-fires needs to advance miniredis's virtual clock itself:
+// miniredis TTLs are static until FastForward is called, they do not decay
+// with real wall-clock time the way the service loop's own timers do.
+func hungServiceUnderTestWithMiniredis(t *testing.T, selfCheckEvery, budget time.Duration) (*Service, *hangingProvider, *miniredis.Miniredis, *redis.Client) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	prov := newHangingProvider()
+	deps := ServiceDeps{
+		Redis:       rdb,
+		CoreID:      "core-a",
+		NewProvider: func(Config) (storage.StorageProvider, error) { return prov, nil },
+		ConfigFor:   func() (Config, bool) { return Config{Backend: "path", Path: "/mnt/shared"}, true },
+		OnlineCores: func(context.Context) ([]string, error) { return []string{"core-a"}, nil },
+	}
+
+	svc := NewService(deps)
+	svc.pollEvery = 5 * time.Millisecond
+	svc.selfCheckEvery = selfCheckEvery
+	svc.selfCheckBudget = budget
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Same leak-by-design hazard as hungServiceUnderTest: release the blocked
+	// provider explicitly or its goroutine outlives the test.
+	t.Cleanup(func() { cancel(); close(prov.release) })
+	svc.Start(ctx)
+	return svc, prov, mr, rdb
+}
+
 // awaitFirstCheck blocks until the boot self-check has reached the provider.
 func awaitFirstCheck(t *testing.T, prov *hangingProvider) {
 	t.Helper()
@@ -363,6 +400,51 @@ func waitUntil(t *testing.T, msg string, cond func() bool) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+// waitForFaultRerecords blocks until a Core's fault has been re-recorded
+// `want` more times, detected by watching its Redis key's remaining TTL jump
+// back up toward the full faultTTL - which only happens when RecordFault
+// runs the SET again (see run()'s timeout-ruling re-arm; a fault recorded
+// exactly once only ever counts down, it never climbs back up on its own).
+//
+// This is a genuine measure of how many times the LOOP ITSELF re-ruled on a
+// stuck condition, unlike a fixed sleep, which only proves wall-clock time
+// passed and would silently under-count on a loaded machine without the test
+// ever failing because of it.
+//
+// Miniredis's TTLs are virtual: they only move when FastForward is called,
+// they do not decay with real elapsed time on their own. So each poll step
+// advances that virtual clock by the same duration it just slept in real
+// time - real time is what actually drives the service loop under test;
+// virtual time is only what miniredis needs to report a shrinking PTTL back.
+// The 2s deadline is a failure detector, not a wait: under the fix, a
+// handful of re-records happen within tens of milliseconds.
+func waitForFaultRerecords(t *testing.T, mr *miniredis.Miniredis, rdb *redis.Client, coreID string, want int) {
+	t.Helper()
+	key := faultKey(coreID)
+	const step = time.Millisecond
+	last, err := rdb.PTTL(context.Background(), key).Result()
+	if err != nil {
+		t.Fatalf("PTTL: %v", err)
+	}
+	seen := 0
+	deadline := time.Now().Add(2 * time.Second)
+	for seen < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("observed only %d/%d fault re-records within the deadline", seen, want)
+		}
+		time.Sleep(step)
+		mr.FastForward(step)
+		cur, err := rdb.PTTL(context.Background(), key).Result()
+		if err != nil {
+			t.Fatalf("PTTL: %v", err)
+		}
+		if cur > last {
+			seen++
+		}
+		last = cur
+	}
 }
 
 func TestStart_AHungStorageBackendDoesNotStallTheServiceLoop(t *testing.T) {
@@ -406,19 +488,58 @@ func TestStart_ACheckThatOverrunsItsBudgetGatesAndRecordsAFault(t *testing.T) {
 	}
 }
 
+// TestStart_AStuckCheckKeepsReRecordingTheFaultInsteadOfGoingStale is the
+// regression test for the "ruled once" bug: budgetExpiry used to be zeroed
+// the moment the budget blew, so apply (and therefore RecordFault) ran
+// exactly once for the whole lifetime of a permanently wedged Core. inFlight
+// stays true forever on a wedged mount, so nothing ever ran apply a second
+// time - the fault's Redis record sat un-refreshed until its own 300s TTL
+// expired, after which the panel would show a clean fleet for a Core that was
+// still alive, still gated, and still failing every storage request.
+func TestStart_AStuckCheckKeepsReRecordingTheFaultInsteadOfGoingStale(t *testing.T) {
+	const selfCheckEvery = 20 * time.Millisecond
+	svc, prov, mr, rdb := hungServiceUnderTestWithMiniredis(t, selfCheckEvery, 5*time.Millisecond)
+	awaitFirstCheck(t, prov)
+
+	waitUntil(t, "the first check never blew its budget", func() bool { return !svc.Status().Healthy() })
+
+	// Proves the fault is re-recorded, not ruled on once: with the bug
+	// restored (budgetExpiry zeroed instead of re-armed) this call times out
+	// and fails the test, because RecordFault never runs a second time.
+	waitForFaultRerecords(t, mr, rdb, "core-a", 4)
+
+	if svc.Status().Healthy() {
+		t.Fatal("still healthy after several self-check intervals on a wedged mount")
+	}
+	faults, err := Faults(context.Background(), rdb)
+	if err != nil {
+		t.Fatalf("Faults: %v", err)
+	}
+	if len(faults) != 1 || faults[0].CoreID != "core-a" || faults[0].Status != StatusUnreachable {
+		t.Fatalf("faults = %+v, want exactly one unreachable fault for core-a still present after multiple self-check intervals", faults)
+	}
+}
+
 func TestStart_DoesNotStartASecondCheckWhileTheFirstIsStillBlocked(t *testing.T) {
 	// A loop that re-armed when the BUDGET expired rather than when the check
 	// actually returned would strand one more goroutine on the dead mount every
 	// interval, forever.
 	const selfCheckEvery = 15 * time.Millisecond
-	svc, prov, _, _ := hungServiceUnderTest(t, selfCheckEvery, 10*time.Millisecond)
+	svc, prov, mr, rdb := hungServiceUnderTestWithMiniredis(t, selfCheckEvery, 10*time.Millisecond)
 	awaitFirstCheck(t, prov)
 
 	// The budget is shorter than the interval, so by now the first check has
-	// already been ruled on and every one of these ten intervals was a chance
-	// to start another.
+	// already been ruled on and every one of these intervals was a chance to
+	// start another.
 	waitUntil(t, "the first check never blew its budget", func() bool { return !svc.Status().Healthy() })
-	time.Sleep(10 * selfCheckEvery)
+
+	// A fixed time.Sleep here only proves wall-clock time passed, not that the
+	// LOOP itself processed that many intervals: on a loaded machine the run()
+	// goroutine could be scheduled late and get through far fewer ticks than
+	// the sleep implies, which would let extra==0 pass for the wrong reason.
+	// Waiting for a real, observed re-record count ties the wait to what the
+	// loop actually did.
+	waitForFaultRerecords(t, mr, rdb, "core-a", 5)
 
 	extra := 0
 drain:
