@@ -1,4 +1,5 @@
 import { API_URL as API_BASE } from './core';
+import { handleUnauthorized } from './session';
 
 export interface AppModule {
     id: number;
@@ -178,9 +179,8 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     };
 
     const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
-    if (res.status === 401) {
-        localStorage.removeItem('token');
-        if (typeof window !== 'undefined') window.location.href = '/login';
+    if (handleUnauthorized(res)) {
+        return { success: false, error: 'Session expired', message: 'Session expired' };
     }
     // Some Go handlers send `http.Error(...)` which is text/plain. Trying to
     // parse that as JSON throws an unhelpful SyntaxError and callers lose the

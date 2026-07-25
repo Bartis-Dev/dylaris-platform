@@ -1,3 +1,5 @@
+import { handleUnauthorized } from "./session";
+
 // Resolve the Core API base URL. Order of precedence:
 //   1. window.__DYLARIS_CONFIG__.apiUrl - runtime shim from /config.js. It is
 //      NOT baked into the build, so a self-hoster can point a prebuilt image at
@@ -45,6 +47,9 @@ export const getAuthHeader = (): Record<string, string> => {
 
 // Error Handler Helper
 export const handleResponse = async (response: Response) => {
+    // Check for an expired session before touching the body: a 401 can carry a
+    // non-JSON body (Go http.Error is text/plain), which would throw here.
+    if (handleUnauthorized(response)) return { success: false, message: 'Session expired' };
     const data = await response.json();
     if (response.ok) return { success: true, ...data };
     return { success: false, message: data.message || 'Unknown error' };
