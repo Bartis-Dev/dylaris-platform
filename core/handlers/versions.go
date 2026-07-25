@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -39,27 +40,43 @@ type PaperMCProvider struct {
 func (p *PaperMCProvider) Name() string { return p.project }
 
 func (p *PaperMCProvider) FetchVersions() ([]VersionEntry, error) {
-	url := fmt.Sprintf("https://api.papermc.io/v2/projects/%s", p.project)
+	// PaperMC retired the v2 API (api.papermc.io/v2 now returns 410 "sunset");
+	// the current source is the v3 Fill API. Its `versions` is an object keyed by
+	// major line -> build list, not the old flat array. Order is irrelevant here:
+	// the panel regroups by major and sorts both columns itself.
+	url := fmt.Sprintf("https://fill.papermc.io/v3/projects/%s", p.project)
 	resp, err := fetchJSON(url)
 	if err != nil {
 		return nil, err
 	}
+	return parsePaperMCVersions(resp, p.project)
+}
 
-	versions, ok := resp["versions"].([]interface{})
+// parsePaperMCVersions flattens the v3 Fill `versions` object ({major: [builds]})
+// into VersionEntry rows, skipping pre-release / RC / snapshot builds (any build
+// carrying a "-" suffix) so the picker only offers stable releases, matching the
+// old v2 behavior.
+func parsePaperMCVersions(resp map[string]interface{}, project string) ([]VersionEntry, error) {
+	versions, ok := resp["versions"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected %s API response", p.project)
+		return nil, fmt.Errorf("unexpected %s API response", project)
 	}
-
 	var entries []VersionEntry
-	for i := len(versions) - 1; i >= 0; i-- { // newest first
-		build, _ := versions[i].(string)
-		if build == "" {
+	for _, builds := range versions {
+		list, ok := builds.([]interface{})
+		if !ok {
 			continue
 		}
-		entries = append(entries, VersionEntry{
-			Major: getMajorVersion(build),
-			Build: build,
-		})
+		for _, b := range list {
+			build, _ := b.(string)
+			if build == "" || strings.Contains(build, "-") {
+				continue
+			}
+			entries = append(entries, VersionEntry{
+				Major: getMajorVersion(build),
+				Build: build,
+			})
+		}
 	}
 	return entries, nil
 }

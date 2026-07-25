@@ -300,9 +300,12 @@ func fetchJSON(url string, target interface{}) error {
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
-// installPaper fetches the latest PaperMC build for the given version and downloads it as server.jar.
+// installPaper fetches the latest PaperMC build for the given version and
+// downloads it as server.jar. Uses the v3 Fill API; the old api.papermc.io/v2
+// was retired (now returns 410 "sunset"). The v3 builds/latest response carries
+// the direct download URL, so there is no longer a URL to reconstruct.
 func installPaper(dir, version string) error {
-	apiURL := fmt.Sprintf("https://api.papermc.io/v2/projects/paper/versions/%s/builds", version)
+	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/paper/versions/%s/builds/latest", version)
 	resp, err := http.Get(apiURL)
 	if err != nil {
 		return fmt.Errorf("failed to query PaperMC API: %v", err)
@@ -313,40 +316,22 @@ func installPaper(dir, version string) error {
 	}
 
 	var result struct {
-		Builds []struct {
-			Build     int    `json:"build"`
-			Channel   string `json:"channel"`
-			Downloads struct {
-				Application struct {
-					Name string `json:"name"`
-				} `json:"application"`
-			} `json:"downloads"`
-		} `json:"builds"`
+		ID        int `json:"id"`
+		Downloads map[string]struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"downloads"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return fmt.Errorf("failed to parse PaperMC response: %v", err)
 	}
-	if len(result.Builds) == 0 {
-		return fmt.Errorf("no builds found for Paper %s", version)
+	dl, ok := result.Downloads["server:default"]
+	if !ok || dl.URL == "" {
+		return fmt.Errorf("no server download available for Paper %s", version)
 	}
 
-	// Prefer the newest "default" (stable) build; fall back to the newest of
-	// any channel if Paper only published experimental builds for this version.
-	latest := result.Builds[len(result.Builds)-1]
-	for i := len(result.Builds) - 1; i >= 0; i-- {
-		if result.Builds[i].Channel == "default" {
-			latest = result.Builds[i]
-			break
-		}
-	}
-	fileName := latest.Downloads.Application.Name
-	downloadURL := fmt.Sprintf(
-		"https://api.papermc.io/v2/projects/paper/versions/%s/builds/%d/downloads/%s",
-		version, latest.Build, fileName,
-	)
-
-	log.Printf("Downloading PaperMC %s build %d ...", version, latest.Build)
-	return downloadFile(downloadURL, filepath.Join(dir, "server.jar"))
+	log.Printf("Downloading PaperMC %s build %d ...", version, result.ID)
+	return downloadFile(dl.URL, filepath.Join(dir, "server.jar"))
 }
 
 // installVanilla downloads the official Minecraft server jar via Mojang's launcher manifest.
@@ -512,13 +497,13 @@ func installFromUploadZip(destDir, structure string) error {
 // Returns the detected JAR filename (e.g. "forge-1.20.1-47.2.0-shim.jar") or "server.jar" as fallback.
 func DetectServerJar(destDir string) string {
 	patterns := []string{
-		"forge-*-shim.jar",          // Forge 1.17+ (new launcher)
-		"forge-*-universal.jar",     // Forge legacy
-		"neoforge-*.jar",            // NeoForge
-		"fabric-server-launch.jar",  // Fabric
-		"paper-*.jar",               // Paper
-		"purpur-*.jar",              // Purpur
-		"server.jar",                // Default
+		"forge-*-shim.jar",         // Forge 1.17+ (new launcher)
+		"forge-*-universal.jar",    // Forge legacy
+		"neoforge-*.jar",           // NeoForge
+		"fabric-server-launch.jar", // Fabric
+		"paper-*.jar",              // Paper
+		"purpur-*.jar",             // Purpur
+		"server.jar",               // Default
 	}
 	for _, pattern := range patterns {
 		matches, _ := filepath.Glob(filepath.Join(destDir, pattern))
