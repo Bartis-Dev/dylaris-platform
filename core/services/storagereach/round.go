@@ -14,11 +14,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RoundsChannel carries a round id to every Core the moment a round opens.
-// It is the LATENCY path only: currentRoundKey is the source of truth, because
-// a fire-and-forget publish is exactly what a Core in a GC pause misses.
-const RoundsChannel = "dylaris:storagereach:rounds"
-
 const (
 	keyPrefix       = "dylaris:storagereach:"
 	currentRoundKey = keyPrefix + "current"
@@ -186,9 +181,14 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 	}
 }
 
-// publishRound writes the round metadata and the staged config, then signals.
-// Order matters: a Core woken by the publish must find both keys already
-// there, or it reports no-response for a round that was perfectly fine.
+// publishRound writes the round metadata and the staged config, then the
+// current-round key that every Core polls for.
+//
+// Order matters, and the current-round key going LAST is the whole of it: a
+// Core that finds it must find both other keys already there, or it reports
+// no-response for a round that was perfectly fine. Discovery is polling only -
+// a round's window is 15s and the service loop polls every second, so a Core
+// sees an open round within one tick of it opening.
 func publishRound(ctx context.Context, rdb *redis.Client, meta roundMeta, cfg Config) error {
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
@@ -206,10 +206,6 @@ func publishRound(ctx context.Context, rdb *redis.Client, meta roundMeta, cfg Co
 	}
 	if err := rdb.Set(ctx, currentRoundKey, meta.RoundID, roundTTL).Err(); err != nil {
 		return fmt.Errorf("storagereach: publish current round: %w", err)
-	}
-	// Best-effort: currentRoundKey above already guarantees discovery.
-	if err := rdb.Publish(ctx, RoundsChannel, meta.RoundID).Err(); err != nil {
-		log.Printf("storagereach: round %s publish signal failed, peers will find it by poll: %v", meta.RoundID, err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package storagereach
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -207,6 +208,36 @@ func TestSelfCheck_PublishesOnlyOnAStatusChange(t *testing.T) {
 	}
 }
 
+func TestSelfCheck_AddsItselfWithoutWritingIntoTheCallersSlice(t *testing.T) {
+	// OnlineCores returns a slice with SPARE CAPACITY, which an implementation
+	// is free to reuse between calls. Appending this Core's id to it in place
+	// would write into that backing array behind the caller's back.
+	backing := make([]string, 1, 4)
+	backing[0] = "core-b"
+	deps := testDeps(t, t.TempDir(), "core-a", nil)
+	deps.OnlineCores = func(context.Context) ([]string, error) { return backing, nil }
+	svc := NewService(deps)
+
+	res := svc.SelfCheck(context.Background())
+
+	// core-a's own heartbeat has not landed, so it is missing from the online
+	// set and has to add itself. That it gets a verdict AT ALL is the proof it
+	// did: Aggregate only emits a result for a listed participant.
+	if res.Status != StatusNotShared {
+		t.Fatalf("status = %s, want not-shared; a Core absent from its own participant set gets no verdict", res.Status)
+	}
+	if len(res.MissingPeers) != 1 || res.MissingPeers[0] != "core-b" {
+		t.Errorf("MissingPeers = %v, want [core-b]", res.MissingPeers)
+	}
+
+	if len(backing) != 1 || backing[0] != "core-b" {
+		t.Errorf("the caller's slice was modified: %v", backing)
+	}
+	if spare := backing[:cap(backing)]; spare[1] != "" {
+		t.Fatalf("wrote %q into the caller's spare capacity; an OnlineCores that reuses its buffer would hand out corrupted data", spare[1])
+	}
+}
+
 func TestSelfCheck_OnlineCoreLookupFailureDoesNotGate(t *testing.T) {
 	// Redis being unreachable is separately visible on the health page.
 	// Gating every storage route because we could not COUNT peers would turn
@@ -249,5 +280,155 @@ func TestStart_RunsABootCheckAndStopsWithTheContext(t *testing.T) {
 	case <-svc.Done():
 	case <-time.After(3 * time.Second):
 		t.Fatal("the service loop did not stop when its context was cancelled")
+	}
+}
+
+// hangingProvider models a wedged mount: WriteFile blocks until the test
+// releases it, and deliberately ignores ctx. That is not laziness in the fake,
+// it is the fact the watchdog exists for - a filesystem call already stuck
+// inside a syscall cannot be interrupted from userspace, so a context timeout
+// alone would leave the service goroutine exactly as stuck.
+//
+// storage.StorageProvider is embedded nil on purpose: any method other than
+// the two below is one this fake never expects to be called, and a nil panic
+// says so loudly instead of quietly succeeding.
+type hangingProvider struct {
+	storage.StorageProvider
+	// entered takes one token per WriteFile entry, so a test can both wait for
+	// the first check and count how many checks were ever started.
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newHangingProvider() *hangingProvider {
+	return &hangingProvider{entered: make(chan struct{}, 64), release: make(chan struct{})}
+}
+
+func (p *hangingProvider) WriteFile(context.Context, string, io.Reader) error {
+	p.entered <- struct{}{}
+	<-p.release
+	return errors.New("storage released")
+}
+
+// ListFiles is reached once WriteFile finally fails, so it has to answer;
+// erroring here keeps the refresh away from the nil embedded provider.
+func (p *hangingProvider) ListFiles(context.Context, string) ([]storage.FileInfo, error) {
+	return nil, errors.New("storage released")
+}
+
+// hungServiceUnderTest wires a service to a provider that never returns, with
+// every interval in milliseconds so no test waits on the real 15s budget or
+// the real 120s period.
+func hungServiceUnderTest(t *testing.T, selfCheckEvery, budget time.Duration) (*Service, *hangingProvider, ServiceDeps, context.CancelFunc) {
+	t.Helper()
+	prov := newHangingProvider()
+	deps := testDeps(t, t.TempDir(), "core-a", []string{"core-a"})
+	deps.NewProvider = func(Config) (storage.StorageProvider, error) { return prov, nil }
+
+	svc := NewService(deps)
+	svc.pollEvery = 5 * time.Millisecond
+	svc.selfCheckEvery = selfCheckEvery
+	svc.selfCheckBudget = budget
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// The provider ignores ctx by design, so cancelling is not enough to end
+	// the orphaned check goroutine; release it explicitly or it outlives the
+	// test.
+	t.Cleanup(func() { cancel(); close(prov.release) })
+	svc.Start(ctx)
+	return svc, prov, deps, cancel
+}
+
+// awaitFirstCheck blocks until the boot self-check has reached the provider.
+func awaitFirstCheck(t *testing.T, prov *hangingProvider) {
+	t.Helper()
+	select {
+	case <-prov.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the boot self-check never reached the storage provider")
+	}
+}
+
+// waitUntil polls cond until it holds. Every caller drives the loop at
+// millisecond intervals, so the 2s cap is a failure detector, not a wait.
+func waitUntil(t *testing.T, msg string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+func TestStart_AHungStorageBackendDoesNotStallTheServiceLoop(t *testing.T) {
+	// The failure being guarded: with the check called synchronously, a stale
+	// NFS mount blocks the write, run() never reaches its select, ctx.Done() is
+	// never observed, Done() never closes, and round participation stops dead.
+	svc, prov, _, cancel := hungServiceUnderTest(t, 10*time.Second, 30*time.Millisecond)
+	awaitFirstCheck(t, prov)
+
+	cancel()
+	select {
+	case <-svc.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the service loop did not stop while a storage write was hung; a wedged mount would freeze it forever")
+	}
+}
+
+func TestStart_ACheckThatOverrunsItsBudgetGatesAndRecordsAFault(t *testing.T) {
+	// This is the bug itself, not just the symptom: while the check hangs,
+	// nothing ever updates LocalStatus, and LocalStatus starts HEALTHY by
+	// design - so the Core goes on claiming access it cannot prove.
+	svc, prov, deps, _ := hungServiceUnderTest(t, 10*time.Second, 30*time.Millisecond)
+	awaitFirstCheck(t, prov)
+
+	waitUntil(t, "still healthy after the self-check blew its budget; a Core wedged on a dead mount must stop vouching for it", func() bool {
+		return !svc.Status().Healthy()
+	})
+	if status, detail := svc.Status().Snapshot(); status != StatusUnreachable {
+		t.Fatalf("LocalStatus = %s, want unreachable", status)
+	} else if detail == "" {
+		t.Error("Detail is empty; the operator is never told the check timed out")
+	}
+
+	var faults []Fault
+	waitUntil(t, "no fault recorded for a timed-out self-check; the panel would show a healthy fleet", func() bool {
+		faults, _ = Faults(context.Background(), deps.Redis)
+		return len(faults) > 0
+	})
+	if len(faults) != 1 || faults[0].CoreID != "core-a" || faults[0].Status != StatusUnreachable {
+		t.Fatalf("faults = %+v, want exactly one unreachable fault for core-a", faults)
+	}
+}
+
+func TestStart_DoesNotStartASecondCheckWhileTheFirstIsStillBlocked(t *testing.T) {
+	// A loop that re-armed when the BUDGET expired rather than when the check
+	// actually returned would strand one more goroutine on the dead mount every
+	// interval, forever.
+	const selfCheckEvery = 15 * time.Millisecond
+	svc, prov, _, _ := hungServiceUnderTest(t, selfCheckEvery, 10*time.Millisecond)
+	awaitFirstCheck(t, prov)
+
+	// The budget is shorter than the interval, so by now the first check has
+	// already been ruled on and every one of these ten intervals was a chance
+	// to start another.
+	waitUntil(t, "the first check never blew its budget", func() bool { return !svc.Status().Healthy() })
+	time.Sleep(10 * selfCheckEvery)
+
+	extra := 0
+drain:
+	for {
+		select {
+		case <-prov.entered:
+			extra++
+		default:
+			break drain
+		}
+	}
+	if extra != 0 {
+		t.Fatalf("%d further self-check(s) started while the first was still blocked; a hung mount would leak a goroutine per interval", extra)
 	}
 }

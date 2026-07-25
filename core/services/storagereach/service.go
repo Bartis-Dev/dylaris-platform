@@ -2,6 +2,7 @@ package storagereach
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -17,12 +18,17 @@ import (
 const EventStorageReachChanged = "storagereach.changed"
 
 const (
-	// selfCheckEvery is the owner-chosen periodic interval.
-	selfCheckEvery = 120 * time.Second
-	// participantPollEvery is how often a Core looks for an open round. A
-	// config round has a 15s cap, so polling at the self-check interval would
-	// miss every round; this is the loop's real tick.
-	participantPollEvery = time.Second
+	// defaultSelfCheckEvery is the owner-chosen periodic interval.
+	defaultSelfCheckEvery = 120 * time.Second
+	// defaultPollEvery is how often a Core looks for an open round. A config
+	// round has a 15s cap, so polling at the self-check interval would miss
+	// every round; this is the loop's real tick.
+	defaultPollEvery = time.Second
+	// defaultSelfCheckBudget is how long the loop waits for one self-check
+	// before it stops waiting and rules on it. It is the same 15s a config
+	// round gets: both are "prove storage access once", and a backend that has
+	// not answered in 15s is not about to.
+	defaultSelfCheckBudget = 15 * time.Second
 	// defaultBeaconMaxAge is 2.5 self-check intervals: long enough that one
 	// missed refresh does not evict a healthy Core, short enough that a dead
 	// one stops vouching for the share within five minutes.
@@ -56,11 +62,16 @@ type Service struct {
 	status *LocalStatus
 	coord  *Coordinator
 
-	// beaconMaxAge is a field rather than a constant so tests can age beacons
-	// out without waiting five minutes.
-	beaconMaxAge time.Duration
+	// These four are fields rather than constants so tests can age beacons out
+	// and drive the loop in milliseconds instead of minutes.
+	beaconMaxAge    time.Duration
+	selfCheckEvery  time.Duration
+	selfCheckBudget time.Duration
+	pollEvery       time.Duration
+
 	// notSharedStreak counts consecutive not-shared verdicts. Only ever
-	// touched from SelfCheck, which the single service loop serialises.
+	// touched from apply, which the single service loop serialises: a check
+	// goroutine produces a verdict and never applies one.
 	notSharedStreak int
 
 	mu         sync.Mutex
@@ -72,11 +83,14 @@ type Service struct {
 
 func NewService(deps ServiceDeps) *Service {
 	return &Service{
-		deps:         deps,
-		status:       NewLocalStatus(),
-		coord:        NewCoordinator(deps.Redis, deps.CoreID, deps.NewProvider),
-		beaconMaxAge: defaultBeaconMaxAge,
-		doneCh:       make(chan struct{}),
+		deps:            deps,
+		status:          NewLocalStatus(),
+		coord:           NewCoordinator(deps.Redis, deps.CoreID, deps.NewProvider),
+		beaconMaxAge:    defaultBeaconMaxAge,
+		selfCheckEvery:  defaultSelfCheckEvery,
+		selfCheckBudget: defaultSelfCheckBudget,
+		pollEvery:       defaultPollEvery,
+		doneCh:          make(chan struct{}),
 	}
 }
 
@@ -97,23 +111,93 @@ func (s *Service) Start(ctx context.Context) {
 	})
 }
 
+// checkOutcome is what one self-check goroutine hands back to the loop. It
+// carries a verdict and nothing else: gating, fault recording and publishing
+// all stay on the loop goroutine, which is what keeps notSharedStreak
+// single-writer without a mutex.
+type checkOutcome struct {
+	res CoreResult
+	// apply is false when the check produced nothing to commit; see observe.
+	apply bool
+}
+
+// run is the service loop. Every state mutation happens here: the storage work
+// runs in a child goroutine that only produces a verdict.
+//
+// The child goroutine is the whole point. A wedged mount is exactly the
+// failure this package exists to catch, and it cannot be waited on safely:
+// LocalProvider's MkdirAll, CreateTemp, Sync and Rename are plain blocking
+// syscalls, so a cancelled context cannot interrupt one that is already stuck
+// (storage/provider.go says so on the interface itself). A synchronous
+// self-check would therefore freeze this loop, stop round participation, never
+// observe ctx.Done, and leave the Core reporting healthy forever - because
+// LocalStatus starts healthy by design and nothing would ever update it.
 func (s *Service) run(ctx context.Context) {
 	defer close(s.doneCh)
 
-	// The boot check happens before the first tick: a Core that cannot see the
+	// Capacity 1 so a check that overran its budget can still complete its send
+	// and exit after this loop moved on. Only one check is ever in flight (see
+	// inFlight), so one slot is exactly enough and the send never blocks.
+	outcomes := make(chan checkOutcome, 1)
+
+	// Both are read and written ONLY on this goroutine. inFlight stays true
+	// until the check actually reports back, budget or no budget: the goroutine
+	// is still out there, and starting a second one against a wedged mount
+	// would only add another stuck goroutine every interval.
+	var (
+		inFlight     bool
+		budgetExpiry time.Time
+	)
+	startCheck := func() {
+		inFlight = true
+		budgetExpiry = time.Now().Add(s.selfCheckBudget)
+		go func() {
+			res, ok := s.observe(ctx)
+			outcomes <- checkOutcome{res: res, apply: ok}
+		}()
+	}
+
+	// The boot check starts before the first tick: a Core that cannot see the
 	// shared storage must be gated the moment it joins the load balancer, not
 	// two minutes later.
-	s.SelfCheck(ctx)
+	startCheck()
+	nextSelfCheck := time.Now().Add(s.selfCheckEvery)
 
-	ticker := time.NewTicker(participantPollEvery)
+	ticker := time.NewTicker(s.pollEvery)
 	defer ticker.Stop()
-	nextSelfCheck := time.Now().Add(selfCheckEvery)
 
 	for {
 		select {
 		case <-ctx.Done():
+			// A check blocked in a hung syscall cannot be reclaimed by any Go
+			// mechanism, so it outlives this loop by design. Leaking one
+			// goroutine on a wedged mount is the acceptable half of the trade;
+			// stalling the service forever is not.
 			return
+		case out := <-outcomes:
+			inFlight = false
+			budgetExpiry = time.Time{}
+			// A late result is still an honest observation of the backend, so
+			// it is applied rather than dropped: it is what un-gates a Core
+			// whose mount recovered between two periodic ticks.
+			if out.apply {
+				s.apply(ctx, out.res)
+			}
+			continue
 		case <-ticker.C:
+		}
+
+		// A check that blew its budget IS the fault: the backend has not
+		// answered, which is what unreachable means. Ruled on once - clearing
+		// budgetExpiry - so a permanently stuck check does not re-record it on
+		// every tick.
+		if inFlight && !budgetExpiry.IsZero() && time.Now().After(budgetExpiry) {
+			budgetExpiry = time.Time{}
+			s.apply(ctx, CoreResult{
+				CoreID: s.deps.CoreID,
+				Status: StatusUnreachable,
+				Detail: fmt.Sprintf("storage self-check did not finish within %s", s.selfCheckBudget),
+			})
 		}
 
 		// Take part in any open config round. This is the fast path: a round
@@ -125,8 +209,10 @@ func (s *Service) run(ctx context.Context) {
 		}
 
 		if time.Now().After(nextSelfCheck) {
-			s.SelfCheck(ctx)
-			nextSelfCheck = time.Now().Add(selfCheckEvery)
+			nextSelfCheck = time.Now().Add(s.selfCheckEvery)
+			if !inFlight {
+				startCheck()
+			}
 		}
 	}
 }
@@ -140,7 +226,21 @@ func (s *Service) run(ctx context.Context) {
 // a stable per-Core path lets them see each other at all. And it reads the
 // PERSISTED config, unlike a config round, which tests a candidate that has
 // deliberately not been saved yet.
+//
+// It is synchronous, so it blocks for exactly as long as the backend does. The
+// service loop never calls it for that reason; see run.
 func (s *Service) SelfCheck(ctx context.Context) CoreResult {
+	res, ok := s.observe(ctx)
+	if !ok {
+		return res
+	}
+	return s.apply(ctx, res)
+}
+
+// observe does one self-check's storage I/O and returns THIS Core's verdict.
+// It mutates no service state, which is what makes it safe to run off the loop
+// goroutine. The bool is false when there is nothing to commit.
+func (s *Service) observe(ctx context.Context) (CoreResult, bool) {
 	me := s.deps.CoreID
 
 	cfg, configured := s.deps.ConfigFor()
@@ -148,7 +248,7 @@ func (s *Service) SelfCheck(ctx context.Context) CoreResult {
 		// Not a fault: RequireCoreStorageConfigured already refuses the write
 		// routes, and a red fleet banner on every fresh install would train
 		// operators to ignore it.
-		return s.apply(ctx, CoreResult{CoreID: me, Status: StatusOK})
+		return CoreResult{CoreID: me, Status: StatusOK}, true
 	}
 
 	participants, err := s.deps.OnlineCores(ctx)
@@ -157,18 +257,24 @@ func (s *Service) SelfCheck(ctx context.Context) CoreResult {
 		// Closing every storage route because peers could not be COUNTED
 		// would turn a Redis blip into a storage outage.
 		log.Printf("storagereach: could not list online Cores, skipping this self-check: %v", err)
-		return CoreResult{CoreID: me, Status: StatusOK}
+		return CoreResult{CoreID: me, Status: StatusOK}, false
 	}
 	if !contains(participants, me) {
 		// This Core's own heartbeat has not landed yet. Checking without
 		// itself in the set would prove nothing about itself.
-		participants = append(participants, me)
+		//
+		// Copied first: the slice belongs to the OnlineCores implementation,
+		// and appending in place would write into a backing array it is free to
+		// reuse on the next call.
+		withMe := make([]string, len(participants), len(participants)+1)
+		copy(withMe, participants)
+		participants = append(withMe, me)
 	}
 
 	fingerprint := Fingerprint(cfg)
 	prov, provErr := s.deps.NewProvider(cfg)
 	if provErr != nil {
-		return s.apply(ctx, CoreResult{CoreID: me, Status: StatusUnreachable, Detail: provErr.Error()})
+		return CoreResult{CoreID: me, Status: StatusUnreachable, Detail: provErr.Error()}, true
 	}
 
 	rep := RefreshBeacon(ctx, prov, BeaconOptions{
@@ -182,10 +288,21 @@ func (s *Service) SelfCheck(ctx context.Context) CoreResult {
 	agg := Aggregate(participants, map[string]Report{me: rep}, fingerprint, true)
 	for _, r := range agg.Results {
 		if r.CoreID == me {
-			return s.apply(ctx, r)
+			return r, true
 		}
 	}
-	return CoreResult{CoreID: me, Status: StatusOK}
+	// Not reachable in practice - me is in participants by the block above, and
+	// Aggregate emits one result per participant - but Go needs a terminal
+	// return, so it is fail-closed rather than a silent ok. A Core with no
+	// verdict about itself has proven nothing about the storage, and claiming
+	// health on no evidence is the single outcome this package exists to
+	// prevent. This goes through apply like any other failure: it gates and
+	// records a fault the operator can see.
+	return CoreResult{
+		CoreID: me,
+		Status: StatusNoResponse,
+		Detail: "self-check produced no verdict for this Core",
+	}, true
 }
 
 // shouldGate decides whether a verdict closes this Core's storage routes.
