@@ -72,9 +72,15 @@ func TestAggregate_ClassifiesEveryFailure(t *testing.T) {
 		wantList func(t *testing.T, cr CoreResult)
 	}{
 		{
-			name:   "unreachable",
-			mutate: func(r *Report) { r.Reachable = false; r.Wrote = false; r.WriteErr = "connection refused"; r.SeenPeers = nil; r.CrossWroteTo = nil },
-			want:   StatusUnreachable,
+			name: "unreachable",
+			mutate: func(r *Report) {
+				r.Reachable = false
+				r.Wrote = false
+				r.WriteErr = "connection refused"
+				r.SeenPeers = nil
+				r.CrossWroteTo = nil
+			},
+			want: StatusUnreachable,
 			wantList: func(t *testing.T, cr CoreResult) {
 				if cr.Detail != "connection refused" {
 					t.Errorf("Detail = %q, want the backend error text", cr.Detail)
@@ -84,9 +90,14 @@ func TestAggregate_ClassifiesEveryFailure(t *testing.T) {
 		{
 			// Reachable but the write failed: a read-only mount. Distinct
 			// from unreachable because the fix is different.
-			name:   "write-denied",
-			mutate: func(r *Report) { r.Wrote = false; r.WriteErr = "read-only file system"; r.SeenPeers = nil; r.CrossWroteTo = nil },
-			want:   StatusWriteDenied,
+			name: "write-denied",
+			mutate: func(r *Report) {
+				r.Wrote = false
+				r.WriteErr = "read-only file system"
+				r.SeenPeers = nil
+				r.CrossWroteTo = nil
+			},
+			want: StatusWriteDenied,
 			wantList: func(t *testing.T, cr CoreResult) {
 				if cr.Detail != "read-only file system" {
 					t.Errorf("Detail = %q, want the backend error text", cr.Detail)
@@ -115,17 +126,21 @@ func TestAggregate_ClassifiesEveryFailure(t *testing.T) {
 		},
 		{
 			// The reporting Core is itself on the wrong backend.
-			name:   "own fingerprint mismatch",
-			mutate: func(r *Report) { r.Fingerprint = "fp-STALE" },
-			want:   StatusFingerprintMismatch,
+			name:     "own fingerprint mismatch",
+			mutate:   func(r *Report) { r.Fingerprint = "fp-STALE" },
+			want:     StatusFingerprintMismatch,
 			wantList: func(t *testing.T, cr CoreResult) {},
 		},
 		{
 			// The reporting Core is right, but it saw a peer that is not.
 			// The MISMATCHED peer is the one at fault, not the reporter.
-			name:   "a peer on the wrong backend",
-			mutate: func(r *Report) { r.SeenPeers = []string{}; r.CrossWroteTo = []string{}; r.MismatchedPeers = []string{"core-b"} },
-			want:   StatusNotShared,
+			name: "a peer on the wrong backend",
+			mutate: func(r *Report) {
+				r.SeenPeers = []string{}
+				r.CrossWroteTo = []string{}
+				r.MismatchedPeers = []string{"core-b"}
+			},
+			want:     StatusNotShared,
 			wantList: func(t *testing.T, cr CoreResult) {},
 		},
 	}
