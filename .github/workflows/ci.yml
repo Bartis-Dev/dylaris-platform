@@ -93,38 +93,22 @@ jobs:
   # on for node/pkg as well is a deliberate follow-up, not a freebie: a NEW gate
   # that retroactively fails on untouched code blocks deploys for reasons nobody
   # chose today. Extend it once those modules have been checked by hand.
-  # Runs as a job CONTAINER rather than a `docker run` inside a step. That is
-  # not a style choice: this runner is itself containerized, so a step-level
-  # bind mount of $PWD names a path the host daemon cannot see. Docker then
-  # silently creates an EMPTY directory and mounts that, and the run fails with
-  # "directory prefix . does not contain main module". A job container is
-  # mounted by the runner itself, which knows how to reach its own workspace.
-  #
-  # The two named volumes persist the module and build caches between runs,
-  # which matters: race instrumentation dominates the runtime and a cold build
-  # cache roughly triples it. Right mechanism for a self-hosted runner; a hosted
-  # one would need actions/cache instead.
+  # Runs as a docker BUILD. The reasoning, and the two mechanisms that failed on
+  # this runner before it, are documented in .github/race.Dockerfile. Short
+  # version: a build uploads its context instead of mounting one, which is the
+  # same code path the image-build jobs below have always used successfully
+  # here, so it does not depend on the runner's own containerization.
   race-tests:
     runs-on: self-hosted
-    container:
-      image: golang:1.26
-      volumes:
-        - dylaris-ci-gomodcache:/go/pkg/mod
-        - dylaris-ci-gobuildcache:/root/.cache/go-build
     steps:
       - uses: actions/checkout@v4
 
-      # GOWORK must stay ON. core/go.mod replaces only dylaris-pkg, while
-      # dylaris-proto resolves through go.work, so GOWORK=off fails with
-      # "package dylaris-proto/node is not in std". Running ./... from core
-      # still compiles only core's own packages, so beam/app - which needs a
-      # Wails frontend bundle a fresh checkout does not have - is never built
-      # here and needs no stub.
       - name: go test -race (core)
-        working-directory: core
-        env:
-          CGO_ENABLED: '1'
-        run: go test -race -count=1 ./...
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./.github/race.Dockerfile
+          push: false
 
   panel-tests:
     runs-on: self-hosted
