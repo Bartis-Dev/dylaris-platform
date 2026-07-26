@@ -35,13 +35,28 @@ func sharedFactory(root string) ProviderFactory {
 	}
 }
 
-func fastRound() RoundOptions {
-	// 300ms is ample margin for two real participants sharing a temp-dir
-	// LocalProvider to cross-discover each other at a 20ms retry cadence
-	// (a 15x gap, well clear of the 5x floor a CI runner's scheduling jitter
-	// needs), but short enough that a test where a peer never shows (so the
-	// round must wait out the full deadline by design) does not turn into a
-	// multi-second sleep.
+// settlingRound is for every test whose round ENDS ON ITS OWN, because every
+// participant reports (passing or failing). RunRound returns the moment the
+// last report lands, so the deadline is never actually waited on and a generous
+// one costs nothing: it is reached only when the test is already failing, and
+// then waiting is what you want anyway.
+//
+// It is generous on purpose. A single shared helper used to serve both this
+// case and the wait-out-the-clock case below with one 300ms deadline, reasoned
+// out as "a 15x margin over the retry cadence". That reasoning held on an idle
+// developer machine and broke in CI, where -race instrumentation and a runner
+// running the rest of the matrix in parallel pushed a healthy two-participant
+// round past 300ms: core-b was reported no-response and the gate went red on
+// code that was fine. A deadline a passing test never reaches cannot do that.
+func settlingRound() RoundOptions {
+	return RoundOptions{Deadline: 10 * time.Second, PollEvery: 20 * time.Millisecond}
+}
+
+// expiringRound is for the opposite case: a test where a participant never
+// reports, so the round MUST sit out its whole deadline before failing closed.
+// Here the deadline is the thing under test and it has to stay short, or the
+// test becomes a multi-second sleep.
+func expiringRound() RoundOptions {
 	return RoundOptions{Deadline: 300 * time.Millisecond, PollEvery: 20 * time.Millisecond}
 }
 
@@ -50,7 +65,7 @@ func TestRunRound_SingleParticipantPassesWithoutPeers(t *testing.T) {
 	c := NewCoordinator(rdb, "core-a", sharedFactory(t.TempDir()))
 
 	res, err := c.RunRound(context.Background(), Config{Backend: "path", Path: "/mnt/shared"},
-		[]string{"core-a"}, fastRound())
+		[]string{"core-a"}, settlingRound())
 
 	if err != nil {
 		t.Fatalf("RunRound: %v", err)
@@ -82,7 +97,7 @@ func TestRunRound_PassesWhenEveryParticipantReports(t *testing.T) {
 
 	c := NewCoordinator(rdb, "core-a", sharedFactory(root))
 	res, err := c.RunRound(ctx, Config{Backend: "path", Path: "/mnt/shared"},
-		[]string{"core-a", "core-b"}, fastRound())
+		[]string{"core-a", "core-b"}, settlingRound())
 	if err != nil {
 		t.Fatalf("RunRound: %v", err)
 	}
@@ -129,8 +144,7 @@ func TestRunRound_FailsClosedWhenAParticipantNeverReports(t *testing.T) {
 func TestRunRound_OnProgressStaysZeroWhenAPeerNeverAppears(t *testing.T) {
 	rdb := newReachTestRedis(t)
 	var seen []int
-	opts := fastRound()
-	opts.Deadline = 200 * time.Millisecond
+	opts := expiringRound()
 	opts.OnProgress = func(r RoundResult) { seen = append(seen, r.Confirmed) }
 
 	c := NewCoordinator(rdb, "core-a", sharedFactory(t.TempDir()))
@@ -262,7 +276,7 @@ func TestRunRound_DeletesTheStagedConfigWhenItEnds(t *testing.T) {
 	c := NewCoordinator(rdb, "core-a", sharedFactory(t.TempDir()))
 
 	res, err := c.RunRound(ctx, Config{Backend: "s3", S3Bucket: "b", S3SecretKey: "super-secret"},
-		[]string{"core-a"}, fastRound())
+		[]string{"core-a"}, settlingRound())
 	if err != nil {
 		t.Fatalf("RunRound: %v", err)
 	}
@@ -348,11 +362,11 @@ func TestRunRound_UsesAFreshUnguessableRoundID(t *testing.T) {
 	c := NewCoordinator(rdb, "core-a", sharedFactory(t.TempDir()))
 	cfg := Config{Backend: "path", Path: "/mnt/shared"}
 
-	first, err := c.RunRound(context.Background(), cfg, []string{"core-a"}, fastRound())
+	first, err := c.RunRound(context.Background(), cfg, []string{"core-a"}, settlingRound())
 	if err != nil {
 		t.Fatalf("first round: %v", err)
 	}
-	second, err := c.RunRound(context.Background(), cfg, []string{"core-a"}, fastRound())
+	second, err := c.RunRound(context.Background(), cfg, []string{"core-a"}, settlingRound())
 	if err != nil {
 		t.Fatalf("second round: %v", err)
 	}
@@ -389,7 +403,7 @@ func TestRunParticipant_ReportsUnreachableWhenTheProviderWillNotBuild(t *testing
 	}()
 
 	res, err := c.RunRound(ctx, Config{Backend: "s3", S3Bucket: "b"},
-		[]string{"core-a", "core-b"}, fastRound())
+		[]string{"core-a", "core-b"}, settlingRound())
 	if err != nil {
 		t.Fatalf("RunRound: %v", err)
 	}
@@ -532,7 +546,7 @@ func TestRunRound_DeletesTheStagedConfigWhenPublishFailsAfterStagingTheConfig(t 
 	})
 
 	_, err = c.RunRound(ctx, Config{Backend: "s3", S3Bucket: "b", S3SecretKey: "super-secret"},
-		[]string{"core-a"}, fastRound())
+		[]string{"core-a"}, settlingRound())
 	if err == nil {
 		t.Fatal("RunRound: want an error when publishRound fails after staging the config")
 	}
