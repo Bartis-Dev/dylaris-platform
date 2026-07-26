@@ -86,7 +86,7 @@ describe('reachReducer', () => {
     });
 
     it('fails when the deadline passes without a verdict', () => {
-        const s = reachReducer(start(2), { type: 'tick', elapsedMs: 15100 });
+        const s = reachReducer(start(2), { type: 'tick', elapsedMs: 20100 });
         expect(s.phase).toBe('failed');
         expect(s.message).not.toBe('');
     });
@@ -170,7 +170,7 @@ describe('conclusive progress failure vs real timeout', () => {
             },
         });
         expect(s.phase).toBe('failed');
-        expect(s.message).not.toContain('15 seconds');
+        expect(s.message).not.toContain('20 seconds');
         expect(s.message).toContain('1 of 2');
         expect(s.message).toContain(statusLabel('not-shared'));
     });
@@ -190,14 +190,14 @@ describe('conclusive progress failure vs real timeout', () => {
             },
         });
         expect(s.phase).toBe('failed');
-        expect(s.message).not.toContain('15 seconds');
+        expect(s.message).not.toContain('20 seconds');
         expect(s.message).toContain('2 of 3');
     });
 
     it('still uses the timeout message when the deadline actually passes without a verdict', () => {
-        const s = reachReducer(start(2), { type: 'tick', elapsedMs: 15100 });
+        const s = reachReducer(start(2), { type: 'tick', elapsedMs: 20100 });
         expect(s.phase).toBe('failed');
-        expect(s.message).toContain('15 seconds');
+        expect(s.message).toContain('20 seconds');
     });
 });
 

@@ -49,8 +49,21 @@ export type ReachEvent =
     | { type: 'tick'; elapsedMs: number }
     | { type: 'failure'; message: string; progress: RoundProgress | null; roundId?: string };
 
-/** Matches the Core-side round cap; the UI must not outlive the round. */
-export const ROUND_DEADLINE_MS = 15_000;
+/**
+ * A backstop for a LOST response, not a competing verdict on the round's
+ * outcome - the server is always the authority on success or failure.
+ * Deliberately longer than the server's own worst case, not equal to it: the
+ * round's hard cap is 15s (core/handlers/core_storage_reach.go
+ * defaultReachRoundDeadline), but the coordinator's own probe gets up to
+ * 1 more second of grace past that deadline before it is ruled on
+ * (core/services/storagereach/round.go defaultProbeWatchdogGrace) - so a
+ * round can legitimately take ~16s to answer. Setting this to exactly 15s
+ * would flip the panel to a false "timeout" for a save that was still going
+ * to succeed a moment later. 20s keeps ~4s of margin over that 16s worst
+ * case for the HTTP round trip itself, and matches reachRoundLockTTL's own
+ * margin over the same round cap.
+ */
+export const ROUND_DEADLINE_MS = 20_000;
 /** After this, the copy acknowledges the wait instead of leaving a bare spinner. */
 export const SLOW_AFTER_MS = 3_000;
 
@@ -64,7 +77,7 @@ export const initialReachState: ReachState = {
 };
 
 const TIMEOUT_MESSAGE =
-    'The Cores did not all confirm access within 15 seconds. The settings were not saved.';
+    `The Cores did not all confirm access within ${ROUND_DEADLINE_MS / 1000} seconds. The settings were not saved.`;
 
 function settled(phase: ReachPhase): boolean {
     return phase === 'success' || phase === 'failed';
