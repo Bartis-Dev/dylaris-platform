@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    fleetHealthySummary,
     initialReachState,
     parseStorageReachEvent,
     reachReducer,
@@ -286,5 +287,22 @@ describe('parseStorageReachEvent', () => {
             roundId: 'R2',
             progress: { confirmed: 2, total: 2, done: true, ok: true, results: [] },
         });
+    });
+});
+
+describe('fleetHealthySummary', () => {
+    it('uses singular wording for exactly one Core', () => {
+        expect(fleetHealthySummary(1)).toBe('This Core can reach the shared storage.');
+    });
+
+    it('uses plural wording with the count for more than one Core', () => {
+        expect(fleetHealthySummary(3)).toBe('All 3 Cores can reach the shared storage.');
+    });
+
+    it('does not special-case zero, so a not-yet-populated online list reads as "All 0"', () => {
+        // There is no meaningful zero-Core healthy state in practice (the panel
+        // itself is served by an online Core), so this just pins the actual
+        // behavior rather than inventing a state nothing produces.
+        expect(fleetHealthySummary(0)).toBe('All 0 Cores can reach the shared storage.');
     });
 });

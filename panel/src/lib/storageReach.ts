@@ -215,6 +215,17 @@ export function statusRemedy(status: ReachStatus): string {
 }
 
 /**
+ * The fleet storage-health card's "everything is fine" summary line.
+ * Extracted (rather than left as an inline ternary in StorageHealthCard.tsx)
+ * because that component is a .tsx file this panel's node-environment vitest
+ * config cannot execute - see the file header.
+ */
+export function fleetHealthySummary(onlineCount: number): string {
+    if (onlineCount === 1) return 'This Core can reach the shared storage.';
+    return `All ${onlineCount} Cores can reach the shared storage.`;
+}
+
+/**
  * Narrows a raw `storagereach.changed` SSE payload into a reducer event, or
  * `null` when the payload should be ignored.
  *

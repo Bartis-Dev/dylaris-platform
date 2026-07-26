@@ -10,6 +10,7 @@ import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { Badge } from '@/components/ui/Badge';
 import { systemEvents } from '@/lib/systemEvents';
 import { reachReducer, initialReachState, statusLabel, statusRemedy, parseStorageReachEvent } from '@/lib/storageReach';
+import StorageHealthCard from '@/components/settings/StorageHealthCard';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -385,6 +386,8 @@ export default function CoreStorageTab() {
           )}
         </div>
       )}
+
+      <StorageHealthCard />
 
       {/* Live fleet-wide reachability round, run on every save: the settings
           are persisted only once every online Core proves it can read and
