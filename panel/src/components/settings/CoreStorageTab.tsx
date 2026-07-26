@@ -41,7 +41,6 @@ export default function CoreStorageTab() {
   // guessing from a count, so a genuinely shared path across many Cores is
   // no longer refused before it is even tried.
   const [onlineCores, setOnlineCores] = useState(0);
-  const [multiCoreWarning, setMultiCoreWarning] = useState<string | null>(null);
 
   // Saved storage connections for the "use a saved connection" selector.
   const [connections, setConnections] = useState<StorageConnection[]>([]);
@@ -72,7 +71,6 @@ export default function CoreStorageTab() {
         snapshotRef.current = s;
       }
       setOnlineCores(res.onlineCores ?? 0);
-      setMultiCoreWarning(res.hostPathWarning || null);
       setLoading(false);
     });
   }, []);
@@ -226,16 +224,6 @@ export default function CoreStorageTab() {
           })}
         </div>
       </div>
-
-      {/* A host path that was already saved before the deployment grew. Kept
-          separate from the selector hint above: this one means files are
-          being written to a split store right now. */}
-      {multiCoreWarning && (
-        <div className="alert alert-warning text-xs flex items-start gap-2">
-          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <span>{multiCoreWarning}</span>
-        </div>
-      )}
 
       {/* Path backend */}
       {settings.backend === 'path' && (

@@ -87,35 +87,35 @@ describe('s3IdentityChanged', () => {
   });
 });
 
-describe('canSaveCoreStorage host-path single-Core constraint', () => {
+describe('canSaveCoreStorage on a multi-Core deployment', () => {
+  // The old count-based host-path guard (a 3rd `hostPathAllowed` parameter
+  // blocking the filesystem backend outright above 1 Core) is gone:
+  // checkSharedStorageReachable now PROVES reachability server-side with a
+  // real cross-Core round, so a genuinely shared path is no longer refused -
+  // or client-side guessed at - before it is even tried. This function only
+  // checks form completeness now, for any backend, regardless of Core count.
   const path: CoreStorageConfig = { ...base, backend: 'path', path: '/mnt/shared', pathConfirmed: true };
   const s3: CoreStorageConfig = { ...base, backend: 's3', s3Bucket: 'b', s3AccessKey: 'k', s3SecretKey: 'sec' };
 
-  it('an otherwise valid host path cannot be saved while a second Core is online', () => {
-    expect(canSaveCoreStorage(path, null, false)).toBe(false);
-  });
-  it('the same config is saveable on a single Core', () => {
-    expect(canSaveCoreStorage(path, null, true)).toBe(true);
-  });
-  it('defaults to allowed, so a caller that has not fetched the answer behaves as before', () => {
+  it('a valid host path is saveable regardless of how many Cores are online', () => {
     expect(canSaveCoreStorage(path, null)).toBe(true);
   });
-  it('does not block s3, which is the backend multi-Core deployments are meant to use', () => {
-    expect(canSaveCoreStorage(s3, null, false)).toBe(true);
+  it('a valid s3 config is saveable regardless of how many Cores are online', () => {
+    expect(canSaveCoreStorage(s3, null)).toBe(true);
   });
   it('does not rescue a host path that is invalid for other reasons', () => {
-    expect(canSaveCoreStorage({ ...path, pathConfirmed: false }, null, true)).toBe(false);
-    expect(canSaveCoreStorage({ ...path, path: 'relative' }, null, true)).toBe(false);
+    expect(canSaveCoreStorage({ ...path, pathConfirmed: false }, null)).toBe(false);
+    expect(canSaveCoreStorage({ ...path, path: 'relative' }, null)).toBe(false);
   });
 });
 
 describe('canSaveCoreStorage with a selected storage connection', () => {
   it('a selected connection makes an s3 config saveable even with blank inline fields', () => {
     const c: CoreStorageConfig = { ...base, backend: 's3', s3Bucket: '', s3AccessKey: '', s3SecretKey: '', connectionId: 5 };
-    expect(canSaveCoreStorage(c, null, true)).toBe(true);
+    expect(canSaveCoreStorage(c, null)).toBe(true);
   });
   it('connectionId 0 falls back to the inline requirements, so blank inline is not saveable', () => {
     const c: CoreStorageConfig = { ...base, backend: 's3', s3Bucket: '', s3AccessKey: '', s3SecretKey: '', connectionId: 0 };
-    expect(canSaveCoreStorage(c, null, true)).toBe(false);
+    expect(canSaveCoreStorage(c, null)).toBe(false);
   });
 });

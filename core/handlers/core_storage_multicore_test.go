@@ -220,79 +220,44 @@ func TestSaveConfig_RefusesWhenTheVerifierIsNotRunning(t *testing.T) {
 	}
 }
 
-func TestHostPathMultiCoreWarning(t *testing.T) {
-	tests := []struct {
-		name     string
-		cfg      CoreStorageConfig
-		online   int
-		wantWarn bool
-	}{
-		{name: "a host path on one Core is fine", cfg: CoreStorageConfig{Backend: "path"}, online: 1},
-		{name: "a host path on an uncounted deployment is fine", cfg: CoreStorageConfig{Backend: "path"}, online: 0},
-		{name: "a host path on two Cores warns", cfg: CoreStorageConfig{Backend: "path"}, online: 2, wantWarn: true},
-		{name: "the local spelling warns too", cfg: CoreStorageConfig{Backend: "local"}, online: 2, wantWarn: true},
-		{name: "s3 on many Cores never warns", cfg: CoreStorageConfig{Backend: "s3"}, online: 5},
-		{name: "an unconfigured backend never warns", cfg: CoreStorageConfig{}, online: 5},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := hostPathMultiCoreWarning(tc.cfg, tc.online)
-			if (got != "") != tc.wantWarn {
-				t.Fatalf("warning = %q, wantWarn = %v", got, tc.wantWarn)
-			}
-		})
-	}
-}
-
-func TestGetConfig_ReportsHostPathAvailability(t *testing.T) {
+// TestGetConfig_ReportsOnlineCores replaces TestGetConfig_ReportsHostPathAvailability:
+// the count-based host-path guard is gone (checkSharedStorageReachable proves
+// reachability with a real cross-Core round instead), so GetConfig no longer
+// computes hostPathAllowed or hostPathWarning from the count - only the count
+// itself, which the panel's round-progress counter uses as its expected
+// total. The negative assertions guard against those two dead fields quietly
+// reappearing.
+func TestGetConfig_ReportsOnlineCores(t *testing.T) {
 	tests := []struct {
 		name            string
 		values          map[string]string
 		cores           []string
 		redisDown       bool
-		wantAllowed     bool
 		wantOnlineCores float64
-		wantWarning     bool
 	}{
 		{
-			name:            "one Core leaves the host path selectable",
+			name:            "one Core",
 			values:          map[string]string{},
 			cores:           []string{"core-a"},
-			wantAllowed:     true,
 			wantOnlineCores: 1,
 		},
 		{
-			name:            "two Cores take the host path off the table",
-			values:          map[string]string{},
-			cores:           []string{"core-a", "core-b"},
-			wantAllowed:     false,
-			wantOnlineCores: 2,
-		},
-		{
-			// The warning is only for a config already SAVED as a host path.
-			// An s3 deployment with many Cores is correct and must stay silent.
-			name:            "a saved host path on two Cores also warns",
+			name:            "a saved host path on two Cores",
 			values:          map[string]string{keyCoreStorageBackend: "path", keyCoreStoragePath: "/mnt/shared"},
 			cores:           []string{"core-a", "core-b"},
-			wantAllowed:     false,
 			wantOnlineCores: 2,
-			wantWarning:     true,
 		},
 		{
-			name:            "a saved s3 config on two Cores does not warn",
+			name:            "a saved s3 config on two Cores",
 			values:          map[string]string{keyCoreStorageBackend: "s3", keyCoreStorageS3Bucket: "b"},
 			cores:           []string{"core-a", "core-b"},
-			wantAllowed:     false,
 			wantOnlineCores: 2,
 		},
 		{
-			// A hint the server could not compute must not grey out a valid
-			// option. The save path stays the enforcement point.
-			name:            "an unverifiable count leaves the form usable",
+			// A hint the server could not compute must not fail the response.
+			name:            "an unverifiable count still returns 200",
 			values:          map[string]string{},
 			redisDown:       true,
-			wantAllowed:     true,
 			wantOnlineCores: 0,
 		},
 	}
@@ -312,15 +277,14 @@ func TestGetConfig_ReportsHostPathAvailability(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("body is not JSON: %v", err)
 			}
-			if body["hostPathAllowed"] != tc.wantAllowed {
-				t.Errorf("hostPathAllowed = %v, want %v", body["hostPathAllowed"], tc.wantAllowed)
-			}
 			if body["onlineCores"] != tc.wantOnlineCores {
 				t.Errorf("onlineCores = %v, want %v", body["onlineCores"], tc.wantOnlineCores)
 			}
-			warning, _ := body["hostPathWarning"].(string)
-			if (warning != "") != tc.wantWarning {
-				t.Errorf("hostPathWarning = %q, wantWarning = %v", warning, tc.wantWarning)
+			if _, present := body["hostPathAllowed"]; present {
+				t.Error("response still carries hostPathAllowed; the count-based guard was removed and must not come back")
+			}
+			if _, present := body["hostPathWarning"]; present {
+				t.Error("response still carries hostPathWarning; the count-based warning was removed and must not come back")
 			}
 		})
 	}
@@ -341,57 +305,5 @@ func TestGetConfig_LeaksNoInstanceIdentities(t *testing.T) {
 		if strings.Contains(rec.Body.String(), id) {
 			t.Errorf("the response named instance %q; body: %s", id, rec.Body.String())
 		}
-	}
-}
-
-func TestWarnAboutHostPathAtBoot(t *testing.T) {
-	tests := []struct {
-		name      string
-		values    map[string]string
-		cores     []string
-		redisDown bool
-		wantWarn  bool
-	}{
-		{
-			// The case this exists for: a second Core joining a deployment
-			// that already stores files on a host path.
-			name:     "joining a host-path deployment warns",
-			values:   map[string]string{keyCoreStorageBackend: "path", keyCoreStoragePath: "/mnt/shared"},
-			cores:    []string{"core-a", "core-b"},
-			wantWarn: true,
-		},
-		{
-			name:   "a single Core on a host path is silent",
-			values: map[string]string{keyCoreStorageBackend: "path", keyCoreStoragePath: "/mnt/shared"},
-			cores:  []string{"core-a"},
-		},
-		{
-			name:   "s3 is silent at any scale",
-			values: map[string]string{keyCoreStorageBackend: "s3", keyCoreStorageS3Bucket: "b"},
-			cores:  []string{"core-a", "core-b"},
-		},
-		{
-			// Boot must never be blocked or made noisy by an unreachable
-			// Redis; that is already loud elsewhere.
-			name:      "an unverifiable count is silent",
-			values:    map[string]string{keyCoreStorageBackend: "path", keyCoreStoragePath: "/mnt/shared"},
-			redisDown: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			rdb := multiCoreRedis(t, tc.cores...)
-			if tc.redisDown {
-				rdb = downRedis(t)
-			}
-			st := &AppState{Store: multiCoreState(t, tc.values), Redis: rdb}
-
-			got := st.WarnAboutHostPathAtBoot(context.Background())
-
-			if (got != "") != tc.wantWarn {
-				t.Fatalf("warning = %q, wantWarn = %v", got, tc.wantWarn)
-			}
-		})
 	}
 }

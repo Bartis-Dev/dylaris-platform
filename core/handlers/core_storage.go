@@ -245,55 +245,18 @@ func isHostPathBackend(backend string) bool {
 
 // CountOnlineCores reports how many Core instances are currently heartbeating.
 //
-// It exists for the host-path backend, which stores files on ONE machine's
-// filesystem. With a second Core online, half the reads miss and half the
-// writes land where the other Core will never look for them - and nothing
-// fails loudly, because each Core's own writes read back perfectly.
+// Informational only: it backs the "onlineCores" figure GetConfig returns for
+// the panel's live X/N round-progress counter. It used to also gate the
+// host-path backend by count, but that guess is gone now that
+// checkSharedStorageReachable PROVES reachability with a real cross-Core
+// round instead - a genuinely shared host path across many Cores is no longer
+// refused (or warned about) before it is even tried.
 func (s *AppState) CountOnlineCores(ctx context.Context) (int, error) {
 	ids, err := services.OnlineCoreIDs(ctx, s.Redis)
 	if err != nil {
 		return 0, err
 	}
 	return len(ids), nil
-}
-
-// hostPathMultiCoreMessage is shared by the save refusal and the panel warning
-// so the operator is told the same thing in both places.
-const hostPathMultiCoreMessage = "The filesystem backend stores files on one machine's disk, and %d Core instances are online. Each Core would serve only the files it wrote itself. Use the S3 backend, or mount a shared filesystem (NFS/SMB) at this path on every host. A Core that was killed rather than shut down cleanly can still be counted for up to 30 seconds."
-
-// hostPathMultiCoreWarning returns the operator-facing warning for a config
-// that is ALREADY saved as a host path on a deployment that has since grown
-// past one Core, or "" when there is nothing to warn about.
-//
-// A second Core appearing after the fact does NOT auto-disable the backend.
-// Silently repointing where files are stored is worse than a loud warning: the
-// operator may be mid-deploy, and an automatic switch would strand every file
-// written so far somewhere Core no longer looks.
-//
-// Takes the count rather than fetching it so the caller pays for one Redis
-// round trip, and so this stays a pure function.
-func hostPathMultiCoreWarning(cfg CoreStorageConfig, online int) string {
-	if !isHostPathBackend(cfg.Backend) || online <= 1 {
-		return ""
-	}
-	return fmt.Sprintf(hostPathMultiCoreMessage, online)
-}
-
-// WarnAboutHostPathAtBoot logs the warning above once at startup, so a Core
-// joining a host-path deployment says so even if no admin opens the storage
-// tab. Returns the message it logged (empty when there was nothing to warn
-// about) so the behaviour is testable without capturing log output.
-func (s *AppState) WarnAboutHostPathAtBoot(ctx context.Context) string {
-	online, err := s.CountOnlineCores(ctx)
-	if err != nil {
-		log.Printf("core storage: could not count online Cores at boot: %v", err)
-		return ""
-	}
-	warning := hostPathMultiCoreWarning(s.LoadCoreStorageConfig(), online)
-	if warning != "" {
-		log.Printf("core storage: WARNING: %s", warning)
-	}
-	return warning
 }
 
 // ProbeS3Connection performs one cheap, read-only call against the configured
@@ -507,9 +470,9 @@ func NewCoreStorageHandler(state *AppState) *CoreStorageHandler {
 // blanked (and, thanks to its "omitempty" json tag, omitted entirely from
 // the response) while S3SecretSet tells the panel one is already stored.
 // GetConfig GET /api/settings/core-storage - PANEL settings.read (RequireCap
-// at the route). Alongside the stored config it answers the two questions the
-// form needs about the host-path backend: may it be selected, and is the one
-// already saved now unsafe.
+// at the route). Alongside the stored config it reports how many Cores are
+// online, which the panel's round-progress counter uses as its expected
+// total once a save starts.
 func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := h.state.LoadCoreStorageConfig()
 	cfg.S3SecretKey = "" // write-only; never emitted
@@ -517,25 +480,16 @@ func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	// The instance ids are NOT emitted, only the count. They are hostnames, and
 	// the count alone is everything the form has to render.
 	online, err := h.state.CountOnlineCores(r.Context())
-	hostPathAllowed := true
 	if err != nil {
-		// A hint the UI could not compute is not a reason to grey out a valid
-		// option. The save path is the enforcement point and refuses on this
-		// same error, with a message that explains itself; the form stays
-		// usable in the meantime.
+		// A hint the UI could not compute is not fatal to the response: the
+		// counter just starts from 0 until a save round supplies a live total.
 		log.Printf("core storage: could not count online Cores for the settings form: %v", err)
-	} else {
-		hostPathAllowed = online <= 1
 	}
 
-	warning := hostPathMultiCoreWarning(cfg, online)
-
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":         true,
-		"settings":        cfg,
-		"onlineCores":     online,
-		"hostPathAllowed": hostPathAllowed,
-		"hostPathWarning": warning,
+		"success":     true,
+		"settings":    cfg,
+		"onlineCores": online,
 	})
 }
 

@@ -14,21 +14,9 @@ export interface GetCoreStorageResponse {
   /**
    * How many Core instances are currently heartbeating. 0 means the server
    * could not take the count (Redis unreachable), NOT that no Core is running.
+   * Used as the expected total for the round-progress counter a save starts.
    */
   onlineCores?: number;
-  /**
-   * False when a second Core is online, which makes the filesystem backend
-   * incorrect: it stores files on one machine's disk, so each Core would serve
-   * only what it wrote itself. The server enforces this on save; this field
-   * exists so the form can say so before the admin tries.
-   */
-  hostPathAllowed?: boolean;
-  /**
-   * Set only when the ALREADY-SAVED backend is a filesystem path and a second
-   * Core has since appeared. The backend deliberately does not auto-switch, so
-   * this warning is the operator's only signal. Render it persistently.
-   */
-  hostPathWarning?: string;
 }
 
 export async function getCoreStorage(): Promise<GetCoreStorageResponse> {

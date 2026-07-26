@@ -500,11 +500,6 @@ func main() {
 	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.Region, cfg.GRPCPort)
 	coreHeartbeat.Start()
 
-	// Warn once, here, if this instance is joining a deployment that stores
-	// files on a host path. Placed AFTER coreHeartbeat.Start() on purpose:
-	// Start writes this Core's key before returning, so the count includes us.
-	appState.WarnAboutHostPathAtBoot(context.Background())
-
 	// Shared-storage reachability. This Core PROVES it can write to and read
 	// from the same core file storage as its peers - at boot, then every
 	// 120s - and gates its own storage routes when it cannot. Deliberately
