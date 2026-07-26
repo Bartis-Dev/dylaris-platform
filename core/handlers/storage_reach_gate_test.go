@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/services/storagereach"
@@ -42,7 +43,11 @@ func TestRequireCoreStorageReachable_PassesWhenTheVerifierIsAbsent(t *testing.T)
 
 func TestRequireCoreStorageReachable_503sWithTheTaxonomyReason(t *testing.T) {
 	svc := storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})
-	svc.Status().Set(storagereach.StatusNotShared, "cannot see core-b")
+	// Distinctive, obviously-internal detail: two of the eight gated routes
+	// are open to any authenticated user with no capability check, so this
+	// string must never reach the response body (see the assertion below).
+	const rawDetail = "/mnt/nfs/dylaris-data: permission denied"
+	svc.Status().Set(storagereach.StatusNotShared, rawDetail)
 	s := &AppState{StorageReach: svc}
 
 	called := false
@@ -67,6 +72,9 @@ func TestRequireCoreStorageReachable_503sWithTheTaxonomyReason(t *testing.T) {
 	msg, _ := body["message"].(string)
 	if msg == "" {
 		t.Error("message is empty; the operator is told nothing actionable")
+	}
+	if strings.Contains(rec.Body.String(), rawDetail) {
+		t.Errorf("response body leaks the raw backend error text: %s", rec.Body.String())
 	}
 }
 

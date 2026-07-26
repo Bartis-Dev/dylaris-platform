@@ -111,14 +111,20 @@ func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.Handl
 			next(w, r)
 			return
 		}
-		status, detail := s.StorageReach.Status().Snapshot()
+		// The second Snapshot() value is the raw backend error text (mount
+		// paths, bucket names, S3 endpoints); two of the eight gated routes
+		// are open to any authenticated user with no capability check, so it
+		// must never reach this body. The taxonomy value + remedy below are
+		// what a caller needs; the full detail stays on the fault-list
+		// endpoint for admins.
+		status, _ := s.StorageReach.Status().Snapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
 			"error":   "storage_unreachable",
 			"reason":  string(status),
 			"message": storageReachMessage(status),
-			"detail":  detail,
 		})
 	}
 }
