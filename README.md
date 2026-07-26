@@ -516,6 +516,17 @@ DYLARIS scales on three axes:
 - **Redis/Valkey** is a coordination bus (in-memory by design). A single replica is fine; for HA, run Valkey with replication/Sentinel and update `REDIS_ADDR`.
 - **Ingress** scales via the separate Gateway stack (multiple edges), keeping node IPs private.
 
+**Core file storage across multiple Cores**
+
+Every online Core must be able to write to and read from the SAME shared Core file storage (Library, ticket attachments, ticket backups). A per-host volume that only *looks* shared is a silent failure: blobs split across hosts and nothing errors, because each Core reads its own writes back perfectly. Core proves the share rather than assuming it:
+
+- **Saving a shared storage config is proven, not assumed.** On a deployment with more than one online Core, saving the Core file storage settings (or switching the target backend mid storage-migration) runs a reachability round across every online Core: each one must prove it can write its own file, read every peer's, and cross-write into every peer's namespace. The save is refused unless **all** of them pass. The round has a hard 15-second cap and no override; a deployment with only one online Core skips it (there is nothing to prove). This covers S3 as well as filesystem paths — the previous guard only counted Cores and ignored S3 entirely.
+- **Every Core re-verifies on its own, too.** Independent of any config save, each Core re-checks its own access to the persisted config at boot and every 120 seconds.
+- **A failing Core is gated, not taken down.** A Core that fails its check keeps serving auth, server management and every other route; only the storage-dependent routes (library, ticket attachments/backups, storage settings) return `503` with a machine-readable reason and an operator-facing remedy. The reason is one of: `ok`, `offline`, `no-response`, `unreachable`, `write-denied`, `not-shared`, `fingerprint-mismatch`, `cross-write-denied`.
+- **Faults are visible fleet-wide.** Each Core's current fault (which Core, since when, why) is recorded in Redis and shown on the panel's Core file storage tab; `GET /api/settings/storage-reach` backs a read-only fleet-health view.
+- **Rolling upgrades block storage config changes.** A Core still running the pre-upgrade binary keeps sending heartbeats, so it still counts as an online participant, but it has no reachability check to answer with and is reported `no-response`. Every storage-settings save and every storage migration's backend switch is refused until the **whole fleet** runs the upgraded binary — this is the intended fail-closed behavior, not a bug. If a save is refused naming a Core, check whether that Core is still on the old image before assuming the storage itself is broken.
+- **A wedged mount leaks a goroutine, not the service.** A hung NFS/CIFS mount blocks inside plain syscalls that no context cancellation can interrupt. Both the periodic self-check and round participation run on a watchdogged child goroutine with a bounded budget; past the budget the Core is correctly reported `unreachable` and the service keeps ticking, but the underlying goroutine cannot be reclaimed until the syscall itself returns. This is a deliberate trade-off (a leaked goroutine beats a stalled Core): a new check is never started against the same wedge on the next tick, so it does not compound into one leaked goroutine per tick — but it should not be diagnosed as a leak bug either.
+
 ## Operations
 
 ```bash

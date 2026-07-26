@@ -94,8 +94,13 @@ services:
       # per-host volume, and this stack runs "replicas: 2" below - so the two
       # Cores do NOT share it. That is why the "Core File Storage" setting in
       # the panel must be pointed at S3, or at a shared filesystem mounted on
-      # every host (see the commented block below). Core refuses to save the
-      # filesystem backend while more than one Core is online.
+      # every host (see the commented block below). The filesystem backend IS
+      # allowed across multiple Cores - but only if the same filesystem is
+      # genuinely mounted at that path on every host. Core now PROVES this
+      # with a reachability check (every online Core must write + read +
+      # cross-write) before saving the config, rather than assuming it from a
+      # Core count. See "Core file storage across multiple Cores" in the
+      # README for the failure modes and the fleet-health surface.
       - core_data:/app/dylaris_data
 
       # ── Optional: a shared filesystem instead of S3 ──────────────────────
