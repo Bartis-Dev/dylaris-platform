@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -372,6 +373,28 @@ func TestStorageReachStatusHandler_ReturnsFaults(t *testing.T) {
 	}
 }
 
+// storageReachDepsCounters counts every call into the three ServiceDeps hooks
+// that SelfCheck and RunRound touch, so the test below can assert an
+// INVOCATION count instead of an outcome.
+//
+// An outcome-based check (before/after status, or "no round key landed in
+// Redis") can be fooled two different ways: an unconfigured backend makes
+// SelfCheck produce the exact same idempotent ok result every time (so a
+// repeat call is invisible in a status diff), and checkSharedStorageReachable
+// short-circuits on "not more than one online Core" before it ever reaches
+// the round machinery (so a wrongly-wired round call leaves no round key
+// either). A call count sidesteps both: ConfigFor is the first thing observe
+// does inside SelfCheck regardless of what it returns, and NewProvider is
+// what RunRound's Coordinator calls for ITS OWN participation regardless of
+// how many peers there are - so both fire on the very first line of the code
+// path they claim to guard, before either masking condition gets a chance to
+// apply.
+type storageReachDepsCounters struct {
+	configFor   atomic.Int64
+	onlineCores atomic.Int64
+	newProvider atomic.Int64
+}
+
 // TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound pins the
 // read-only doc comment on StorageReachStatus with a REAL, started verifier
 // service rather than trusting the comment alone: Service.SelfCheck is
@@ -381,16 +404,37 @@ func TestStorageReachStatusHandler_ReturnsFaults(t *testing.T) {
 // config save. If a future edit ever wires the handler into either path, this
 // fails.
 func TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound(t *testing.T) {
-	rdb := multiCoreRedis(t, "core-a")
+	// Two online Cores, not one: checkSharedStorageReachable treats "not more
+	// than one online Core" as nothing-to-prove and returns immediately. With
+	// only one Core seeded, a regression that wired the status handler into
+	// that round check would never even reach the round machinery, and every
+	// assertion below would still pass on a broken handler. This reads through
+	// services.OnlineCoreIDs (the real Redis heartbeat set), independently of
+	// the ServiceDeps.OnlineCores fake below.
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	counters := &storageReachDepsCounters{}
+	providerRoot := t.TempDir()
 	svc := storagereach.NewService(storagereach.ServiceDeps{
 		Redis:  rdb,
 		CoreID: "core-a",
 		// Unconfigured storage keeps the boot self-check a fast no-op (observe
 		// returns immediately without touching the provider or Redis, see
 		// service.go) so the baseline snapshot below is not racing real
-		// filesystem I/O.
-		ConfigFor:   func() (storagereach.Config, bool) { return storagereach.Config{}, false },
-		OnlineCores: func(context.Context) ([]string, error) { return []string{"core-a"}, nil },
+		// filesystem I/O. Counted anyway: ConfigFor is called unconditionally
+		// as observe's first step, configured or not, so the counter alone
+		// (not what it returns) is what proves whether SelfCheck ran again.
+		ConfigFor: func() (storagereach.Config, bool) {
+			counters.configFor.Add(1)
+			return storagereach.Config{}, false
+		},
+		OnlineCores: func(ctx context.Context) ([]string, error) {
+			counters.onlineCores.Add(1)
+			return []string{"core-a"}, nil
+		},
+		NewProvider: func(cfg storagereach.Config) (storage.StorageProvider, error) {
+			counters.newProvider.Add(1)
+			return &storage.LocalProvider{BasePath: providerRoot}, nil
+		},
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -401,6 +445,9 @@ func TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound(t *testing.T) {
 	// for "the handler changed nothing".
 	time.Sleep(50 * time.Millisecond)
 	statusBefore, detailBefore := svc.Status().Snapshot()
+	configForBefore := counters.configFor.Load()
+	onlineCoresBefore := counters.onlineCores.Load()
+	newProviderBefore := counters.newProvider.Load()
 
 	h := NewCoreStorageHandler(&AppState{
 		Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}, StorageReach: svc,
@@ -417,6 +464,19 @@ func TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound(t *testing.T) {
 	if statusAfter != statusBefore || detailAfter != detailBefore {
 		t.Fatalf("status endpoint changed the local verdict: before = %s/%q, after = %s/%q",
 			statusBefore, detailBefore, statusAfter, detailAfter)
+	}
+
+	if got := counters.configFor.Load(); got != configForBefore {
+		t.Fatalf("ConfigFor was called %d time(s) by the status endpoint (baseline %d): the handler ran a self-check",
+			got-configForBefore, configForBefore)
+	}
+	if got := counters.onlineCores.Load(); got != onlineCoresBefore {
+		t.Fatalf("OnlineCores was called %d time(s) by the status endpoint (baseline %d): the handler ran a self-check or a round",
+			got-onlineCoresBefore, onlineCoresBefore)
+	}
+	if got := counters.newProvider.Load(); got != newProviderBefore {
+		t.Fatalf("NewProvider was called %d time(s) by the status endpoint (baseline %d): the handler opened a storage provider, meaning it ran a self-check or started a round",
+			got-newProviderBefore, newProviderBefore)
 	}
 
 	pending, err := storagereach.PendingRoundID(ctx, rdb)
