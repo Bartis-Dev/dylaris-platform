@@ -80,12 +80,15 @@ jobs:
         run: go test -count=1 ./...
 
   # Race detector gate. Separate from go-tests because it needs a C toolchain
-  # that the plain matrix does not: -race requires cgo, and cgo requires gcc.
+  # that the plain matrix does not: -race requires cgo, and cgo requires gcc,
+  # which is not installed on this runner and is not ours to add.
   #
-  # Why a container instead of installing gcc on the runner: this workflow
-  # already builds and pushes Docker images, so Docker is guaranteed present
-  # here in a way gcc is not. The official Go image also pins the toolchain
-  # independently of the runner's.
+  # Runs as a docker BUILD, which uploads its context instead of mounting one.
+  # That is the same code path the image-build jobs below have always used
+  # successfully here, so it does not depend on how the runner itself is
+  # packaged. Two simpler mechanisms were tried first and both failed for
+  # environment reasons; .github/race.Dockerfile records what they were so
+  # nobody spends the afternoon rediscovering them.
   #
   # Scoped to core ON PURPOSE. Core is where this repo's concurrency actually
   # lives (the storage-reachability watchdogs, the Redis write-claim, the
@@ -93,18 +96,18 @@ jobs:
   # on for node/pkg as well is a deliberate follow-up, not a freebie: a NEW gate
   # that retroactively fails on untouched code blocks deploys for reasons nobody
   # chose today. Extend it once those modules have been checked by hand.
-  # Runs as a docker BUILD. The reasoning, and the two mechanisms that failed on
-  # this runner before it, are documented in .github/race.Dockerfile. Short
-  # version: a build uploads its context instead of mounting one, which is the
-  # same code path the image-build jobs below have always used successfully
-  # here, so it does not depend on the runner's own containerization.
   race-tests:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
+      # BUILDKIT_PROGRESS=plain so the test output lands in the job log. Without
+      # it buildx collapses the RUN and a PASSING run tells you nothing about
+      # what actually ran; a gate you cannot read is a gate you stop trusting.
       - name: go test -race (core)
         uses: docker/build-push-action@v5
+        env:
+          BUILDKIT_PROGRESS: plain
         with:
           context: .
           file: ./.github/race.Dockerfile
@@ -141,11 +144,7 @@ jobs:
   # 2. Change detection - only after every test job is green, and never on PRs.
   # ----------------------------------------------
   detect-changes:
-    # race-tests is deliberately NOT in this list yet. It is a brand-new job and
-    # its first attempt failed for an environment reason, not a code one, which
-    # blocked every image build. It stays non-blocking until it has gone green
-    # on a real run; then it gets added here and to the build jobs.
-    needs: [go-tests, panel-tests]
+    needs: [go-tests, race-tests, panel-tests]
     if: github.event_name != 'pull_request'
     runs-on: self-hosted
     outputs:
@@ -177,7 +176,7 @@ jobs:
   # 3. Build + push. Changed images on push; every image on workflow_dispatch.
   # ----------------------------------------------
   build-core:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     permissions:
@@ -222,7 +221,7 @@ jobs:
             RUN_AS=dylaris
 
   build-node:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.node == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-service.yml
     with:
@@ -232,7 +231,7 @@ jobs:
     secrets: inherit
 
   build-panel:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-service.yml
     with:
@@ -248,7 +247,7 @@ jobs:
     secrets: inherit
 
   build-log-shipper:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.log-shipper == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     permissions:
