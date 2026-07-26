@@ -42,6 +42,15 @@ export async function getCoreStorage(): Promise<GetCoreStorageResponse> {
 export interface SaveCoreStorageResponse {
   success: boolean;
   message?: string;
+  /** Present on a 409/503: the per-Core reachability round result. */
+  round?: {
+    roundId: string;
+    confirmed: number;
+    total: number;
+    done: boolean;
+    ok: boolean;
+    results: import('@/lib/storageReach').CoreReachResult[];
+  };
 }
 
 export async function saveCoreStorage(s: CoreStorageConfig): Promise<SaveCoreStorageResponse> {

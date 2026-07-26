@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useReducer, useRef } from 'react';
 import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage, s3IdentityChanged, type CoreStorageConfig } from '@/lib/coreStorage';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { Badge } from '@/components/ui/Badge';
+import { systemEvents } from '@/lib/systemEvents';
+import { reachReducer, initialReachState, statusLabel, statusRemedy, type CoreReachResult } from '@/lib/storageReach';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -30,11 +33,12 @@ export default function CoreStorageTab() {
   // the next test replaces or clears it.
   const [testWarning, setTestWarning] = useState<string | null>(null);
 
-  // The single-Core constraint on the filesystem backend, as answered by the
-  // server. hostPathAllowed defaults to true so the form behaves normally
-  // until the first GET lands, and stays true if the server could not take the
-  // count - the save is refused server-side either way.
-  const [hostPathAllowed, setHostPathAllowed] = useState(true);
+  // onlineCores is the expected participant count shown as the counter's
+  // total while a save round is running. The old count-based refusal
+  // (blocking the filesystem backend outright above 1 Core) is gone: the
+  // server now proves reachability with a real cross-Core round instead of
+  // guessing from a count, so a genuinely shared path across many Cores is
+  // no longer refused before it is even tried.
   const [onlineCores, setOnlineCores] = useState(0);
   const [multiCoreWarning, setMultiCoreWarning] = useState<string | null>(null);
 
@@ -43,6 +47,9 @@ export default function CoreStorageTab() {
 
   // Snapshot of the last-saved config, used for dirty detection.
   const snapshotRef = useRef<CoreStorageConfig | null>(null);
+
+  const [reach, dispatchReach] = useReducer(reachReducer, initialReachState);
+  const reachActive = reach.phase === 'verifying' || reach.phase === 'slow';
 
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 4500); };
 
@@ -55,7 +62,6 @@ export default function CoreStorageTab() {
         setSettings(s);
         snapshotRef.current = s;
       }
-      setHostPathAllowed(res.hostPathAllowed !== false);
       setOnlineCores(res.onlineCores ?? 0);
       setMultiCoreWarning(res.hostPathWarning || null);
       setLoading(false);
@@ -68,7 +74,7 @@ export default function CoreStorageTab() {
     });
   }, []);
 
-  const canSave = canSaveCoreStorage(settings, snapshotRef.current, hostPathAllowed);
+  const canSave = canSaveCoreStorage(settings, snapshotRef.current);
   const identityChanged = settings.backend === 's3' && s3IdentityChanged(settings, snapshotRef.current);
   // A saved connection supplies the credentials; the inline s3 fields and the
   // inline Test are then hidden (the connection has its own test on the Storage
@@ -80,29 +86,61 @@ export default function CoreStorageTab() {
 
   const handleSave = async () => {
     if (!canSave) {
-      // The multi-Core case has its own message: telling an admin to tick a
-      // checkbox they cannot reach would be the wrong instruction entirely.
       const reason =
         settings.backend !== 'path'
           ? 'Fill in the bucket, access key and secret before saving.'
-          : !hostPathAllowed
-            ? `The filesystem backend cannot be used while ${onlineCores} Core instances are online. Use S3, or scale down to one Core.`
-            : 'Enter an absolute path and tick the confirmation checkbox before saving.';
+          : 'Enter an absolute path and tick the confirmation checkbox before saving.';
       showToast(reason, false);
       return;
     }
     setSaving(true);
+    // onlineCores is only the EXPECTED participant count for the counter; the
+    // server decides the real participant set from live heartbeats.
+    dispatchReach({ type: 'start', total: Math.max(onlineCores, 1) });
     const res = await saveCoreStorage(settings);
     if (res.success) {
+      dispatchReach({
+        type: 'progress',
+        progress: { confirmed: reach.total, total: reach.total, done: true, ok: true, results: [] },
+      });
       showToast('Core file storage saved.');
       const saved: CoreStorageConfig = { ...settings, s3SecretKey: '', s3SecretSet: settings.s3SecretSet || settings.s3SecretKey !== '' };
       setSettings(saved);
       snapshotRef.current = saved;
     } else {
-      showToast(res.message || 'Save failed.', false);
+      dispatchReach({
+        type: 'failure',
+        message: res.message || 'Save failed.',
+        progress: res.round ?? null,
+      });
+      if (!res.round) showToast(res.message || 'Save failed.', false);
     }
     setSaving(false);
   };
+
+  // Live X/N counter. The save request stays open for the length of the
+  // round, so the progress has to arrive out-of-band.
+  useEffect(() => {
+    if (!reachActive) return;
+    return systemEvents.on('storagereach.changed', (event) => {
+      const p = event.payload as { round?: string; confirmed?: number; total?: number; done?: boolean; ok?: boolean; results?: CoreReachResult[] } | undefined;
+      // The periodic self-check publishes on this channel too, with no
+      // counter; only round events carry one.
+      if (!p || typeof p.confirmed !== 'number' || typeof p.total !== 'number') return;
+      dispatchReach({
+        type: 'progress',
+        roundId: p.round,
+        progress: { confirmed: p.confirmed, total: p.total, done: !!p.done, ok: !!p.ok, results: p.results ?? [] },
+      });
+    });
+  }, [reachActive]);
+
+  useEffect(() => {
+    if (!reachActive) return;
+    const startedAt = Date.now();
+    const id = setInterval(() => dispatchReach({ type: 'tick', elapsedMs: Date.now() - startedAt }), 250);
+    return () => clearInterval(id);
+  }, [reachActive]);
 
   const handleDiscard = () => { if (snapshotRef.current) setSettings(snapshotRef.current); };
 
@@ -145,32 +183,25 @@ export default function CoreStorageTab() {
           {BACKENDS.map(b => {
             const Icon = b.icon;
             const active = settings.backend === b.id;
-            // Only the filesystem backend is constrained, and only while a
-            // second Core is online.
-            const blocked = b.id === 'path' && !hostPathAllowed;
             return (
               <button
                 key={b.id}
                 type="button"
                 onClick={() => set('backend', b.id)}
-                disabled={blocked}
-                aria-describedby={blocked ? 'core-storage-host-path-blocked' : undefined}
                 className={`card p-4 text-left transition-all relative focus:outline-none focus-visible:ring-2 focus-visible:ring-(--accent) ${
-                  blocked
-                    ? 'border-(--base-03) opacity-50 cursor-not-allowed'
-                    : active
-                      ? 'border-(--accent) ring-1 ring-(--accent)/40 bg-(--accent-ghost)'
-                      : 'border-(--base-03) hover:border-(--base-05)'
+                  active
+                    ? 'border-(--accent) ring-1 ring-(--accent)/40 bg-(--accent-ghost)'
+                    : 'border-(--base-03) hover:border-(--base-05)'
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${active && !blocked ? 'bg-(--accent)/20 text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
+                  <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-(--accent)/20 text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
                     <Icon size={18} />
                   </div>
                   <div className="min-w-0">
-                    <div className={`font-medium text-sm flex items-center gap-1.5 ${active && !blocked ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
+                    <div className={`font-medium text-sm flex items-center gap-1.5 ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
                       {b.label}
-                      {active && !blocked && <CircleCheck size={13} className="text-(--accent-light)" />}
+                      {active && <CircleCheck size={13} className="text-(--accent-light)" />}
                     </div>
                     <div className="text-xs text-(--base-06) mt-1">{b.description}</div>
                   </div>
@@ -179,17 +210,6 @@ export default function CoreStorageTab() {
             );
           })}
         </div>
-
-        {/* The reason, spelled out. A greyed-out option with no explanation is
-            the thing an operator files a bug about. */}
-        {!hostPathAllowed && (
-          <p id="core-storage-host-path-blocked" className="text-xs text-(--base-06) mt-2">
-            The filesystem backend is unavailable because {onlineCores} Core instances are online. It stores
-            files on a single machine&apos;s disk, so each Core would only serve what it wrote itself. Use S3, or
-            scale down to one Core. A Core that was killed rather than shut down cleanly can still be counted
-            for up to 30 seconds.
-          </p>
-        )}
       </div>
 
       {/* A host path that was already saved before the deployment grew. Kept
@@ -349,6 +369,53 @@ export default function CoreStorageTab() {
           </div>
           </>
           )}
+        </div>
+      )}
+
+      {/* Live fleet-wide reachability round, run on every save: the settings
+          are persisted only once every online Core proves it can read and
+          write the same shared storage. */}
+      {reachActive && (
+        <div className="alert alert-info text-xs flex flex-col gap-2" role="status" aria-live="polite">
+          <div className="flex items-center gap-2">
+            <Loader2 size={14} className="animate-spin" />
+            <span className="font-mono text-[11px] tracking-[0.04em] text-(--base-09)">
+              {reach.confirmed}/{reach.total} cores can read and write this storage
+            </span>
+          </div>
+          {reach.phase === 'slow' && (
+            <span className="text-(--base-06)">
+              Taking longer than usual (first setup or cross-region mounts can be slower).
+            </span>
+          )}
+        </div>
+      )}
+
+      {reach.phase === 'failed' && (
+        <div className="alert alert-error text-xs flex flex-col gap-3" role="alert">
+          <span className="text-(--base-09)">{reach.message}</span>
+          {reach.results.length > 0 && (
+            <ul className="flex flex-col gap-1.5">
+              {reach.results.map(r => (
+                <li key={r.coreId} className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={r.status === 'ok' ? 'success' : 'warning'}>{statusLabel(r.status)}</Badge>
+                    <span className="font-mono text-[11px] text-(--base-07)">{r.coreId}</span>
+                  </div>
+                  {r.status !== 'ok' && (
+                    <span className="text-(--base-06)">
+                      {statusRemedy(r.status)}
+                      {r.missingPeers?.length ? ` Cannot see: ${r.missingPeers.join(', ')}.` : ''}
+                      {r.deniedPeers?.length ? ` Cannot write into: ${r.deniedPeers.join(', ')}.` : ''}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button type="button" className="btn btn-secondary btn-sm self-start" onClick={handleSave} disabled={saving}>
+            Retry
+          </button>
         </div>
       )}
 

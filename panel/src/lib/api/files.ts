@@ -139,7 +139,15 @@ export function uploadLibraryFiles(path: string, files: FileList, onProgress: (p
                 try { resolve(JSON.parse(xhr.responseText)); }
                 catch { resolve({ success: false, message: 'Bad upload response' }); }
             } else {
-                resolve({ success: false, message: 'Upload failed' });
+                // Surface the server's reason (e.g. the storage-reach gate's
+                // taxonomy remedy on a 503) instead of a generic message; see
+                // the identical handling in uploadFiles above.
+                try {
+                    const body = JSON.parse(xhr.responseText);
+                    resolve({ success: false, message: body.message || 'Upload failed' });
+                } catch {
+                    resolve({ success: false, message: 'Upload failed' });
+                }
             }
         };
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
