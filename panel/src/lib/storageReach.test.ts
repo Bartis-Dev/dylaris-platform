@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     initialReachState,
+    parseStorageReachEvent,
     reachReducer,
     statusLabel,
     statusRemedy,
@@ -227,5 +228,63 @@ describe('status copy', () => {
 
     it('falls back rather than rendering blank for an unknown status remedy', () => {
         expect(statusRemedy('something-new' as ReachStatus)).not.toBe('');
+    });
+});
+
+describe('parseStorageReachEvent', () => {
+    it('parses a real round progress payload into a progress event', () => {
+        const event = parseStorageReachEvent({
+            round: 'R1', confirmed: 1, total: 2, done: false, ok: false,
+            results: [{ coreId: 'core-a', status: 'ok' }],
+        });
+        expect(event).toEqual({
+            type: 'progress',
+            roundId: 'R1',
+            progress: {
+                confirmed: 1, total: 2, done: false, ok: false,
+                results: [{ coreId: 'core-a', status: 'ok' }],
+            },
+        });
+    });
+
+    it('ignores the periodic self-check publish, which carries no counter', () => {
+        // The self-check publishes on the same SSE channel with no confirmed/
+        // total fields at all - that absence is the only thing that tells it
+        // apart from a real round progress payload.
+        expect(parseStorageReachEvent({ status: 'ok' })).toBeNull();
+    });
+
+    it('ignores a payload missing just `total`', () => {
+        expect(parseStorageReachEvent({ round: 'R1', confirmed: 1 })).toBeNull();
+    });
+
+    it('ignores a payload missing just `confirmed`', () => {
+        expect(parseStorageReachEvent({ round: 'R1', total: 2 })).toBeNull();
+    });
+
+    it('ignores a malformed payload without crashing', () => {
+        expect(parseStorageReachEvent(null)).toBeNull();
+        expect(parseStorageReachEvent(undefined)).toBeNull();
+        expect(parseStorageReachEvent('not an object')).toBeNull();
+        expect(parseStorageReachEvent(42)).toBeNull();
+        expect(parseStorageReachEvent({ confirmed: 'one', total: 2 })).toBeNull();
+    });
+
+    it('defaults results to an empty array when absent or malformed', () => {
+        const event = parseStorageReachEvent({ confirmed: 0, total: 3 });
+        expect(event?.type).toBe('progress');
+        expect(event && event.type === 'progress' && event.progress.results).toEqual([]);
+    });
+
+    it('passes through the round id for a payload naming a different round, unfiltered', () => {
+        // parseStorageReachEvent has no notion of "the current round" - it only
+        // extracts what the payload carries. Rejecting a stale/foreign round is
+        // the reducer's job (its own roundId guard), not this function's.
+        const event = parseStorageReachEvent({ round: 'R2', confirmed: 2, total: 2, done: true, ok: true, results: [] });
+        expect(event).toEqual({
+            type: 'progress',
+            roundId: 'R2',
+            progress: { confirmed: 2, total: 2, done: true, ok: true, results: [] },
+        });
     });
 });

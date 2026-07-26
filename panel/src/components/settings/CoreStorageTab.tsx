@@ -9,7 +9,7 @@ import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skel
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { Badge } from '@/components/ui/Badge';
 import { systemEvents } from '@/lib/systemEvents';
-import { reachReducer, initialReachState, statusLabel, statusRemedy, type CoreReachResult } from '@/lib/storageReach';
+import { reachReducer, initialReachState, statusLabel, statusRemedy, parseStorageReachEvent } from '@/lib/storageReach';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -50,6 +50,14 @@ export default function CoreStorageTab() {
 
   const [reach, dispatchReach] = useReducer(reachReducer, initialReachState);
   const reachActive = reach.phase === 'verifying' || reach.phase === 'slow';
+
+  // Bumped at the start of every handleSave call (Save or Retry) and
+  // compared after the await: a Retry can start a fresh attempt while an
+  // older, stale one is still in flight (that is the whole point of letting
+  // Retry fire immediately instead of waiting for the stale request), so the
+  // stale attempt's eventual result must be recognized as superseded and
+  // discarded rather than clobbering the newer, still-active round's state.
+  const saveGenerationRef = useRef(0);
 
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 4500); };
 
@@ -93,15 +101,24 @@ export default function CoreStorageTab() {
       showToast(reason, false);
       return;
     }
+    const generation = ++saveGenerationRef.current;
     setSaving(true);
     // onlineCores is only the EXPECTED participant count for the counter; the
-    // server decides the real participant set from live heartbeats.
-    dispatchReach({ type: 'start', total: Math.max(onlineCores, 1) });
+    // server decides the real participant set from live heartbeats. Captured
+    // once so the synthetic success event below uses this SAME total instead
+    // of `reach.total` read from the closure captured before this dispatch
+    // takes effect (which would still hold the previous round's total).
+    const total = Math.max(onlineCores, 1);
+    dispatchReach({ type: 'start', total });
     const res = await saveCoreStorage(settings);
+    // A newer Retry can have started (and even finished) while this request
+    // was in flight; a stale result must not touch state that belongs to
+    // that newer, still-active round. See saveGenerationRef above.
+    if (saveGenerationRef.current !== generation) return;
     if (res.success) {
       dispatchReach({
         type: 'progress',
-        progress: { confirmed: reach.total, total: reach.total, done: true, ok: true, results: [] },
+        progress: { confirmed: total, total, done: true, ok: true, results: [] },
       });
       showToast('Core file storage saved.');
       const saved: CoreStorageConfig = { ...settings, s3SecretKey: '', s3SecretSet: settings.s3SecretSet || settings.s3SecretKey !== '' };
@@ -112,6 +129,10 @@ export default function CoreStorageTab() {
         type: 'failure',
         message: res.message || 'Save failed.',
         progress: res.round ?? null,
+        // The real server round id, when the refusal carried one: lets the
+        // reducer's own stale-round guard reject this if a newer round's
+        // progress has since taken over roundId (see reachReducer 'failure').
+        roundId: res.round?.roundId,
       });
       if (!res.round) showToast(res.message || 'Save failed.', false);
     }
@@ -123,15 +144,8 @@ export default function CoreStorageTab() {
   useEffect(() => {
     if (!reachActive) return;
     return systemEvents.on('storagereach.changed', (event) => {
-      const p = event.payload as { round?: string; confirmed?: number; total?: number; done?: boolean; ok?: boolean; results?: CoreReachResult[] } | undefined;
-      // The periodic self-check publishes on this channel too, with no
-      // counter; only round events carry one.
-      if (!p || typeof p.confirmed !== 'number' || typeof p.total !== 'number') return;
-      dispatchReach({
-        type: 'progress',
-        roundId: p.round,
-        progress: { confirmed: p.confirmed, total: p.total, done: !!p.done, ok: !!p.ok, results: p.results ?? [] },
-      });
+      const parsed = parseStorageReachEvent(event.payload);
+      if (parsed) dispatchReach(parsed);
     });
   }, [reachActive]);
 
@@ -413,7 +427,17 @@ export default function CoreStorageTab() {
               ))}
             </ul>
           )}
-          <button type="button" className="btn btn-secondary btn-sm self-start" onClick={handleSave} disabled={saving}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm self-start"
+            onClick={handleSave}
+            // Driven by the round's own phase, not `saving`: `saving` stays
+            // true for as long as the ORIGINAL, possibly-stale request is
+            // still in flight, which is exactly the state this failure panel
+            // is shown in on a genuine timeout. Retry must fire immediately,
+            // not wait for that stale request to resolve.
+            disabled={reachActive}
+          >
             Retry
           </button>
         </div>

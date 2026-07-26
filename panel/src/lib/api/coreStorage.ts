@@ -4,6 +4,7 @@
 // server-side so it can render "(unchanged)" instead of asking the admin to
 // re-enter a secret that's still there.
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
+import { handleUnauthorized } from '@/lib/api/session';
 import type { CoreStorageConfig } from '@/lib/coreStorage';
 
 export interface GetCoreStorageResponse {
@@ -53,6 +54,11 @@ export interface SaveCoreStorageResponse {
   };
 }
 
+// Deliberately NOT routed through the shared handleResponse: its non-2xx
+// branch keeps only `message` and drops every other field. A 409/503 refusal
+// here carries `round` (the per-Core reachability result) alongside
+// `message`, and the failure panel is unusable without it - so this endpoint
+// parses its own body and keeps `round` on both branches instead.
 export async function saveCoreStorage(s: CoreStorageConfig): Promise<SaveCoreStorageResponse> {
   try {
     const res = await fetch(`${API_URL}/settings/core-storage`, {
@@ -60,7 +66,10 @@ export async function saveCoreStorage(s: CoreStorageConfig): Promise<SaveCoreSto
       headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     });
-    return (await handleResponse(res)) as SaveCoreStorageResponse;
+    if (handleUnauthorized(res)) return { success: false, message: 'Session expired' };
+    const data = await res.json();
+    if (res.ok) return { success: true, ...data };
+    return { success: false, message: data.message || 'Unknown error', round: data.round };
   } catch (err) {
     return handleError(err) as SaveCoreStorageResponse;
   }

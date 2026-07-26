@@ -213,3 +213,39 @@ export function statusRemedy(status: ReachStatus): string {
     if (status === 'ok') return '';
     return REMEDIES[status] ?? 'This Core could not confirm access to the shared storage.';
 }
+
+/**
+ * Narrows a raw `storagereach.changed` SSE payload into a reducer event, or
+ * `null` when the payload should be ignored.
+ *
+ * The periodic self-check publishes on this same event channel as the
+ * fleet-wide config round, but with no counter fields at all - `confirmed`
+ * and `total` are what tells the two apart, so a payload missing either is
+ * the self-check's publish, not round progress, and is ignored. This does
+ * NOT know which round is "current" (that is session state, not part of the
+ * payload) - it only extracts whatever `round` id the payload carries; the
+ * reducer's own roundId guard decides whether that round is still relevant.
+ */
+export function parseStorageReachEvent(payload: unknown): ReachEvent | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const p = payload as {
+        round?: unknown;
+        confirmed?: unknown;
+        total?: unknown;
+        done?: unknown;
+        ok?: unknown;
+        results?: unknown;
+    };
+    if (typeof p.confirmed !== 'number' || typeof p.total !== 'number') return null;
+    return {
+        type: 'progress',
+        roundId: typeof p.round === 'string' ? p.round : undefined,
+        progress: {
+            confirmed: p.confirmed,
+            total: p.total,
+            done: !!p.done,
+            ok: !!p.ok,
+            results: Array.isArray(p.results) ? (p.results as CoreReachResult[]) : [],
+        },
+    };
+}
