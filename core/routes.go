@@ -1051,7 +1051,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.DeleteBackup))))).Methods("DELETE")
 	// Restore: two-step Danger Zone (init + execute) - 2FA + 15s timer + typed phrase.
 	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.InitRestore))))).Methods("POST")
-	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.ExecuteRestore))))).Methods("POST")
 	// Deletion audit log (admin management -> PANEL tickets.read). Note: the
 	// DELETE /tickets/{id} handler itself (ticket_deletions.go) stays
 	// authed-exempt with its in-handler IsAdmin gate untouched - that route
