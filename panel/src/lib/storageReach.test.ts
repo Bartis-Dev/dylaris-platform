@@ -123,6 +123,80 @@ describe('reachReducer', () => {
         expect(s.phase).toBe('verifying');
         expect(s.confirmed).toBe(0);
     });
+
+    it('ignores a failure that arrives after the round already succeeded', () => {
+        // Simulates the in-flight request's catch handler firing late, after
+        // a `progress` event already resolved the round as a success.
+        let s = reachReducer(initialReachState, { type: 'start', total: 1, roundId: 'R1' });
+        s = reachReducer(s, {
+            type: 'progress',
+            roundId: 'R1',
+            progress: { confirmed: 1, total: 1, done: true, ok: true, results: [] },
+        });
+        expect(s.phase).toBe('success');
+        s = reachReducer(s, { type: 'failure', roundId: 'R1', message: 'stale rejection', progress: null });
+        expect(s.phase).toBe('success');
+        expect(s.message).toBe('');
+    });
+
+    it('ignores a failure naming an older round after Retry started a new one', () => {
+        // Concrete Retry bug: `start` resets to a fresh round while the
+        // PREVIOUS round's in-flight request is still pending; its eventual
+        // rejection carries the OLD round id and must not flip the new,
+        // already-verifying round to failed.
+        let s = reachReducer(initialReachState, { type: 'start', total: 2, roundId: 'R1' });
+        s = reachReducer(s, { type: 'start', total: 2, roundId: 'R2' });
+        expect(s.phase).toBe('verifying');
+        s = reachReducer(s, { type: 'failure', roundId: 'R1', message: 'stale from R1', progress: null });
+        expect(s.phase).toBe('verifying');
+        expect(s.message).toBe('');
+    });
+});
+
+describe('conclusive progress failure vs real timeout', () => {
+    it('does not use the timeout message for a fast, conclusive failure', () => {
+        let s = reachReducer(initialReachState, { type: 'start', total: 2, roundId: 'R1' });
+        s = reachReducer(s, {
+            type: 'progress',
+            roundId: 'R1',
+            progress: {
+                confirmed: 1, total: 2, done: true, ok: false,
+                results: [
+                    { coreId: 'core-a', status: 'ok' },
+                    { coreId: 'core-b', status: 'not-shared', missingPeers: ['core-a'] },
+                ],
+            },
+        });
+        expect(s.phase).toBe('failed');
+        expect(s.message).not.toContain('15 seconds');
+        expect(s.message).toContain('1 of 2');
+        expect(s.message).toContain(statusLabel('not-shared'));
+    });
+
+    it('names each distinct failing status when more than one Core fails differently', () => {
+        let s = reachReducer(initialReachState, { type: 'start', total: 3, roundId: 'R1' });
+        s = reachReducer(s, {
+            type: 'progress',
+            roundId: 'R1',
+            progress: {
+                confirmed: 1, total: 3, done: true, ok: false,
+                results: [
+                    { coreId: 'core-a', status: 'ok' },
+                    { coreId: 'core-b', status: 'not-shared' },
+                    { coreId: 'core-c', status: 'write-denied' },
+                ],
+            },
+        });
+        expect(s.phase).toBe('failed');
+        expect(s.message).not.toContain('15 seconds');
+        expect(s.message).toContain('2 of 3');
+    });
+
+    it('still uses the timeout message when the deadline actually passes without a verdict', () => {
+        const s = reachReducer(start(2), { type: 'tick', elapsedMs: 15100 });
+        expect(s.phase).toBe('failed');
+        expect(s.message).toContain('15 seconds');
+    });
 });
 
 describe('status copy', () => {
@@ -143,7 +217,15 @@ describe('status copy', () => {
         }
     });
 
+    it('returns an empty remedy for ok on purpose, since there is nothing to remedy on success', () => {
+        expect(statusRemedy('ok')).toBe('');
+    });
+
     it('falls back rather than rendering a raw enum for an unknown status', () => {
         expect(statusLabel('something-new' as ReachStatus)).not.toBe('');
+    });
+
+    it('falls back rather than rendering blank for an unknown status remedy', () => {
+        expect(statusRemedy('something-new' as ReachStatus)).not.toBe('');
     });
 });
