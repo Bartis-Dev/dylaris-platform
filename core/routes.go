@@ -1006,7 +1006,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.UploadAttachment))))).Methods("POST")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.ListAttachments))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.DownloadAttachment)))).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.DeleteAttachment))).Methods("DELETE")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.DeleteAttachment)))).Methods("DELETE")
 
 	// Canned responses: support sees the read list (authed-exempt - its own
 	// in-handler support-or-admin check is the boundary and is unchanged),
@@ -1046,11 +1046,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration)))).Methods("POST")
 	// Backups: create, list, download, delete.
 	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(ticketMigrationHandler.CreateBackup)))))).Methods("POST")
-	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.ListBackups)))).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.DownloadBackup)))).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DeleteBackup)))).Methods("DELETE")
+	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.ListBackups))))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.DownloadBackup))))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.DeleteBackup))))).Methods("DELETE")
 	// Restore: two-step Danger Zone (init + execute) - 2FA + 15s timer + typed phrase.
-	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.InitRestore)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.InitRestore))))).Methods("POST")
 	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteRestore)))).Methods("POST")
 	// Deletion audit log (admin management -> PANEL tickets.read). Note: the
 	// DELETE /tickets/{id} handler itself (ticket_deletions.go) stays
