@@ -733,6 +733,89 @@ func TestRunRound_ReturnsWithinItsBudgetWhenItsOwnProbeWedges(t *testing.T) {
 	}
 }
 
+// TestRunRound_ReturnsWithinItsBudgetWhenItsOwnProviderBuildWedges is Fix 1's
+// discriminating test: it wedges the injected NewProvider FACTORY itself,
+// never the provider it would have returned. That is the exact gap the test
+// above cannot see - its wedgedProvider is only reached once a provider
+// already exists, but newStorageProviderForConfig's os.MkdirAll (ungated,
+// since NewReachProvider always builds a candidate provider with a nil gate;
+// see core_storage_reach.go's NewReachProvider doc comment) can block before
+// a provider is ever built at all.
+//
+// Reverting Fix 1 - building the provider inline in RunRound, before
+// probeSelf's watchdog goroutine and timer even start - turns this into the
+// 5s select timeout below: the factory never returns, so nothing ever starts
+// the watchdog clock, and RunRound (holding the caller's config-round lock)
+// never returns either.
+func TestRunRound_ReturnsWithinItsBudgetWhenItsOwnProviderBuildWedges(t *testing.T) {
+	rdb := newReachTestRedis(t)
+	never := make(chan struct{}) // never closed
+	c := NewCoordinator(rdb, "core-a", func(Config) (storage.StorageProvider, error) {
+		<-never
+		return nil, nil
+	})
+	// Shrunk from the production second so the watchdog fires without a real
+	// one-second wait; the field exists for exactly this.
+	c.probeGrace = 100 * time.Millisecond
+
+	type outcome struct {
+		res     RoundResult
+		err     error
+		elapsed time.Duration
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		start := time.Now()
+		res, err := c.RunRound(context.Background(), Config{Backend: "path", Path: "/mnt/shared"},
+			[]string{"core-a"}, RoundOptions{Deadline: 150 * time.Millisecond, PollEvery: 20 * time.Millisecond})
+		done <- outcome{res: res, err: err, elapsed: time.Since(start)}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("RunRound: %v", got.err)
+		}
+		if got.elapsed > 2*time.Second {
+			t.Fatalf("RunRound took %s against a provider build that never returns; it is not bounded", got.elapsed)
+		}
+		if got.res.OK {
+			t.Fatal("OK = true although the coordinator's own provider never finished building")
+		}
+		r, ok := coreResultFor(got.res, "core-a")
+		if !ok {
+			t.Fatalf("results = %+v, want one for core-a", got.res.Results)
+		}
+		if r.Status != StatusUnreachable {
+			t.Fatalf("core-a = %s, want unreachable", r.Status)
+		}
+		if r.Detail == "" {
+			t.Error("Detail is empty; the operator is not told the build never finished")
+		}
+
+		// The staged config and current-round keys must both be gone: RunRound's
+		// deferred cleanup runs once probeSelf's watchdog gives up on the round,
+		// regardless of whether the provider build it was watching ever returns.
+		// Left behind, these are exactly what makes a later save see "another
+		// verification is in progress" forever.
+		if got.res.RoundID == "" {
+			t.Fatal("res.RoundID is empty; cannot check the staged keys")
+		}
+		if n, err := rdb.Exists(context.Background(), roundConfigKey(got.res.RoundID)).Result(); err != nil {
+			t.Fatalf("Exists: %v", err)
+		} else if n != 0 {
+			t.Error("the staged config outlived a round whose own provider build wedged")
+		}
+		if n, err := rdb.Exists(context.Background(), currentRoundKey).Result(); err != nil {
+			t.Fatalf("Exists: %v", err)
+		} else if n != 0 {
+			t.Error("the current-round key outlived a round whose own provider build wedged")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunRound never returned against a provider build that never returns: the build ran outside probeSelf's watchdog and blocked the caller forever")
+	}
+}
+
 // TestRunParticipant_BoundsItsProbeToTheRoundDeadline is the participant half of
 // TestRunRound_BoundsItsOwnProbeToTheRoundDeadline. The round is published
 // directly rather than through a coordinator so the participant is the only

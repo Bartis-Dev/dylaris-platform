@@ -167,14 +167,21 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 	}
 
 	// The coordinator is a participant like any other: it must prove its own
-	// access, not assume it.
-	prov, provErr := c.newProvider(cfg)
-	if provErr == nil {
-		rep, completed := c.probeSelf(ctx, prov, deadline, ProbeOptions{
-			CoreID: c.coreID, RoundID: roundID, Fingerprint: fingerprint,
-			Participants: participants, Deadline: opts.Deadline, RetryEvery: opts.PollEvery,
-		})
-		storeReport(ctx, c.rdb, roundID, rep)
+	// access, not assume it. The provider BUILD runs inside probeSelf's own
+	// watchdogged child goroutine, sharing its budget with the probe - see
+	// probeSelf's doc comment for why a build that never returns (a dead
+	// mount's os.MkdirAll, gated by nothing since NewReachProvider always
+	// passes a nil gate) is exactly the same hazard a wedged probe is, and
+	// needs the same watchdog.
+	rep, prov, completed := c.probeSelf(ctx, cfg, deadline, ProbeOptions{
+		CoreID: c.coreID, RoundID: roundID, Fingerprint: fingerprint,
+		Participants: participants, Deadline: opts.Deadline, RetryEvery: opts.PollEvery,
+	})
+	storeReport(ctx, c.rdb, roundID, rep)
+	if prov != nil {
+		// prov is nil when the build itself failed or never came back in
+		// time; either way there is no beacon on the backend for CleanupRound
+		// to remove.
 		defer func() {
 			cleanup := func() {
 				if err := CleanupRound(context.WithoutCancel(ctx), prov, roundID); err != nil {
@@ -194,10 +201,6 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 			}
 			cleanup()
 		}()
-	} else {
-		storeReport(ctx, c.rdb, roundID, Report{
-			CoreID: c.coreID, Fingerprint: fingerprint, WriteErr: provErr.Error(), At: time.Now().Unix(),
-		})
 	}
 
 	var last RoundResult
@@ -236,24 +239,37 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 	}
 }
 
-// probeSelf runs the coordinator's OWN probe on a watchdogged child goroutine
-// and returns what it observed. The bool is false when the probe did not come
-// back in time, in which case the report is the synthetic one below.
+// probeSelfOutcome is what the build-and-probe child goroutine below hands
+// back over its one channel. prov is nil when the build failed or never
+// returned in time - either way there is nothing on the backend for the
+// caller to clean up.
+type probeSelfOutcome struct {
+	prov storage.StorageProvider
+	rep  Report
+}
+
+// probeSelf builds the coordinator's OWN provider AND runs its OWN probe on a
+// single watchdogged child goroutine, sharing one budget between the two, and
+// returns what it observed. The bool is false when neither came back in time,
+// in which case the report is the synthetic one below.
 //
 // Same hazard and the same watchdog shape Service.run already uses for its
 // self-check and its round participation: a wedged mount blocks inside syscalls
 // no context cancellation can interrupt (storage/provider.go says so on the
-// interface itself). This probe runs INLINE on the admin's HTTP goroutine while
-// that goroutine holds the config-round lock, so a probe that never returns
-// makes every later storage-config save on this replica answer 409 "wait for it
-// to finish" forever.
+// interface itself). Both halves run INLINE on the admin's HTTP goroutine while
+// that goroutine holds the config-round lock: the BUILD (newStorageProviderForConfig's
+// os.MkdirAll, ungated because NewReachProvider always passes a nil gate for a
+// candidate config - see its own doc comment) just as much as the probe that
+// follows it. Either one never returning would make every later storage-config
+// save on this replica answer 409 "wait for it to finish" forever, so the two
+// are watchdogged together rather than only the probe on its own.
 //
 // The child goroutine is left to leak on a timeout because nothing in Go can
 // reclaim one parked in a syscall. results has capacity 1 so an orphan can still
 // complete its send and exit rather than block on a channel nobody reads. The
-// child produces a Report and nothing else; every piece of state stays on the
-// calling goroutine.
-func (c *Coordinator) probeSelf(ctx context.Context, prov storage.StorageProvider, deadline time.Time, opts ProbeOptions) (Report, bool) {
+// child produces a probeSelfOutcome and nothing else; every piece of state
+// stays on the calling goroutine.
+func (c *Coordinator) probeSelf(ctx context.Context, cfg Config, deadline time.Time, opts ProbeOptions) (Report, storage.StorageProvider, bool) {
 	// Bound the probe's individual backend CALLS, not just the gaps between
 	// them: Probe checks its own deadline only between calls, so without this
 	// nothing bounds a single one. The S3 SDK genuinely aborts on a context
@@ -263,8 +279,21 @@ func (c *Coordinator) probeSelf(ctx context.Context, prov storage.StorageProvide
 	probeCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
-	results := make(chan Report, 1)
-	go func() { results <- Probe(probeCtx, prov, opts) }()
+	results := make(chan probeSelfOutcome, 1)
+	go func() {
+		prov, err := c.newProvider(cfg)
+		if err != nil {
+			// Same shape RunParticipant uses for its own build failure: no
+			// SeenPeers/etc are set here, only WriteErr, which Aggregate turns
+			// into unreachable.
+			results <- probeSelfOutcome{rep: Report{
+				CoreID: opts.CoreID, Fingerprint: opts.Fingerprint,
+				WriteErr: err.Error(), At: time.Now().Unix(),
+			}}
+			return
+		}
+		results <- probeSelfOutcome{prov: prov, rep: Probe(probeCtx, prov, opts)}
+	}()
 
 	grace := c.probeGrace
 	if grace <= 0 {
@@ -274,19 +303,19 @@ func (c *Coordinator) probeSelf(ctx context.Context, prov storage.StorageProvide
 	defer timer.Stop()
 
 	select {
-	case rep := <-results:
-		return rep, true
+	case out := <-results:
+		return out.rep, out.prov, true
 	case <-ctx.Done():
-		return timedOutReport(opts, fmt.Sprintf("storage probe did not finish: %v", ctx.Err())), false
+		return timedOutReport(opts, fmt.Sprintf("storage probe did not finish: %v", ctx.Err())), nil, false
 	case <-timer.C:
 		// The probe may have completed in the same instant the budget expired.
 		// Its own honest observation always beats a synthetic verdict.
 		select {
-		case rep := <-results:
-			return rep, true
+		case out := <-results:
+			return out.rep, out.prov, true
 		default:
 		}
-		return timedOutReport(opts, fmt.Sprintf("storage probe did not finish within %s of the round deadline", grace)), false
+		return timedOutReport(opts, fmt.Sprintf("storage probe did not finish within %s of the round deadline", grace)), nil, false
 	}
 }
 

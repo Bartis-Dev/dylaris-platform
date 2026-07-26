@@ -275,6 +275,81 @@ func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges(t *testin
 	s.reachRoundMu.Unlock()
 }
 
+// blockingProviderFactory models a NewProvider FACTORY that itself wedges -
+// the gap Fix 1 closes, and the discriminating case blockingProvider above
+// cannot exercise: there NewProvider itself returns instantly and only a
+// provider METHOD blocks, which the round's watchdog already covered before
+// Fix 1. Here the factory call never returns at all, modelling
+// newStorageProviderForConfig's ungated os.MkdirAll (NewReachProvider always
+// builds a candidate provider with a nil gate) hanging on a dead mount before
+// any provider exists to call a method on.
+type blockingProviderFactory struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newBlockingProviderFactory() *blockingProviderFactory {
+	return &blockingProviderFactory{entered: make(chan struct{}, 4), release: make(chan struct{})}
+}
+
+func (f *blockingProviderFactory) build(storagereach.Config) (storage.StorageProvider, error) {
+	f.entered <- struct{}{}
+	<-f.release
+	return nil, errors.New("provider build released")
+}
+
+// TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProviderBuildWedges is
+// Fix 1's discriminating proof at the handler layer: with the provider BUILD
+// back outside probeSelf's watchdog (i.e. Fix 1 reverted), this test hangs or
+// times out instead of observing the lock released - see
+// TestRunRound_ReturnsWithinItsBudgetWhenItsOwnProviderBuildWedges in
+// round_test.go for the same proof against RunRound directly.
+func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProviderBuildWedges(t *testing.T) {
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	factory := newBlockingProviderFactory()
+	s := &AppState{
+		Redis: rdb,
+		Store: &coreStorageFakeStore{values: map[string]string{}},
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a", NewProvider: factory.build,
+		}),
+		reachRoundDeadline: 150 * time.Millisecond,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.checkSharedStorageReachable(context.Background(),
+			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+	}()
+
+	select {
+	case <-factory.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the round never reached the hung provider build; the test setup is broken")
+	}
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the save was allowed although this Core's own provider never finished building")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("checkSharedStorageReachable never returned against a provider build that never returns: the round holds the config-round lock forever and every later save answers 409")
+	}
+
+	if _, err := rdb.Get(context.Background(), reachRoundLockKey).Result(); err != redis.Nil {
+		t.Errorf("the config-round lock was not released after the wedged provider build gave up (err = %v)", err)
+	}
+	// The local mutex has to be free too, or the next save on this replica is
+	// refused by the TryLock branch instead.
+	if !s.reachRoundMu.TryLock() {
+		t.Fatal("the local round mutex is still held after the wedged provider build gave up")
+	}
+	s.reachRoundMu.Unlock()
+
+	close(factory.release)
+}
+
 // TestCheckSharedStorageReachable_RefusesWhileAnotherRoundIsLocked is carry-over
 // check #2: RunRound's own cleanup (round.go) deletes the single global
 // "current round" Redis key unconditionally, without checking it still points
