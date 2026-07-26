@@ -133,14 +133,25 @@ func TestAggregate_ClassifiesEveryFailure(t *testing.T) {
 		},
 		{
 			// The reporting Core is right, but it saw a peer that is not.
-			// The MISMATCHED peer is the one at fault, not the reporter.
+			// The MISMATCHED peer is the one at fault, not the reporter:
+			// core-a SAW core-b's beacon (it was readable, just carrying the
+			// wrong fingerprint), so core-a must not also be convicted of
+			// not-shared over the very peer it correctly named. core-b itself
+			// gets fingerprint-mismatch - see
+			// TestAggregate_PeerMismatchIsBlamedOnThePeer.
+			//
+			// This case used to assert StatusNotShared for core-a, which
+			// convicted the REPORTER despite this exact comment already
+			// saying it is not the one at fault - that was the aggregate.go
+			// bug this test was accidentally pinning, not a real
+			// requirement. Corrected to StatusOK to match the comment.
 			name: "a peer on the wrong backend",
 			mutate: func(r *Report) {
 				r.SeenPeers = []string{}
 				r.CrossWroteTo = []string{}
 				r.MismatchedPeers = []string{"core-b"}
 			},
-			want:     StatusNotShared,
+			want:     StatusOK,
 			wantList: func(t *testing.T, cr CoreResult) {},
 		},
 		{

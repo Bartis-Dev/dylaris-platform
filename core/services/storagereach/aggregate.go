@@ -73,7 +73,15 @@ func Aggregate(participants []string, reports map[string]Report, fingerprint str
 			cr.Status = StatusWriteDenied
 			cr.Detail = rep.WriteErr
 		default:
-			missing := missingFrom(participants, id, rep.SeenPeers)
+			// A peer this report names in MismatchedPeers was SEEN - its beacon
+			// was readable, just carrying the wrong fingerprint - which is not
+			// the same as never appearing at all. That peer already gets its
+			// own fingerprint-mismatch verdict above (via mismatchedByPeer), so
+			// folding it into "seen" here stops the reporter that correctly
+			// identified it from also being wrongly convicted of not-shared
+			// over the very peer it named.
+			seen := append(append([]string(nil), rep.SeenPeers...), rep.MismatchedPeers...)
+			missing := missingFrom(participants, id, seen)
 			if len(missing) > 0 {
 				cr.Status = StatusNotShared
 				cr.MissingPeers = missing
