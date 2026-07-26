@@ -523,6 +523,11 @@ func main() {
 		},
 	})
 	appState.StorageReach.Start(bgCtx)
+	// Announce it like every other background service. Without this line the one
+	// service whose job is to make a SILENT storage failure visible is itself
+	// invisible in the boot log, so an operator cannot tell a Core that verified
+	// and passed from one where the check never ran.
+	log.Printf("Storage Reachability Verifier started (id=%s)", cfg.CoreID)
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
