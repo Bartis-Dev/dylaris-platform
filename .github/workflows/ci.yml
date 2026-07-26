@@ -79,6 +79,52 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -count=1 ./...
 
+  # Race detector gate. Separate from go-tests because it needs a C toolchain
+  # that the plain matrix does not: -race requires cgo, and cgo requires gcc.
+  #
+  # Why a container instead of installing gcc on the runner: this workflow
+  # already builds and pushes Docker images, so Docker is guaranteed present
+  # here in a way gcc is not. The official Go image also pins the toolchain
+  # independently of the runner's.
+  #
+  # Scoped to core ON PURPOSE. Core is where this repo's concurrency actually
+  # lives (the storage-reachability watchdogs, the Redis write-claim, the
+  # in-process route-gate status read from HTTP handler goroutines). Turning it
+  # on for node/pkg as well is a deliberate follow-up, not a freebie: a NEW gate
+  # that retroactively fails on untouched code blocks deploys for reasons nobody
+  # chose today. Extend it once those modules have been checked by hand.
+  race-tests:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      # GOWORK must stay ON. core/go.mod replaces only dylaris-pkg, while
+      # dylaris-proto resolves through go.work, so GOWORK=off fails with
+      # "package dylaris-proto/node is not in std". Running ./... from
+      # /src/core still compiles only core's own packages, so beam/app - which
+      # needs a Wails frontend bundle a fresh checkout does not have - is never
+      # built here and needs no stub.
+      #
+      # The two named volumes persist the module and build caches between runs,
+      # which matters: race instrumentation dominates the runtime and a cold
+      # build cache roughly triples it. They are the right mechanism for a
+      # self-hosted runner; a hosted one would need actions/cache instead.
+      #
+      # NOTE: this bind-mounts the checkout. If this runner is ever moved into a
+      # container talking to the host daemon (docker-in-docker), $PWD will not
+      # exist for that daemon and this step fails while the image builds keep
+      # working, because those upload a build context instead of mounting one.
+      - name: go test -race (core)
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -v dylaris-ci-gomodcache:/go/pkg/mod \
+            -v dylaris-ci-gobuildcache:/root/.cache/go-build \
+            -w /src/core \
+            -e CGO_ENABLED=1 \
+            golang:1.26 \
+            go test -race -count=1 ./...
+
   panel-tests:
     runs-on: self-hosted
     steps:
@@ -110,7 +156,7 @@ jobs:
   # 2. Change detection - only after every test job is green, and never on PRs.
   # ----------------------------------------------
   detect-changes:
-    needs: [go-tests, panel-tests]
+    needs: [go-tests, race-tests, panel-tests]
     if: github.event_name != 'pull_request'
     runs-on: self-hosted
     outputs:
@@ -142,7 +188,7 @@ jobs:
   # 3. Build + push. Changed images on push; every image on workflow_dispatch.
   # ----------------------------------------------
   build-core:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     permissions:
@@ -187,7 +233,7 @@ jobs:
             RUN_AS=dylaris
 
   build-node:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.node == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-service.yml
     with:
@@ -197,7 +243,7 @@ jobs:
     secrets: inherit
 
   build-panel:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-service.yml
     with:
@@ -213,7 +259,7 @@ jobs:
     secrets: inherit
 
   build-log-shipper:
-    needs: [go-tests, panel-tests, detect-changes]
+    needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.log-shipper == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     permissions:
