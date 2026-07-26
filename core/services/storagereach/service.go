@@ -41,6 +41,12 @@ const (
 	defaultBeaconMaxAge = 300 * time.Second
 	// notSharedGraceRounds is how many CONSECUTIVE not-shared verdicts gate
 	// the routes. See shouldGate for why only this status gets grace.
+	//
+	// On a cold fleet (nobody has a fresh beacon-write claim yet) a Core's
+	// very first pass has no peer claims to expect, so expectedParticipants
+	// narrows the set down to itself alone and that first pass reads ok
+	// before the streak ever starts, which is why a genuine fake-shared
+	// volume takes three passes to gate on a cold start, not two.
 	notSharedGraceRounds = 2
 )
 
