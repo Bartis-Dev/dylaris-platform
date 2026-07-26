@@ -123,6 +123,28 @@ func CoreStorageToReachConfig(cfg CoreStorageConfig) storagereach.Config {
 //
 // Exported for the same reason as CoreStorageToReachConfig: main.go wires this
 // in directly as storagereach.ServiceDeps.NewProvider.
+//
+// nil gate, nil s3 resilience - the same RAW build every other candidate-config
+// call site does (ProbeS3Connection, TestConnection, the migration target
+// builder), for the reason newStorageProviderForConfig's own doc comment gives:
+// a candidate probe must fail fast, and the live instances describe the LIVE
+// backend rather than the one being tested. Passing them here broke three
+// things at once:
+//   - A mistyped s3 endpoint flipped the LIVE, working backend into
+//     reconnecting, and the probe's next call then sat in the resilience
+//     layer's ten-MINUTE retry budget while holding the config-round lock.
+//   - A Core whose egress to the endpoint is firewalled - the flagship failure
+//     this verifier exists to name - blocked in that same budget and never
+//     wrote its report, so it was reported as no-response ("check its logs")
+//     instead of unreachable ("check that it can reach the S3 endpoint").
+//   - For a host path, a CANDIDATE path's failures marked the LIVE path
+//     unhealthy, and a wedged live path refused to build a provider for a
+//     DIFFERENT, healthy candidate - so an admin could not fix a broken path
+//     config by pointing at a good one.
+//
+// Failing fast without the wrapper still holds: every S3Provider method threads
+// the caller's ctx into aws-sdk-go-v2 (storage/s3provider.go), which aborts on
+// it, and the round now hands the probe a context bounded by the round deadline.
 func (s *AppState) NewReachProvider(cfg storagereach.Config) (storage.StorageProvider, error) {
 	return newStorageProviderForConfig(CoreStorageConfig{
 		Backend:     cfg.Backend,
@@ -134,7 +156,7 @@ func (s *AppState) NewReachProvider(cfg storagereach.Config) (storage.StoragePro
 		S3SecretKey: cfg.S3SecretKey,
 		S3PathStyle: cfg.S3PathStyle,
 		S3Prefix:    cfg.S3Prefix,
-	}, "", s.StorageGate, s.StorageS3)
+	}, "", nil, nil)
 }
 
 // EffectiveCoreStorageConfig exports effectiveCoreStorageConfig for callers

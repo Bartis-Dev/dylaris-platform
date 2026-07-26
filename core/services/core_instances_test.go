@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -193,5 +194,69 @@ func TestOnlineCoreIDs_ReportsRedisFailure(t *testing.T) {
 func TestOnlineCoreIDs_ReportsMissingClient(t *testing.T) {
 	if _, err := OnlineCoreIDs(context.Background(), nil); err == nil {
 		t.Fatal("want an error for a nil client, not a zero count")
+	}
+}
+
+// TestOnlineCoreIDs_ReportsAPerKeyGetFailure pins the difference between the
+// benign expiry race and a Redis failure.
+//
+// The SCAN succeeds and every per-key GET then fails, which is what a
+// connection reset mid-walk looks like (a failover, a CLIENT KILL, a TCP
+// reset). Swallowing those returned an EMPTY list with a NIL error, and
+// handlers.checkSharedStorageReachable reads "not more than one Core online" as
+// nothing to prove: it skips the verification round entirely and persists a
+// backend nothing proved any Core can reach, reported to the admin as a pass.
+//
+// The hook fails GET only, so the SCAN that finds the keys still works and the
+// failure is genuinely per-key rather than "Redis is gone" (which
+// TestOnlineCoreIDs_ReportsRedisFailure already covers by closing the server).
+func TestOnlineCoreIDs_ReportsAPerKeyGetFailure(t *testing.T) {
+	rdb, mr := newCoreInstancesRedis(t)
+	seedHeartbeat(t, mr, "core-a")
+	seedHeartbeat(t, mr, "core-b")
+	seedHeartbeat(t, mr, "core-c")
+
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		if cmd == "GET" {
+			peer.WriteError("SIMULATED: io: read/write on closed pipe")
+			return true
+		}
+		return false
+	})
+
+	ids, err := OnlineCoreIDs(context.Background(), rdb)
+	if err == nil {
+		t.Fatalf("OnlineCoreIDs = %v, <nil>; want an error. A short list with a nil error is read as \"not more than one Core online\" and skips the storage verification round entirely", ids)
+	}
+	if ids != nil {
+		t.Errorf("ids = %v, want nil alongside the error", ids)
+	}
+}
+
+// TestOnlineCoreIDs_StillSkipsAKeyThatExpiredMidWalk is the positive control
+// for the test above: the ONE GET error that is not a failure must still be
+// skipped, or an ordinary heartbeat expiring between the SCAN and the GET -
+// which happens on every rolling restart - would refuse every storage save.
+func TestOnlineCoreIDs_StillSkipsAKeyThatExpiredMidWalk(t *testing.T) {
+	rdb, mr := newCoreInstancesRedis(t)
+	seedHeartbeat(t, mr, "core-a")
+	seedHeartbeat(t, mr, "core-gone")
+
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		if cmd == "GET" && len(args) > 0 && args[0] == "dylaris:core:core-gone" {
+			// Exactly what Redis answers for a key that expired between the
+			// SCAN that listed it and this GET.
+			peer.WriteNull()
+			return true
+		}
+		return false
+	})
+
+	ids, err := OnlineCoreIDs(context.Background(), rdb)
+	if err != nil {
+		t.Fatalf("OnlineCoreIDs: %v, want the expiry race treated as a skip", err)
+	}
+	if len(ids) != 1 || ids[0] != "core-a" {
+		t.Fatalf("ids = %v, want [core-a]", ids)
 	}
 }

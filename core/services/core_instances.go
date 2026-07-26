@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -83,10 +84,22 @@ func OnlineCoreIDs(ctx context.Context, rdb *redis.Client) ([]string, error) {
 
 			val, err := rdb.Get(ctx, key).Result()
 			if err != nil {
-				// A key that expired between the SCAN and this GET is the
-				// normal race, not a failure: the heartbeat it belonged to is
-				// stale by definition, so skipping it is the right answer.
-				continue
+				if errors.Is(err, redis.Nil) {
+					// A key that expired between the SCAN and this GET is the
+					// normal race, not a failure: the heartbeat it belonged to
+					// is stale by definition, so skipping it is the right
+					// answer.
+					continue
+				}
+				// Any other failure is Redis breaking, and it must NOT be read
+				// as an absent key. Swallowing it returns a silently SHORT list
+				// with a nil error, and the shared-storage save path reads a
+				// short list as "not more than one Core online", which is its
+				// signal that there is nothing to prove: it skips the whole
+				// verification round and persists a backend no Core ever
+				// demonstrated it could reach - reported to the admin as a pass.
+				// Same reasoning and the same idiom as storagereach.Faults.
+				return nil, fmt.Errorf("core instances: get %s: %w", key, err)
 			}
 
 			var hb CoreHeartbeat

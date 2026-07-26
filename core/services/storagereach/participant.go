@@ -81,10 +81,23 @@ func RunParticipant(ctx context.Context, rdb *redis.Client, coreID, roundID stri
 		return nil
 	}
 
-	rep := Probe(ctx, prov, ProbeOptions{
+	// Bound the probe's individual backend CALLS to the round window, not just
+	// the gaps between them: Probe checks its deadline only between calls, so
+	// without this nothing bounds a single one and a call that never returns on
+	// its own runs long past the round it belongs to. The S3 SDK genuinely
+	// aborts on a context (every S3Provider method threads the caller's ctx into
+	// aws-sdk-go-v2); a host-path syscall does not, and the service loop's own
+	// round watchdog (service.go) is what covers that case.
+	probeCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	rep := Probe(probeCtx, prov, ProbeOptions{
 		CoreID: coreID, RoundID: roundID, Fingerprint: meta.Fingerprint,
 		Participants: meta.Participants, Deadline: budget, RetryEvery: retryEvery,
 	})
+	// ctx, not probeCtx: the report write must not be cancelled by the probe's
+	// own budget, or a participant that ran the window out would have nothing to
+	// show for it and read as no-response.
 	storeReport(ctx, rdb, roundID, rep)
 	return nil
 }

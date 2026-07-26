@@ -53,6 +53,15 @@ func multiCoreState(t *testing.T, values map[string]string) *multiCoreFakeStore 
 // a live Redis with an empty keyspace; use downRedis for the unreachable case.
 func multiCoreRedis(t *testing.T, ids ...string) *redis.Client {
 	t.Helper()
+	rdb, _ := multiCoreRedisServer(t, ids...)
+	return rdb
+}
+
+// multiCoreRedisServer is multiCoreRedis plus the server behind it, for the one
+// test that has to inject a per-command fault (SetPreHook) rather than just
+// seed keys.
+func multiCoreRedisServer(t *testing.T, ids ...string) (*redis.Client, *miniredis.Miniredis) {
+	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
@@ -65,7 +74,7 @@ func multiCoreRedis(t *testing.T, ids ...string) *redis.Client {
 		}
 		mr.Set("dylaris:core:"+id, string(data))
 	}
-	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	return redis.NewClient(&redis.Options{Addr: mr.Addr()}), mr
 }
 
 // downRedis returns a client pointed at a server that has been shut down, so
@@ -145,10 +154,21 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: factory,
 		}),
-		// Same short override as the refusal tests: if core-b ever loses the
-		// discovery race below, this fails in 150ms instead of burning the
-		// full 15s default before it does.
-		reachRoundDeadline: 150 * time.Millisecond,
+		// Shortened from the 15s default so a lost discovery race below fails
+		// fast, but deliberately ABOVE the round's 1s poll cadence, unlike the
+		// refusal tests' 150ms.
+		//
+		// checkSharedStorageReachable leaves RoundOptions.PollEvery unset, so it
+		// is the production 1s, and PollEvery is also the retry cadence of the
+		// coordinator's own Probe. A sub-second deadline therefore buys the
+		// coordinator exactly ONE listing, taken microseconds after the round is
+		// published - before any peer could physically have written its beacon -
+		// so core-a would report not-shared no matter how fast core-b is. This
+		// is the mismatch RoundOptions.PollEvery's own doc comment warns about.
+		// A deadline past one poll gives the coordinator a second listing, which
+		// is what this positive control needs; the round still returns as soon
+		// as both reports are in, so the real cost is ~1s, not 1.2s.
+		reachRoundDeadline: 1200 * time.Millisecond,
 	}}
 
 	done := make(chan error, 1)

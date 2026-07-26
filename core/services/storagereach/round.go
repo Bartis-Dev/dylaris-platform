@@ -24,6 +24,20 @@ const (
 	// carries the S3 secret, so it must not survive a coordinator that died
 	// before its explicit delete.
 	configTTL = 30 * time.Second
+	// defaultProbeWatchdogGrace is how long PAST the round deadline the
+	// coordinator waits for its own probe before it stops waiting and rules on
+	// it.
+	//
+	// The margin is the whole point of the constant. Probe stops retrying at the
+	// round deadline but still has to finish the backend call it is inside, and
+	// on a host path that call is a syscall no context can interrupt. Ruling at
+	// exactly the deadline would race a perfectly healthy probe and convict this
+	// Core as unreachable when all it did was fail to see a peer - sending the
+	// operator to the wrong place, which is the one thing the taxonomy exists to
+	// avoid. A second is far longer than a healthy backend's final call and far
+	// shorter than a wedged mount's forever, and it keeps the worst-case round
+	// (15s + 1s) inside reachRoundLockTTL, which must outlive it.
+	defaultProbeWatchdogGrace = time.Second
 )
 
 func roundMetaKey(id string) string   { return keyPrefix + "round:" + id + ":meta" }
@@ -66,10 +80,21 @@ type Coordinator struct {
 	rdb         *redis.Client
 	coreID      string
 	newProvider ProviderFactory
+
+	// probeGrace is a field rather than a bare const only so the suite can
+	// shrink it and prove the watchdog fires without waiting out a real second,
+	// the same arrangement Service and storage.S3Resilience use. Production
+	// never reassigns it.
+	probeGrace time.Duration
 }
 
 func NewCoordinator(rdb *redis.Client, coreID string, newProvider ProviderFactory) *Coordinator {
-	return &Coordinator{rdb: rdb, coreID: coreID, newProvider: newProvider}
+	return &Coordinator{
+		rdb:         rdb,
+		coreID:      coreID,
+		newProvider: newProvider,
+		probeGrace:  defaultProbeWatchdogGrace,
+	}
 }
 
 // RoundOptions bounds a round and exposes its progress.
@@ -140,17 +165,29 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 	// access, not assume it.
 	prov, provErr := c.newProvider(cfg)
 	if provErr == nil {
-		rep := Probe(ctx, prov, ProbeOptions{
+		rep, completed := c.probeSelf(ctx, prov, deadline, ProbeOptions{
 			CoreID: c.coreID, RoundID: roundID, Fingerprint: fingerprint,
 			Participants: participants, Deadline: opts.Deadline, RetryEvery: opts.PollEvery,
 		})
 		storeReport(ctx, c.rdb, roundID, rep)
 		defer func() {
-			if err := CleanupRound(context.WithoutCancel(ctx), prov, roundID); err != nil {
-				// Orphans age out and are ignored by later rounds, which key
-				// off the round id in every beacon.
-				log.Printf("storagereach: probe cleanup for round %s: %v", roundID, err)
+			cleanup := func() {
+				if err := CleanupRound(context.WithoutCancel(ctx), prov, roundID); err != nil {
+					// Orphans age out and are ignored by later rounds, which key
+					// off the round id in every beacon.
+					log.Printf("storagereach: probe cleanup for round %s: %v", roundID, err)
+				}
 			}
+			if !completed {
+				// The probe never came back, so this DeletePath goes to a
+				// backend that has stopped answering and would block the
+				// caller's goroutine exactly as the probe did - undoing the
+				// watchdog one line after it fired. Cleanup is best-effort by
+				// contract (see CleanupRound), so it is detached instead.
+				go cleanup()
+				return
+			}
+			cleanup()
 		}()
 	} else {
 		storeReport(ctx, c.rdb, roundID, Report{
@@ -180,6 +217,82 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 			return last, ctx.Err()
 		case <-time.After(opts.PollEvery):
 		}
+	}
+}
+
+// probeSelf runs the coordinator's OWN probe on a watchdogged child goroutine
+// and returns what it observed. The bool is false when the probe did not come
+// back in time, in which case the report is the synthetic one below.
+//
+// Same hazard and the same watchdog shape Service.run already uses for its
+// self-check and its round participation: a wedged mount blocks inside syscalls
+// no context cancellation can interrupt (storage/provider.go says so on the
+// interface itself). This probe runs INLINE on the admin's HTTP goroutine while
+// that goroutine holds the config-round lock, so a probe that never returns
+// makes every later storage-config save on this replica answer 409 "wait for it
+// to finish" forever.
+//
+// The child goroutine is left to leak on a timeout because nothing in Go can
+// reclaim one parked in a syscall. results has capacity 1 so an orphan can still
+// complete its send and exit rather than block on a channel nobody reads. The
+// child produces a Report and nothing else; every piece of state stays on the
+// calling goroutine.
+func (c *Coordinator) probeSelf(ctx context.Context, prov storage.StorageProvider, deadline time.Time, opts ProbeOptions) (Report, bool) {
+	// Bound the probe's individual backend CALLS, not just the gaps between
+	// them: Probe checks its own deadline only between calls, so without this
+	// nothing bounds a single one. The S3 SDK genuinely aborts on a context
+	// (every S3Provider method threads the caller's ctx into aws-sdk-go-v2), so
+	// for s3 this alone is a real bound; a host-path syscall ignores it, which
+	// is what the watchdog below is for.
+	probeCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
+	results := make(chan Report, 1)
+	go func() { results <- Probe(probeCtx, prov, opts) }()
+
+	grace := c.probeGrace
+	if grace <= 0 {
+		grace = defaultProbeWatchdogGrace
+	}
+	timer := time.NewTimer(time.Until(deadline) + grace)
+	defer timer.Stop()
+
+	select {
+	case rep := <-results:
+		return rep, true
+	case <-ctx.Done():
+		return timedOutReport(opts, fmt.Sprintf("storage probe did not finish: %v", ctx.Err())), false
+	case <-timer.C:
+		// The probe may have completed in the same instant the budget expired.
+		// Its own honest observation always beats a synthetic verdict.
+		select {
+		case rep := <-results:
+			return rep, true
+		default:
+		}
+		return timedOutReport(opts, fmt.Sprintf("storage probe did not finish within %s of the round deadline", grace)), false
+	}
+}
+
+// timedOutReport is the synthetic report for a probe that never came back.
+//
+// Reachable stays false with the reason in WriteErr, which Aggregate turns into
+// unreachable - the taxonomy's own words for "up, but cannot reach the storage".
+// Storing nothing instead would leave this Core reading as no-response, which
+// tells the operator to retry and read a Core's logs when what actually
+// happened is that the backend stopped answering.
+func timedOutReport(opts ProbeOptions, detail string) Report {
+	return Report{
+		CoreID:      opts.CoreID,
+		Fingerprint: opts.Fingerprint,
+		WriteErr:    detail,
+		At:          time.Now().Unix(),
+		// Non-nil for the same reason Probe does it: the panel renders these
+		// lists directly, and null is not a list.
+		SeenPeers:        []string{},
+		MismatchedPeers:  []string{},
+		CrossWroteTo:     []string{},
+		CrossWriteDenied: []string{},
 	}
 }
 

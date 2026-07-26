@@ -3,6 +3,7 @@ package storagereach
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -479,5 +480,250 @@ func TestRunRound_DeletesTheStagedConfigWhenPublishFailsAfterStagingTheConfig(t 
 	}
 	if len(leftover) != 0 {
 		t.Fatalf("staged config key(s) survived a publish that failed partway through: %v", leftover)
+	}
+}
+
+// The three tests below are about how a round is BOUNDED. Probe checks its own
+// deadline only BETWEEN backend calls, so until these were written nothing at
+// all bounded a single call: the round deadline was advisory, and one call that
+// did not return on its own ran forever.
+//
+// Both fakes embed storage.StorageProvider nil on purpose: any method other
+// than the ones implemented is one the fake never expects to be called, and a
+// nil-pointer panic says so loudly instead of quietly succeeding.
+
+// ctxBoundProvider models a CONTEXT-AWARE backend - the S3 SDK, which threads
+// the caller's ctx into every call and genuinely aborts on it - whose call
+// never completes on its own. It returns only once the context it was handed is
+// done, so a probe run on an unbounded context never returns at all.
+type ctxBoundProvider struct {
+	storage.StorageProvider
+}
+
+func (p *ctxBoundProvider) WriteFile(ctx context.Context, _ string, _ io.Reader) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (p *ctxBoundProvider) ListFiles(ctx context.Context, _ string) ([]storage.FileInfo, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// DeletePath answers so RunRound's CleanupRound defer has something to call.
+func (p *ctxBoundProvider) DeletePath(context.Context, string) error { return nil }
+
+// wedgedProvider models a wedged host-path mount: every call is a syscall that
+// never returns and that no context cancellation can interrupt - the exact
+// failure this package exists to catch, and the one a context bound cannot
+// help with.
+type wedgedProvider struct {
+	storage.StorageProvider
+	never chan struct{}
+}
+
+func newWedgedProvider() *wedgedProvider {
+	return &wedgedProvider{never: make(chan struct{})}
+}
+
+func (p *wedgedProvider) WriteFile(context.Context, string, io.Reader) error {
+	<-p.never // never closed
+	return nil
+}
+
+func (p *wedgedProvider) ListFiles(context.Context, string) ([]storage.FileInfo, error) {
+	<-p.never
+	return nil, nil
+}
+
+// DeletePath wedges too, because a mount that swallowed the write swallows the
+// cleanup delete just the same. RunRound must therefore not wait on its own
+// cleanup after the watchdog fired, or it would undo the watchdog one line
+// later.
+func (p *wedgedProvider) DeletePath(context.Context, string) error {
+	<-p.never
+	return nil
+}
+
+func coreResultFor(res RoundResult, coreID string) (CoreResult, bool) {
+	for _, r := range res.Results {
+		if r.CoreID == coreID {
+			return r, true
+		}
+	}
+	return CoreResult{}, false
+}
+
+// TestRunRound_BoundsItsOwnProbeToTheRoundDeadline pins the context bound on
+// the coordinator's own probe. Against a context-aware backend that never
+// answers on its own, the round deadline must actually end the call - not merely
+// be consulted between calls that already returned.
+//
+// Reverting the bound (handing Probe the caller's unbounded ctx) turns this
+// into the 3s select timeout below: the write never returns and RunRound never
+// does either.
+func TestRunRound_BoundsItsOwnProbeToTheRoundDeadline(t *testing.T) {
+	rdb := newReachTestRedis(t)
+	c := NewCoordinator(rdb, "core-a", func(Config) (storage.StorageProvider, error) {
+		return &ctxBoundProvider{}, nil
+	})
+
+	type outcome struct {
+		res     RoundResult
+		err     error
+		elapsed time.Duration
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		start := time.Now()
+		res, err := c.RunRound(context.Background(), Config{Backend: "s3", S3Bucket: "b"},
+			[]string{"core-a"}, RoundOptions{Deadline: 200 * time.Millisecond, PollEvery: 20 * time.Millisecond})
+		done <- outcome{res: res, err: err, elapsed: time.Since(start)}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("RunRound: %v", got.err)
+		}
+		// The watchdog would also end this round, but a full second later
+		// (defaultProbeWatchdogGrace). Landing under that is what proves the
+		// CONTEXT bound is what ended the call, not the watchdog behind it.
+		if got.elapsed > time.Second {
+			t.Fatalf("RunRound took %s; the round deadline did not bound the backend call itself", got.elapsed)
+		}
+		if got.res.OK {
+			t.Fatal("OK = true although the coordinator's own probe never reached the backend")
+		}
+		r, ok := coreResultFor(got.res, "core-a")
+		if !ok {
+			t.Fatalf("results = %+v, want one for core-a", got.res.Results)
+		}
+		if r.Status != StatusUnreachable {
+			t.Fatalf("core-a = %s, want unreachable: a Core whose backend never answered must not be reported as no-response, which sends the operator to read logs instead of checking the endpoint", r.Status)
+		}
+		if r.Detail == "" {
+			t.Error("Detail is empty; the operator is not told why")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunRound never returned: the probe ran on an unbounded context, so a backend call that only ends when its context does never ends at all")
+	}
+}
+
+// TestRunRound_ReturnsWithinItsBudgetWhenItsOwnProbeWedges pins the watchdog. A
+// context bound cannot help here: the fake blocks the way a wedged mount does,
+// inside a call nothing can interrupt. The coordinator's probe runs INLINE on
+// the admin's HTTP goroutine while it holds the config-round lock, so without a
+// watchdog every later storage-config save on this replica answers 409 "wait
+// for it to finish" forever.
+//
+// Reverting the watchdog (probing inline again) turns this into the 5s select
+// timeout below.
+func TestRunRound_ReturnsWithinItsBudgetWhenItsOwnProbeWedges(t *testing.T) {
+	rdb := newReachTestRedis(t)
+	prov := newWedgedProvider()
+	c := NewCoordinator(rdb, "core-a", func(Config) (storage.StorageProvider, error) { return prov, nil })
+	// Shrunk from the production second so the watchdog fires without a real
+	// one-second wait; the field exists for exactly this.
+	c.probeGrace = 100 * time.Millisecond
+
+	type outcome struct {
+		res     RoundResult
+		err     error
+		elapsed time.Duration
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		start := time.Now()
+		res, err := c.RunRound(context.Background(), Config{Backend: "path", Path: "/mnt/shared"},
+			[]string{"core-a"}, RoundOptions{Deadline: 150 * time.Millisecond, PollEvery: 20 * time.Millisecond})
+		done <- outcome{res: res, err: err, elapsed: time.Since(start)}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("RunRound: %v", got.err)
+		}
+		if got.elapsed > 2*time.Second {
+			t.Fatalf("RunRound took %s against a wedged backend; it is not bounded", got.elapsed)
+		}
+		if got.res.OK {
+			t.Fatal("OK = true although the coordinator's own probe never came back")
+		}
+		r, ok := coreResultFor(got.res, "core-a")
+		if !ok {
+			t.Fatalf("results = %+v, want one for core-a", got.res.Results)
+		}
+		if r.Status != StatusUnreachable {
+			t.Fatalf("core-a = %s, want unreachable", r.Status)
+		}
+		if r.Detail == "" {
+			t.Error("Detail is empty; the operator is not told the probe never finished")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunRound never returned against a wedged backend: the coordinator's own probe is not watchdogged, so it holds the round lock forever")
+	}
+}
+
+// TestRunParticipant_BoundsItsProbeToTheRoundDeadline is the participant half of
+// TestRunRound_BoundsItsOwnProbeToTheRoundDeadline. The round is published
+// directly rather than through a coordinator so the participant is the only
+// thing under test.
+//
+// Reverting the bound turns this into the 5s select timeout below.
+func TestRunParticipant_BoundsItsProbeToTheRoundDeadline(t *testing.T) {
+	rdb := newReachTestRedis(t)
+	ctx := context.Background()
+	cfg := Config{Backend: "s3", S3Bucket: "b"}
+	const roundID = "round-bounded"
+
+	meta := roundMeta{
+		RoundID:           roundID,
+		Fingerprint:       Fingerprint(cfg),
+		Participants:      []string{"core-a", "core-b"},
+		Coordinator:       "core-a",
+		DeadlineUnixMilli: time.Now().Add(200 * time.Millisecond).UnixMilli(),
+		PollEveryMillis:   20,
+	}
+	if err := publishRound(ctx, rdb, meta, cfg); err != nil {
+		t.Fatalf("publishRound: %v", err)
+	}
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- RunParticipant(ctx, rdb, "core-b", roundID, func(Config) (storage.StorageProvider, error) {
+			return &ctxBoundProvider{}, nil
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunParticipant: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Fatalf("RunParticipant took %s; the round deadline did not bound the backend call itself", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunParticipant never returned: the probe ran on an unbounded context, so a backend call that only ends when its context does never ends at all")
+	}
+
+	// It must still have REPORTED. A participant that ran the window out and
+	// wrote nothing reads as no-response, which tells the operator to check
+	// that Core's logs rather than its access to the endpoint.
+	reports := collectReports(ctx, rdb, roundID, []string{"core-b"})
+	rep, ok := reports["core-b"]
+	if !ok {
+		t.Fatal("core-b wrote no report; the coordinator would read it as no-response instead of unreachable")
+	}
+	agg := Aggregate(meta.Participants, map[string]Report{"core-b": rep}, meta.Fingerprint, true)
+	r, ok := coreResultFor(agg, "core-b")
+	if !ok {
+		t.Fatalf("results = %+v, want one for core-b", agg.Results)
+	}
+	if r.Status != StatusUnreachable {
+		t.Fatalf("core-b = %s, want unreachable", r.Status)
 	}
 }

@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/services/storagereach"
@@ -123,6 +125,153 @@ func TestCheckSharedStorageReachable_RedisFailureRefuses(t *testing.T) {
 	if err == nil {
 		t.Fatal("a save was allowed while the online-Core set could not be read")
 	}
+}
+
+// TestCheckSharedStorageReachable_PerKeyRedisFailureRefuses closes the gap the
+// test above cannot see. There the whole Redis is gone, so the SCAN itself
+// fails; here the SCAN succeeds and only the per-key GETs fail - a connection
+// reset mid-walk (a failover, a CLIENT KILL, a TCP reset).
+//
+// Swallowing those GET errors returned an EMPTY list with a NIL error, which
+// this function's own "0 and 1 are both not-more-than-one" short-circuit reads
+// as nothing to prove: no round runs at all, the new backend is persisted, and
+// the panel reports success for a fleet nothing verified. Three Cores are
+// seeded precisely so that a correct read would NOT short-circuit, which is
+// what makes the empty list the whole failure.
+func TestCheckSharedStorageReachable_PerKeyRedisFailureRefuses(t *testing.T) {
+	rdb, mr := multiCoreRedisServer(t, "core-a", "core-b", "core-c")
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		if cmd == "GET" {
+			peer.WriteError("SIMULATED: io: read/write on closed pipe")
+			return true
+		}
+		return false
+	})
+	s := &AppState{
+		Redis: rdb,
+		Store: &coreStorageFakeStore{values: map[string]string{}},
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
+		}),
+		reachRoundDeadline: 150 * time.Millisecond,
+	}
+
+	err := s.checkSharedStorageReachable(context.Background(),
+		CoreStorageConfig{Backend: "path", Path: t.TempDir()})
+
+	if err == nil {
+		t.Fatal("the save was allowed while the online-Core set could not be read: an empty list with a nil error skipped the round entirely and would have persisted an unverified backend")
+	}
+	var refusal *sharedStorageRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("err = %T, want *sharedStorageRefusal", err)
+	}
+	if refusal.status != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", refusal.status)
+	}
+}
+
+// TestNewReachProvider_IgnoresTheLiveHostPathGate pins half of why the reach
+// provider is built RAW. The gate watches the LIVE configured path; a round
+// tests a CANDIDATE one. Consulting it means an admin whose current path has
+// wedged cannot point the config at a healthy path to fix it, because the
+// provider for the healthy path refuses to build.
+func TestNewReachProvider_IgnoresTheLiveHostPathGate(t *testing.T) {
+	candidate := t.TempDir()
+	s := &AppState{StorageGate: unhealthyGate(t), StorageS3: storage.NewS3Resilience()}
+
+	prov, err := s.NewReachProvider(storagereach.Config{Backend: "path", Path: candidate})
+	if err != nil {
+		t.Fatalf("NewReachProvider behind an unhealthy LIVE gate: %v, want a healthy CANDIDATE path to build anyway", err)
+	}
+	if err := prov.WriteFile(context.Background(), "probe.txt", strings.NewReader("x")); err != nil {
+		t.Fatalf("WriteFile through the reach provider: %v, want the candidate path usable", err)
+	}
+}
+
+// TestNewReachProvider_DoesNotTouchTheLiveS3State pins the other half. Going
+// through the live resilience wrapper meant a mistyped endpoint flipped the
+// LIVE, working backend into reconnecting - which then parks the next call in a
+// ten-MINUTE retry budget while the admin's request holds the round lock, and
+// reports a firewalled Core as no-response instead of unreachable.
+//
+// 127.0.0.1:1 is refused immediately, so this is a deterministic
+// connection-class failure - the exact class isS3ConnectionClass acts on. A
+// context deadline would NOT do: isS3ConnectionClass deliberately returns false
+// for one, so a bounded-context version of this test would pass even on the
+// broken wiring. AWS_MAX_ATTEMPTS keeps the SDK from spending ~4s on its own
+// backoff before handing that refusal back.
+func TestNewReachProvider_DoesNotTouchTheLiveS3State(t *testing.T) {
+	t.Setenv("AWS_MAX_ATTEMPTS", "1")
+	s := &AppState{StorageGate: storage.NewGate(), StorageS3: storage.NewS3Resilience()}
+
+	prov, err := s.NewReachProvider(storagereach.Config{
+		Backend: "s3", S3Endpoint: "http://127.0.0.1:1", S3Bucket: "candidate",
+		S3AccessKey: "AK", S3SecretKey: "SK", S3PathStyle: true,
+	})
+	if err != nil {
+		t.Fatalf("NewReachProvider: %v", err)
+	}
+	// The raw provider is the exported concrete type; the resilience wrapper is
+	// an unexported one, so this alone names which of the two came back.
+	if _, ok := prov.(*storage.S3Provider); !ok {
+		t.Fatalf("reach provider = %T, want a raw *storage.S3Provider; the live resilience wrapper makes a mistyped endpoint pause for up to ten minutes", prov)
+	}
+	if err := prov.WriteFile(context.Background(), "probe.txt", strings.NewReader("x")); err == nil {
+		t.Fatal("the candidate write against a refused endpoint succeeded; the test setup is broken")
+	}
+
+	if reconnecting, _, lastErr := s.StorageS3.State(); reconnecting {
+		t.Fatalf("a CANDIDATE config's failure put the LIVE s3 backend into reconnecting (lastErr = %v); the live backend was never tested and may be perfectly healthy", lastErr)
+	}
+}
+
+// TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges is the
+// handler-side half of storagereach's own watchdog test: the coordinator's
+// probe runs INLINE on this goroutine, which holds both the local mutex and the
+// cluster-wide Redis lock. If it never returns, neither lock is ever released
+// and every later save on this replica answers 409 "wait for it to finish"
+// forever - for a round that will never finish.
+//
+// blockingProvider's release channel is deliberately never closed here, unlike
+// in the concurrency test above.
+func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges(t *testing.T) {
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	prov := newBlockingProvider()
+	s := &AppState{
+		Redis: rdb,
+		Store: &coreStorageFakeStore{values: map[string]string{}},
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a",
+			NewProvider: func(storagereach.Config) (storage.StorageProvider, error) { return prov, nil },
+		}),
+		reachRoundDeadline: 150 * time.Millisecond,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.checkSharedStorageReachable(context.Background(),
+			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the save was allowed although this Core's own probe never came back")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("checkSharedStorageReachable never returned against a wedged backend: the round holds the config-round lock forever and every later save answers 409")
+	}
+
+	if _, err := rdb.Get(context.Background(), reachRoundLockKey).Result(); err != redis.Nil {
+		t.Errorf("the config-round lock was not released after the wedged round gave up (err = %v)", err)
+	}
+	// The local mutex has to be free too, or the next save on this replica is
+	// refused by the TryLock branch instead.
+	if !s.reachRoundMu.TryLock() {
+		t.Fatal("the local round mutex is still held after the wedged round gave up")
+	}
+	s.reachRoundMu.Unlock()
 }
 
 // TestCheckSharedStorageReachable_RefusesWhileAnotherRoundIsLocked is carry-over
