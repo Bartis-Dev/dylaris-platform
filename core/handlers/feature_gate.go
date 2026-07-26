@@ -139,7 +139,11 @@ func storageReachMessage(status storagereach.Status) string {
 	case storagereach.StatusUnreachable:
 		return "This Core cannot reach the shared file storage. Check that the mount is present on this host, or that the S3 endpoint is reachable from it."
 	case storagereach.StatusWriteDenied:
-		return "This Core can reach the shared file storage but cannot write to it. Check that the mount is not read-only and that the credentials allow writes."
+		// uid 1000 is named explicitly because it is the most likely cause on a
+		// filesystem path and the least discoverable: Core runs as a non-root
+		// user, so a share that root can write is still refused. "Credentials"
+		// alone pointed the operator at S3 even when the backend was a mount.
+		return "This Core can reach the shared file storage but cannot write to it. On a filesystem path, check that the mount is not read-only and that the path is writable by uid 1000, the non-root user Core runs as; pointing the config at a subdirectory you chowned to 1000 also works. On S3, check that the credentials allow writes."
 	case storagereach.StatusNotShared:
 		return "This Core cannot see files written by the other Cores, so the storage is not actually shared. Point every Core at the same S3 bucket, or mount the same filesystem at this path on every host."
 	case storagereach.StatusFingerprintMismatch:

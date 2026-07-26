@@ -206,7 +206,11 @@ const REMEDIES: Record<ReachStatus, string> = {
     'offline': 'This Core is not running. It will verify its own access the next time it starts.',
     'no-response': 'This Core is online but did not answer in time. Retry; if it keeps failing, check its logs.',
     'unreachable': 'This Core cannot reach the storage at all. Check that the mount exists on that host, or that it can reach the S3 endpoint.',
-    'write-denied': 'This Core can read the storage but cannot write to it. Check for a read-only mount or missing write permission.',
+    // uid 1000 is named because it is the likeliest cause on a filesystem path
+    // and the hardest to guess: Core runs as a non-root user, so a share only
+    // root can write is still refused. Kept in step with the Go copy in
+    // handlers/feature_gate.go, which serves the same status in a 503 body.
+    'write-denied': 'This Core can read the storage but cannot write to it. On a filesystem path, check for a read-only mount or a path not writable by uid 1000, the non-root user Core runs as. On S3, check that the credentials allow writes.',
     'not-shared': 'This Core cannot see files written by the others, so the storage is not actually shared. Use S3, or mount the same filesystem at this path on every host.',
     'fingerprint-mismatch': 'This Core is pointed at a different backend than the rest of the deployment. Restart it so it picks up the current settings.',
     'cross-write-denied': 'This Core cannot write into files owned by the others. Check the share user mapping (NFS root_squash / uid mapping).',
