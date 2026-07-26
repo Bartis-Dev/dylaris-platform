@@ -15,6 +15,7 @@ import (
 	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/services"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 )
@@ -634,5 +635,99 @@ func TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound(t *testing.T) {
 	}
 	if pending != "" {
 		t.Fatalf("a round was started by a status-only read: pending round id = %q", pending)
+	}
+}
+
+// TestRedactReachResults_ClearsDetailOnly pins the pure helper Fix 1 added:
+// Detail is wiped, every other field (which the panel's failure list actually
+// renders) survives untouched.
+func TestRedactReachResults_ClearsDetailOnly(t *testing.T) {
+	in := []storagereach.CoreResult{
+		{CoreID: "core-a", Status: storagereach.StatusOK},
+		{
+			CoreID: "core-b", Status: storagereach.StatusUnreachable,
+			Detail: "/mnt/nfs/dylaris-shared: permission denied",
+		},
+		{
+			CoreID: "core-c", Status: storagereach.StatusNotShared,
+			MissingPeers: []string{"core-a"}, Detail: "some internal detail",
+		},
+	}
+	got := redactReachResults(in)
+
+	for i, r := range got {
+		if r.Detail != "" {
+			t.Errorf("Results[%d].Detail = %q, want stripped", i, r.Detail)
+		}
+	}
+	if got[0].CoreID != "core-a" || got[0].Status != storagereach.StatusOK {
+		t.Errorf("Results[0] = %+v, want core-a/ok untouched", got[0])
+	}
+	if got[1].CoreID != "core-b" || got[1].Status != storagereach.StatusUnreachable {
+		t.Errorf("Results[1] = %+v, want core-b/unreachable untouched apart from Detail", got[1])
+	}
+	if len(got[2].MissingPeers) != 1 || got[2].MissingPeers[0] != "core-a" {
+		t.Errorf("Results[2].MissingPeers = %v, want [core-a] untouched", got[2].MissingPeers)
+	}
+	// The input slice itself must be untouched: Aggregate's result may be read
+	// elsewhere (the refusal body, the fault-list endpoint) after OnProgress
+	// runs, and those callers are supposed to keep the real Detail.
+	if in[1].Detail == "" {
+		t.Error("redactReachResults mutated the input slice in place; the caller's own copy lost its Detail")
+	}
+}
+
+// TestCheckSharedStorageReachable_SSEProgressNeverCarriesDetail is Fix 1's
+// end-to-end proof: a round with a genuinely failing Core (a distinctive,
+// obviously-internal error string, same shape as a real mount/S3 error) must
+// never let that string ride along on the storagereach.changed SSE event.
+// /api/system/events is authenticated with no capability check, so every
+// logged-in tenant with a panel session open would otherwise receive it.
+func TestCheckSharedStorageReachable_SSEProgressNeverCarriesDetail(t *testing.T) {
+	const rawDetail = "/mnt/nfs/dylaris-shared/.dylaris-reachability/probe: permission denied"
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	ctx := context.Background()
+
+	sub := rdb.Subscribe(ctx, services.SystemEventsChannel)
+	defer sub.Close()
+	if _, err := sub.Receive(ctx); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	ch := sub.Channel()
+
+	s := &AppState{
+		Redis:  rdb,
+		Store:  &coreStorageFakeStore{values: map[string]string{}},
+		Events: services.NewSystemEventsPublisher(rdb),
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a",
+			NewProvider: func(storagereach.Config) (storage.StorageProvider, error) {
+				return nil, errors.New(rawDetail)
+			},
+		}),
+		reachRoundDeadline: 150 * time.Millisecond,
+	}
+
+	if err := s.checkSharedStorageReachable(ctx, CoreStorageConfig{Backend: "path", Path: "/mnt/shared"}); err == nil {
+		t.Fatal("the round was expected to fail (core-a's own provider never builds)")
+	}
+
+	seenAny := false
+	for {
+		select {
+		case msg := <-ch:
+			seenAny = true
+			if strings.Contains(msg.Payload, rawDetail) {
+				t.Fatalf("published SSE payload leaks the raw backend error text: %s", msg.Payload)
+			}
+			if strings.Contains(msg.Payload, `"detail"`) {
+				t.Fatalf("published SSE payload carries a detail field at all: %s", msg.Payload)
+			}
+		case <-time.After(200 * time.Millisecond):
+			if !seenAny {
+				t.Fatal("no storagereach.changed event was published; the test setup is broken")
+			}
+			return
+		}
 	}
 }

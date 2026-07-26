@@ -277,7 +277,7 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 				"total":     r.Total,
 				"done":      r.Done,
 				"ok":        r.OK,
-				"results":   r.Results,
+				"results":   redactReachResults(r.Results),
 			})
 		},
 	})
@@ -297,6 +297,26 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 		}
 	}
 	return nil
+}
+
+// redactReachResults strips Detail - the raw backend error text (mount paths,
+// S3 endpoints, bucket names, permission text) - before a round's progress
+// goes out over the system-events SSE stream.
+//
+// /api/system/events is authenticated but carries no capability check, so
+// every logged-in tenant with a panel session open receives this event: up to
+// 15 of them per round, one per poll tick a status actually changes on. The
+// fault-list endpoint (StorageReachStatus, settings.read-gated) is the one
+// place Detail is meant to reach an operator; this is the same leak class the
+// 503 route gate was already fixed against (see RequireCoreStorageReachable's
+// own doc comment in feature_gate.go).
+func redactReachResults(results []storagereach.CoreResult) []storagereach.CoreResult {
+	out := make([]storagereach.CoreResult, len(results))
+	for i, r := range results {
+		out[i] = r
+		out[i].Detail = ""
+	}
+	return out
 }
 
 // sendReachRefusal writes a refusal as JSON, including the per-Core round
