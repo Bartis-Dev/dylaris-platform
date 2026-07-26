@@ -2,30 +2,40 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"dylaris-core/services"
+	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 )
 
-// The single-Core guard on the filesystem backend lives in checkHostPathAllowed
-// and the settings save goes through it. The storage-migration config switch
-// persists a target config through the SAME writer but used to skip the guard
-// entirely, so a migration to a host-path target sailed straight past the check
-// SaveConfig enforces and split file storage across every online Core - the
-// exact state the guard exists to prevent. These pin that SwitchConfig now
+// The shared-storage proof lives in checkSharedStorageReachable and the
+// settings save goes through it. The storage-migration config switch persists
+// a target config through the SAME writer but used to skip the guard
+// entirely, so a migration to a host-path target sailed straight past the
+// check SaveConfig enforces and split file storage across every online Core -
+// the exact state the guard exists to prevent. These pin that SwitchConfig now
 // shares it.
 
 // switchResolverFor builds a resolver over a fake store and a miniredis seeded
 // with the named Cores. Gate and S3 are wired because a SUCCESSFUL switch calls
-// persistCoreStorageConfig, which syncs them.
+// persistCoreStorageConfig, which syncs them. StorageReach is wired with a
+// LocalProvider factory rooted at a fresh temp dir per call, so a resolver
+// built with more than one Core online can actually run a round rather than
+// refusing outright because no verifier is present.
 func switchResolverFor(t *testing.T, st *multiCoreFakeStore, coreIDs ...string) *StorageDataSetResolver {
 	t.Helper()
+	rdb := multiCoreRedis(t, coreIDs...)
 	return &StorageDataSetResolver{state: &AppState{
 		Store:       st,
-		Redis:       multiCoreRedis(t, coreIDs...),
+		Redis:       rdb,
 		StorageGate: storage.NewGate(),
 		StorageS3:   storage.NewS3Resilience(),
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
+		}),
 	}}
 }
 
@@ -38,10 +48,13 @@ func s3Target() services.StorageTargetConfig {
 }
 
 // TestSwitchConfig_RefusesHostPathOnMultipleCores is the load-bearing one: the
-// bypass this closes.
+// bypass this closes. core-b heartbeats but never runs an actual participant,
+// so the round times out with core-b no-response - fail-closed, same as an
+// unproven SaveConfig.
 func TestSwitchConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
 	r := switchResolverFor(t, st, "core-a", "core-b")
+	r.state.reachRoundDeadline = 150 * time.Millisecond
 
 	err := r.SwitchConfig(context.Background(), CoreStorageDataSetID, hostPathTarget())
 
@@ -67,15 +80,44 @@ func TestSwitchConfig_AllowsHostPathOnASingleCore(t *testing.T) {
 	}
 }
 
-// TestSwitchConfig_AllowsS3OnMultipleCores is the other control: the guard is
-// about the host path, not about multi-Core deployments, which are what S3 is
-// for.
+// TestSwitchConfig_AllowsS3OnMultipleCores is the positive control, updated
+// for the round-based guard: s3 is no longer a blanket bypass on multi-Core
+// deployments (the old count-only guard's stance) - it must pass the same
+// proof a host path does. core-b runs a real participant goroutine so the
+// round can actually confirm both Cores and the switch succeeds.
 func TestSwitchConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
-	r := switchResolverFor(t, st, "core-a", "core-b")
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	factory := sharedLocalFactory(t.TempDir())
+	r := &StorageDataSetResolver{state: &AppState{
+		Store:       st,
+		Redis:       rdb,
+		StorageGate: storage.NewGate(),
+		StorageS3:   storage.NewS3Resilience(),
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a", NewProvider: factory,
+		}),
+	}}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx := context.Background()
+		for i := 0; i < 300; i++ {
+			id, err := storagereach.PendingRoundID(ctx, rdb)
+			if err == nil && id != "" {
+				done <- storagereach.RunParticipant(ctx, rdb, "core-b", id, factory)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		done <- fmt.Errorf("core-b never saw a round")
+	}()
 
 	if err := r.SwitchConfig(context.Background(), CoreStorageDataSetID, s3Target()); err != nil {
 		t.Fatalf("SwitchConfig to s3 with two Cores online = %v, want nil", err)
+	}
+	if perr := <-done; perr != nil {
+		t.Fatalf("core-b participant: %v", perr)
 	}
 	if st.values[keyCoreStorageBackend] != "s3" {
 		t.Errorf("backend persisted as %q, want %q", st.values[keyCoreStorageBackend], "s3")

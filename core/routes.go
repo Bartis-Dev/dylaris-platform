@@ -297,6 +297,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/xdp/config":                           "settings.read",
 	"/api/settings/core-storage":                      "settings.read",
 	"/api/settings/core-storage/test":                 "settings.write",
+	"/api/settings/storage-reach":                     "settings.read",
 	"/api/settings/filemanager":                       "settings.read",
 	"/api/settings/gateway":                           "settings.read",
 	"/api/settings/gateway/hub-redis-admin":           "settings.read",
@@ -1328,6 +1329,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.SaveConfig))).Methods("POST")
 	api.HandleFunc("/settings/core-storage/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.TestConnection))).Methods("POST")
+	// Fleet storage health: which Cores are currently failing their shared-
+	// storage self-check.
+	api.HandleFunc("/settings/storage-reach", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.StorageReachStatus))).Methods("GET")
 	// Coarse connection state of the configured core storage backends. Authed,
 	// not capability-gated: it is the initial value for the storage.connection
 	// .changed SSE events, which every authed panel session already receives,

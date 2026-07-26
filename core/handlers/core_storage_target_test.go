@@ -428,7 +428,7 @@ func TestCoreStorage_SaveConfig_SecretOnlyRotationWritesTheNewSecret(t *testing.
 	fs.kv[keyCoreStorageS3Bucket] = "bucket1"
 	fs.kv[keyCoreStorageS3AccessKey] = "key1"
 	fs.kv[keyCoreStorageS3SecretKey] = "OLD-SECRET"
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage",

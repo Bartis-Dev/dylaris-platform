@@ -296,68 +296,6 @@ func (s *AppState) WarnAboutHostPathAtBoot(ctx context.Context) string {
 	return warning
 }
 
-// hostPathRefusal is returned by checkHostPathAllowed when a filesystem-backend
-// config must not be persisted. It carries the HTTP status the settings form
-// should answer with; a non-HTTP caller (the storage-migration config switch)
-// uses only Error().
-type hostPathRefusal struct {
-	status  int
-	message string
-}
-
-func (e *hostPathRefusal) Error() string { return e.message }
-
-// checkHostPathAllowed refuses a filesystem-backend config while more than one
-// Core is online, and returns nil otherwise. It is the single gate both the
-// settings save and the storage-migration config switch go through, so neither
-// can persist a host path the other would reject - the two used to disagree,
-// and a migration to a host-path target sailed past the guard the save had.
-//
-// A count error is treated as a refusal rather than a pass. This is a rare,
-// deliberate admin action, not a hot path, so "could not verify" is worth a
-// retry; letting it through would silently split file storage across instances,
-// which is the failure this whole check exists to prevent. Redis being
-// unreachable is separately visible on the health page, so the operator is not
-// left guessing about the cause.
-func (s *AppState) checkHostPathAllowed(ctx context.Context, cfg CoreStorageConfig) error {
-	if !isHostPathBackend(cfg.Backend) {
-		return nil
-	}
-	online, err := s.CountOnlineCores(ctx)
-	if err != nil {
-		log.Printf("core storage: could not count online Cores: %v", err)
-		return &hostPathRefusal{
-			status:  http.StatusServiceUnavailable,
-			message: "Could not verify how many Core instances are online, so the filesystem backend cannot be used right now. Check that Redis is reachable and try again.",
-		}
-	}
-	// 0 and 1 are both "not more than one": a count of 0 means this Core's own
-	// heartbeat has not landed yet, not that no Core is running.
-	if online <= 1 {
-		return nil
-	}
-	return &hostPathRefusal{
-		status:  http.StatusConflict,
-		message: fmt.Sprintf(hostPathMultiCoreMessage, online),
-	}
-}
-
-// guardHostPathBackend adapts checkHostPathAllowed to the SaveConfig handler's
-// (ok, status, message) shape. It gates the SAVE only; TestConnection is
-// deliberately left open, because testing whether a path is reachable stays a
-// useful and harmless thing to do on any number of Cores.
-func (h *CoreStorageHandler) guardHostPathBackend(ctx context.Context, cfg CoreStorageConfig) (ok bool, status int, message string) {
-	err := h.state.checkHostPathAllowed(ctx, cfg)
-	if err == nil {
-		return true, 0, ""
-	}
-	var refusal *hostPathRefusal
-	if errors.As(err, &refusal) {
-		return false, refusal.status, refusal.message
-	}
-	return false, http.StatusServiceUnavailable, err.Error()
-}
-
 // ProbeS3Connection performs one cheap, read-only call against the configured
 // s3 backend. It is the probe storage.S3Resilience.StartProbe runs while the
 // backend is reconnecting, and the only thing that lets an upload-only Core
@@ -676,15 +614,24 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	if effective.ConnectionID != 0 {
 		// The connection supplies the credentials, so validate the RESOLVED
 		// connection rather than the inline s3 fields (which the operator may
-		// deliberately leave blank). The host-path guard does not apply - a
-		// connection is always s3.
+		// deliberately leave blank).
 		conn, err := h.state.Store.GetStorageConnection(effective.ConnectionID)
 		if err != nil {
 			sendJSONError(w, "Selected storage connection not found", http.StatusBadRequest)
 			return
 		}
-		if err := validateCoreStorageConfig(coreStorageConfigFromConnection(conn)); err != nil {
+		connCfg := coreStorageConfigFromConnection(conn)
+		if err := validateCoreStorageConfig(connCfg); err != nil {
 			sendJSONError(w, "Selected storage connection is not usable: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// After validation, before any write: a saved connection is still
+		// shared storage every Core has to reach, exactly like the inline
+		// branch below. connCfg, not effective: effective's inline s3 fields
+		// are typically blank for a connection-backed save, and the round
+		// needs the connection's real credentials to actually probe with.
+		if err := h.state.checkSharedStorageReachable(r.Context(), connCfg); err != nil {
+			h.sendReachRefusal(w, err)
 			return
 		}
 	} else {
@@ -692,10 +639,11 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 			sendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// After validation, before any write: a refused save must never leave a
-		// half-applied config behind.
-		if ok, status, msg := h.guardHostPathBackend(r.Context(), effective); !ok {
-			sendJSONError(w, msg, status)
+		// After validation, before any write: a refused save must never leave
+		// a half-applied config behind. The round PROVES shared access rather
+		// than inferring it from a Core count, so it also covers s3.
+		if err := h.state.checkSharedStorageReachable(r.Context(), effective); err != nil {
+			h.sendReachRefusal(w, err)
 			return
 		}
 	}

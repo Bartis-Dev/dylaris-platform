@@ -44,7 +44,10 @@ func validConnection() *models.StorageConnection {
 // connection supplies the credentials.
 func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 	fs := newCoreStorageConnFakeStore(validConnection(), nil)
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	// A single online Core so checkSharedStorageReachable's short-circuit
+	// applies; this test is about the merge/validation behaviour, not the
+	// reachability round.
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	// backend s3 + a connection, but the inline s3 fields are all blank.
 	body, _ := json.Marshal(CoreStorageConfig{Backend: "s3", ConnectionID: 5})
@@ -64,7 +67,7 @@ func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 // merge.
 func TestSaveConfig_BlankBackendWithConnectionStillSaves(t *testing.T) {
 	fs := newCoreStorageConnFakeStore(validConnection(), nil)
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	body, _ := json.Marshal(CoreStorageConfig{ConnectionID: 5}) // no Backend
 	rw := httptest.NewRecorder()

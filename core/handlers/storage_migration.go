@@ -633,12 +633,14 @@ func (r *StorageDataSetResolver) SwitchConfig(ctx context.Context, sourceID stri
 		// modpack settings form's concern, not this one's.
 		return r.switchModpackConfig(cfg)
 	}
-	// The same single-Core guard the settings form applies through
-	// guardHostPathBackend. Without it a migration to a host-path target
-	// persists it with no count check at all, landing the deployment in exactly
-	// the split-storage state the guard on SaveConfig exists to prevent. The
-	// job surfaces this error with the source left intact and nothing deleted.
-	if err := r.state.checkHostPathAllowed(ctx, cfg); err != nil {
+	// The same shared-storage proof the settings form requires through
+	// checkSharedStorageReachable. Without it a migration to a target no other
+	// Core can actually reach persists with no check at all, landing the
+	// deployment in exactly the split-storage state the guard on SaveConfig
+	// exists to prevent - and, unlike the count-only guard this replaced, it
+	// also catches an s3 target with credentials that do not work. The job
+	// surfaces this error with the source left intact and nothing deleted.
+	if err := r.state.checkSharedStorageReachable(ctx, cfg); err != nil {
 		return err
 	}
 	// cfg.S3SecretKey, not a "was a secret submitted" flag: persistCoreStorageConfig

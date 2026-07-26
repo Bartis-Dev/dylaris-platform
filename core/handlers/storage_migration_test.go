@@ -489,7 +489,10 @@ func TestStorageDataSetResolver_ResolveTargetRejectsARowBackedDataSet(t *testing
 func TestStorageDataSetResolver_SwitchConfigPersistsTheTarget(t *testing.T) {
 	fs := newStorageMigrationFakeStore()
 	configuredPathStorage(t, fs)
-	st := &AppState{Store: fs}
+	// A single online Core so checkSharedStorageReachable's short-circuit
+	// applies; this test is about the persisted target shape, not the
+	// reachability round.
+	st := &AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}
 	res := NewStorageDataSetResolver(st)
 
 	err := res.SwitchConfig(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{

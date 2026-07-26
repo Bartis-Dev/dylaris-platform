@@ -3,15 +3,18 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/services"
+	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	"dylaris-core/store"
 )
@@ -78,111 +81,39 @@ func downRedis(t *testing.T) *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: addr})
 }
 
-func TestGuardHostPathBackend(t *testing.T) {
-	tests := []struct {
-		name       string
-		cfg        CoreStorageConfig
-		cores      []string
-		redisDown  bool
-		wantOK     bool
-		wantStatus int
-		wantMsg    string // substring
-	}{
-		{
-			name:   "s3 is never gated",
-			cfg:    CoreStorageConfig{Backend: "s3", S3Bucket: "b"},
-			cores:  []string{"core-a", "core-b", "core-c"},
-			wantOK: true,
-		},
-		{
-			// s3 must not be blocked by a Redis outage either: the count is
-			// irrelevant to it, so it must not even be attempted.
-			name:      "s3 is not gated even when the count cannot be taken",
-			cfg:       CoreStorageConfig{Backend: "s3", S3Bucket: "b"},
-			redisDown: true,
-			wantOK:    true,
-		},
-		{
-			name:   "a host path on a single Core is allowed",
-			cfg:    CoreStorageConfig{Backend: "path", Path: "/mnt/shared"},
-			cores:  []string{"core-a"},
-			wantOK: true,
-		},
-		{
-			// A count of 0 means this Core's own heartbeat has not landed yet
-			// (or failed to write), not that no Core is running. Treating it
-			// as a refusal would make the setting unsavable on a fresh install
-			// whose first heartbeat has not gone out.
-			name:   "a count of zero is treated as one, not as a refusal",
-			cfg:    CoreStorageConfig{Backend: "path", Path: "/mnt/shared"},
-			cores:  nil,
-			wantOK: true,
-		},
-		{
-			name:       "a host path on two Cores is refused",
-			cfg:        CoreStorageConfig{Backend: "path", Path: "/mnt/shared"},
-			cores:      []string{"core-a", "core-b"},
-			wantOK:     false,
-			wantStatus: http.StatusConflict,
-			wantMsg:    "2 Core instances are online",
-		},
-		{
-			// "local" is the historical spelling of the same backend and is
-			// still present in stored configs. Gating only "path" would leave
-			// it as a way around the check.
-			name:       "the historical local spelling is gated too",
-			cfg:        CoreStorageConfig{Backend: "local", Path: "/mnt/shared"},
-			cores:      []string{"core-a", "core-b"},
-			wantOK:     false,
-			wantStatus: http.StatusConflict,
-		},
-		{
-			name:       "an unverifiable count refuses rather than waves through",
-			cfg:        CoreStorageConfig{Backend: "path", Path: "/mnt/shared"},
-			redisDown:  true,
-			wantOK:     false,
-			wantStatus: http.StatusServiceUnavailable,
-			wantMsg:    "Could not verify",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			rdb := multiCoreRedis(t, tc.cores...)
-			if tc.redisDown {
-				rdb = downRedis(t)
-			}
-			h := &CoreStorageHandler{state: &AppState{
-				Store: multiCoreState(t, map[string]string{}),
-				Redis: rdb,
-			}}
-
-			ok, status, msg := h.guardHostPathBackend(context.Background(), tc.cfg)
-
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v (status %d, msg %q)", ok, tc.wantOK, status, msg)
-			}
-			if !tc.wantOK && status != tc.wantStatus {
-				t.Errorf("status = %d, want %d", status, tc.wantStatus)
-			}
-			if tc.wantMsg != "" && !strings.Contains(msg, tc.wantMsg) {
-				t.Errorf("message = %q, want it to contain %q", msg, tc.wantMsg)
-			}
-			if tc.wantOK && msg != "" {
-				t.Errorf("an allowed config carried a message: %q", msg)
-			}
-		})
+// sharedLocalFactory hands every participant a LocalProvider on the same
+// root, mirroring services/storagereach/round_test.go's sharedFactory: what a
+// genuinely shared mount looks like from the verifier's point of view. It
+// ignores cfg entirely (backend, path, s3 fields) on purpose - the tests below
+// are about SaveConfig's wiring of the round, not about proving a real
+// filesystem or S3 endpoint, exactly like round_test.go's own use of it with
+// an s3-flavoured Config.
+func sharedLocalFactory(root string) storagereach.ProviderFactory {
+	return func(storagereach.Config) (storage.StorageProvider, error) {
+		return &storage.LocalProvider{BasePath: root}, nil
 	}
 }
 
 // TestSaveConfig_RefusesHostPathOnMultipleCores drives the real handler,
 // because the guard being correct is worth nothing if the save path does not
-// consult it. It asserts nothing was persisted as well as the status: the
-// writes run as an unguarded loop, so a refusal landing late would leave a
-// half-applied config behind.
+// consult it. Two Cores heartbeat but only core-a (the handler under test)
+// ever participates in the round, so core-b is fail-closed no-response - the
+// same "a peer never proves it" case checkSharedStorageReachable's own unit
+// tests cover, exercised here through the actual SaveConfig HTTP handler. It
+// asserts nothing was persisted as well as the status: the writes run as an
+// unguarded loop, so a refusal landing late would leave a half-applied config
+// behind.
 func TestSaveConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
-	h := &CoreStorageHandler{state: &AppState{Store: st, Redis: multiCoreRedis(t, "core-a", "core-b")}}
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	h := &CoreStorageHandler{state: &AppState{
+		Store: st,
+		Redis: rdb,
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
+		}),
+		reachRoundDeadline: 150 * time.Millisecond,
+	}}
 
 	body := `{"backend":"path","path":"/mnt/shared","pathConfirmed":true}`
 	rec := httptest.NewRecorder()
@@ -196,27 +127,72 @@ func TestSaveConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 	}
 }
 
-// TestSaveConfig_AllowsS3OnMultipleCores is the positive control: the guard
-// must not have become a blanket refusal on multi-Core deployments, which are
-// exactly the deployments S3 exists for.
+// TestSaveConfig_AllowsS3OnMultipleCores is the positive control, updated for
+// the round-based guard: s3 on multiple Cores is no longer an unconditional
+// bypass (the old count-only guard's "s3 is never gated" - it must now pass
+// the SAME proof a host path does. core-b runs a real participant goroutine,
+// exactly like the service loop does in production, so the round can actually
+// confirm both Cores and the save succeeds.
 func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	factory := sharedLocalFactory(t.TempDir())
 	h := &CoreStorageHandler{state: &AppState{
 		Store:       st,
-		Redis:       multiCoreRedis(t, "core-a", "core-b"),
+		Redis:       rdb,
 		StorageGate: storage.NewGate(),
 		StorageS3:   storage.NewS3Resilience(),
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a", NewProvider: factory,
+		}),
 	}}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx := context.Background()
+		for i := 0; i < 300; i++ {
+			id, err := storagereach.PendingRoundID(ctx, rdb)
+			if err == nil && id != "" {
+				done <- storagereach.RunParticipant(ctx, rdb, "core-b", id, factory)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		done <- fmt.Errorf("core-b never saw a round")
+	}()
 
 	body := `{"backend":"s3","s3Bucket":"b","s3AccessKey":"AKIA","s3SecretKey":"secret"}`
 	rec := httptest.NewRecorder()
 	h.SaveConfig(rec, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", strings.NewReader(body)))
 
+	if perr := <-done; perr != nil {
+		t.Fatalf("core-b participant: %v", perr)
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	if st.values[keyCoreStorageBackend] != "s3" {
 		t.Errorf("backend persisted as %q, want %q", st.values[keyCoreStorageBackend], "s3")
+	}
+}
+
+// TestSaveConfig_RefusesWhenTheVerifierIsNotRunning covers the "could not
+// verify = refuse" rule at the SaveConfig level: a Core with no StorageReach
+// service (e.g. built by tooling, or before boot wiring completes) must not
+// let a multi-Core save through just because it cannot check it.
+func TestSaveConfig_RefusesWhenTheVerifierIsNotRunning(t *testing.T) {
+	st := multiCoreState(t, map[string]string{})
+	h := &CoreStorageHandler{state: &AppState{Store: st, Redis: multiCoreRedis(t, "core-a", "core-b")}}
+
+	body := `{"backend":"s3","s3Bucket":"b","s3AccessKey":"AKIA","s3SecretKey":"secret"}`
+	rec := httptest.NewRecorder()
+	h.SaveConfig(rec, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", strings.NewReader(body)))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if st.writes != 0 {
+		t.Errorf("the refused save persisted %d settings; it must persist none", st.writes)
 	}
 }
 

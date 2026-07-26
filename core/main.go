@@ -22,6 +22,7 @@ import (
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	"dylaris-core/store"
 	beamauth "dylaris-pkg/beam/auth"
@@ -500,14 +501,33 @@ func main() {
 	coreHeartbeat.Start()
 
 	// Warn once, here, if this instance is joining a deployment that stores
-	// files on a host path. That combination is only correct on a single Core,
-	// and the panel's warning is only seen by an admin who opens the storage
-	// tab - a scale-up is exactly the case where nobody does.
-	//
-	// Placed AFTER coreHeartbeat.Start() on purpose: Start writes this Core's
-	// key before returning, so the count includes us. Running it earlier would
-	// have the second Core see only the first and stay silent.
+	// files on a host path. Placed AFTER coreHeartbeat.Start() on purpose:
+	// Start writes this Core's key before returning, so the count includes us.
 	appState.WarnAboutHostPathAtBoot(context.Background())
+
+	// Shared-storage reachability. This Core PROVES it can write to and read
+	// from the same core file storage as its peers - at boot, then every
+	// 120s - and gates its own storage routes when it cannot. Deliberately
+	// not leader-gated: every Core must verify itself, and only itself.
+	appState.StorageReach = storagereach.NewService(storagereach.ServiceDeps{
+		Redis:       redisClient,
+		CoreID:      cfg.CoreID,
+		NewProvider: appState.NewReachProvider,
+		ConfigFor: func() (storagereach.Config, bool) {
+			cfg, err := appState.EffectiveCoreStorageConfig()
+			if err != nil || !appState.CoreStorageConfigured() {
+				return storagereach.Config{}, false
+			}
+			return handlers.CoreStorageToReachConfig(cfg), true
+		},
+		OnlineCores: func(ctx context.Context) ([]string, error) {
+			return services.OnlineCoreIDs(ctx, redisClient)
+		},
+		Publish: func(eventType string, payload map[string]interface{}) {
+			appState.Events.Publish(context.Background(), eventType, payload)
+		},
+	})
+	appState.StorageReach.Start(bgCtx)
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.

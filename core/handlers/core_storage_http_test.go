@@ -41,7 +41,10 @@ func (f *coreStorageHTTPFakeStore) SetSetting(key, value string) error {
 
 func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	// A single online Core so checkSharedStorageReachable's short-circuit
+	// applies; this test is about the secret round trip, not the
+	// reachability round.
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	// Save an s3 config with a secret.
 	body, _ := json.Marshal(CoreStorageConfig{
@@ -356,7 +359,7 @@ func seedCoreStorageS3(fs *coreStorageHTTPFakeStore) {
 func TestCoreStorage_SaveConfig_BlankSecretUnchangedIdentity_ReusesStoredSecret(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
 	seedCoreStorageS3(fs)
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	body, _ := json.Marshal(CoreStorageConfig{
 		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "bucket1", S3AccessKey: "key1",
@@ -528,7 +531,7 @@ func TestCoreStorage_TestConnection_FailureBody_NeverLeaksSecret(t *testing.T) {
 // must be trimmed before persisting, not silently break auth later.
 func TestCoreStorage_SaveConfig_TrimsS3FieldWhitespace(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	body, _ := json.Marshal(CoreStorageConfig{
 		Backend: "s3", S3Endpoint: "  https://s3.example.com  ", S3Bucket: "  bucket1 ",

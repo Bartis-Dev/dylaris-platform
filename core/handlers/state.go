@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"sync"
 	"time"
 
 	"dylaris-core/authz"
@@ -90,6 +91,16 @@ type AppState struct {
 	// tooling and tests, which the gate treats as "not enabled" rather than
 	// "deny".
 	StorageReach *storagereach.Service
+
+	// reachRoundDeadline overrides the config-round cap. Zero means the
+	// default; it exists so tests do not wait 15s per case.
+	reachRoundDeadline time.Duration
+
+	// reachRoundMu is the single-process half of the config-round lock that
+	// checkSharedStorageReachable takes before calling RunRound: the Redis
+	// SETNX lock alongside it is the cluster-wide half. Zero value is a ready
+	// to use, unlocked mutex, so no constructor change is needed.
+	reachRoundMu sync.Mutex
 
 	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
 	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the
