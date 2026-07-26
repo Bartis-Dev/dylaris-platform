@@ -24,6 +24,22 @@ func testDeps(t *testing.T, root, coreID string, online []string) ServiceDeps {
 	}
 }
 
+// seedClaim makes coreID look like a Core that just wrote its fleet beacon
+// successfully.
+//
+// A peer with no fresh claim is not expected in storage at all (an old binary
+// mid-rollout, a Core whose own write failed, one that has not booted that
+// far), so its absence is evidence about IT and never gates the observer. Every
+// test that means "the peer really IS writing, this Core just cannot see it" -
+// which is the fake-shared volume, the thing the feature exists to catch - has
+// to say so explicitly.
+func seedClaim(t *testing.T, rdb *redis.Client, coreID string) {
+	t.Helper()
+	if err := PublishClaim(context.Background(), rdb, coreID, time.Now(), defaultClaimTTL); err != nil {
+		t.Fatalf("PublishClaim(%s): %v", coreID, err)
+	}
+}
+
 func TestSelfCheck_SoloCoreIsOK(t *testing.T) {
 	svc := NewService(testDeps(t, t.TempDir(), "core-a", []string{"core-a"}))
 
@@ -58,11 +74,13 @@ func TestSelfCheck_UnconfiguredStorageIsNotAFault(t *testing.T) {
 
 func TestSelfCheck_FirstNotSharedRecordsAFaultButDoesNotGate(t *testing.T) {
 	ctx := context.Background()
-	// core-a is alone on its own root while core-b is online: the peer's
-	// beacon is not there. On the FIRST pass that is indistinguishable from
-	// "core-b booted 10 seconds ago and has not written its beacon yet", so
-	// the fault is reported but the routes stay open.
+	// core-a is alone on its own root while core-b is online AND claims a
+	// fresh beacon write: the peer's file is supposed to be there and is not.
+	// On the FIRST pass that is still indistinguishable from "core-b wrote its
+	// beacon a moment ago and the backend has not propagated it yet", so the
+	// fault is reported but the routes stay open.
 	deps := testDeps(t, t.TempDir(), "core-a", []string{"core-a", "core-b"})
+	seedClaim(t, deps.Redis, "core-b")
 	svc := NewService(deps)
 
 	res := svc.SelfCheck(ctx)
@@ -87,6 +105,7 @@ func TestSelfCheck_FirstNotSharedRecordsAFaultButDoesNotGate(t *testing.T) {
 
 func TestSelfCheck_SecondConsecutiveNotSharedGates(t *testing.T) {
 	deps := testDeps(t, t.TempDir(), "core-a", []string{"core-a", "core-b"})
+	seedClaim(t, deps.Redis, "core-b")
 	svc := NewService(deps)
 
 	svc.SelfCheck(context.Background())
@@ -102,6 +121,7 @@ func TestSelfCheck_GraceResetsAfterAHealthyPass(t *testing.T) {
 	// away from gating for the rest of its life.
 	online := []string{"core-a", "core-b"}
 	deps := testDeps(t, t.TempDir(), "core-a", online)
+	seedClaim(t, deps.Redis, "core-b")
 	svc := NewService(deps)
 
 	svc.SelfCheck(context.Background()) // not-shared #1
@@ -145,6 +165,7 @@ func TestSelfCheck_RecoveryClearsTheFaultAndUngates(t *testing.T) {
 	ctx := context.Background()
 	online := []string{"core-a", "core-b"}
 	deps := testDeps(t, t.TempDir(), "core-a", online)
+	seedClaim(t, deps.Redis, "core-b")
 	svc := NewService(deps)
 
 	svc.SelfCheck(ctx)
@@ -219,6 +240,7 @@ func TestSelfCheck_AddsItselfWithoutWritingIntoTheCallersSlice(t *testing.T) {
 	backing[0] = "core-b"
 	deps := testDeps(t, t.TempDir(), "core-a", nil)
 	deps.OnlineCores = func(context.Context) ([]string, error) { return backing, nil }
+	seedClaim(t, deps.Redis, "core-b")
 	svc := NewService(deps)
 
 	res := svc.SelfCheck(context.Background())
@@ -258,6 +280,9 @@ func TestSelfCheck_OnlineCoreLookupFailureDoesNotGate(t *testing.T) {
 
 func TestStart_RunsABootCheckAndStopsWithTheContext(t *testing.T) {
 	deps := testDeps(t, t.TempDir(), "core-a", []string{"core-a", "core-b"})
+	// core-b claims a fresh beacon write, so its absence from core-a's root is
+	// the fake-shared volume and the boot check has a fault to record.
+	seedClaim(t, deps.Redis, "core-b")
 	svc := NewService(deps)
 
 	ctx, cancel := context.WithCancel(context.Background())

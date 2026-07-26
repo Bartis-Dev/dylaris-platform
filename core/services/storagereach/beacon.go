@@ -82,6 +82,16 @@ func RefreshBeacon(ctx context.Context, prov storage.StorageProvider, opts Beaco
 
 	names, listErr := listNames(ctx, prov, FleetDir)
 	if listErr != nil {
+		// This pass could not LOOK, so it has no evidence about peers at all.
+		// Leaving Reachable true with an empty SeenPeers would read as
+		// not-shared and convict this Core of a fake-shared volume on what is
+		// really a backend failure - two of those in a row and it gates itself
+		// for the wrong reason, in the wrong place. Reachable false is the
+		// taxonomy's own answer for "up, but cannot reach the storage".
+		rep.Reachable = false
+		if rep.WriteErr == "" {
+			rep.WriteErr = listErr.Error()
+		}
 		return finishReport(rep)
 	}
 	rep.Reachable = true

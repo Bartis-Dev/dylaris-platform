@@ -68,9 +68,10 @@ type Service struct {
 	status *LocalStatus
 	coord  *Coordinator
 
-	// These five are fields rather than constants so tests can age beacons out
+	// These six are fields rather than constants so tests can age beacons out
 	// and drive the loop in milliseconds instead of minutes.
 	beaconMaxAge    time.Duration
+	claimTTL        time.Duration
 	selfCheckEvery  time.Duration
 	selfCheckBudget time.Duration
 	pollEvery       time.Duration
@@ -94,6 +95,7 @@ func NewService(deps ServiceDeps) *Service {
 		status:          NewLocalStatus(),
 		coord:           NewCoordinator(deps.Redis, deps.CoreID, deps.NewProvider),
 		beaconMaxAge:    defaultBeaconMaxAge,
+		claimTTL:        defaultClaimTTL,
 		selfCheckEvery:  defaultSelfCheckEvery,
 		selfCheckBudget: defaultSelfCheckBudget,
 		pollEvery:       defaultPollEvery,
@@ -341,20 +343,47 @@ func (s *Service) observe(ctx context.Context) (CoreResult, bool) {
 	}
 
 	fingerprint := Fingerprint(cfg)
+
+	// Read the peers' beacon-write claims BEFORE refreshing this Core's own
+	// beacon, never after. A claim already in Redis was published after the
+	// beacon it vouches for was written, so a listing taken afterwards cannot
+	// miss that file; reading claims afterwards would let a peer that wrote
+	// mid-pass be expected before this Core ever had a chance to see it.
+	claimed, claimErr := FreshClaims(ctx, s.deps.Redis, participants, time.Now(), s.claimTTL)
+	if claimErr != nil {
+		// Same shape as the OnlineCores failure above, and the same answer.
+		// Without the claim set there is no honest way to tell "my storage is
+		// fake-shared" from "a peer stopped writing", and ruling anyway would
+		// either gate on a peer's fault or clear a real one of this Core's.
+		// Committing nothing leaves an already-gated Core gated, with its
+		// fault standing.
+		log.Printf("storagereach: could not read peer beacon claims, skipping this self-check: %v", claimErr)
+		return CoreResult{CoreID: me, Status: StatusOK}, false
+	}
+
 	prov, provErr := s.deps.NewProvider(cfg)
 	if provErr != nil {
+		// No provider means no beacon write, so this Core has to stop being
+		// expected by its peers now rather than when its claim expires.
+		s.claimBeaconWrite(ctx, false)
 		return CoreResult{CoreID: me, Status: StatusUnreachable, Detail: provErr.Error()}, true
 	}
 
+	// Participants, not the claim-filtered set: what this Core LOOKS at is
+	// every online peer, so a mismatched fingerprint and a denied cross-write
+	// are still observed. The claim filter belongs on what it is entitled to
+	// EXPECT, which is the aggregation below.
 	rep := RefreshBeacon(ctx, prov, BeaconOptions{
 		CoreID: me, Fingerprint: fingerprint,
 		Participants: participants, MaxAge: s.beaconMaxAge,
 	})
+	s.claimBeaconWrite(ctx, rep.Wrote)
 
 	// Only THIS Core's verdict is meaningful here - the report is its own.
 	// The fleet view is assembled from every Core's own fault record, not
 	// from one Core's opinion of its peers.
-	agg := Aggregate(participants, map[string]Report{me: rep}, fingerprint, true)
+	agg := Aggregate(expectedParticipants(participants, me, claimed, rep.MismatchedPeers),
+		map[string]Report{me: rep}, fingerprint, true)
 	for _, r := range agg.Results {
 		if r.CoreID == me {
 			return r, true
@@ -372,6 +401,33 @@ func (s *Service) observe(ctx context.Context) (CoreResult, bool) {
 		Status: StatusNoResponse,
 		Detail: "self-check produced no verdict for this Core",
 	}, true
+}
+
+// claimBeaconWrite publishes or withdraws this Core's beacon-write claim, which
+// is what tells its PEERS whether to expect its beacon in storage at all.
+//
+// It is tied strictly to the beacon WRITE, never to the verdict. On a
+// fake-shared volume every Core writes its own file perfectly and every one
+// reports not-shared; withdrawing the claim on a failing verdict would make all
+// of them stop expecting each other and un-gate the entire fleet on the next
+// pass, which is the exact failure this package exists to catch.
+//
+// A Redis error is logged, not fatal: it is a claim about this Core for other
+// Cores to read, not evidence about this Core's own storage, so it must not
+// become this Core's verdict.
+func (s *Service) claimBeaconWrite(ctx context.Context, wrote bool) {
+	if wrote {
+		if err := PublishClaim(ctx, s.deps.Redis, s.deps.CoreID, time.Now(), s.claimTTL); err != nil {
+			log.Printf("storagereach: %v", err)
+		}
+		return
+	}
+	// Withdrawn the moment the write fails, so healthy peers stop expecting
+	// this Core's beacon at once instead of at the claim's TTL - which is long
+	// enough for them to gate themselves on a fault that is only about here.
+	if err := ClearClaim(ctx, s.deps.Redis, s.deps.CoreID); err != nil {
+		log.Printf("storagereach: %v", err)
+	}
 }
 
 // shouldGate decides whether a verdict closes this Core's storage routes.
