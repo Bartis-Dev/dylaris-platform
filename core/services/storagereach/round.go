@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"time"
 
 	"dylaris-core/storage"
@@ -108,8 +109,12 @@ type RoundOptions struct {
 	// a short PollEvery in a test also keeps the underlying Probe loop from
 	// overshooting a short Deadline by a whole extra cycle.
 	PollEvery time.Duration
-	// OnProgress, when set, is called with each new partial result so a caller
-	// can stream an X/N counter. Never called concurrently.
+	// OnProgress, when set, is called with each new partial result - "new"
+	// meaning the aggregate actually differs from the last call, not merely
+	// that another poll tick elapsed with nothing to say. The final call (the
+	// round completes or the deadline expires) always fires regardless, so a
+	// caller can rely on it to learn the round settled. Never called
+	// concurrently.
 	OnProgress func(RoundResult)
 }
 
@@ -196,17 +201,28 @@ func (c *Coordinator) RunRound(ctx context.Context, cfg Config, participants []s
 	}
 
 	var last RoundResult
+	var lastReported RoundResult
+	reported := false
 	for {
 		reports := collectReports(ctx, c.rdb, roundID, participants)
 		expired := !time.Now().Before(deadline)
 		complete := len(reports) == len(participants)
+		final := complete || expired
 
-		last = Aggregate(participants, reports, fingerprint, complete || expired)
+		last = Aggregate(participants, reports, fingerprint, final)
 		last.RoundID = roundID
-		if opts.OnProgress != nil {
+		// Skip a publish that would say nothing new: the panel's fleet-health
+		// card reloads on every storagereach.changed event, so an unchanged
+		// result on every one of up to 15 poll ticks per round is up to 15
+		// no-op status refetches per open panel session. The final call is
+		// exempt - a settled round must always report even if the last
+		// reported state happened to already match it.
+		if opts.OnProgress != nil && (final || !reported || !reflect.DeepEqual(last, lastReported)) {
 			opts.OnProgress(last)
+			lastReported = last
+			reported = true
 		}
-		if complete || expired {
+		if final {
 			return last, nil
 		}
 

@@ -276,6 +276,73 @@ func TestRunRound_DeletesTheStagedConfigWhenItEnds(t *testing.T) {
 	}
 }
 
+// TestRunRound_OnProgressSkipsUnchangedPolls is the dedup counterpart to
+// TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount: it proves
+// OnProgress does NOT fire on every poll tick, only when the aggregate result
+// actually changes (plus the always-on final call).
+//
+// Same delayed-report rig as the sequence test above, but with a much shorter
+// PollEvery (10ms) against the same 150ms delay, so roughly 14 poll iterations
+// elapse with an IDENTICAL "1/2, not done" result before core-b's report
+// finally lands. The old, undeduplicated behavior would have called
+// OnProgress once per poll - order a dozen or more times; the fix collapses
+// every one of those identical polls into the single call at which the result
+// first became "1/2, not done", plus the final "2/2, done" call. Exactly 2,
+// not "at least 2" (the sequence test's weaker bound), is the point here.
+func TestRunRound_OnProgressSkipsUnchangedPolls(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	root := t.TempDir()
+	ctx := context.Background()
+
+	const delayedReportKeySuffix = ":report:core-b"
+	const reportDelay = 150 * time.Millisecond
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		if cmd == "SET" && len(args) > 0 && strings.HasSuffix(args[0], delayedReportKeySuffix) {
+			time.Sleep(reportDelay)
+		}
+		return false
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 300; i++ {
+			id, err := PendingRoundID(ctx, rdb)
+			if err == nil && id != "" {
+				done <- RunParticipant(ctx, rdb, "core-b", id, sharedFactory(root))
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		done <- errors.New("core-b never saw a round")
+	}()
+
+	var calls int
+	opts := RoundOptions{Deadline: time.Second, PollEvery: 10 * time.Millisecond}
+	opts.OnProgress = func(RoundResult) { calls++ }
+
+	c := NewCoordinator(rdb, "core-a", sharedFactory(root))
+	res, err := c.RunRound(ctx, Config{Backend: "path", Path: "/mnt/shared"},
+		[]string{"core-a", "core-b"}, opts)
+	if err != nil {
+		t.Fatalf("RunRound: %v", err)
+	}
+	if perr := <-done; perr != nil {
+		t.Fatalf("participant: %v", perr)
+	}
+	if !res.OK || res.Confirmed != 2 {
+		t.Fatalf("res = %+v, want a passing 2/2 round", res)
+	}
+
+	if calls != 2 {
+		t.Fatalf("OnProgress fired %d times, want exactly 2 (one for the unchanged 1/2 state, one for the final 2/2); a dozen or more identical calls means the dedup regressed", calls)
+	}
+}
+
 func TestRunRound_UsesAFreshUnguessableRoundID(t *testing.T) {
 	rdb := newReachTestRedis(t)
 	c := NewCoordinator(rdb, "core-a", sharedFactory(t.TempDir()))
