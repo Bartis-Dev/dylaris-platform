@@ -145,6 +145,10 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: factory,
 		}),
+		// Same short override as the refusal tests: if core-b ever loses the
+		// discovery race below, this fails in 150ms instead of burning the
+		// full 15s default before it does.
+		reachRoundDeadline: 150 * time.Millisecond,
 	}}
 
 	done := make(chan error, 1)

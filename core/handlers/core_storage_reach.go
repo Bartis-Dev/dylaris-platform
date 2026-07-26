@@ -2,12 +2,16 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/services"
 	"dylaris-core/services/storagereach"
@@ -40,6 +44,45 @@ const (
 	// does not wedge every future save behind a lock nobody will clear.
 	reachRoundLockTTL = 20 * time.Second
 )
+
+// reachRoundBusyMessage is returned for either lock layer refusing an
+// attempt - the local TryLock and the Redis SETNX alike - so a same-replica
+// caller and a cross-replica caller see an identical refusal. From the
+// outside "another round is running" is one fact, not two.
+const reachRoundBusyMessage = "Another storage configuration change is currently being verified on this deployment. Wait for it to finish and try again."
+
+// reachRoundLockReleaseScript frees the config-round lock only if it still
+// holds the value THIS caller set with SetNX. A plain GET-then-DEL from Go
+// would not be atomic across the two round trips, reopening the exact race
+// the per-attempt token exists to close: a stale holder whose TTL just
+// expired could still delete a lock a NEWER holder acquired in between the
+// GET and the DEL. Same compare-and-delete idiom as pkg/leader/leader.go's
+// lease release.
+const reachRoundLockReleaseScript = `
+if redis.call('get', KEYS[1]) == ARGV[1] then
+	return redis.call('del', KEYS[1])
+else
+	return 0
+end
+`
+
+// releaseReachRoundLock is the compare-and-delete half of the token above.
+// Unexported, but called directly by this file's tests to simulate a stale
+// holder's release racing a newer holder's lock without waiting out a real
+// round.
+func releaseReachRoundLock(ctx context.Context, rdb *redis.Client, token string) error {
+	return rdb.Eval(ctx, reachRoundLockReleaseScript, []string{reachRoundLockKey}, token).Err()
+}
+
+// newReachRoundLockToken returns an unguessable per-attempt lock value - the
+// same construction round.go's newRoundID uses for round ids.
+func newReachRoundLockToken() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("core storage: config-round lock token: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
 
 // sharedStorageRefusal is returned when a config must not be persisted because
 // the fleet could not prove shared access. It carries the whole RoundResult,
@@ -143,14 +186,42 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 
 	// Local mutex (single-process safety) plus a Redis SETNX lock
 	// (cluster-wide safety) - the same two-layer pattern
-	// RoutingMigrationService.Run uses. The mutex alone would not stop two
-	// different Core replicas from both starting a round for two concurrent
-	// save requests; the Redis lock is what makes "no concurrent rounds" true
-	// fleet-wide, not just on this process.
-	s.reachRoundMu.Lock()
+	// RoutingMigrationService.Run uses, but with TryLock instead of Lock.
+	//
+	// RunRound can block forever: for a path backend it writes through a gated
+	// provider, and Gate.Run is documented (storage/limiter.go) to run fn
+	// INLINE on the caller's goroutine with NO deadline - a deadline cannot
+	// tell a legitimately slow multi-GB upload from a wedged mount, so it does
+	// not try. On a wedged mount a blocking Lock() would then park every later
+	// SaveConfig/SwitchConfig on this Core behind a mutex nothing will ever
+	// release: a leaked goroutine and HTTP connection per attempt, with no TTL
+	// to self-heal, while the Redis lock's own TTL expires underneath it so
+	// even the cross-process guarantee is gone. That is worse than the overlap
+	// this lock exists to prevent, since a wedged mount is exactly the failure
+	// this whole feature exists to detect. TryLock turns "busy" into the same
+	// fast refusal the Redis branch below returns, instead of an unbounded
+	// park, so a same-replica caller and a cross-replica caller behave
+	// identically.
+	if !s.reachRoundMu.TryLock() {
+		return &sharedStorageRefusal{status: http.StatusConflict, message: reachRoundBusyMessage}
+	}
 	defer s.reachRoundMu.Unlock()
 
-	acquired, lockErr := s.Redis.SetNX(ctx, reachRoundLockKey, "1", reachRoundLockTTL).Result()
+	// The lock value is an unguessable per-attempt token, not a shared
+	// constant, so the deferred release below can confirm it still owns the
+	// lock before deleting it. A shared value would let a holder that overran
+	// the TTL delete a LATER holder's lock - the same unconditional-delete bug
+	// class this lock exists to defend against in RunRound's own cleanup.
+	token, tokenErr := newReachRoundLockToken()
+	if tokenErr != nil {
+		log.Printf("core storage: could not generate a config-round lock token: %v", tokenErr)
+		return &sharedStorageRefusal{
+			status:  http.StatusServiceUnavailable,
+			message: "Could not verify shared storage access right now. Check that Redis is reachable and try again.",
+		}
+	}
+
+	acquired, lockErr := s.Redis.SetNX(ctx, reachRoundLockKey, token, reachRoundLockTTL).Result()
 	if lockErr != nil {
 		log.Printf("core storage: could not acquire the config-round lock: %v", lockErr)
 		return &sharedStorageRefusal{
@@ -159,13 +230,10 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 		}
 	}
 	if !acquired {
-		return &sharedStorageRefusal{
-			status:  http.StatusConflict,
-			message: "Another storage configuration change is currently being verified on this deployment. Wait for it to finish and try again.",
-		}
+		return &sharedStorageRefusal{status: http.StatusConflict, message: reachRoundBusyMessage}
 	}
 	defer func() {
-		if err := s.Redis.Del(context.WithoutCancel(ctx), reachRoundLockKey).Err(); err != nil {
+		if err := releaseReachRoundLock(context.WithoutCancel(ctx), s.Redis, token); err != nil {
 			log.Printf("core storage: could not release the config-round lock: %v", err)
 		}
 	}()

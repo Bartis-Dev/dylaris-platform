@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/services/storagereach"
+	"dylaris-core/storage"
 )
 
 // Redis seeding for these tests reuses multiCoreRedis and coreStorageFakeStore
@@ -49,6 +51,23 @@ func TestCheckSharedStorageReachable_SingleCoreSkipsTheRound(t *testing.T) {
 	if err := s.checkSharedStorageReachable(context.Background(),
 		CoreStorageConfig{Backend: "path", Path: "/mnt/shared"}); err != nil {
 		t.Fatalf("checkSharedStorageReachable on a single Core = %v, want nil", err)
+	}
+}
+
+// TestCheckSharedStorageReachable_ZeroOnlineCoresIsTreatedAsOne pins the other
+// half of the "0 and 1 are both not-more-than-one" short-circuit: a fresh
+// install whose own heartbeat has not landed in Redis yet must still be able
+// to save its storage settings, not be refused because the online count reads
+// as zero. This case existed in the old count-only guard's table and was
+// dropped when that guard was replaced; the behavior itself was never
+// removed (see the len(online) <= 1 check above), only its test coverage.
+func TestCheckSharedStorageReachable_ZeroOnlineCoresIsTreatedAsOne(t *testing.T) {
+	rdb := multiCoreRedis(t) // no heartbeats seeded: the online count is 0
+	s := &AppState{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}}
+
+	if err := s.checkSharedStorageReachable(context.Background(),
+		CoreStorageConfig{Backend: "path", Path: "/mnt/shared"}); err != nil {
+		t.Fatalf("checkSharedStorageReachable with zero online Cores = %v, want nil (short-circuit)", err)
 	}
 }
 
@@ -163,6 +182,164 @@ func TestCheckSharedStorageReachable_ReleasesTheLockAfterARound(t *testing.T) {
 	}
 }
 
+// TestStorageReachRoundLockRelease_StaleHolderCannotDeleteANewerLock pins the
+// compare-and-delete fix: the lock value is a per-attempt token, not a shared
+// constant, so a holder releasing after its own TTL has already expired must
+// not delete a DIFFERENT holder's lock that has since taken the key. A plain
+// unconditional Del would delete whatever is there, deleting a later round's
+// still-open lock out from under it - exactly the unconditional-delete bug
+// class this lock exists to defend against in RunRound's own cleanup.
+func TestStorageReachRoundLockRelease_StaleHolderCannotDeleteANewerLock(t *testing.T) {
+	rdb := multiCoreRedis(t, "core-a")
+	ctx := context.Background()
+
+	// Simulate a newer holder already owning the key - as if the stale
+	// holder's TTL expired, a later round acquired the lock with its own
+	// token, and only THEN does the stale holder's deferred release finally
+	// run.
+	if err := rdb.Set(ctx, reachRoundLockKey, "newer-token", time.Minute).Err(); err != nil {
+		t.Fatalf("seed newer lock: %v", err)
+	}
+
+	if err := releaseReachRoundLock(ctx, rdb, "stale-token"); err != nil {
+		t.Fatalf("releaseReachRoundLock: %v", err)
+	}
+
+	got, err := rdb.Get(ctx, reachRoundLockKey).Result()
+	if err != nil {
+		t.Fatalf("the newer lock is gone after a stale-token release (err = %v); want it untouched", err)
+	}
+	if got != "newer-token" {
+		t.Fatalf("lock value = %q, want %q untouched", got, "newer-token")
+	}
+}
+
+// TestStorageReachRoundLockRelease_MatchingTokenDeletes is the positive
+// control for the test above: a release presenting the SAME token the lock
+// was set with must still actually free it, or every save would refuse
+// forever.
+func TestStorageReachRoundLockRelease_MatchingTokenDeletes(t *testing.T) {
+	rdb := multiCoreRedis(t, "core-a")
+	ctx := context.Background()
+
+	if err := rdb.Set(ctx, reachRoundLockKey, "my-token", time.Minute).Err(); err != nil {
+		t.Fatalf("seed lock: %v", err)
+	}
+	if err := releaseReachRoundLock(ctx, rdb, "my-token"); err != nil {
+		t.Fatalf("releaseReachRoundLock: %v", err)
+	}
+	if _, err := rdb.Get(ctx, reachRoundLockKey).Result(); err != redis.Nil {
+		t.Errorf("lock still present after a matching-token release (err = %v)", err)
+	}
+}
+
+// blockingProvider models a wedged mount for the concurrency test below:
+// WriteFile blocks until the test releases it, exactly the RunRound -> Probe
+// -> prov.WriteFile chain Fix 1 is about (storage/limiter.go's Gate.Run runs
+// WriteFile INLINE with no deadline, so a real wedged mount blocks this call
+// forever).
+//
+// storage.StorageProvider is embedded nil on purpose: any method other than
+// the two implemented below is one this fake never expects to be called, and
+// a nil-pointer panic says so loudly instead of quietly succeeding.
+type blockingProvider struct {
+	storage.StorageProvider
+	// entered is signalled once WriteFile is called, so the test can wait for
+	// the round to actually be inside the hung call before it measures how
+	// fast a second, concurrent call refuses.
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newBlockingProvider() *blockingProvider {
+	return &blockingProvider{entered: make(chan struct{}, 4), release: make(chan struct{})}
+}
+
+func (p *blockingProvider) WriteFile(context.Context, string, io.Reader) error {
+	p.entered <- struct{}{}
+	<-p.release
+	return errors.New("storage released")
+}
+
+// ListFiles is reached once WriteFile finally returns, so it has to answer;
+// erroring here keeps Probe's retry loop away from the nil embedded provider.
+func (p *blockingProvider) ListFiles(context.Context, string) ([]storage.FileInfo, error) {
+	return nil, errors.New("storage released")
+}
+
+// DeletePath is reached by RunRound's unconditional CleanupRound defer once
+// the round finishes, success or not; a no-op keeps that away from the nil
+// embedded provider too.
+func (p *blockingProvider) DeletePath(context.Context, string) error {
+	return nil
+}
+
+// TestCheckSharedStorageReachable_SecondConcurrentCallIsRefusedNotQueued pins
+// Fix 1: with a real round wedged inside RunRound (a hung WriteFile, the
+// documented failure mode of Gate.Run), a second concurrent call must be
+// refused immediately with the same 409 the Redis lock branch returns, not
+// queued behind the first until it eventually gives up. Restoring
+// reachRoundMu.Lock() in place of TryLock() turns this test into a hang,
+// which is the discriminating proof that TryLock is what fixes it.
+func TestCheckSharedStorageReachable_SecondConcurrentCallIsRefusedNotQueued(t *testing.T) {
+	rdb := multiCoreRedis(t, "core-a", "core-b")
+	prov := newBlockingProvider()
+	s := &AppState{
+		Redis: rdb,
+		Store: &coreStorageFakeStore{values: map[string]string{}},
+		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+			Redis: rdb, CoreID: "core-a",
+			NewProvider: func(storagereach.Config) (storage.StorageProvider, error) { return prov, nil },
+		}),
+		reachRoundDeadline: 150 * time.Millisecond,
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- s.checkSharedStorageReachable(context.Background(),
+			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+	}()
+
+	select {
+	case <-prov.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first call never reached the hung write; the test setup is broken")
+	}
+
+	secondStart := time.Now()
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- s.checkSharedStorageReachable(context.Background(),
+			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+	}()
+
+	select {
+	case err := <-secondDone:
+		if elapsed := time.Since(secondStart); elapsed > time.Second {
+			t.Fatalf("the second call took %s to return; it queued behind the first instead of refusing immediately", elapsed)
+		}
+		var refusal *sharedStorageRefusal
+		if !errors.As(err, &refusal) {
+			t.Fatalf("second call err = %T, want *sharedStorageRefusal", err)
+		}
+		if refusal.status != http.StatusConflict {
+			t.Errorf("second call status = %d, want 409", refusal.status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second call never returned: it queued behind the first instead of being refused")
+	}
+
+	close(prov.release)
+	select {
+	case err := <-firstDone:
+		if err == nil {
+			t.Error("the first call should have failed - its own write never succeeded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first call did not finish after being released")
+	}
+}
+
 func TestStorageReachStatusHandler_ReturnsFaults(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a")
 	ctx := context.Background()
@@ -192,5 +369,61 @@ func TestStorageReachStatusHandler_ReturnsFaults(t *testing.T) {
 	}
 	if len(body.Online) != 1 || body.Online[0] != "core-a" {
 		t.Errorf("onlineCores = %v, want [core-a]", body.Online)
+	}
+}
+
+// TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound pins the
+// read-only doc comment on StorageReachStatus with a REAL, started verifier
+// service rather than trusting the comment alone: Service.SelfCheck is
+// documented as unsafe to call concurrently with the service's own running
+// Start loop (both end in apply, whose state is single-writer by convention,
+// not mutex-guarded), and a round must only ever be started by an actual
+// config save. If a future edit ever wires the handler into either path, this
+// fails.
+func TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound(t *testing.T) {
+	rdb := multiCoreRedis(t, "core-a")
+	svc := storagereach.NewService(storagereach.ServiceDeps{
+		Redis:  rdb,
+		CoreID: "core-a",
+		// Unconfigured storage keeps the boot self-check a fast no-op (observe
+		// returns immediately without touching the provider or Redis, see
+		// service.go) so the baseline snapshot below is not racing real
+		// filesystem I/O.
+		ConfigFor:   func() (storagereach.Config, bool) { return storagereach.Config{}, false },
+		OnlineCores: func(context.Context) ([]string, error) { return []string{"core-a"}, nil },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	svc.Start(ctx)
+
+	// Give the boot self-check goroutine time to run and settle so the
+	// baseline below isn't racing it - a race there would be a false positive
+	// for "the handler changed nothing".
+	time.Sleep(50 * time.Millisecond)
+	statusBefore, detailBefore := svc.Status().Snapshot()
+
+	h := NewCoreStorageHandler(&AppState{
+		Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}, StorageReach: svc,
+	})
+	for i := 0; i < 5; i++ {
+		rec := httptest.NewRecorder()
+		h.StorageReachStatus(rec, httptest.NewRequest("GET", "/api/settings/storage-reach", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d: status = %d, want 200 (%s)", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	statusAfter, detailAfter := svc.Status().Snapshot()
+	if statusAfter != statusBefore || detailAfter != detailBefore {
+		t.Fatalf("status endpoint changed the local verdict: before = %s/%q, after = %s/%q",
+			statusBefore, detailBefore, statusAfter, detailAfter)
+	}
+
+	pending, err := storagereach.PendingRoundID(ctx, rdb)
+	if err != nil {
+		t.Fatalf("PendingRoundID: %v", err)
+	}
+	if pending != "" {
+		t.Fatalf("a round was started by a status-only read: pending round id = %q", pending)
 	}
 }
