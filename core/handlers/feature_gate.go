@@ -112,11 +112,13 @@ func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.Handl
 			return
 		}
 		// The second Snapshot() value is the raw backend error text (mount
-		// paths, bucket names, S3 endpoints); two of the eight gated routes
-		// are open to any authenticated user with no capability check, so it
-		// must never reach this body. The taxonomy value + remedy below are
-		// what a caller needs; the full detail stays on the fault-list
-		// endpoint for admins.
+		// paths, bucket names, S3 endpoints); five of the fourteen gated
+		// routes (routes.go: the three ticket-attachment routes, plus
+		// GET /api/library and GET /api/library/download) are open to any
+		// authenticated user with no capability check, so it must never
+		// reach this body. The taxonomy value + remedy below are what a
+		// caller needs; the full detail stays on the fault-list endpoint for
+		// admins.
 		status, _ := s.StorageReach.Status().Snapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
