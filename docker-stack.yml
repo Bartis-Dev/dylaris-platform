@@ -123,10 +123,28 @@ services:
       #     findmnt -o TARGET,PROPAGATION /mnt/dylaris-shared
       # Mount propagation does not work with Docker Desktop.
       #
+      # OWNERSHIP - the step that is easiest to miss. Core runs as uid 1000
+      # (the non-root "dylaris" user, see Dockerfile), so this path must be
+      # writable by uid 1000 on EVERY host. Get it wrong and the reachability
+      # check refuses the config with "write-denied" on every Core, which is
+      # loud and actionable but only after you tried to save. Two ways:
+      #   - own the share as 1000, which is what the fstab lines below do, or
+      #   - leave the mount root as it is and point the panel at a
+      #     subdirectory you created once:
+      #       mkdir -p /mnt/dylaris-shared/dylaris
+      #       chown 1000:1000 /mnt/dylaris-shared/dylaris
+      #     Core's own mkdir then creates everything below it as uid 1000.
+      # S3 has no uid semantics and sidesteps this entirely.
+      #
       # /etc/fstab on each host:
       #
       #   NFS (recommended):
       #     nas:/export/dylaris  /mnt/dylaris-shared  nfs  defaults,_netdev  0 0
+      #
+      #     NFS carries the server's own uid/gid over the wire, so the EXPORTED
+      #     directory must be owned by 1000 (chown 1000:1000 on the NAS), or the
+      #     export must squash to it (anonuid=1000,anongid=1000,all_squash).
+      #     There is no client-side mount option that fixes this for NFS.
       #
       #     Leave the default "hard" retry behaviour in place. nfs(5) states
       #     that "soft" can cause SILENT DATA CORRUPTION and should only be
@@ -143,7 +161,11 @@ services:
       #     carries the same corruption caveat as "soft".
       #
       #   SMB/CIFS:
-      #     //nas/dylaris  /mnt/dylaris-shared  cifs  credentials=/etc/dylaris-smb.cred,uid=0,gid=0,_netdev  0 0
+      #     //nas/dylaris  /mnt/dylaris-shared  cifs  credentials=/etc/dylaris-smb.cred,uid=1000,gid=1000,_netdev  0 0
+      #
+      #     uid/gid here are a CLIENT-side ownership override: SMB carries no
+      #     unix uids, so the mount presents every file as that owner. It must
+      #     be 1000, not 0, or Core cannot write the share at all.
       #
       #     Note the inversion: CIFS defaults to "soft" (return an error),
       #     the opposite of NFS's "hard" default. Leave it. Add "hard" only if
