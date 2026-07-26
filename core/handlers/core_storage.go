@@ -239,6 +239,14 @@ func (s *AppState) SyncStorageGate() {
 // TestConnection's ephemeral-path branch and health.go's storageComponent each
 // switch on the literals directly. Anyone adding a third spelling has to visit
 // all of them - this helper alone will not carry it.
+//
+// Unused since the count-based host-path warning it backed was removed (a real
+// cross-Core round proves sharing now instead of guessing from a count) -
+// staticcheck here only runs the SA* checks, which do not flag dead code, so
+// this was not caught automatically. Kept anyway, deliberately: it is the
+// single most direct pointer to the literal-matching call sites listed above,
+// and storagereach.isPathBackend's own doc comment names it by this exact
+// identifier.
 func isHostPathBackend(backend string) bool {
 	return backend == "path" || backend == "local"
 }
