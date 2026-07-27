@@ -59,6 +59,23 @@ services:
       # MUST be the same host as FRONTEND_URL on a DIFFERENT port. See .env.example.
       TAB_PROXY_PORT: "${TAB_PROXY_PORT:-}"
       TAB_PROXY_ORIGIN: "${TAB_PROXY_ORIGIN:-}"
+      # Everything below is forwarded ONLY so that setting it in the stack
+      # environment (or a shell-sourced .env) actually works. A documented
+      # variable that is missing from this block is silently ignored no matter
+      # what the operator sets.
+      #
+      # DYLARIS_TELEMETRY is the one that matters most: .env.example offers it
+      # as a HARD opt-out that overrides the in-panel toggle, and until it was
+      # listed here that promise was simply not kept.
+      DYLARIS_TELEMETRY: "${DYLARIS_TELEMETRY:-}"
+      DYLARIS_TELEMETRY_KEY: "${DYLARIS_TELEMETRY_KEY:-}"
+      ADMIN_SECRET: "${ADMIN_SECRET:-}"
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
+      # Must be flipped on Core AND every Node together, or the mesh breaks.
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      DB_TYPE: "${DB_TYPE:-timescaledb}"
+      EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
+      BILLING_SUSPEND_GRACE: "${BILLING_SUSPEND_GRACE:-48h}"
     # Core's shutdown runs a sequence, and the whole of it has to fit inside
     # this window or the later steps simply never execute. Budget: the API
     # listener drains for up to 30s, the tab-proxy listener for up to another
@@ -216,6 +233,19 @@ services:
       # overlay (25523 stays UNPUBLISHED, see below). Empty = all beam transfers
       # rejected. Must equal Core's JWT_SECRET AND the gateway relay's BEAM_JWT_SECRET.
       BEAM_JWT_SECRET: "${JWT_SECRET}"
+      # Same reason as the core block above: forwarded so the stack environment
+      # actually reaches the container. SIDECAR_REDIS_ADDR matters most here -
+      # MC containers are host siblings and cannot resolve Swarm overlay DNS, so
+      # in this topology they need Redis by IP, and until it was listed here the
+      # documented "set it to the leader's private IP in Swarm" was impossible
+      # without editing this file. GRPC_TLS_ENABLED must match Core's setting.
+      SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-}"
+      SIDECAR_REDIS_DB: "${SIDECAR_REDIS_DB:-}"
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      GRPC_TLS_FINGERPRINT: "${GRPC_TLS_FINGERPRINT:-}"
+      NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
+      STORAGE_PATHS: "${STORAGE_PATHS:-}"
+      DYLARIS_CPUSET_CPUS: "${DYLARIS_CPUSET_CPUS:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data

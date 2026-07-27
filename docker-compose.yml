@@ -44,6 +44,30 @@ services:
       # MUST be the same host as FRONTEND_URL on a DIFFERENT port. See .env.example.
       TAB_PROXY_PORT: "${TAB_PROXY_PORT:-}"
       TAB_PROXY_ORIGIN: "${TAB_PROXY_ORIGIN:-}"
+      # Everything below is forwarded ONLY so that setting it in .env actually
+      # works. Compose uses a .env file for ${...} substitution, it does NOT
+      # inject it into the container, so a documented variable that is missing
+      # from this block is silently ignored no matter what the operator sets.
+      #
+      # DYLARIS_TELEMETRY is the one that matters most: .env.example offers it
+      # as a HARD opt-out that overrides the in-panel toggle, and until it was
+      # listed here that promise was simply not kept.
+      DYLARIS_TELEMETRY: "${DYLARIS_TELEMETRY:-}"
+      DYLARIS_TELEMETRY_KEY: "${DYLARIS_TELEMETRY_KEY:-}"
+      # Break-glass admin creation via /setup. RAM-only, never persisted.
+      ADMIN_SECRET: "${ADMIN_SECRET:-}"
+      # Which proxies' X-Forwarded-For Core believes, for rate limiting and the
+      # audit log. Empty trusts the private ranges, which is right for the
+      # reference reverse-proxy-on-the-same-Docker-network layout.
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
+      # Must be flipped on Core AND every Node together, or the mesh breaks.
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      # timescaledb (hypertable + native retention) or postgres (plain table).
+      DB_TYPE: "${DB_TYPE:-timescaledb}"
+      # Only relevant when pointing DB_HOST at an external Postgres.
+      DB_SSLMODE: "${DB_SSLMODE:-disable}"
+      EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
+      BILLING_SUSPEND_GRACE: "${BILLING_SUSPEND_GRACE:-48h}"
     # Core's shutdown runs a sequence, and the whole of it has to fit inside
     # this window or the later steps simply never execute. Budget: the API
     # listener drains for up to 30s, the tab-proxy listener for up to another
@@ -107,6 +131,17 @@ services:
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com
       MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
+      # Same reason as the core block above: forwarded so .env actually reaches
+      # the container. GRPC_TLS_ENABLED must match Core's setting exactly.
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      GRPC_TLS_FINGERPRINT: "${GRPC_TLS_FINGERPRINT:-}"
+      NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
+      # MC containers are host siblings and cannot resolve Docker service DNS in
+      # every topology, so they may need Redis by IP rather than by name.
+      SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-}"
+      SIDECAR_REDIS_DB: "${SIDECAR_REDIS_DB:-}"
+      STORAGE_PATHS: "${STORAGE_PATHS:-}"
+      DYLARIS_CPUSET_CPUS: "${DYLARIS_CPUSET_CPUS:-}"
       # Beam ticket secret. Core signs beam tickets with JWT_SECRET; the node
       # validates them (node/main.go StartBeamServer). Must equal Core's JWT_SECRET
       # or EVERY beam transfer is rejected - including the 25523 LAN fast-path

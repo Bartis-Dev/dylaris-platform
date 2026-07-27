@@ -6,7 +6,17 @@
 
 Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) servers across one host or a whole fleet — from a single web panel.
 
+[**dylaris.com**](https://dylaris.com)
+
 </div>
+
+> ### Beta, and under active development
+>
+> DYLARIS is self-hostable and usable today, but it has not reached a stable release. Expect breaking changes between images, schema migrations that run on deploy, and features that are still moving. If you need a fixed target, pin an image tag instead of `latest`.
+>
+> **This README is the documentation.** The docs site on [dylaris.com](https://dylaris.com) is not live yet, so everything needed to deploy and run the platform is here: the [quick start](#quick-start-single-host), both [deployment topologies](#deployment), and a [complete environment variable reference](#configuration-reference) covering every variable the code actually reads.
+>
+> Bug reports and questions are welcome. If anything in this README is wrong, unclear or incomplete, that counts as a bug worth reporting.
 
 ---
 
@@ -271,15 +281,23 @@ All configuration is passed as **Docker environment variables** — set them in 
 
 Every variable below maps to a real env read in the code; nothing is invented. Core **refuses to boot** if `JWT_SECRET` or `CLUSTER_SECRET` is empty or left at its placeholder.
 
+**Which of these actually reach the container.** This trips people up, so it is worth stating plainly: Compose and Swarm only pass a variable into a service if that service's `environment:` block lists it. A `.env` file is read when the YAML is *parsed*, to expand `${VAR}` placeholders; it is never injected into the containers by itself. A documented variable that is missing from the `environment:` block is therefore ignored no matter what you put in `.env`.
+
+Both shipped files forward everything an operator normally needs, including the telemetry opt-out. What they deliberately do **not** forward, so you must add it to the `environment:` block yourself if you want it:
+
+- **Owner / SaaS integrations:** `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `CF_API_TOKEN`, `CF_ZONE_ID`, `STORE_URL`, `STORE_SHARED_KEY`, `UPDATES_FEED_URL_PLATFORM`, `UPDATES_FEED_URL_GATEWAY`, `BEAM_MANIFEST_URL`, `CLAMAV_ADDR`.
+- **Identity and tuning knobs with working defaults:** `DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`, `NODE_MANAGES_LINK`, `LINK_IMAGE`, `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN`.
+- **Port variables** (`API_PORT`, `SFTP_PORT`, `BEAM_GRPC_PORT`, `BEAM_LAN_FASTPATH`, `MIGRATION_PORT`, `PORT_RANGE`) and `CORE_GRPC_ADDR`. These are set as literals in the YAML because the matching `ports:` publication lives there too. Changing a port means editing both lines anyway, so edit the file.
+
 ### Secrets (Docker / Portainer secrets via `*_FILE`)
 
 Every secret can be supplied from a **file** instead of a plain env value by setting `<NAME>_FILE` to a readable path. The service reads the file (whitespace-trimmed), so you can use Docker/Swarm secrets (`/run/secrets/...`) or Portainer secrets without ever putting the value in the environment. Precedence per secret: `<NAME>_FILE` → `<NAME>` → default; an unreadable or empty `*_FILE` logs and falls back rather than booting blank.
 
 Supported:
 
-- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`
+- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `CF_API_TOKEN_FILE`, `STORE_SHARED_KEY_FILE`
 - **Node:** `CLUSTER_SECRET_FILE`, `BEAM_JWT_SECRET_FILE`
-- **Log shipper:** *(none - the node injects scoped Redis creds derived from its per-node secret)*
+- **Log shipper:** `REDIS_PASS_FILE`. You will not normally set it: the Node injects a scoped per-node Redis credential when it launches the container. It exists for running the shipper standalone.
 
 Example (Swarm / Portainer with external secrets):
 
@@ -336,6 +354,8 @@ secrets:
 | `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
 | `UPDATES_FEED_URL_PLATFORM` | *(public repo feed)* | No (owner) | Raw URL of the append-only JSONL update feed the admin "what's new" bell diffs against the baked baseline. Defaults to the platform public-repo raw feed. Fails open when unset or unreachable. |
 | `UPDATES_FEED_URL_GATEWAY` | *(empty)* | No (owner) | Raw URL of the gateway update feed. Empty until it is cross-pushed into the public platform repo. Fails open. |
+| `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | Overrides the compiled-in URL the panel reads Beam desktop-client update manifests from. Point it at your own mirror if you fork or self-distribute Beam. |
+| `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
 
 ### Node
 
@@ -363,6 +383,7 @@ secrets:
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
 | `BEAM_LAN_FASTPATH` | `true` (on unless `false`) | No | Toggles the Beam LAN fast-path TLS listener on `:25523` (pinned-TLS, direct client ↔ node). Set `false` to disable; any other value leaves it on. |
+| `BEAM_LAN_PORT` | `25523` | No | Port for that LAN fast-path listener. Change it together with the `ports:` publication in the compose file, and never publish the plain overlay port `25521` instead. |
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
 | `BEAM_JWT_SECRET` | *(empty — Beam rejects all tickets)* | No (required for Beam) | Must match the gateway beam-relay's JWT secret so relay-validated tickets pass the node-side gate. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
