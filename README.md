@@ -14,9 +14,9 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 >
 > DYLARIS is self-hostable and usable today, but it has not reached a stable release. Expect breaking changes between images, schema migrations that run on deploy, and features that are still moving. If you need a fixed target, pin an image tag instead of `latest`.
 >
-> **This README is the documentation.** The docs site on [dylaris.com](https://dylaris.com) is not live yet, so everything needed to deploy and run the platform is here: the [quick start](#quick-start-single-host), both [deployment topologies](#deployment), and a [complete environment variable reference](#configuration-reference) covering every variable the code actually reads.
+> **[dylaris.com](https://dylaris.com) is the project home and the documentation site**, and it is where the long-form guides are going as they are written. This README deliberately stays at what you need to get running and understand the shape of the system: the [quick start](#quick-start-single-host), both [deployment topologies](#deployment), and a [complete environment variable reference](#configuration-reference) covering every variable the code actually reads. Deploying from this file alone works today.
 >
-> Bug reports and questions are welcome. If anything in this README is wrong, unclear or incomplete, that counts as a bug worth reporting.
+> Bug reports and questions are welcome. If anything here is wrong, unclear or incomplete, that counts as a bug worth reporting.
 
 ---
 
@@ -72,33 +72,36 @@ Everything is self-hosted: your servers, your data, your infrastructure.
 DYLARIS is a small set of independently deployable services that coordinate through **Redis/Valkey** (queues, pub/sub, discovery, settings) and a **gRPC mesh** (Core ↔ Node). State lives in **TimescaleDB** (PostgreSQL 16 + time-series for stats).
 
 ```
-                                  ┌──────────────────────────────┐
-              Browser  ─────────▶ │            PANEL             │  Next.js web UI (:25510)
-                                  └───────────────┬──────────────┘
-                                                  │ REST (browser → Core API)
-                                                  ▼
-   TimescaleDB ◀───────── SQL ─────────┐  ┌──────────────────────┐
-   (Postgres 16)                       └──│         CORE         │  Go API (:25500) + gRPC (:25501)
-                                          │  leader election,    │
-   Redis / Valkey ◀── queues ────────────│  scheduler, auth,    │
-   (queues / pub-sub / discovery)        │  RCON, SSE, library  │
-        ▲   ▲                            └───────┬──────────────┘
-        │   │                                    │ Redis queue: dylaris:node:{id}:queue
-        │   │                                    │ + inbound gRPC mesh (node dials core)
-        │   │                                    ▼
-        │   └──────────────────────────┐  ┌──────────────────────┐
-        └──────────────────────────────│──│         NODE         │  Go agent — drives local Docker
-                                        │  │  creates/manages MC  │
-                                        │  │  server containers   │
-                                        │  └───────┬──────────────┘
-                                        │          │ /var/run/docker.sock
-                                        │          ▼
-                                        │   ┌──────────────┐ ┌──────────────┐
-                                        │   │ mc-server A  │ │ mc-server B  │  (one container per server,
-                                        │   └──────────────┘ └──────────────┘   log-shipper as PID 1)
-                                        │
-              (optional) Gateway repo ──┘  edge (ingress) · hub · link · warp leader
+   Browser
+      |
+      v
+   +-----------+   REST    +--------------------------+
+   |   PANEL   | --------> |           CORE           |
+   |   :25510  |           |  :25500 API  :25501 gRPC |
+   +-----------+           +--------------------------+
+                             |          |          |
+                    SQL      |          |          |   queues, pub/sub,
+                             v          |          v   discovery, settings
+                  +---------------+     |    +----------------+
+                  |  TimescaleDB  |     |    | Redis / Valkey |
+                  |  Postgres 16  |     |    +----------------+
+                  +---------------+     |          ^
+                                        |          |  the node shares the
+            Redis queue for work,       |          |  same Redis for its
+            gRPC mesh for control       v          |  own work queue
+                           +--------------------------+
+                           |           NODE           |
+                           |  one Go agent per host   |
+                           +--------------------------+
+                                        |
+                                        v   /var/run/docker.sock
+                           +-------------+  +-------------+
+                           | mc-server A |  | mc-server B |
+                           +-------------+  +-------------+
+                           one container per server, log-shipper as PID 1
 ```
+
+Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp leader). It talks to this repo only through shared Redis keys, never directly.
 
 ### Services
 
@@ -109,8 +112,8 @@ DYLARIS is a small set of independently deployable services that coordinate thro
 | **Panel** | `panel/` | Next.js (App Router) web UI (`:25510`). |
 | **Log Shipper** | `log-shipper/` | Tiny wrapper binary that runs as **PID 1 inside each MC container**, wrapping the Java process and shipping stdout/stderr to a Redis stream. Built into the MC container image, not deployed as a standalone service. |
 | **Agent** | `agent/` | A Go **library** (not a service) imported by Node for host CPU/RAM/network stats collection. No `main.go`. |
-| TimescaleDB | (image) | `timescale/timescaledb:latest-pg16` — PostgreSQL 16 + TimescaleDB for relational data and time-series stats. The **source of truth**. |
-| Redis/Valkey | (image) | `valkey/valkey:8-alpine` — in-memory coordination bus (queues, pub/sub, discovery, settings, stats streams). |
+| TimescaleDB | (image) | `timescale/timescaledb:latest-pg16` — PostgreSQL 16 + TimescaleDB for relational data and time-series stats. The **source of truth**: users, servers, settings, audit. This is the thing to back up. |
+| Redis/Valkey | (image) | `valkey/valkey:8-alpine` — in-memory coordination bus (queues, pub/sub, discovery, settings, stats streams). In-memory **by design** (`--save "" --appendonly no`): losing it loses transient queue and discovery state, not your servers. |
 
 ### How the services talk
 
@@ -119,11 +122,6 @@ DYLARIS is a small set of independently deployable services that coordinate thro
 - **File access.** `beam` uses an overlay gRPC transport (`:25521`, JWT-ticket gated, signed by Core, validated by Node) that never exposes the node IP. `sftp` exposes a classic SFTP server (`:25520`). External/Warp nodes force `beam`.
 - **Live data.** MC console logs, stats, and player data stream back through Redis streams; the browser receives them as Server-Sent Events.
 - **Optional Gateway (separate repo).** Cross-repo communication is exclusively through shared Redis keys/queues (e.g. `dylaris:hub:queue`, `route:{domain}`) — no direct HTTP/gRPC across the repo boundary. The Beam data plane (Beam client → relay → link → node) is the one separate data path.
-
-### Data stores
-
-- **TimescaleDB (Postgres 16)** — source of truth: users, servers, settings, audit, plus time-series stats. Back this up.
-- **Redis/Valkey** — in-memory by design (`--save "" --appendonly no`). Losing it loses transient queue/discovery state, not your servers.
 
 ## How it works
 
