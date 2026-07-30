@@ -291,7 +291,6 @@ var requiredCaps = map[string]string{
 	"/api/admin/storage/manifests":                    "settings.read",
 	"/api/admin/storage/manifests/{id:[0-9]+}":        "settings.write",
 	"/api/admin/storage/manifests/{id:[0-9]+}/export": "settings.read",
-	"/api/admin/settings/telemetry":                   "settings.read",
 	"/api/admin/maintenance":                          "settings.write",
 	"/api/admin/settings/audit":                       "settings.read",
 	"/api/admin/xdp/config":                           "settings.read",
@@ -505,7 +504,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
-	telemetrySettingsHandler := handlers.NewTelemetrySettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	tabProxySettingsHandler := handlers.NewTabProxySettingsHandler(appState)
@@ -865,10 +863,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/storage/manifests", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageMigrationHandler.ListManifests))).Methods("GET")
 	api.HandleFunc("/admin/storage/manifests/{id:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(storageMigrationHandler.ExportManifest))).Methods("GET")
 	api.HandleFunc("/admin/storage/manifests/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageMigrationHandler.DeleteManifest))).Methods("DELETE")
-	// --- Telemetry settings (PANEL settings.*) ---
-	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(telemetrySettingsHandler.Get))).Methods("GET")
-	api.HandleFunc("/admin/settings/telemetry", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(telemetrySettingsHandler.Set))).Methods("PUT")
-
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")
 	// Warp admin registry: regions + leaders (PANEL topology.*; Phase 4 Task 18)

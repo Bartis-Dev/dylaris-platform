@@ -16,10 +16,9 @@ import (
 // the question the host-path storage backend depends on, because a host path
 // is only correct on a single Core.
 //
-// Deliberately NOT built on the telemetry instance id: that value is
-// per-DEPLOYMENT by design (a hash of CLUSTER_SECRET, identical on every
-// replica) and is leader-gated on top, so it is architecturally incapable of
-// counting instances.
+// Note for anyone tempted to derive an instance id from CLUSTER_SECRET: that
+// value is per-DEPLOYMENT (identical on every replica), so it is architecturally
+// incapable of counting instances.
 
 // coreLeaderKey shares the dylaris:core: prefix with the heartbeats but is the
 // leader lease, not an instance registry - it holds the current leader's id as

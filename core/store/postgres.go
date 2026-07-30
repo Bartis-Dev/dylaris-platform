@@ -1261,28 +1261,6 @@ func (s *PostgresStore) InsertStatsBatch(stats []models.ServerStatRow) error {
 	return tx.Commit()
 }
 
-// SumLatestPlayerCounts returns the platform-wide total players, computed
-// from the most recent server_stats row per server. Used by the telemetry
-// heartbeat. Best-effort: returns 0 + nil err on empty.
-func (s *PostgresStore) SumLatestPlayerCounts() (int, error) {
-	// Use DISTINCT ON to grab only the newest row per server, then sum.
-	// server_stats keys on server_uuid (TEXT), not server_id.
-	const q = `
-		SELECT COALESCE(SUM(players), 0)
-		FROM (
-			SELECT DISTINCT ON (server_uuid) players
-			FROM server_stats
-			ORDER BY server_uuid, time DESC
-		) AS latest
-	`
-	var n int
-	err := s.db.QueryRow(q).Scan(&n)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return n, err
-}
-
 func (s *PostgresStore) GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error) {
 	rows, err := s.db.Query(`SELECT time, server_uuid, cpu, cpu_limit, mem_used, mem_limit, players, max_players
 		FROM server_stats WHERE server_uuid = $1 AND time >= $2 ORDER BY time ASC`, serverUUID, since)

@@ -550,13 +550,6 @@ func main() {
 	scheduledTasksService.SetLeader(coreLeader)
 	scheduledTasksService.Start(bgCtx)
 
-	// Telemetry heartbeat. Posts anonymous platform stats to
-	// dylaris.dev every 10min for the live counter on the website.
-	// Leader-gated so multi-Core deployments don't double-count.
-	telemetryHeartbeat := services.NewTelemetryHeartbeat(pgStore, cfg.ClusterSecret, cfg.Region)
-	telemetryHeartbeat.SetLeader(coreLeader)
-	telemetryHeartbeat.Start(bgCtx)
-
 	// Recovery-token printer. Background loop that logs either the
 	// Fresh-Install hint or the Lost-Admin token + URL every 30s as long as
 	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.

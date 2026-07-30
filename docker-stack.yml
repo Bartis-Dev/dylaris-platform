@@ -63,12 +63,6 @@ services:
       # environment (or a shell-sourced .env) actually works. A documented
       # variable that is missing from this block is silently ignored no matter
       # what the operator sets.
-      #
-      # DYLARIS_TELEMETRY is the one that matters most: .env.example offers it
-      # as a HARD opt-out that overrides the in-panel toggle, and until it was
-      # listed here that promise was simply not kept.
-      DYLARIS_TELEMETRY: "${DYLARIS_TELEMETRY:-}"
-      DYLARIS_TELEMETRY_KEY: "${DYLARIS_TELEMETRY_KEY:-}"
       ADMIN_SECRET: "${ADMIN_SECRET:-}"
       TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
       # Must be flipped on Core AND every Node together, or the mesh breaks.

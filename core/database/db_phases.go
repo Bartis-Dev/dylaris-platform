@@ -181,19 +181,14 @@ func applyPhase8Schema(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase18Schema seeds the Telemetry Heartbeat toggle for
-// anonymous usage stats that the website's live counter consumes. Default
-// is ENABLED — operators are informed at boot + in Settings → Features and
-// can opt out via the toggle or DYLARIS_TELEMETRY=false ENV.
-func applyPhase18Schema(db *sql.DB) error {
-	for _, kv := range []struct{ k, v string }{
-		{"telemetry_enabled", "true"},
-		{"telemetry_endpoint", "https://dylaris.dev/api/heartbeat"},
-	} {
-		if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ($1, $2)
-			ON CONFLICT (key) DO NOTHING`, kv.k, kv.v); err != nil {
-			return fmt.Errorf("phase 18: seed %s: %w", kv.k, err)
-		}
+// dropTelemetrySettings removes the two settings rows the former usage-stats
+// heartbeat owned (phase 18, removed in full). Without this an upgraded install
+// keeps rows nothing reads, which later reads as a feature that is merely
+// switched off. Idempotent: a fresh install deletes nothing.
+func dropTelemetrySettings(db *sql.DB) error {
+	if _, err := db.Exec(`DELETE FROM settings
+		WHERE key IN ('telemetry_enabled', 'telemetry_endpoint')`); err != nil {
+		return fmt.Errorf("drop telemetry settings: %w", err)
 	}
 	return nil
 }

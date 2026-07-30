@@ -48,12 +48,6 @@ services:
       # works. Compose uses a .env file for ${...} substitution, it does NOT
       # inject it into the container, so a documented variable that is missing
       # from this block is silently ignored no matter what the operator sets.
-      #
-      # DYLARIS_TELEMETRY is the one that matters most: .env.example offers it
-      # as a HARD opt-out that overrides the in-panel toggle, and until it was
-      # listed here that promise was simply not kept.
-      DYLARIS_TELEMETRY: "${DYLARIS_TELEMETRY:-}"
-      DYLARIS_TELEMETRY_KEY: "${DYLARIS_TELEMETRY_KEY:-}"
       # Break-glass admin creation via /setup. RAM-only, never persisted.
       ADMIN_SECRET: "${ADMIN_SECRET:-}"
       # Which proxies' X-Forwarded-For Core believes, for rate limiting and the

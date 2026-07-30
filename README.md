@@ -38,7 +38,7 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Beam desktop client](#beam-desktop-client)
 - [Development](#development)
 - [Tech stack](#tech-stack)
-- [Anonymous usage stats](#anonymous-usage-stats)
+- [No telemetry](#no-telemetry)
 
 ---
 
@@ -281,7 +281,7 @@ Every variable below maps to a real env read in the code; nothing is invented. C
 
 **Which of these actually reach the container.** This trips people up, so it is worth stating plainly: Compose and Swarm only pass a variable into a service if that service's `environment:` block lists it. A `.env` file is read when the YAML is *parsed*, to expand `${VAR}` placeholders; it is never injected into the containers by itself. A documented variable that is missing from the `environment:` block is therefore ignored no matter what you put in `.env`.
 
-Both shipped files forward everything an operator normally needs, including the telemetry opt-out. What they deliberately do **not** forward, so you must add it to the `environment:` block yourself if you want it:
+Both shipped files forward everything an operator normally needs. What they deliberately do **not** forward, so you must add it to the `environment:` block yourself if you want it:
 
 - **Owner / SaaS integrations:** `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `CF_API_TOKEN`, `CF_ZONE_ID`, `STORE_URL`, `STORE_SHARED_KEY`, `UPDATES_FEED_URL_PLATFORM`, `UPDATES_FEED_URL_GATEWAY`, `BEAM_MANIFEST_URL`, `CLAMAV_ADDR`.
 - **Identity and tuning knobs with working defaults:** `DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`, `NODE_MANAGES_LINK`, `LINK_IMAGE`, `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN`.
@@ -340,8 +340,6 @@ secrets:
 | `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. The bundled Valkey runs the stock image (non-root) with `--aclfile` and is NOT auto-seeded, so this must match the `default` admin password you create in the aclfile before the first boot (see the redis service comment in the compose files). |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
-| `DYLARIS_TELEMETRY` | *(unset = on)* | No | Set to `false` to hard-disable anonymous usage stats (bypasses the in-panel toggle). See [Anonymous usage stats](#anonymous-usage-stats). |
-| `DYLARIS_TELEMETRY_KEY` | *(empty)* | No | Optional bearer key sent with the anonymous heartbeat. Set it to the website's `HEARTBEAT_SECRET` when that endpoint enforces auth; empty sends no header (unauthenticated endpoint). |
 | `BILLING_SUSPEND_GRACE` | `48h` | No | Grace before a `suspended` (BYON) tenant is cut off (servers stopped, link tunnels dropped), so a transient billing/DB fault cannot instantly kick a paying customer. Go duration; `0` enforces on the next hourly tick. |
 | `ADMIN_SECRET` | *(empty)* | No | RAM-only break-glass. When set (>=16 chars), creating an admin via `/setup` requires this exact value in every mode - closes the fresh-install race and re-opens `/setup` to recover or add an admin. Never written to the DB or logs; unset + restart to disable. Supports `ADMIN_SECRET_FILE`. |
 | `DNS_UPDATER_ENABLED` | `false` | No (owner) | Leader-gated reconciler that points each region's edge wildcard A record at the live edge IPs. Only for multi-region Gateway deploys on Cloudflare; most self-hosters leave it off. |
@@ -676,11 +674,12 @@ cd panel && npm run build    # production build
 - **Data:** PostgreSQL 16 / TimescaleDB, Redis-compatible **Valkey**.
 - **Runtime:** Docker / Docker Compose / Docker Swarm.
 
-## Anonymous usage stats
+## No telemetry
 
-Each Dylaris Core sends a tiny anonymized payload to `dylaris.dev/api/heartbeat` every 10 min so a public live counter on the website can show *"N platforms · N gateways · N containers · N players online"*. The payload contains: an opaque hash of `CLUSTER_SECRET` (stable per deployment, so a multi-Core cluster counts once), instance type, container counts, total players, and version. No user data, no server names, no IPs.
-
-Disable any time: **Settings → Features → "Anonymous Usage Stats"** toggle, or set `DYLARIS_TELEMETRY=false` (hard kill, bypasses the DB toggle).
+Dylaris sends nothing anywhere. There is no usage heartbeat, no phone-home, no
+opt-out to configure, and no endpoint to block. Your instance talks to your
+database, your Redis, your nodes, and whatever mod/plugin sources you ask it to
+fetch from. Nothing else.
 
 ---
 

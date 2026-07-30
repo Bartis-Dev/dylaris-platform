@@ -32,10 +32,10 @@ type Config struct {
 	// the node<->core NodeService channel. Off (default) = plaintext, exactly as
 	// before. Must be flipped together with every node's GRPC_TLS_ENABLED.
 	GRPCTLSEnabled bool
-	// Region — which logical region this Core lives in. Stamped
-	// into heartbeat + the system info endpoint so the panel can show a
-	// "Connected to <region> Core" chip and downstream consumers can attribute
-	// telemetry to a region. 'default' for single-region setups.
+	// Region — which logical region this Core lives in. Stamped into the
+	// system info endpoint so the panel can show a "Connected to <region> Core"
+	// chip and downstream consumers can attribute a Core to a region.
+	// 'default' for single-region setups.
 	Region string
 
 	// Database

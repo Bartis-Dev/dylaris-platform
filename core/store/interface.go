@@ -308,9 +308,6 @@ type Store interface {
 	InsertStatsBatch(stats []models.ServerStatRow) error
 	GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error)
 
-	// --- Telemetry ---
-	SumLatestPlayerCounts() (int, error)
-
 	// --- Library Disabled Paths ---
 	ListDisabledLibraryPaths() ([]string, error)
 	SetLibraryPathDisabled(path string, disabled bool) error
