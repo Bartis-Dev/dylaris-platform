@@ -181,7 +181,7 @@ CLUSTER_SECRET=$(openssl rand -hex 32)
 DB_USER=dylaris
 DB_PASSWORD=$(openssl rand -hex 24)
 DB_NAME=dylaris
-PANEL_API_URL=http://localhost:25500
+PANEL_API_URL=http://localhost:25500/api
 EOF
 
 # 2. Seed the Valkey ACL file (mandatory: the --aclfile Valkey refuses to start
@@ -197,7 +197,7 @@ docker compose up -d
 
 That's it — Core, a Node, the Panel, TimescaleDB and Valkey are now running. Create your first server from the Panel.
 
-> **Production note:** put the Panel/Core behind a reverse proxy with TLS and set `PANEL_API_URL` to the **public** URL the browser will use to reach the Core API (e.g. `https://api.example.com`), because the browser — not the container — calls the API. Set `DB_SSLMODE=require` if the database is remote.
+> **Production note:** put the Panel/Core behind a reverse proxy with TLS and set `PANEL_API_URL` to the **public** URL the browser will use to reach the Core API, including the `/api` path (e.g. `https://api.example.com/api`), because the browser — not the container — calls the API. Set `DB_SSLMODE=require` if the database is remote.
 
 ## Deployment
 
@@ -397,13 +397,13 @@ Already-paired nodes keep reconnecting normally.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `PANEL_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL. Runtime (not build-time): the container's entrypoint writes it into `/config.js` on every start, so it takes effect without a rebuild. If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`), the usual reverse-proxy layout where `/api` is routed to Core. See the shim details below. |
+| `PANEL_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL, **including the `/api` path** (e.g. `https://api.example.com/api`) — the panel appends route paths to it verbatim, so a value without `/api` 404s every call. Runtime (not build-time): the container's entrypoint writes it into `/config.js` on every start, so it takes effect without a rebuild. If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`), the usual reverse-proxy layout where `/api` is routed to Core. See the shim details below. |
 
 The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). The runtime value lives in **`/config.js`**; the container's entrypoint (`panel/docker-entrypoint.sh`) regenerates that file from `PANEL_API_URL` on every start, so set the env var rather than bind-mounting `/app/public/config.js` directly - the entrypoint overwrites it on the next restart:
 
 ```js
-// what the entrypoint writes when PANEL_API_URL=https://api.example.com
-window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com" };
+// what the entrypoint writes when PANEL_API_URL=https://api.example.com/api
+window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com/api" };
 ```
 
 ### Log Shipper (inside the MC container)
