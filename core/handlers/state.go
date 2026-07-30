@@ -96,6 +96,17 @@ type AppState struct {
 	// default; it exists so tests do not wait 15s per case.
 	reachRoundDeadline time.Duration
 
+	// reachRoundPoll overrides the round's poll cadence, which is also how
+	// often the coordinator retries its OWN storage listing. Zero means the
+	// production default (storagereach's 1s). It exists because that cadence
+	// decides how many chances the coordinator gets to observe a peer's beacon
+	// before the deadline: at 1s a short test deadline buys one or two listings
+	// and the positive-control test then depends on a peer goroutine being
+	// scheduled inside a single second, which held locally and flaked on CI.
+	// Production keeps 1s - a config save is interactive, and polling shared
+	// storage faster than that buys nothing.
+	reachRoundPoll time.Duration
+
 	// reachRoundMu is the single-process half of the config-round lock that
 	// checkSharedStorageReachable takes before calling RunRound: the Redis
 	// SETNX lock alongside it is the cluster-wide half. Zero value is a ready

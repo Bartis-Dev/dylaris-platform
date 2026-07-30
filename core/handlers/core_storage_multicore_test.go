@@ -154,21 +154,29 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: factory,
 		}),
-		// Shortened from the 15s default so a lost discovery race below fails
-		// fast, but deliberately ABOVE the round's 1s poll cadence, unlike the
-		// refusal tests' 150ms.
+		// The poll cadence is what matters here, not the deadline. It is how
+		// often the coordinator retries its OWN storage listing (and, published
+		// as PollEveryMillis, how often core-b retries its probe), so together
+		// with the deadline it decides how many chances core-a gets to observe
+		// core-b's beacon.
 		//
-		// checkSharedStorageReachable leaves RoundOptions.PollEvery unset, so it
-		// is the production 1s, and PollEvery is also the retry cadence of the
-		// coordinator's own Probe. A sub-second deadline therefore buys the
-		// coordinator exactly ONE listing, taken microseconds after the round is
-		// published - before any peer could physically have written its beacon -
-		// so core-a would report not-shared no matter how fast core-b is. This
-		// is the mismatch RoundOptions.PollEvery's own doc comment warns about.
-		// A deadline past one poll gives the coordinator a second listing, which
-		// is what this positive control needs; the round still returns as soon
-		// as both reports are in, so the real cost is ~1s, not 1.2s.
-		reachRoundDeadline: 1200 * time.Millisecond,
+		// This test used to run at the production 1s cadence with a 1200ms
+		// deadline, which bought exactly TWO listings: core-b's goroutine had a
+		// single one-second window to be scheduled, discover the round and
+		// write. That held locally and flaked on CI, where the runner executes
+		// the whole job matrix at once - core-b wrote after core-a's second and
+		// last listing, so core-a reported not-shared while core-b reported ok
+		// and the save was refused with confirmed 1 of 2.
+		//
+		// 50ms over 6s is ~120 listings instead of 2, which removes the
+		// dependence on when a goroutine happens to be scheduled rather than
+		// just widening the window. It is also faster in the passing case: the
+		// round ends as soon as every report is in AND the coordinator's own
+		// probe sees all peers, so this now returns in well under a second
+		// instead of waiting out a full 1s poll. The deadline only bounds how
+		// long a genuinely lost race keeps retrying before failing.
+		reachRoundDeadline: 6 * time.Second,
+		reachRoundPoll:     50 * time.Millisecond,
 	}}
 
 	done := make(chan error, 1)

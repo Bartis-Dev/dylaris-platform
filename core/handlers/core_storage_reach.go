@@ -268,6 +268,10 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 	reachCfg := CoreStorageToReachConfig(cfg)
 	result, err := s.StorageReach.Coordinator().RunRound(ctx, reachCfg, online, storagereach.RoundOptions{
 		Deadline: deadline,
+		// Zero leaves storagereach's production cadence in place; only tests set
+		// it, to stop a short deadline from reducing the coordinator to a couple
+		// of listings. See AppState.reachRoundPoll.
+		PollEvery: s.reachRoundPoll,
 		// Each partial result becomes the panel's live "X/N cores confirmed"
 		// counter. Without this the admin stares at a spinner for 15s.
 		OnProgress: func(r storagereach.RoundResult) {
