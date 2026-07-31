@@ -223,7 +223,32 @@ func (d *DNSReconciler) reconcile(ctx context.Context) {
 // derived from "everything in the zone that is not in my desired set" - a name
 // the reconciler did not create cannot be reached from here at all.
 func (d *DNSReconciler) sweepOrphans(ctx context.Context, provider DNSProvider, written DNSPlan, now time.Time, grace time.Duration) []string {
-	owned, err := d.loadOwnership(ctx)
+	return sweepOrphansWith(ctx, provider, d.ownership(), written, now, grace)
+}
+
+// ownershipStore is the registry as the sweep needs it. Narrow on purpose: the
+// deletion path is the one place where a mistake removes a record that is not
+// ours, so it has to be testable without standing up Redis.
+type ownershipStore interface {
+	load(ctx context.Context) (map[string]OwnedName, error)
+	save(ctx context.Context, owned map[string]OwnedName) error
+}
+
+// redisOwnership is the production implementation, backed by DNSOwnershipKey.
+type redisOwnership struct{ d *DNSReconciler }
+
+func (r redisOwnership) load(ctx context.Context) (map[string]OwnedName, error) {
+	return r.d.loadOwnership(ctx)
+}
+
+func (r redisOwnership) save(ctx context.Context, owned map[string]OwnedName) error {
+	return r.d.saveOwnership(ctx, owned)
+}
+
+func (d *DNSReconciler) ownership() ownershipStore { return redisOwnership{d: d} }
+
+func sweepOrphansWith(ctx context.Context, provider DNSProvider, registry ownershipStore, written DNSPlan, now time.Time, grace time.Duration) []string {
+	owned, err := registry.load(ctx)
 	if err != nil {
 		// Without the registry there is no proof of ownership, so nothing may be
 		// deleted this pass. Creates already happened and are unaffected.
@@ -257,7 +282,7 @@ func (d *DNSReconciler) sweepOrphans(ctx context.Context, provider DNSProvider, 
 		}
 	}
 
-	if err := d.saveOwnership(ctx, RefreshOwnership(owned, written, now)); err != nil {
+	if err := registry.save(ctx, RefreshOwnership(owned, written, now)); err != nil {
 		log.Printf("dns reconciler: could not persist ownership registry: %v", err)
 	}
 	return failures
