@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"dylaris-pkg/storageplacement"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -17,10 +19,23 @@ import (
 // tracking which server lives on which path (via Redis), and resolving
 // server UUIDs to their actual filesystem location.
 type StorageManager struct {
-	paths []string        // Validated, available storage paths
+	paths []string // Validated, available storage paths
 	rdb   *redis.Client
 	mu    sync.RWMutex
+
+	// Placement policy for NEW servers, published per node by Core. Zero value
+	// (empty mode) behaves as auto, so a node that never receives the key keeps
+	// the original free-space behaviour.
+	placementMode  string
+	placementOrder []string
 }
+
+// Placement modes for new-server assignment. Aliases of the shared constants so
+// Core, the node and the panel cannot drift apart on the spelling.
+const (
+	placementAuto   = storageplacement.ModeAuto
+	placementManual = storageplacement.ModeManual
+)
 
 // StorageInfo holds disk usage information for a single storage path.
 type StorageInfo struct {
@@ -30,6 +45,11 @@ type StorageInfo struct {
 	UsedBytes   uint64   `json:"used_bytes"`
 	ServerCount int      `json:"server_count"`
 	ServerUUIDs []string `json:"server_uuids"` // Top-level UUID directories on disk
+	// QuotaEnforceable reports whether a per-server disk limit can actually be
+	// ENFORCED on this path. Project quotas need xfs or ext4; on NFS/CIFS the
+	// node accepts a limit and silently cannot apply it, so an operator must be
+	// able to see the difference rather than trust a limit that does nothing.
+	QuotaEnforceable bool `json:"quota_enforceable"`
 }
 
 // NewStorageManager creates a StorageManager with the given paths.
@@ -159,7 +179,45 @@ func (sm *StorageManager) GetServerDir(serverUUID string) string {
 	return filepath.Join(sm.GetServerPath(serverUUID), serverUUID)
 }
 
-// SelectStoragePath picks the best path for a new server based on free space.
+// SetPlacement applies the per-node placement policy Core published. An
+// unrecognised mode falls back to auto rather than leaving the node unable to
+// place servers at all.
+func (sm *StorageManager) SetPlacement(mode string, order []string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.placementMode = storageplacement.NormalizeMode(mode)
+	sm.placementOrder = append([]string(nil), order...)
+}
+
+// orderedPaths returns this node's paths in the admin's priority order.
+//
+// Paths the order does not mention come LAST, in their configured order: that is
+// what makes a disk added later land at the bottom without the admin having to
+// edit anything, and it means an order referring to a path this node no longer
+// has simply drops out. Caller must hold sm.mu.
+func (sm *StorageManager) orderedPaths() []string {
+	return storageplacement.OrderPaths(sm.paths, sm.placementOrder)
+}
+
+// pickByPriority returns the first usable path in the admin's order, or "" when
+// none is usable.
+//
+// "Usable" only means the path currently reports free space: a path that is
+// unmounted or full reports 0 and is skipped. Manual placement deliberately does
+// NOT balance beyond that - the admin chose the order, and second-guessing it
+// with a free-space heuristic would make the setting mean nothing.
+// Caller must hold sm.mu.
+func (sm *StorageManager) pickByPriority() string {
+	for _, p := range sm.orderedPaths() {
+		if getFreeSpace(p) > 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+// SelectStoragePath picks the path for a NEW server: an explicit request wins,
+// then the admin's manual order if configured, then most free space.
 // After selection, it creates the server directory and stores the assignment in Redis.
 func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath string) (string, error) {
 	sm.mu.Lock()
@@ -173,6 +231,16 @@ func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath str
 			}
 		}
 		return "", fmt.Errorf("preferred path %q not available", preferredPath)
+	}
+
+	if sm.placementMode == placementManual {
+		if p := sm.pickByPriority(); p != "" {
+			return sm.assignPath(serverUUID, p)
+		}
+		// Every path in the order is gone or full. Fall through to free-space
+		// selection instead of refusing: a stale order must not take the node
+		// out of service.
+		log.Printf("storage: manual placement order has no usable path, falling back to free space")
 	}
 
 	// Auto: pick path with most free space

@@ -187,16 +187,59 @@ func (s *SFTPServer) getUserServers(username string) []sftpServerRef {
 	return servers
 }
 
+// legacySFTPHostKeyPath is the pre-STORAGE_PATHS location, relative to the
+// working directory. Inside the container that is /app/data, which is on no
+// volume, so a key kept there is regenerated on every recreate and every client
+// gets a host-key-changed warning.
+const legacySFTPHostKeyPath = "data/sftp_host_key"
+
+// sftpHostKeyPath puts the host key next to the node identity on the first
+// storage path, which is the one directory a node is already required to keep
+// across recreates. Falls back to the legacy location only if that is unset.
+func sftpHostKeyPath() string {
+	if nodeSecretDir == "" {
+		return filepath.FromSlash(legacySFTPHostKeyPath)
+	}
+	return filepath.Join(nodeSecretDir, "sftp_host_key")
+}
+
+// parseHostKey returns a signer for a PEM-encoded RSA key, or nil if the bytes
+// are not one.
+func parseHostKey(data []byte) ssh.Signer {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		return nil
+	}
+	return signer
+}
+
 func (s *SFTPServer) loadOrGenHostKey() (ssh.Signer, error) {
-	keyPath := filepath.Join("data", "sftp_host_key")
+	keyPath := sftpHostKeyPath()
 	os.MkdirAll(filepath.Dir(keyPath), 0700)
 
 	if data, err := os.ReadFile(keyPath); err == nil {
-		block, _ := pem.Decode(data)
-		if block != nil {
-			key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-			if err == nil {
-				return ssh.NewSignerFromKey(key)
+		if signer := parseHostKey(data); signer != nil {
+			return signer, nil
+		}
+	}
+
+	// Adopt a key still sitting in the legacy location so upgrading a node does
+	// not change its fingerprint, and persist it where it will actually survive.
+	if legacy := filepath.FromSlash(legacySFTPHostKeyPath); legacy != keyPath {
+		if data, err := os.ReadFile(legacy); err == nil {
+			if signer := parseHostKey(data); signer != nil {
+				if err := os.WriteFile(keyPath, data, 0600); err != nil {
+					log.Printf("SFTP: could not migrate host key to %s: %v", keyPath, err)
+				}
+				return signer, nil
 			}
 		}
 	}

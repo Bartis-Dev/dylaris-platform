@@ -397,9 +397,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// If this is a WriteReq, create temp file and register pending write
 	// BEFORE sending response so that chunks arriving immediately after won't be dropped.
 	if writeReq := msg.GetWriteReq(); writeReq != nil {
-		tempDir := m.handler.getTempDir()
-		os.MkdirAll(tempDir, 0755)
-		tempFile, err := os.CreateTemp(tempDir, "upload-*.tmp")
+		tempFile, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
 		if err != nil {
 			log.Printf("gRPC Mesh: Failed to create temp file (request_id=%s): %v", msg.RequestId, err)
 			// Still let Handle() process to send error response

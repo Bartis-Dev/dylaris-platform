@@ -57,6 +57,54 @@ func stagedArchivePath(storagePath, serverUUID string) string {
 	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".zip")
 }
 
+// migrationOriginPath is the stamp migrate_out drops next to the staged archive,
+// naming the node that staged it.
+func migrationOriginPath(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".origin")
+}
+
+// sharedStorageOwner returns the OTHER node that staged this migration into one
+// of our own storage paths, or "" when the storage is genuinely ours alone.
+//
+// Two nodes backed by the same network share are indistinguishable by path: both
+// legitimately resolve to the same string (/storage/<uuid>), whether or not the
+// bytes behind it are shared. So instead of comparing paths we prove sameness
+// positively - a stamp sitting on OUR disk that names a DIFFERENT node can only
+// mean that node's storage is our storage.
+//
+// It cannot false-positive on a stale stamp: a leftover from an earlier
+// migration out of this node names this node and is ignored.
+func sharedStorageOwner(storage *StorageManager, serverUUID string) string {
+	for _, p := range storage.Paths() {
+		data, err := os.ReadFile(migrationOriginPath(p, serverUUID))
+		if err != nil {
+			continue
+		}
+		if owner := strings.TrimSpace(string(data)); owner != "" && owner != nodeID {
+			return owner
+		}
+	}
+	return ""
+}
+
+// refuseIfStorageShared aborts a transfer whose source shares our storage.
+//
+// Such a "move" is not a move: source and target resolve to the same directory,
+// so the pull overwrites the live server with a copy of itself and the source's
+// cleanup then deletes it out from under the running container - total data loss
+// reported as a successful migration. Refuse before anything is written, so the
+// orchestrator fails the move with no cutover.
+func refuseIfStorageShared(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, cmd string) bool {
+	owner := sharedStorageOwner(storage, serverUUID)
+	if owner == "" {
+		return false
+	}
+	log.Printf("%s %s: refusing - storage is shared with source node %s", cmd, serverUUID, owner)
+	setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf(
+		"shared storage: this node and %s write to the same storage backend, so moving would delete the server", owner))
+	return true
+}
+
 // migrationArchivePathFor is the archivePathFor callback handed to
 // StartMigrationServer. It resolves the server's storage path and returns the
 // staged archive, ok=true only if that file actually exists. We serve a staged
@@ -108,6 +156,15 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	if err := os.MkdirAll(stagingDir, 0755); err != nil {
 		log.Printf("migrate_out %s: cannot create staging dir: %v", serverUUID, err)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", "cannot create staging dir")
+		return
+	}
+
+	// Stamp the staging dir with our identity BEFORE archiving. This is the
+	// target's only signal that it is looking at our storage rather than its
+	// own, so a move we cannot prove safe must not start at all.
+	if err := os.WriteFile(migrationOriginPath(storagePath, serverUUID), []byte(nodeID), 0644); err != nil {
+		log.Printf("migrate_out %s: cannot write origin stamp: %v", serverUUID, err)
+		setMigrationStatus(ctx, rdb, serverUUID, "error", "cannot write origin stamp")
 		return
 	}
 
@@ -175,6 +232,10 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 			return
 		}
 		chosen = picked
+	}
+
+	if refuseIfStorageShared(ctx, rdb, storage, serverUUID, "migrate_in") {
+		return
 	}
 
 	// Pick a target storage path by free space; this also creates <path>/<uuid>/
@@ -279,6 +340,10 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 	if err := os.Remove(zipPath); err != nil && !os.IsNotExist(err) {
 		log.Printf("migrate_cleanup %s: could not remove staged archive %s: %v", serverUUID, zipPath, err)
 	}
+	originPath := migrationOriginPath(storagePath, serverUUID)
+	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("migrate_cleanup %s: could not remove origin stamp %s: %v", serverUUID, originPath, err)
+	}
 
 	srcDir := filepath.Join(storagePath, serverUUID)
 	if err := os.RemoveAll(srcDir); err != nil {
@@ -338,6 +403,12 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	if getURL == "" || expectedSha256 == "" {
 		log.Printf("migrate_pull_r2 %s: missing getURL/expectedSha256", serverUUID)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", "missing pull_r2 parameters")
+		return
+	}
+
+	// Same hazard as the LAN path: the R2 round trip does not make the source
+	// and target directories any less identical on shared storage.
+	if refuseIfStorageShared(ctx, rdb, storage, serverUUID, "migrate_pull_r2") {
 		return
 	}
 

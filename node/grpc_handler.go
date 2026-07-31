@@ -557,9 +557,20 @@ func (h *StreamHandler) resolveFinalPath(serverUUID, path string) (string, error
 	return filePath, nil
 }
 
-// getTempDir returns the temp directory for upload staging.
-func (h *StreamHandler) getTempDir() string {
-	return filepath.Join(h.baseDir, "dylaris_data", ".tmp")
+// createUploadTemp opens the staging file for one inbound mesh upload.
+//
+// It is created in the FINAL directory, not a shared temp dir: the transfer
+// completes with an os.Rename, and as soon as STORAGE_PATHS points at its own
+// mount, a staging dir under the working directory is a different filesystem,
+// so that rename fails with EXDEV and every upload 500s. Same approach the beam
+// upload path already takes. The leading dot keeps the partial file out of the
+// way in the file browser.
+func (h *StreamHandler) createUploadTemp(serverUUID, path string) (*os.File, error) {
+	finalPath, err := h.resolveFinalPath(serverUUID, path)
+	if err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(filepath.Dir(finalPath), ".upload-*.tmp")
 }
 
 func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFileReq) *pb.NodeMessage {

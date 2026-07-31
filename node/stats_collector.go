@@ -79,7 +79,7 @@ type containerSnapshot struct {
 // StartStatsCollector discovers running MC containers and collects stats.
 // bufferMaxLen controls the Redis Stream MAXLEN for the per-server buffer.
 // quota is the filesystem quota provider (may be nil or unavailable).
-func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManager, nid string, bufferMaxLen int64, quota *QuotaProvider) {
+func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManager, nid string, bufferMaxLen int64, quota *QuotaSet) {
 	log.Println("Stats collector started")
 
 	tracked := make(map[string]context.CancelFunc) // uuid -> cancel
@@ -202,7 +202,7 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	}
 }
 
-func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, containerName string, bufferMaxLen int64, quota *QuotaProvider, snap *containerSnapshot) {
+func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, containerName string, bufferMaxLen int64, quota *QuotaSet, snap *containerSnapshot) {
 	log.Printf("stats: tracking %s", containerName)
 
 	liveTicker := time.NewTicker(liveInterval)
@@ -210,7 +210,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 
 	// Disk interval depends on quota availability
 	dInterval := diskFallbackInterval
-	if quota != nil && quota.IsAvailable() {
+	if quota.AnyAvailable() {
 		dInterval = diskInterval
 	}
 	diskTicker := time.NewTicker(dInterval)
@@ -264,7 +264,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 
 	// Initial disk scan
 	go func() {
-		usage := getDiskUsage(uuid, quota)
+		usage := getDiskUsage(ctx, rdb, uuid, quota)
 		if usage != nil {
 			data, _ := json.Marshal(usage)
 			rdb.Set(ctx, diskKey, string(data), 10*time.Minute)
@@ -378,7 +378,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			}()
 		case <-diskTicker.C:
 			go func() {
-				usage := getDiskUsage(uuid, quota)
+				usage := getDiskUsage(ctx, rdb, uuid, quota)
 				if usage != nil {
 					data, _ := json.Marshal(usage)
 					rdb.Set(ctx, diskKey, string(data), 10*time.Minute)
@@ -431,13 +431,20 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	}
 }
 
-// getDiskUsage returns disk usage using quotas if available.
-// Adds warning level based on quota limit utilization.
-func getDiskUsage(uuid string, quota *QuotaProvider) *DiskUsagePayload {
-	if quota == nil || !quota.IsAvailable() {
-		return nil
+// getDiskUsage returns disk usage, from the quota system where the filesystem
+// supports it and from a du scan where it does not.
+//
+// The du path matters twice over: without it a server on NFS/CIFS reported NO
+// disk usage at all (this function simply returned nil), and it is the only
+// measurement the disk guard has to work with there.
+func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *QuotaSet) *DiskUsagePayload {
+	var usage *DiskUsagePayload
+	if quota != nil && quota.IsAvailableFor(uuid) {
+		usage = quota.GetDiskUsage(uuid)
 	}
-	usage := quota.GetDiskUsage(uuid)
+	if usage == nil {
+		usage = duDiskUsage(ctx, rdb, uuid)
+	}
 	if usage == nil {
 		return nil
 	}
@@ -456,6 +463,24 @@ func getDiskUsage(uuid string, quota *QuotaProvider) *DiskUsagePayload {
 	}
 
 	return usage
+}
+
+// duDiskUsage measures a server directory with du, for filesystems that cannot
+// do project quotas. Deliberately not called on quota-capable paths: du walks
+// every inode, which is exactly what quotas exist to avoid.
+func duDiskUsage(ctx context.Context, rdb *redis.Client, uuid string) *DiskUsagePayload {
+	if globalStorageMgr == nil {
+		return nil
+	}
+	dir := globalStorageMgr.GetServerDir(uuid)
+	if dir == "" {
+		return nil
+	}
+	total := dirSize(dir)
+	if total < 0 {
+		return nil
+	}
+	return &DiskUsagePayload{Total: total, Limit: loadDiskLimit(ctx, rdb, uuid) * 1024 * 1024}
 }
 
 // dirSize returns the total size of a directory in bytes.

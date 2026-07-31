@@ -54,8 +54,12 @@ var (
 	// Port-range config
 	portRangeStart int
 	portRangeEnd   int
-	portMode       string
-	containerPort  int // port MC listens on inside the container
+	// portRangeNotice explains a fallback to the default range (unset or
+	// unparseable PORT_RANGE). Empty when the env value was used as-is.
+	// Published in the heartbeat so the panel can surface the typo.
+	portRangeNotice string
+	portMode        string
+	containerPort   int // port MC listens on inside the container
 
 	sftpPort string
 
@@ -279,8 +283,10 @@ func main() {
 	sftpSrv := NewSFTPServer(rdb, storageMgr, nodeID)
 	go sftpSrv.Start(ctx, sftpPort)
 
-	// Quota provider for first storage path (legacy compat) — multi-path quota handled per-path
-	quotaProvider := NewQuotaProvider(storageMgr.Paths()[0])
+	// One quota provider per storage path: project quotas are per filesystem,
+	// so a single provider would silently skip every server not on the first path.
+	quotaProvider := NewQuotaSet(storageMgr)
+	globalQuotaSet = quotaProvider
 
 	// On startup, restart any running MC containers with stale Redis config
 	dockerMgr.ReconcileRedisEnv()
@@ -307,6 +313,13 @@ func main() {
 			}
 		}()
 	}
+
+	// Shared-storage detection. A storage path mounted into two nodes cannot
+	// work - node identity itself lives there - and the failure is otherwise
+	// silent until a migration destroys a server. Diagnostic only: it warns
+	// loudly and reports through the heartbeat, it never refuses to start.
+	globalSharedStorage = newSharedStorageDetector(nodeID, storageMgr.Paths)
+	globalSharedStorage.Run(ctx.Done())
 
 	go startDiscoveryLoop(ctx, rdb, nodeID, nodeTags, nodeRegion, mon, dockerMgr)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
@@ -472,11 +485,7 @@ func parseConfig() {
 	}
 
 	linkImage = os.Getenv("LINK_IMAGE")
-	if v := os.Getenv("NODE_MANAGES_LINK"); v != "" {
-		nodeManagesLink = v == "true"
-	} else {
-		nodeManagesLink = nodeExternal
-	}
+	nodeManagesLink = resolveNodeManagesLink(os.Getenv("NODE_MANAGES_LINK"), linkImage)
 	if nodeManagesLink && linkImage == "" {
 		log.Println("NODE_MANAGES_LINK is on but LINK_IMAGE is empty — the node will not spawn a Link sidecar.")
 	}
@@ -492,29 +501,9 @@ func parseConfig() {
 	// Port range stays env-only because firewall rules on the host must
 	// match. Allocation strategy + container port move to admin settings
 	// (published to Redis by Core) and are loaded later in loadModesFromRedis.
-	portRangeStart = 25600
-	portRangeEnd = 25699
-	if v := os.Getenv("PORT_RANGE"); v != "" {
-		parts := strings.SplitN(v, "-", 2)
-		if len(parts) == 2 {
-			if s, err := strconv.Atoi(parts[0]); err == nil {
-				portRangeStart = s
-			}
-			if e, err := strconv.Atoi(parts[1]); err == nil {
-				portRangeEnd = e
-			}
-		}
-	} else {
-		if v := os.Getenv("PORT_RANGE_START"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				portRangeStart = n
-			}
-		}
-		if v := os.Getenv("PORT_RANGE_END"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				portRangeEnd = n
-			}
-		}
+	portRangeStart, portRangeEnd, portRangeNotice = resolvePortRange()
+	if portRangeNotice != "" {
+		log.Printf("Port config: %s", portRangeNotice)
 	}
 	portMode = "sequential" // default until loadModesFromRedis overrides
 	containerPort = 25565   // default MC port; admin can change globally in Settings → Nodes → Placement
@@ -615,6 +604,38 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 			ioWeight = uint16(n)
 		}
 	}
+	// Per-node storage placement for NEW servers. Node-scoped, because the paths
+	// differ per node: a global setting could not name them. Absent/unparseable
+	// leaves the node on auto (most free space), which is the historical default.
+	if globalStorageMgr != nil {
+		mode, order := placementAuto, []string(nil)
+		// Our own policy wins; without one we take the fleet default. A stored
+		// plain "auto" with no order carries no information, so it falls through
+		// rather than pinning this node to auto against the fleet setting.
+		for _, key := range []string{
+			fmt.Sprintf("dylaris:node:%s:storage_placement", nodeID),
+			"dylaris:placement:storage_default",
+		} {
+			v, err := rdb.Get(ctx, key).Result()
+			if err != nil || v == "" {
+				continue
+			}
+			var cfg struct {
+				Mode  string   `json:"mode"`
+				Order []string `json:"order"`
+			}
+			if err := json.Unmarshal([]byte(v), &cfg); err != nil {
+				log.Printf("storage placement: ignoring unparseable %s: %v", key, err)
+				continue
+			}
+			if cfg.Mode == placementManual || len(cfg.Order) > 0 {
+				mode, order = cfg.Mode, cfg.Order
+				break
+			}
+		}
+		globalStorageMgr.SetPlacement(mode, order)
+	}
+
 	routingMode, fileAccessMode = applyExternalOverride(routingMode, fileAccessMode, nodeExternal)
 }
 
@@ -634,6 +655,14 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 
 // storageManager is set during init and used by heartbeat to publish storage info.
 var globalStorageMgr *StorageManager
+
+// globalQuotaSet mirrors globalStorageMgr so the heartbeat can report per-path
+// quota enforceability without threading the set through every caller.
+var globalQuotaSet *QuotaSet
+
+// globalSharedStorage detects a storage path mounted into more than one node.
+// Read by the heartbeat so the conflict reaches the panel, not just the node log.
+var globalSharedStorage *sharedStorageDetector
 
 func startDiscoveryLoop(ctx context.Context, rdb *redis.Client, id, tags, region string, mon *agent.Monitor, dm *DockerManager) {
 	ticker := time.NewTicker(5 * time.Second)
@@ -696,9 +725,30 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		data["linkCount"] = dm.CountLinkContainers()
 	}
 
-	// Include storage info in heartbeat
+	// Include storage info in heartbeat, enriched with whether each path can
+	// actually enforce a disk limit (see StorageInfo.QuotaEnforceable).
 	if globalStorageMgr != nil {
-		data["storage"] = globalStorageMgr.GetStorageInfo()
+		infos := globalStorageMgr.GetStorageInfo()
+		enforceable := globalQuotaSet.AvailabilityByPath()
+		for i := range infos {
+			infos[i].QuotaEnforceable = enforceable[infos[i].Path]
+		}
+		data["storage"] = infos
+	}
+
+	// A storage path shared with another node. Reported every beat rather than
+	// once, because the condition persists until an operator changes the mounts
+	// and the panel must keep showing it.
+	if conflicts := globalSharedStorage.Conflicts(); len(conflicts) > 0 {
+		data["sharedStorage"] = conflicts
+	}
+
+	// The effective MC host-port range, so an admin can read it in the panel
+	// instead of off the stack file - these are the ports the host firewall has
+	// to open. The notice is only set when the node fell back to the default.
+	data["portRange"] = fmt.Sprintf("%d-%d", portRangeStart, portRangeEnd)
+	if portRangeNotice != "" {
+		data["portRangeNotice"] = portRangeNotice
 	}
 	jsonData, _ := json.Marshal(data)
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
@@ -781,7 +831,7 @@ func refreshServerMetadata(serverDir, uuid, name, image string, ramMB int, cpu f
 	}
 }
 
-func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaProvider, storage *StorageManager) {
+func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	stream := fmt.Sprintf("dylaris:node:%s:cmds", id)
 	log.Printf("Listening for core commands on stream: %s", stream)
 
@@ -809,7 +859,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 // consumer; returning normally lets the queue ACK the message. Handler errors
 // are logged (preserving the previous behaviour) rather than surfaced, since
 // redelivery is driven by crash-before-return, not per-command logical failure.
-func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaProvider, storage *StorageManager) {
+func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
 	// Apply node-level default cpuset if not set by core
@@ -840,6 +890,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				log.Printf("Quota assign warning for %s: %v", cmd.Config.UUID, err)
 			}
 			if cmd.Config.Docker.DiskLimit > 0 {
+				recordDiskLimit(ctx, rdb, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 				if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
 					log.Printf("Quota limit warning for %s: %v", cmd.Config.UUID, err)
 				}
@@ -1007,6 +1058,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
 		}
 		if quota != nil {
+			recordDiskLimit(ctx, rdb, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 			if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
 				log.Printf("Quota limit update warning for %s: %v", cmd.Config.UUID, err)
 			}
