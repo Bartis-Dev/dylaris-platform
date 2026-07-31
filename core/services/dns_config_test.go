@@ -181,7 +181,12 @@ func TestDNSConfigComplete(t *testing.T) {
 // reconciler rebuilds its provider only when this value changes.
 func TestDNSConfigFingerprint(t *testing.T) {
 	base := DNSConfig{Enabled: true, Provider: "cloudflare", Token: "token-a", Zones: []string{"example.com"}}
-	if base.fingerprint() != base.fingerprint() {
+	// Stability matters as much as sensitivity: a fingerprint that varied per
+	// call would rebuild the provider on every single tick. Held in variables
+	// because comparing one expression against itself is a defect pattern
+	// staticcheck rejects (SA4000), correctly - it just is not one here.
+	firstCall, secondCall := base.fingerprint(), base.fingerprint()
+	if firstCall != secondCall {
 		t.Fatal("fingerprint is not stable across calls")
 	}
 	changed := []struct {
