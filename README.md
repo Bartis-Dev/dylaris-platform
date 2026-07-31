@@ -129,7 +129,7 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 2. **Setup** — the user picks a Java/loader/software (or a modpack), Core pushes a `setup` command, the Node installs it and the server goes `stopped`.
 3. **Run** — start/stop/restart commands flow Core → Redis → Node → Docker. Console, stats, and player data stream back over Redis streams + SSE.
 4. **Reach the server** — depending on the platform **routing mode**:
-   - `ip_port` — the Node binds a host port (`PORT_RANGE_START`–`PORT_RANGE_END`); players connect to `node-ip:port`. This is the default and works without the Gateway.
+   - `ip_port` — the Node binds a host port from `PORT_RANGE`; players connect to `node-ip:port`. This is the default and works without the Gateway.
    - `gateway` — the Node binds **no** host port; player traffic is routed through the optional Gateway **edge** via a reverse tunnel (no node IP exposed). Required for home/external (Warp) nodes.
    - `both` — direct ports *and* gateway routes.
 5. **Files** — `sftp` exposes SFTP (`:25520`), `beam` uses an overlay gRPC transport (`:25521`) that never exposes the node IP. (External/Warp nodes force `gateway`+`beam` automatically via `NODE_EXTERNAL`.)
@@ -160,8 +160,10 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
   makes every emailed verify/reset link unreachable outside the Docker network.
 - **The Node needs the Docker socket.** Treat any host running a Node as trusted;
   it drives the host Docker daemon to launch MC containers.
-- **New in-cluster nodes no longer auto-register from a heartbeat.** A fresh node
-  needs a `NODE_ENROLL_TOKEN` on first boot (like a BYON node); already-paired
+- **New nodes no longer auto-register from a heartbeat.** A fresh node pairs over
+  the gRPC enroll path: an in-cluster node proves possession of `CLUSTER_SECRET`
+  and self-enrolls, a BYON node (which never holds that secret) presents a
+  single-use `NODE_ENROLL_TOKEN` that binds it to its tenant. Already-paired
   nodes reconnect normally.
 
 ## Quick start (single host)
@@ -283,7 +285,7 @@ Every variable below maps to a real env read in the code; nothing is invented. C
 
 Both shipped files forward everything an operator normally needs. What they deliberately do **not** forward, so you must add it to the `environment:` block yourself if you want it:
 
-- **Owner / SaaS integrations:** `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `CF_API_TOKEN`, `CF_ZONE_ID`, `STORE_URL`, `STORE_SHARED_KEY`, `UPDATES_FEED_URL_PLATFORM`, `UPDATES_FEED_URL_GATEWAY`, `BEAM_MANIFEST_URL`, `CLAMAV_ADDR`.
+- **Owner / SaaS integrations:** `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `DNS_API_TOKEN`, `DNS_ZONE`, `STORE_URL`, `STORE_SHARED_KEY`, `UPDATES_FEED_URL_PLATFORM`, `UPDATES_FEED_URL_GATEWAY`, `BEAM_MANIFEST_URL`, `CLAMAV_ADDR`.
 - **Identity and tuning knobs with working defaults:** `DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`, `NODE_MANAGES_LINK`, `LINK_IMAGE`, `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN`.
 - **Port variables** (`API_PORT`, `SFTP_PORT`, `BEAM_GRPC_PORT`, `BEAM_LAN_FASTPATH`, `MIGRATION_PORT`, `PORT_RANGE`) and `CORE_GRPC_ADDR`. These are set as literals in the YAML because the matching `ports:` publication lives there too. Changing a port means editing both lines anyway, so edit the file.
 
@@ -293,7 +295,7 @@ Every secret can be supplied from a **file** instead of a plain env value by set
 
 Supported:
 
-- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `CF_API_TOKEN_FILE`, `STORE_SHARED_KEY_FILE`
+- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `DNS_API_TOKEN_FILE`, `STORE_SHARED_KEY_FILE`
 - **Node:** `CLUSTER_SECRET_FILE`, `BEAM_JWT_SECRET_FILE`
 - **Log shipper:** `REDIS_PASS_FILE`. You will not normally set it: the Node injects a scoped per-node Redis credential when it launches the container. It exists for running the shipper standalone.
 
@@ -342,10 +344,35 @@ secrets:
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
 | `BILLING_SUSPEND_GRACE` | `48h` | No | Grace before a `suspended` (BYON) tenant is cut off (servers stopped, link tunnels dropped), so a transient billing/DB fault cannot instantly kick a paying customer. Go duration; `0` enforces on the next hourly tick. |
 | `ADMIN_SECRET` | *(empty)* | No | RAM-only break-glass. When set (>=16 chars), creating an admin via `/setup` requires this exact value in every mode - closes the fresh-install race and re-opens `/setup` to recover or add an admin. Never written to the DB or logs; unset + restart to disable. Supports `ADMIN_SECRET_FILE`. |
-| `DNS_UPDATER_ENABLED` | `false` | No (owner) | Leader-gated reconciler that points each region's edge wildcard A record at the live edge IPs. Only for multi-region Gateway deploys on Cloudflare; most self-hosters leave it off. |
-| `DNS_PROVIDER` | `cloudflare` | No (owner) | DNS provider for the failover reconciler above. |
-| `CF_API_TOKEN` | *(empty)* | No (owner) | Cloudflare API token for the DNS reconciler. Lives only in Core, never on the edges. |
-| `CF_ZONE_ID` | *(empty)* | No (owner) | Cloudflare zone ID the DNS reconciler updates. |
+| `DNS_UPDATER_ENABLED` | `false` | No (owner) | Leader-gated reconciler that points each region's edge wildcard A record at the live edge IPs. Only for multi-region Gateway deploys; most self-hosters leave it off and set their records by hand. Also settable in Settings -> Infrastructure -> DNS; either switch turns it on. |
+| `DNS_PROVIDER` | `cloudflare` | No (owner) | DNS provider for the reconciler above. Backed by [libdns](https://github.com/libdns/libdns), so more providers are a constructor entry rather than a new HTTP client. |
+| `DNS_API_TOKEN` | *(empty)* | No (owner) | Provider API token. Lives ONLY in Core, never on the edges - an edge is the most exposed host in the fleet and a token that can rewrite the zone does not belong there. `CF_API_TOKEN` is still read as a fallback. **Setting it here makes the panel field read-only**, so a token saved on screen can never silently retire one supplied as a secret. |
+| `DNS_ZONE` | *(empty)* | No (owner) | The zone **name** the edge wildcards live in, e.g. `example.com`. **Replaces `CF_ZONE_ID`**: libdns addresses a zone by name, not by a Cloudflare-assigned id, so the old value cannot be carried over. Required when the updater is on. |
+| `DNS_ZONES` | *(empty)* | No (owner) | Comma-separated multi-zone form, for offering several domains from the same edges. Folded together with `DNS_ZONE`, so a single-zone deployment needs no change. |
+
+All of these can be configured in **Settings -> Infrastructure -> DNS** instead,
+where the token is stored encrypted at rest. The environment wins per field, so a
+token kept in a Docker secret still leaves the zones selectable on screen.
+Enabling the updater from the panel probes the provider against every configured
+zone before the setting is accepted - a credential scoped to only one of them is
+rejected on save rather than failing silently in a log every 30 seconds.
+
+Each region can serve several names, picked in the panel per region, with each
+edge's own `EDGE_WILDCARD` as the fallback when a region has no selection. Beam
+relays get their records from the same loop, using each relay's own
+`BEAM_PUBLIC_HOST` - relays are not part of the panel picker, since several
+relays in one region deliberately share one name to round-robin. The panel lists
+every name in effect labelled by origin (panel, edge env, or relay), because a
+leftover `EDGE_WILDCARD` quietly outliving a panel selection is otherwise
+invisible.
+
+**Deletion is scoped and never zone-wide.** The reconciler records the names it
+creates in a Redis ownership registry and only ever removes names from that
+registry - a zone you release can safely carry your website and mail records. A
+name is removed only after it has gone unadvertised for the grace period (default
+15 minutes), so a rolling edge restart cannot take a live region out of DNS. The
+two original rails still hold: nothing is deleted when a listing fails, and a
+region whose edges are all offline is left untouched.
 | `STORE_URL` | *(empty)* | No (SaaS) | Hosted dylaris.com storefront base URL. Set together with `STORE_SHARED_KEY` to enable store-linking + demo showcase; both empty gives a clean open-core build with no store surface. |
 | `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
 | `UPDATES_FEED_URL_PLATFORM` | *(public repo feed)* | No (owner) | Raw URL of the append-only JSONL update feed the admin "what's new" bell diffs against the baked baseline. Defaults to the platform public-repo raw feed. Fails open when unset or unreachable. |
@@ -363,19 +390,17 @@ secrets:
 | `NODE_TAGS` | *(empty)* | No | Comma-separated placement tags (e.g. `eu,fast`). The tag `external` flags a home/external node. |
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
 | `NODE_EXTERNAL` | `false` | No | If `true` (or `NODE_TAGS` contains `external`), the Node forces `gateway` routing + `beam` file access locally (no host ports, no SFTP). |
-| `NODE_MANAGES_LINK` | *(follows `NODE_EXTERNAL`)* | No | Whether this Node spawns and manages its own Link sidecar. Defaults to the node's external flag when unset; needs `LINK_IMAGE` set to actually spawn one. |
-| `LINK_IMAGE` | *(empty)* | No | Container image for the Link sidecar this Node spawns when it manages Link. Empty means no Link sidecar is spawned. |
+| `NODE_MANAGES_LINK` | *(on when `LINK_IMAGE` is set)* | No | Whether this Node spawns and reconciles its own Link sidecar (container `dylaris_link`). Setting `LINK_IMAGE` is the opt-in; set this to `false` only in the rare case where an image is configured but you deploy Link separately, so the two do not fight over the same container name. A Link is needed per MC Node whenever routing is `gateway`/`both` — not only for BYON. |
+| `LINK_IMAGE` | *(empty)* | No | Container image for the Link sidecar this Node spawns. No built-in default: empty means no Link sidecar, only a log line. |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `CORE_GRPC_ADDR` | *(empty)* | For first boot | Core gRPC endpoint (`host:25501`). Needed for a first-boot node to bootstrap its per-node Redis secret over gRPC; a node with an already-cached secret can start without it (see the boot warning). Redis ACL is mandatory and there is no static-password fallback. |
 | `GRPC_TLS_ENABLED` | `false` | No | TLS + Core-cert fingerprint pinning on the Node ↔ Core gRPC control channel. Off (default) is plaintext. Must match Core's `GRPC_TLS_ENABLED`. |
 | `GRPC_TLS_FINGERPRINT` | *(empty)* | No | Pins the Core control-channel cert fingerprint for a BYON node that does NOT hold `CLUSTER_SECRET` (in-cluster nodes derive it from `CLUSTER_SECRET` and leave this empty). Public pinning material, delivered out-of-band at enroll time. |
-| `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. |
+| `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. Not needed by a node that holds `CLUSTER_SECRET` — it self-enrolls via its cluster proof. |
 | `NODE_RECOVERY_TOKEN` | *(empty)* | For recovery | Single-use, admin-minted token (Settings → Nodes → Reset pairing) to re-pair a node under its EXISTING identity after its secret was reset. Not needed on a normal boot. |
 | `SIDECAR_REDIS_ADDR` | *(falls back to `REDIS_ADDR`)* | No | Redis address handed to MC containers, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. |
 | `SIDECAR_REDIS_DB` | *(falls back to `REDIS_DB`)* | No | Redis DB index for MC containers. |
-| `PORT_RANGE` | *(unset)* | No | Host port range as `START-END` (e.g. `25600-25699`). Takes precedence over the split vars below. |
-| `PORT_RANGE_START` | `25600` | No | Start of host port range for MC servers (`ip_port`/`both`). Ignored if `PORT_RANGE` is set. |
-| `PORT_RANGE_END` | `25699` | No | End of host port range for MC servers. Ignored if `PORT_RANGE` is set. |
+| `PORT_RANGE` | `25600-25699` | No | Host port range for MC servers (`ip_port`/`both`) as `START-END`. Validated: a malformed or inverted range falls back to the default in full (never half-applied) and the reason is shown on the node card in Infrastructure. Replaces the removed `PORT_RANGE_START`/`PORT_RANGE_END`. |
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
 | `BEAM_LAN_FASTPATH` | `true` (on unless `false`) | No | Toggles the Beam LAN fast-path TLS listener on `:25523` (pinned-TLS, direct client ↔ node). Set `false` to disable; any other value leaves it on. |
@@ -383,15 +408,51 @@ secrets:
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
 | `BEAM_JWT_SECRET` | *(empty — Beam rejects all tickets)* | No (required for Beam) | Must match the gateway beam-relay's JWT secret so relay-validated tickets pass the node-side gate. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
-| `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). |
+| `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). **Each path must belong to exactly one node** - see below. |
 | `MODPACK_MIRROR_HOSTS` | *(empty)* | No | Comma-separated extra hosts the Node may download Core-minted pack-build `.mrpack` files from (e.g. the Core public domain / S3 mirror). Merged into the built-in `.mrpack` allowlist (cdn.modrinth.com, github.com, ...). |
 | `DYLARIS_STATS_BUFFER_MAXLEN` | `1800` | No | MaxLen of the per-server stats buffer stream (~1h at 2s). Reduce for very large fleets. |
 | `STATS_STREAM_MAXLEN` | `360` | No | MaxLen of the node system-stats stream (~3h at 30s). |
 
-A brand-new in-cluster node no longer auto-registers from its heartbeat: the
-Core-minted node identity can only be created via the gRPC enroll path, so a
-fresh node needs a `NODE_ENROLL_TOKEN` on first boot just like a BYON node.
-Already-paired nodes keep reconnecting normally.
+#### Shared node storage is not supported
+
+A `STORAGE_PATHS` entry must be backed by a filesystem that belongs to exactly
+one node. Pointing several nodes at one NAS share or one host directory is an
+unsupported topology, and the reason is not that migrations are fragile:
+
+- **Node identity lives in the first storage path.** `.node_secret`, `.node_id`
+  and `.tenant_networks.json` all sit there, so two nodes overwrite each other's
+  identity. The tenant-network allocator writes the whole file without a lock and
+  will hand the same subnet to two different owners.
+- **A migration between two such nodes destroys the server.** The target extracts
+  the archive over the live directory, and the source's cleanup then deletes the
+  running server's data. Open file descriptors keep it alive until the next
+  restart, and the panel reports the migration as successful.
+- **Capacity accounting is wrong.** One 10 TB share behind five nodes is counted
+  as 50 TB of free space by the scheduler.
+
+Each node detects this itself: it writes a beacon into every storage path and
+reads back the beacons it finds. A foreign one means the mount is shared, and the
+node logs it and reports it in its heartbeat, so the Infrastructure page shows it
+on the node card. The migration path refuses independently of that, so a shared
+mount cannot destroy a server even if nobody reads the warning.
+
+The fix is always the same: give each node its own path. There is no supported
+way to share one.
+
+A brand-new node no longer auto-registers from its heartbeat: the Core-minted,
+unguessable node identity can only be created via the gRPC enroll path. There are
+exactly two doors, and which one a node uses is decided by what it holds:
+
+- **In-cluster node** — sends a `cluster_proof` (an HMAC of its id under
+  `CLUSTER_SECRET`) and self-enrolls as an operator-owned node. No token, no
+  panel step, so a first deploy comes up without a mint-and-redeploy round trip.
+- **BYON node** — never holds `CLUSTER_SECRET`, so it presents a single-use
+  `NODE_ENROLL_TOKEN`. That token is what binds the node to its tenant; it is the
+  only path that can produce an owned node.
+
+Admission control (IP allowlist, join toggle) runs before both. When a node
+presents both, the enroll token wins: setting it is an explicit request for an
+owned node. Already-paired nodes keep reconnecting with their per-node secret.
 
 ### Panel
 
@@ -431,7 +492,7 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
 | `25523` | node | Beam LAN fast-path (`BEAM_LAN_PORT`; pinned-TLS, direct client<->node). Publish on the node's LAN (self-host/BYON) to enable the fast path even when a gateway is present; unpublished simply falls back to relay/public. |
 | `25502` | core | Origin-isolated tab-proxy (`TAB_PROXY_PORT`, spec B5; opt-in, same host as panel, different port) |
-| `25600-25699` | node | MC server host ports (`PORT_RANGE_START`–`PORT_RANGE_END`; `ip_port`/`both` routing) |
+| `25600-25699` | node | MC server host ports (`PORT_RANGE`; `ip_port`/`both` routing) |
 | `5432` | postgres | Database (internal) |
 | `6379` | redis | Cache + queues (internal) |
 

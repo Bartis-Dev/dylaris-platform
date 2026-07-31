@@ -216,8 +216,7 @@ services:
       CORE_GRPC_ADDR: "core:25501"
       NODE_ENROLL_TOKEN: "${NODE_ENROLL_TOKEN:-}"
       NODE_RECOVERY_TOKEN: "${NODE_RECOVERY_TOKEN:-}"
-      PORT_RANGE_START: "${PORT_RANGE_START:-25600}"
-      PORT_RANGE_END: "${PORT_RANGE_END:-25699}"
+      PORT_RANGE: "${PORT_RANGE:-25600-25699}"
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com
       MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
