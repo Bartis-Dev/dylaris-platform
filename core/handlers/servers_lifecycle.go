@@ -60,7 +60,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 			Tag:      req.Tag,
 			RAMMB:    req.Docker.RAM,
 			CPUCores: req.Docker.CPULimit,
-			DiskGB:   int(req.Docker.DiskLimit / 1024),
+			DiskGB:   diskMBToGBCeil(req.Docker.DiskLimit),
 		}
 		// BYON: scope auto-placement to nodes this tenant may use (platform or
 		// own), so the scheduler never picks a foreign node only to be rejected
