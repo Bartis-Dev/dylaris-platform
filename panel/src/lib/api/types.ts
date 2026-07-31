@@ -278,7 +278,12 @@ export interface CpuCore { id: number; type: 'P' | 'E' | 'standard'; sibling: nu
 export interface NodeCpuTopology { logicalCount: number; physicalCount: number; hybrid: boolean; cores: CpuCore[]; scannedAt: number; }
 // Returns { success, topology: NodeCpuTopology | null, load: { [coreId]: number } }.
 export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
-// Returns { success, storage: StorageInfo[] } (path/total_bytes/free_bytes/used_bytes/server_count).
+// How a node picks a storage path for NEW servers. "auto" takes the path with
+// the most free space; "manual" walks `order` and takes the first usable path.
+// Paths missing from `order` are tried last, so a disk added later needs no edit.
+// Existing servers never move: their path is pinned at creation time.
+export interface StoragePlacement { mode: 'auto' | 'manual'; order: string[]; }
+// Returns { success, storage: StorageInfo[], placement: StoragePlacement }.
 export const getNodeStorage = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/storage`);
 // Returns { success, nodeId, grpcTlsFingerprint, linkSecret, linkDiscoveryProof }.
 // The secret-free BYON deploy bundle for an already-enrolled node.
@@ -288,6 +293,14 @@ export const getNodes = () => fetchAPI('/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
 export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { method: 'DELETE' });
+export const setNodeStoragePlacement = (id: number, placement: StoragePlacement) =>
+    fetchAPI(`/nodes/${id}/storage-placement`, { method: 'PUT', body: JSON.stringify(placement) });
+// The fleet-wide default a node uses when it has no policy of its own. Returns
+// { success, placement, paths } - paths is every path ANY node reports, since
+// no single node's list describes the fleet.
+export const getFleetStoragePlacement = () => fetchAPI('/settings/storage-placement');
+export const setFleetStoragePlacement = (placement: StoragePlacement) =>
+    fetchAPI('/settings/storage-placement', { method: 'PUT', body: JSON.stringify(placement) });
 // Adopt an auto-discovered node: persist name/region/tags to the DB. After this
 // the heartbeat env no longer overwrites them.
 export const configureNode = (id: number, data: { name?: string; region: string; tags?: string; displayName?: string }) =>
@@ -765,6 +778,14 @@ export interface PlacementSettings {
     pidsLimit: number;
     // Per-container blkio relative weight (10–1000). 0 = off. Scheduler-dependent.
     ioWeight: number;
+    // What happens when a placement would eat into the disk buffer: "soft"
+    // places it anyway and reports it, "hard" refuses. Governs ADMISSION only -
+    // it never stops an already-running server from writing.
+    diskEnforcement: 'soft' | 'hard';
+    // PROJECTED fill levels (written + still promised, over total) at which a
+    // storage path is flagged in the panel.
+    diskWarnPercent: number;
+    diskCriticalPercent: number;
 }
 export interface NodeCandidate {
     nodeId: number;

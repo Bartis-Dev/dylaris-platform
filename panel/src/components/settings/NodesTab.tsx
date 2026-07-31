@@ -8,9 +8,11 @@ import {
     getNodeCpu, getNodeStorage, getNodeDeployBundle, updateNodeCpuset, type NodeCpuTopology,
     getNodeAdmission, updateNodeAdmission, addAdmissionCIDR, deleteAdmissionCIDR, resetNodePairing,
     mintEnrollToken, listEnrollTokens, revokeEnrollToken, type AdmissionCIDR, type NodeEnrollToken,
+    getFleetStoragePlacement, setFleetStoragePlacement, type StoragePlacement as StoragePlacementConfig,
 } from '@/lib/api';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import StoragePlacement from '@/components/StoragePlacement';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
@@ -753,6 +755,53 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 // ─────────────────────────────────────────────
+// Fleet-wide default storage order
+// ─────────────────────────────────────────────
+
+/**
+ * FleetStorageOrder edits the policy a node uses when it has none of its own.
+ *
+ * A fleet-wide ORDER beats a single "default path": paths a node does not have
+ * are skipped and paths the list does not mention go last, so one entry of
+ * /storage means "/storage first everywhere" across a mixed fleet without
+ * naming a single node.
+ */
+function FleetStorageOrder() {
+    const [paths, setPaths] = useState<string[]>([]);
+    const [placement, setPlacement] = useState<StoragePlacementConfig | null>(null);
+
+    useEffect(() => {
+        getFleetStoragePlacement().then(res => {
+            if (!res?.success) return;
+            setPaths(res.paths ?? []);
+            setPlacement(res.placement ?? { mode: 'auto', order: [] });
+        });
+    }, []);
+
+    if (!placement) return <SkeletonCard height="h-24" />;
+    if (paths.length === 0) {
+        return (
+            <p className="text-xs text-(--base-06)">
+                No node is currently reporting a storage path, so there is nothing to order yet.
+            </p>
+        );
+    }
+
+    return (
+        <div className="max-w-md">
+            <StoragePlacement
+                paths={paths}
+                placement={placement}
+                save={setFleetStoragePlacement}
+                onSaved={setPlacement}
+                autoLabel="Most free"
+                hint="Applies to every node that has no order of its own. A node skips paths it does not have."
+            />
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
 // Placement (global defaults + rebalance toggle)
 // ─────────────────────────────────────────────
 
@@ -760,13 +809,16 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
     const [settings, setSettings] = useState<PlacementSettings>({
         cpuOvercommitDefault: 2.0,
         ramOvercommitDefault: 1.0,
-        diskBufferGb: 5,
+        diskBufferGb: 50,
         rebalanceEnabled: false,
         rebalanceThreshold: 90,
         portMode: 'sequential',
         containerPort: 25565,
         pidsLimit: 0,
         ioWeight: 0,
+        diskEnforcement: 'soft',
+        diskWarnPercent: 80,
+        diskCriticalPercent: 95,
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -858,8 +910,63 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                             />
                             <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
                         </div>
-                        <p className="text-xs text-(--base-06)">Reserved free space the scheduler must leave on every node, on top of the server&apos;s own disk request.</p>
+                        <p className="text-xs text-(--base-06)">
+                            Free space every storage path must retain. Counted against what is already <em>promised</em> to
+                            the servers on that path, not just what they have written &mdash; twenty servers with a 50 GB
+                            limit have claimed a terabyte the day they are created. Minimum 10 GB.
+                        </p>
                     </div>
+
+                    <div className="mt-5 flex flex-col gap-[5px]">
+                        <label className="input-label">When a placement would eat into the buffer</label>
+                        <select
+                            value={settings.diskEnforcement}
+                            onChange={e => setSettings(s => ({ ...s, diskEnforcement: e.target.value as 'soft' | 'hard' }))}
+                            className="input-field w-64"
+                        >
+                            <option value="soft">Soft &mdash; place it anyway, flag it</option>
+                            <option value="hard">Hard &mdash; refuse the placement</option>
+                        </select>
+                        <p className="text-xs text-(--base-06)">
+                            Applies to placing a server and raising a limit. Neither mode stops a server that is already
+                            running from writing &mdash; that is what the per-server disk limit does, and only on xfs/ext4.
+                        </p>
+                    </div>
+
+                    <div className="mt-5 flex gap-4">
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label">Warn at</label>
+                            <div className="relative w-28">
+                                <input
+                                    type="number" min={1} max={100}
+                                    value={settings.diskWarnPercent}
+                                    onChange={e => setSettings(s => ({ ...s, diskWarnPercent: Number(e.target.value) }))}
+                                    className="input-field input-mono w-full pr-8 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                />
+                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">%</span>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label">Critical at</label>
+                            <div className="relative w-28">
+                                <input
+                                    type="number" min={1} max={100}
+                                    value={settings.diskCriticalPercent}
+                                    onChange={e => setSettings(s => ({ ...s, diskCriticalPercent: Number(e.target.value) }))}
+                                    className="input-field input-mono w-full pr-8 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                />
+                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p className="mt-2 text-xs text-(--base-06)">
+                        Measured on the <em>projected</em> fill: written plus still promised, over total.
+                    </p>
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5">
+                    <h3 className="mono-label mb-3">Default storage order</h3>
+                    <FleetStorageOrder />
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">

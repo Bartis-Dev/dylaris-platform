@@ -6,9 +6,16 @@ import {
   Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield, Activity,
   Users, Link2, HardDrive, Layers, ArrowUpCircle
 } from 'lucide-react';
-import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
+import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import RoutesPanel from './infrastructure/RoutesPanel';
 import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
+import StoragePlacement from '@/components/StoragePlacement';
+import type { StoragePlacement as StoragePlacementConfig } from '@/lib/api';
+import {
+  sharedStorageMessage,
+  sharedStorageSummary,
+  type SharedStorageConflict,
+} from '@/lib/sharedStorage';
 
 interface StorageInfo {
   path: string;
@@ -19,15 +26,39 @@ interface StorageInfo {
   server_uuids?: string[];
 }
 
-async function fetchNodeStorage(nodeId: number): Promise<StorageInfo[]> {
+interface DiskPathStatus {
+  path: string;
+  totalGb: number;
+  freeGb: number;
+  usedGb: number;
+  committedGb: number;
+  unwrittenGb: number;
+  availableGb: number;
+  headroomGb: number;
+  projectedPercent: number;
+  status: 'unknown' | 'ok' | 'warning' | 'critical' | 'breached';
+  quotaEnforceable: boolean;
+}
+
+async function fetchNodeStorage(nodeId: number): Promise<{ storage: StorageInfo[]; placement: StoragePlacementConfig; capacity: DiskPathStatus[] }> {
+  const fallback = {
+    storage: [] as StorageInfo[],
+    placement: { mode: 'auto' as const, order: [] as string[] },
+    capacity: [] as DiskPathStatus[],
+  };
   try {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
-    return data.success ? (data.storage ?? []) : [];
-  } catch { return []; }
+    if (!data.success) return fallback;
+    return {
+      storage: data.storage ?? [],
+      placement: data.placement ?? fallback.placement,
+      capacity: data.capacity ?? [],
+    };
+  } catch { return fallback; }
 }
 
 interface NodeInfo {
@@ -43,6 +74,12 @@ interface NodeInfo {
   ramFree?: number;
   ramTotal?: number;
   linkCount?: number;
+  portRange?: string;
+  portRangeNotice?: string;
+  // Non-empty when the node found one of its storage paths mounted into another
+  // node too. That topology cannot work - node identity lives in the first
+  // storage path - and it destroys a server on the next migration.
+  sharedStorage?: SharedStorageConflict[];
 }
 
 interface ServerInfo {
@@ -131,9 +168,15 @@ function NodeCard({
   const hasStats = (node.ramTotal ?? 0) > 0;
 
   const [storageData, setStorageData] = useState<StorageInfo[] | null>(null);
+  const [placement, setPlacement] = useState<StoragePlacementConfig | null>(null);
+  const [capacity, setCapacity] = useState<DiskPathStatus[]>([]);
 
   useEffect(() => {
-    fetchNodeStorage(node.id).then(setStorageData);
+    fetchNodeStorage(node.id).then(({ storage, placement, capacity }) => {
+      setStorageData(storage);
+      setPlacement(placement);
+      setCapacity(capacity);
+    });
   }, [node.id]);
 
   return (
@@ -228,6 +271,49 @@ function NodeCard({
         </div>
       )}
 
+      {/* Shared storage — placed above everything else on the card because it
+          is not a warning about degraded behaviour: the node cannot work in this
+          topology at all, and the next migration destroys a server while
+          reporting success. */}
+      {node.sharedStorage && node.sharedStorage.length > 0 && (
+        <div className="rounded-sm border border-(--error-border) bg-(--error-ghost) px-2 py-2 space-y-1.5">
+          <p className="flex items-start gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-[0.08em] text-(--error-light)">
+            <AlertTriangle size={11} className="mt-px shrink-0" />
+            <span>{sharedStorageSummary(node.sharedStorage)}</span>
+          </p>
+          <ul className="space-y-1">
+            {node.sharedStorage.map((c: SharedStorageConflict) => (
+              <li key={`${c.path}-${c.peerNode ?? ''}-${c.kind}`} className="text-[10px] text-(--error-light) leading-snug">
+                {sharedStorageMessage(c)}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-(--base-06) leading-snug">
+            Give each node its own storage path. Sharing one is not supported: node
+            identity is stored there, so the nodes overwrite each other.
+          </p>
+        </div>
+      )}
+
+      {/* MC host-port range — these are the ports the host firewall must open,
+          so it is shown unconditionally rather than hidden behind a detail view. */}
+      {node.portRange && (
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 mono-label">
+              <Network size={10} /> Port range
+            </span>
+            <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{node.portRange}</span>
+          </div>
+          {node.portRangeNotice && (
+            <p className="mt-1.5 flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
+              <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+              <span>{node.portRangeNotice}</span>
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Last seen */}
       {!isOnline && node.lastSeenAt && (
         <p className="text-[10px] text-(--base-05) font-mono">Last seen {timeAgo(node.lastSeenAt)}</p>
@@ -247,6 +333,7 @@ function NodeCard({
           storageData.map((s, i) => {
             const pct = s.total_bytes > 0 ? (s.used_bytes / s.total_bytes) * 100 : 0;
             const barColor = pct > 90 ? 'bg-(--error-light)' : pct > 70 ? 'bg-(--warning)' : 'bg-(--accent)';
+            const cap = capacity.find((c) => c.path === s.path);
             return (
               <div key={i} className="bg-(--base-02) rounded p-2 border border-(--base-03)">
                 <div className="flex justify-between items-center mb-1">
@@ -260,11 +347,69 @@ function NodeCard({
                   <span className="text-[10px] font-mono text-(--base-06)">{formatBytes(s.used_bytes)} / {formatBytes(s.total_bytes)}</span>
                   <span className="text-[10px] font-mono text-(--base-06)">{formatBytes(s.free_bytes)} free</span>
                 </div>
+                {cap && <StorageCapacityNote cap={cap} />}
               </div>
             );
           })
         )}
+
+        {/* Placement policy — only meaningful with more than one path to choose from. */}
+        {placement && storageData && storageData.length > 1 && (
+          <StoragePlacement
+            paths={storageData.map((s) => s.path)}
+            placement={placement}
+            save={(next) => setNodeStoragePlacement(node.id, next)}
+            onSaved={setPlacement}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * StorageCapacityNote shows what free space alone cannot: how much of a path is
+ * already PROMISED to the servers on it. A path can read as 10% full and still
+ * have nothing left to give, because every server is entitled to grow into its
+ * disk limit.
+ */
+function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
+  if (cap.status === 'unknown') return null;
+
+  const tone: Record<string, string> = {
+    ok: 'text-(--base-06)',
+    warning: 'text-(--warning-light)',
+    critical: 'text-(--warning-light)',
+    breached: 'text-(--error-light)',
+  };
+  const label: Record<string, string> = {
+    ok: 'OK',
+    warning: 'Filling up',
+    critical: 'Nearly full',
+    breached: 'Over-promised',
+  };
+
+  return (
+    <div className="mt-1.5 space-y-1 border-t border-(--base-03) pt-1.5">
+      <div className="flex items-center justify-between">
+        <span className="mono-label">Promised</span>
+        <span className={`font-mono text-[10px] tabular-nums ${tone[cap.status]}`}>
+          {label[cap.status]} &middot; {cap.projectedPercent}%
+        </span>
+      </div>
+      <p className="font-mono text-[10px] leading-relaxed text-(--base-05)">
+        {cap.committedGb} GB committed, {cap.unwrittenGb} GB of it not yet written.
+        {' '}
+        {cap.availableGb >= 0
+          ? `${cap.availableGb} GB left to promise after the ${cap.headroomGb} GB buffer.`
+          : `${Math.abs(cap.availableGb)} GB past the ${cap.headroomGb} GB buffer.`}
+      </p>
+      {!cap.quotaEnforceable && (
+        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
+          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+          <span>Disk limits cannot be enforced here: project quotas need xfs or ext4. Limits are recorded but nothing stops a server from exceeding them.</span>
+        </p>
+      )}
     </div>
   );
 }

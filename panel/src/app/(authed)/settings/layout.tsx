@@ -52,6 +52,7 @@ const TAB_GROUPS: SettingsGroup[] = [
         group: 'Infrastructure',
         tabs: [
             { slug: 'regions', label: 'Regions', always: true },
+            { slug: 'dns', label: 'DNS', always: true },
             { slug: 'nodes', label: 'Nodes', always: true },
             { slug: 'gateway', label: 'Gateway', always: true },
             { slug: 'warp', label: 'Warp', always: true },
