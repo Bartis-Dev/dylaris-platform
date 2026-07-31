@@ -83,22 +83,20 @@ func (dm *DockerManager) buildHostPathCache() {
 		return
 	}
 
+	mounts := make([]hostMount, 0, len(info.Mounts))
+	for _, m := range info.Mounts {
+		mounts = append(mounts, hostMount{Destination: m.Destination, Source: m.Source})
+	}
+
 	for _, p := range dm.storageMgr.Paths() {
-		resolved := false
-		for _, m := range info.Mounts {
-			if strings.HasPrefix(p, m.Destination) || p == m.Destination {
-				// Map local path to host path
-				hostPath := strings.Replace(p, m.Destination, m.Source, 1)
-				dm.hostPathCache[p] = hostPath
-				log.Printf("storage: host path %s → %s", p, hostPath)
-				resolved = true
-				break
-			}
-		}
-		if !resolved {
+		hostPath, ok := resolveHostPath(p, mounts)
+		if !ok {
 			// Assume local = host (non-containerized)
 			dm.hostPathCache[p] = p
+			continue
 		}
+		dm.hostPathCache[p] = hostPath
+		log.Printf("storage: host path %s → %s", p, hostPath)
 	}
 }
 

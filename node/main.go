@@ -87,9 +87,15 @@ var (
 	nodeManagesLink bool
 )
 
-// nodeExternal is set at startup: an external/home node forces gateway+beam
-// locally so it never binds host ports or exposes SFTP, regardless of the
-// platform-global routing/file-access setting (spec §9 per-node override).
+// nodeExternal is set at startup: an external/home node forces routing=gateway
+// and file access=beam locally, regardless of the platform-global setting
+// (spec §9 per-node override), so the panel offers Beam rather than SFTP and
+// traffic goes through the gateway instead of a published host port.
+//
+// It is an ADVERTISED mode, not an enforcement: the SFTP listener is started
+// unconditionally further down, so an external node still binds SFTP_PORT.
+// Whether it should is a product question, not a comment fix; until it is
+// answered, do not read this flag as "SFTP is off here".
 var nodeExternal bool
 
 // grpcTLSEnabled gates node<->core gRPC TLS with Core-cert fingerprint pinning.
