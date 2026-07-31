@@ -15,6 +15,9 @@ import (
 var settingsSecretKeys = map[string]bool{
 	"core_storage_s3_secret_key":    true,
 	"modpack_storage_s3_secret_key": true,
+	// DNS provider credential, set in Settings -> DNS. It can rewrite the
+	// operator's zone, so it never sits in the clear next to the zone name.
+	"dns.api_token": true,
 }
 
 // settingsEncMarker prefixes an encrypted value so a read can tell it apart from

@@ -460,7 +460,12 @@ func GetServiceErrorsFromRedis(rdb *redis.Client, service string, count int64) [
 // GetAllServiceErrorsFromRedis reads errors for all gateway service types.
 func GetAllServiceErrorsFromRedis(rdb *redis.Client, count int64) map[string][]errlog.Entry {
 	result := make(map[string][]errlog.Entry)
-	for _, svc := range []string{"gate", "link"} {
+	// "hub" belongs here: the Hub logs a dropped queue message to its own error
+	// stream, and leaving it out of this list is why a malformed create_route
+	// could fail silently for months while the panel still reported success.
+	// "beam" for the same reason: a relay that refuses to register over a
+	// region/host conflict writes the explanation here and nowhere else.
+	for _, svc := range []string{"gate", "link", "hub", "beam"} {
 		entries := GetServiceErrorsFromRedis(rdb, svc, count)
 		if len(entries) > 0 {
 			result[svc] = entries

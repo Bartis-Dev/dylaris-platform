@@ -69,9 +69,18 @@ type Config struct {
 	// provider credentials are present. Credentials live ONLY in Core, never on
 	// the edges.
 	DNSUpdaterEnabled bool
-	DNSProvider       string // "cloudflare"
-	CFAPIToken        string
-	CFZoneID          string
+	DNSProvider       string // see services.SupportedDNSProviders()
+	// DNSAPIToken is the provider credential. CF_API_TOKEN is still read as a
+	// fallback so an existing Cloudflare deployment keeps working.
+	DNSAPIToken string
+	// DNSZone is the zone NAME the edge wildcards live in, e.g. "dylaris.com".
+	// This replaces CF_ZONE_ID: libdns addresses a zone by name, not by a
+	// Cloudflare-assigned id, so the old value cannot be carried over.
+	DNSZone string
+	// DNSZones is the comma-separated multi-zone form, for a hoster offering
+	// several domains from the same edges. DNS_ZONE stays supported and is
+	// folded in, so a single-zone deployment needs no change.
+	DNSZones string
 
 	// Store integration — the hosted dylaris.com storefront. When BOTH
 	// STORE_URL and STORE_SHARED_KEY are set, StoreEnabled flips on and the
@@ -204,8 +213,9 @@ func LoadConfig() (Config, error) {
 
 		DNSUpdaterEnabled: dnsUpdaterEnabled,
 		DNSProvider:       getEnv("DNS_PROVIDER", "cloudflare"),
-		CFAPIToken:        getSecret("CF_API_TOKEN", ""),
-		CFZoneID:          getEnv("CF_ZONE_ID", ""),
+		DNSAPIToken:       getSecret("DNS_API_TOKEN", getSecret("CF_API_TOKEN", "")),
+		DNSZone:           getEnv("DNS_ZONE", ""),
+		DNSZones:          getEnv("DNS_ZONES", ""),
 
 		StoreURL:       storeURL,
 		StoreSharedKey: storeSharedKey,

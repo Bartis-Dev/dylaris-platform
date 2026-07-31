@@ -195,6 +195,8 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/node-admission/cidrs/{id}":    "nodes.delete",
 	"/api/nodes/{id:[0-9]+}":                           "nodes.write",
 	"/api/nodes/{id:[0-9]+}/config":                    "nodes.write",
+	"/api/nodes/{id:[0-9]+}/storage-placement":         "nodes.write",
+	"/api/settings/storage-placement":                  "settings.read",
 	"/api/nodes/{id:[0-9]+}/force":                     "nodes.delete",
 	"/api/nodes/{id:[0-9]+}/placement":                 "nodes.write",
 	"/api/admin/servers":                               "servers.read",
@@ -296,6 +298,8 @@ var requiredCaps = map[string]string{
 	"/api/admin/xdp/config":                           "settings.read",
 	"/api/settings/core-storage":                      "settings.read",
 	"/api/settings/core-storage/test":                 "settings.write",
+	"/api/settings/dns":                               "settings.read",
+	"/api/settings/dns/zones":                         "settings.read",
 	"/api/settings/storage-reach":                     "settings.read",
 	"/api/settings/filemanager":                       "settings.read",
 	"/api/settings/gateway":                           "settings.read",
@@ -451,6 +455,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
 	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
 	storageConnectionHandler := handlers.NewStorageConnectionHandler(appState)
+	dnsSettingsHandler := handlers.NewDNSSettingsHandler(appState)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -1086,6 +1091,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/nodes/{id:[0-9]+}/servers", authHandler.AuthMiddleware(nodeHandler.GetNodeServers)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.ForceDeleteNode))).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
+	api.HandleFunc("/nodes/{id:[0-9]+}/storage-placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.SetNodeStoragePlacement))).Methods("PUT")
+	api.HandleFunc("/settings/storage-placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(nodeHandler.GetFleetStoragePlacement))).Methods("GET")
+	api.HandleFunc("/settings/storage-placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(nodeHandler.SetFleetStoragePlacement))).Methods("PUT")
 	api.HandleFunc("/nodes/{id:[0-9]+}/deploy-bundle", authHandler.AuthMiddleware(nodeHandler.GetDeployBundle)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/cpu", authHandler.AuthMiddleware(cpuPinningHandler.GetNodeCPU)).Methods("GET")
 	// BYON per-user node enrollment tokens (feature-gated inside the handlers).
@@ -1323,6 +1331,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.SaveConfig))).Methods("POST")
 	api.HandleFunc("/settings/core-storage/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.TestConnection))).Methods("POST")
+
+	// DNS updater configuration. The save probes the provider before accepting,
+	// so it is a write even though it stores nothing on a rejected probe; the
+	// zone listing reads through the stored credential and is settings.read.
+	api.HandleFunc("/settings/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dnsSettingsHandler.Get))).Methods("GET")
+	api.HandleFunc("/settings/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dnsSettingsHandler.Save))).Methods("POST")
+	api.HandleFunc("/settings/dns/zones", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dnsSettingsHandler.Zones))).Methods("GET")
 	// Fleet storage health: which Cores are currently failing their shared-
 	// storage self-check.
 	api.HandleFunc("/settings/storage-reach", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.StorageReachStatus))).Methods("GET")

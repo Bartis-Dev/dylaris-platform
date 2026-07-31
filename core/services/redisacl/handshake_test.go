@@ -64,6 +64,12 @@ func (f *fakeHandshakeStore) CreateBYONNode(token, address, ownerID, displayName
 	f.lastCreateToken, f.lastCreateAddress, f.lastCreateOwnerID, f.lastCreateDisplayName = token, address, ownerID, displayName
 	return f.createNodeID, f.createErr
 }
+func (f *fakeHandshakeStore) CreatePlatformNode(token, address, displayName string) (int, error) {
+	f.createCalls++
+	f.lastCreateToken, f.lastCreateAddress, f.lastCreateDisplayName = token, address, displayName
+	f.lastCreateOwnerID = "" // a platform node has no owner
+	return f.createNodeID, f.createErr
+}
 func (f *fakeHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	return f.nodeIDByTokenID, f.nodeIDByTokenFound, f.nodeIDByTokenErr
 }

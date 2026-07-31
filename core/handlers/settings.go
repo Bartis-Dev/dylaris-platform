@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"dylaris-core/services"
 )
 
 type SettingsHandler struct {
@@ -436,12 +438,23 @@ type PlacementSettings struct {
 	// on blk-mq with none/mq-deadline it is a no-op. Hard per-device bps caps need
 	// the backing block device and are intentionally not wired here.
 	IOWeight uint16 `json:"ioWeight"`
+	// DiskEnforcement decides what happens when a placement would eat into the
+	// disk buffer: "soft" places it anyway and reports, "hard" refuses. It
+	// governs ADMISSION only - see services.DiskEnforcementSoft.
+	DiskEnforcement string `json:"diskEnforcement"`
+	// DiskWarnPercent / DiskCriticalPercent are the PROJECTED fill levels
+	// (written + still promised, over total) at which a path is flagged.
+	DiskWarnPercent     int `json:"diskWarnPercent"`
+	DiskCriticalPercent int `json:"diskCriticalPercent"`
 }
 
 var defaultPlacementSettings = PlacementSettings{
 	CPUOvercommitDefault: 2.0, // CPU is time-shared, 2.0x = 200% is conservative
 	RAMOvercommitDefault: 1.0, // RAM has no default overcommit (safer); 100%
-	DiskBufferGB:         10,
+	DiskBufferGB:         services.DefaultDiskHeadroomGB,
+	DiskEnforcement:      services.DiskEnforcementSoft,
+	DiskWarnPercent:      services.DefaultDiskWarnPercent,
+	DiskCriticalPercent:  services.DefaultDiskCritPercent,
 	RebalanceEnabled:     false,
 	RebalanceThreshold:   90,
 	PortMode:             "sequential",
@@ -470,8 +483,24 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
 		return
 	}
-	if req.DiskBufferGB < 0 {
-		req.DiskBufferGB = 0
+	// The buffer is a floor, so it has a floor of its own: below it a path can be
+	// filled until the host itself misbehaves, which takes down every server on
+	// that disk rather than just the one that overran.
+	if req.DiskBufferGB < services.MinDiskHeadroomGB {
+		req.DiskBufferGB = services.MinDiskHeadroomGB
+	}
+	if req.DiskEnforcement != services.DiskEnforcementHard {
+		req.DiskEnforcement = services.DiskEnforcementSoft
+	}
+	if req.DiskWarnPercent < 1 || req.DiskWarnPercent > 100 {
+		req.DiskWarnPercent = services.DefaultDiskWarnPercent
+	}
+	if req.DiskCriticalPercent < 1 || req.DiskCriticalPercent > 100 {
+		req.DiskCriticalPercent = services.DefaultDiskCritPercent
+	}
+	// A warning that fires after the critical level would never be seen.
+	if req.DiskWarnPercent > req.DiskCriticalPercent {
+		req.DiskWarnPercent = req.DiskCriticalPercent
 	}
 	if req.RebalanceThreshold < 50 {
 		req.RebalanceThreshold = 50
@@ -501,6 +530,9 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		{"placement.cpu_overcommit_default", fmt.Sprintf("%g", req.CPUOvercommitDefault)},
 		{"placement.ram_overcommit_default", fmt.Sprintf("%g", req.RAMOvercommitDefault)},
 		{"placement.disk_buffer_gb", fmt.Sprintf("%d", req.DiskBufferGB)},
+		{services.DiskEnforcementSetting, req.DiskEnforcement},
+		{services.DiskWarnPercentSetting, fmt.Sprintf("%d", req.DiskWarnPercent)},
+		{services.DiskCritPercentSetting, fmt.Sprintf("%d", req.DiskCriticalPercent)},
 		{"placement.rebalance_enabled", fmt.Sprintf("%t", req.RebalanceEnabled)},
 		{"placement.rebalance_threshold", fmt.Sprintf("%d", req.RebalanceThreshold)},
 		{"placement.port_mode", req.PortMode},
@@ -544,6 +576,21 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 		var f float64
 		if _, err := fmt.Sscanf(v, "%g", &f); err == nil && f > 0 {
 			s.RAMOvercommitDefault = f
+		}
+	}
+	if v := getStr(services.DiskEnforcementSetting); v == services.DiskEnforcementHard {
+		s.DiskEnforcement = services.DiskEnforcementHard
+	}
+	if v := getStr(services.DiskWarnPercentSetting); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 1 && n <= 100 {
+			s.DiskWarnPercent = n
+		}
+	}
+	if v := getStr(services.DiskCritPercentSetting); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 1 && n <= 100 {
+			s.DiskCriticalPercent = n
 		}
 	}
 	if v := getStr("placement.disk_buffer_gb"); v != "" {
@@ -823,7 +870,7 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 
 	manualOverride := getSetting("beam.relay_address")
 	publicHost := getSetting("beam.public_host")
-	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost)
+	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost, "")
 
 	minVersionMode := getSetting("beam.min_version_mode")
 	if minVersionMode != beamMinVersionModeAuto {

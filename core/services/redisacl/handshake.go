@@ -26,6 +26,9 @@ type HandshakeStore interface {
 	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	NodeLimitReached(ownerID string) bool
 	CreateBYONNode(token, address, ownerID, displayName string) (id int, err error)
+	// CreatePlatformNode creates an operator-owned node row (owner_id stays
+	// NULL). Same Core-minted identity as the BYON path, no owner binding.
+	CreatePlatformNode(token, address, displayName string) (id int, err error)
 	NodeIDByToken(token string) (id int, found bool, err error)
 }
 
@@ -101,6 +104,24 @@ func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address stri
 	}
 	assignedID := uuid.New().String()
 	id, err := h.store.CreateBYONNode(assignedID, address, consumedOwner, token)
+	if err != nil {
+		return "", 0, "", err
+	}
+	secretHex, err := h.ensure(ctx, id, assignedID)
+	return assignedID, id, secretHex, err
+}
+
+// EnrollPlatform creates an OPERATOR-owned node row (owner_id stays NULL) for a
+// node that proved possession of CLUSTER_SECRET, and provisions its ACL. Same
+// Core-minted, unguessable identity as the BYON path; the node-supplied token is
+// kept only as a cosmetic display name.
+//
+// No enroll token is involved, and deliberately no per-owner node limit either:
+// that limit is a BYON billing plan, and a platform node has no owner to bill.
+// The caller is responsible for verifying the cluster proof first.
+func (h *Handshake) EnrollPlatform(ctx context.Context, token, address string) (string, int, string, error) {
+	assignedID := uuid.New().String()
+	id, err := h.store.CreatePlatformNode(assignedID, address, token)
 	if err != nil {
 		return "", 0, "", err
 	}

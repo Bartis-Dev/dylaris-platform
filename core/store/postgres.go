@@ -524,6 +524,28 @@ func (s *PostgresStore) CountServersByNode(nodeID int) (int, error) {
 	return count, err
 }
 
+// ServerDiskLimitsByNode returns uuid -> disk limit in MB for every server on
+// the node. Includes servers with a 0 limit so a caller can tell "unlimited"
+// apart from "not on this node".
+func (s *PostgresStore) ServerDiskLimitsByNode(nodeID int) (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT uuid, COALESCE(disk_limit, 0) FROM servers WHERE node_id = $1`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int64{}
+	for rows.Next() {
+		var uuid string
+		var limitMB int64
+		if err := rows.Scan(&uuid, &limitMB); err != nil {
+			continue
+		}
+		out[uuid] = limitMB
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) ListServersByNode(nodeID int) ([]models.Server, error) {
 	query := `SELECT s.id, s.uuid, s.name, s.status FROM servers s WHERE s.node_id = $1 ORDER BY s.id ASC`
 	rows, err := s.db.Query(query, nodeID)

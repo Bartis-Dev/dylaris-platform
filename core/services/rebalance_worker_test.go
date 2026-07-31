@@ -147,7 +147,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{1: 10}
 
-		if got := w.pickTarget(srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
 			t.Errorf("expected nil (only candidate is the source itself), got node %d", got.ID)
 		}
 	})
@@ -161,7 +161,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10}
 
-		if got := w.pickTarget(srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
 			t.Errorf("expected nil (region mismatch), got node %d", got.ID)
 		}
 	})
@@ -175,7 +175,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10}
 
-		if got := w.pickTarget(srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
 			t.Errorf("expected nil (missing required tag), got node %d", got.ID)
 		}
 	})
@@ -194,7 +194,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 86, 3: 85}
 
-		got := w.pickTarget(srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (load==threshold accepted, load>threshold rejected), got %+v", got)
 		}
@@ -213,7 +213,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10, 3: 10}
 
-		got := w.pickTarget(srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (only one with capacity for 1024MB), got %+v", got)
 		}
@@ -230,7 +230,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 50, 3: 30, 4: 70}
 
-		got := w.pickTarget(srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (lowest load 30), got %+v", got)
 		}
@@ -250,7 +250,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{3: 10, 4: 10}
 
-		if got := w.pickTarget(srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
 			t.Fatalf("expected nil, got %+v", got)
 		}
 	})
@@ -268,7 +268,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		t.Run("routing_mode=ip_port (gateway off)", func(t *testing.T) {
 			fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": ""}}
 			w := &RebalanceWorker{store: fs}
-			if got := w.pickTarget(srv, src, nodes, loads, nil, 85); got != nil {
+			if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
 				t.Errorf("expected nil (external excluded when routing is ip_port), got %+v", got)
 			}
 		})
@@ -276,7 +276,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		t.Run("routing_mode=gateway (gateway on)", func(t *testing.T) {
 			fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
 			w := &RebalanceWorker{store: fs}
-			got := w.pickTarget(srv, src, nodes, loads, nil, 85)
+			got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
 			if got == nil || got.ID != 2 {
 				t.Errorf("expected node 2 (external only excluded when gateway is off), got %+v", got)
 			}
@@ -298,7 +298,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10, 3: 10, 4: 10}
 
-		got := w.pickTarget(srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
 		if got == nil || got.ID != 4 {
 			t.Fatalf("expected node 4 (same tenant), got %+v", got)
 		}

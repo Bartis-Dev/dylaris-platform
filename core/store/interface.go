@@ -94,6 +94,11 @@ type Store interface {
 	// marks the node configured=true so the heartbeat env stops overwriting them.
 	SetNodeConfig(id int, name, region, tags string) error
 	SumAllocatedByNode(nodeID int) (totalRAMMB int64, totalCPU float64, err error)
+	// ServerDiskLimitsByNode returns uuid -> disk limit in MB for every server
+	// on the node, including servers whose limit is 0 (unlimited). Used to sum
+	// how much disk a storage path has already PROMISED, which free space alone
+	// cannot show.
+	ServerDiskLimitsByNode(nodeID int) (map[string]int64, error)
 	CountServersByNode(nodeID int) (int, error)
 	ListServersByNode(nodeID int) ([]models.Server, error)
 	DeleteServersByNode(nodeID int) error

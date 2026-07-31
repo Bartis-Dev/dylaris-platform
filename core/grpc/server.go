@@ -32,6 +32,7 @@ type NodeLookup interface {
 type ACLHandshake interface {
 	EnsureExisting(ctx context.Context, nodeID int, token string) (secretHex string, err error)
 	Enroll(ctx context.Context, token, enrollToken, address string) (assignedID string, nodeID int, secretHex string, err error)
+	EnrollPlatform(ctx context.Context, token, address string) (assignedID string, nodeID int, secretHex string, err error)
 	VerifyProof(ctx context.Context, nodeID int, token, proof string) (ok bool, err error)
 	VerifyChallenge(ctx context.Context, nodeID int, nonce, response string) (ok bool, err error)
 	VerifyClusterProof(token, proof string) bool
@@ -197,12 +198,32 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					return status.Errorf(codes.PermissionDenied, "acl: admission denied (%s) for %s from %v", reason, tokenPrefix(auth.NodeToken), ip)
 				}
 			}
-			// Unknown node: enroll only with a valid enroll token.
-			if auth.EnrollToken == "" {
-				sendFail("unknown node and no enroll token")
-				return fmt.Errorf("acl: unknown node %s without enroll token", tokenPrefix(auth.NodeToken))
+			// Unknown node. Exactly two ways in, tried in this order:
+			//  (1) a single-use enroll token -> BYON node, bound to that token's
+			//      owner. This is the ONLY path that can produce an owned node.
+			//  (2) a valid cluster_proof -> operator-owned platform node
+			//      (owner_id NULL), no token needed. This is the pairing spec's
+			//      "for platform nodes without an enroll token, a cluster_proof":
+			//      a node already holding CLUSTER_SECRET is trusted infrastructure
+			//      by definition, and that secret is strictly more powerful than
+			//      an enroll token, so demanding both only forces a
+			//      deploy -> mint -> redeploy round trip on the operator's own
+			//      fleet. A BYON node never holds CLUSTER_SECRET, so (1) stays
+			//      the only door for tenants and ownership binding is unchanged.
+			// The enroll token wins when both are present: setting it is an
+			// explicit request for an owned node.
+			var assignedID, secretHex string
+			var id int
+			var eerr error
+			switch {
+			case auth.EnrollToken != "":
+				assignedID, id, secretHex, eerr = s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
+			case s.acl.VerifyClusterProof(auth.NodeToken, auth.ClusterProof):
+				assignedID, id, secretHex, eerr = s.acl.EnrollPlatform(ctx, auth.NodeToken, address)
+			default:
+				sendFail("unknown node and no enroll token or cluster proof")
+				return fmt.Errorf("acl: unknown node %s without enroll token or cluster proof", tokenPrefix(auth.NodeToken))
 			}
-			assignedID, id, secretHex, eerr := s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
 			if eerr != nil {
 				sendFail("enrollment failed")
 				return fmt.Errorf("acl: enroll failed for %s: %w", tokenPrefix(auth.NodeToken), eerr)

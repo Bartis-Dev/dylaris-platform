@@ -290,6 +290,17 @@ type Node struct {
 	RAMFree   int64   `json:"ramFree"`
 	RAMTotal  uint64  `json:"ramTotal"`
 	LinkCount int     `json:"linkCount"`
+	// PortRange is the node's effective MC host-port range ("25600-25699").
+	// PortRangeNotice is set only when the node fell back to its default because
+	// PORT_RANGE was unset or unparseable - shown so a typo is visible instead
+	// of the node quietly binding ports the host firewall does not allow.
+	PortRange       string `json:"portRange,omitempty"`
+	PortRangeNotice string `json:"portRangeNotice,omitempty"`
+	// SharedStorage is non-empty when this node found one of its storage paths
+	// mounted into another node as well. That topology cannot work - node
+	// identity itself lives in the first storage path - and it destroys a server
+	// on the next migration while reporting success.
+	SharedStorage []SharedStorageConflict `json:"sharedStorage,omitempty"`
 
 	// Unusable is a derived (not persisted) flag set at API-response time:
 	// true when this node currently has no usable routing path (e.g. an
@@ -306,6 +317,21 @@ type Node struct {
 	// time: true when the node has no region assigned (booted with only a
 	// CLUSTER_SECRET, no DYLARIS_REGION), so an admin should configure it.
 	NeedsConfiguration bool `json:"needsConfiguration,omitempty"`
+}
+
+// SharedStorageConflict is one storage path a node found mounted into another
+// node as well. Mirrors what the node publishes in its heartbeat.
+//
+// Kind is "peer" (another node's beacon sits on our disk) or the strictly worse
+// "identity" (another PROCESS is writing our own beacon, so .node_secret and
+// .node_id have already collided and the two nodes overwrite each other).
+// Shared node storage is not supported - it is detected and surfaced, never
+// worked around.
+type SharedStorageConflict struct {
+	Path     string `json:"path"`
+	Kind     string `json:"kind"`
+	PeerNode string `json:"peerNode,omitempty"`
+	PeerHost string `json:"peerHost,omitempty"`
 }
 
 // IsExternal reports whether this node is an external/home node (tag "external").

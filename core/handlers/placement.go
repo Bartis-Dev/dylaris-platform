@@ -154,7 +154,7 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 			continue
 		}
 
-		c := h.scoreNode(n, req, heartbeats[n.Token])
+		c := h.scoreNode(ctx, n, req, heartbeats[n.Token])
 		candidates = append(candidates, c)
 	}
 
@@ -216,7 +216,7 @@ func dedupe(in []string) []string {
 // scoreNode evaluates one node against the request. Available=false when
 // adding the new server would push allocation past physical*overcommit.
 // Score is normalized 0..3 (sum of three 0..1 components), lower is better.
-func (h *PlacementHandler) scoreNode(n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
+func (h *PlacementHandler) scoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
 	allocRAM, allocCPU, _ := h.state.Store.SumAllocatedByNode(n.ID)
 	serverCount, _ := h.state.Store.CountServersByNode(n.ID)
 
@@ -251,20 +251,35 @@ func (h *PlacementHandler) scoreNode(n *models.Node, req PickNodeRequest, hb *se
 				allocCPU, req.CPUCores, cap, n.CPUOvercommitRatio)
 		}
 	}
-	// Disk floor — heartbeat reports free bytes per storage path. We pick
-	// the largest single path because servers go on one disk, not split.
+	// Disk floor — a server lives on ONE path, so measure the path this node
+	// would actually choose (taking the largest instead would admit a server the
+	// node then places on a smaller disk) and subtract what that path has
+	// already PROMISED to the servers on it. Free space alone hides
+	// oversubscription until users actually fill their servers.
 	if cand.Available && req.DiskGB > 0 && hb != nil {
-		maxFreeGB := int64(0)
-		for _, sp := range hb.Storage {
-			gb := sp.FreeBytes / (1024 * 1024 * 1024)
-			if gb > maxFreeGB {
-				maxFreeGB = gb
-			}
+		limits, err := h.state.Store.ServerDiskLimitsByNode(n.ID)
+		if err != nil {
+			limits = nil
 		}
-		// 5 GB buffer so we never fill a disk to 0.
-		if maxFreeGB > 0 && maxFreeGB < int64(req.DiskGB)+5 {
-			cand.Available = false
-			cand.Reason = fmt.Sprintf("disk full: %d GB free, need %d GB + 5 GB buffer", maxFreeGB, req.DiskGB)
+		res := services.CheckDiskCapacity(services.DiskCapacityRequest{
+			Storage:    hb.Storage,
+			Placement:  services.EffectiveNodePlacement(ctx, h.state.Redis, n.Token),
+			Committed:  services.CommittedBytesByPath(hb.Storage, limits),
+			HeadroomGB: services.DiskHeadroomGB(h.state.Store),
+			WantMB:     int64(req.DiskGB) * 1024,
+		})
+		if !res.Fits {
+			detail := fmt.Sprintf("%s: %d GB free, %d GB already promised to other servers, %d GB buffer -> %d GB available, need %d GB",
+				res.Path, res.FreeGB, res.UnwrittenGB, res.HeadroomGB, res.AvailableGB, req.DiskGB)
+			// Soft mode still places the server; the operator asked to be told,
+			// not to be stopped. Reporting it either way is the point - the old
+			// behaviour was to neither stop nor tell.
+			if services.DiskEnforcement(h.state.Store) == services.DiskEnforcementHard {
+				cand.Available = false
+				cand.Reason = "disk over-promised on " + detail
+			} else {
+				cand.Reason = "warning: disk over-promised on " + detail
+			}
 		}
 	}
 

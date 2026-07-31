@@ -158,7 +158,7 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 		return
 	}
 
-	target := w.pickTarget(candidate, src, nodes, loads, heartbeats, threshold)
+	target := w.pickTarget(ctx, candidate, src, nodes, loads, heartbeats, threshold)
 	if target == nil {
 		log.Printf("rebalance: node %d overloaded (%.0f%%), server %s eligible but no target with capacity; skipping",
 			src.ID, loads[src.ID], candidate.UUID)
@@ -228,7 +228,7 @@ func (w *RebalanceWorker) migrationLocked(ctx context.Context, serverUUID string
 // the source, honoring the source's region/tag constraints, with room for the
 // server's RAM+CPU under overcommit, and below the overload threshold. Among
 // valid targets the lowest-load node wins. Returns nil when none qualify.
-func (w *RebalanceWorker) pickTarget(srv *models.Server, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int) *models.Node {
+func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int) *models.Node {
 	gatewayOn := w.gatewayEnabled()
 
 	var best *models.Node
@@ -265,7 +265,7 @@ func (w *RebalanceWorker) pickTarget(srv *models.Server, src *models.Node, nodes
 		if loads[t.ID] > float64(threshold) {
 			continue
 		}
-		if !nodeHasCapacityFor(w.store, t, heartbeats[t.Token], srv) {
+		if !nodeHasCapacityFor(w.store, t, heartbeats[t.Token], srv, EffectiveNodePlacement(ctx, w.redis, t.Token)) {
 			continue
 		}
 		if best == nil || loads[t.ID] < bestLoad {

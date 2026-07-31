@@ -115,6 +115,21 @@ func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
 	return int64(cnt) >= lim.MaxNodes
 }
 
+// CreatePlatformNode is CreateBYONNode without the owner binding: the row stays
+// owner_id NULL, which is what makes it an operator node rather than a tenant's.
+func (a *aclHandshakeStore) CreatePlatformNode(token, address, displayName string) (int, error) {
+	n := &models.Node{Name: token, Token: token, Address: address, Status: "offline"}
+	if err := a.store.CreateNode(n); err != nil {
+		return 0, err
+	}
+	if displayName != "" {
+		if err := a.store.SetNodeDisplayName(n.ID, displayName); err != nil {
+			return 0, err
+		}
+	}
+	return n.ID, nil
+}
+
 func (a *aclHandshakeStore) CreateBYONNode(token, address, ownerID, displayName string) (int, error) {
 	n := &models.Node{Name: token, Token: token, Address: address, Status: "offline"}
 	if err := a.store.CreateNode(n); err != nil {
@@ -315,17 +330,26 @@ func main() {
 	// a suspend before the link teardown dependencies are wired.
 
 	// DNS reconciler — leader-gated. Points each region's edge wildcard A record
-	// at the live edge IPs via the DNS provider. Off unless DNS_UPDATER_ENABLED
-	// and provider credentials are set; credentials live only here, never on edges.
-	if cfg.DNSUpdaterEnabled {
-		if provider := services.NewCloudflareProvider(cfg.CFAPIToken, cfg.CFZoneID); provider != nil {
-			dnsReconciler := services.NewDNSReconciler(redisClient, provider)
-			dnsReconciler.SetLeader(coreLeader)
-			dnsReconciler.Start(bgCtx)
-		} else {
-			log.Println("DNS updater enabled but Cloudflare credentials missing (CF_API_TOKEN / CF_ZONE_ID) — skipping")
-		}
-	}
+	// at the live edge IPs via the DNS provider. Credentials live only here,
+	// never on edges. It always starts and resolves its configuration per tick:
+	// env wins, the panel is the fallback, and an unconfigured install is a
+	// no-op. That is what lets a panel change take effect without a restart.
+	appState.DNSConfig = services.NewDNSConfigResolver(services.DNSEnvConfig{
+		Enabled:  cfg.DNSUpdaterEnabled,
+		Provider: cfg.DNSProvider,
+		Token:    cfg.DNSAPIToken,
+		// DNS_ZONE (one zone) and DNS_ZONES (several) both feed the same list, so
+		// an existing single-zone deployment keeps working untouched.
+		Zones: append(strings.Split(cfg.DNSZones, ","), cfg.DNSZone),
+	}, pgStore)
+	dnsReconciler := services.NewDNSReconciler(redisClient, appState.DNSConfig)
+	dnsReconciler.SetLeader(coreLeader)
+	// Beam relays get their records from the same loop, so a relay name is never
+	// mistaken for an abandoned edge name and swept.
+	dnsReconciler.SetRelaySource(func(ctx context.Context) []services.RelayAdvert {
+		return handlers.BeamRelayAdverts(ctx, redisClient)
+	})
+	dnsReconciler.Start(bgCtx)
 
 	// Auto-delete service — daily ticker scans inactive users,
 	// emails warnings, executes deletions per the auth.* settings. No-op

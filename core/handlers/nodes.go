@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -361,9 +362,222 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"storage": storage,
+		"success":   true,
+		"storage":   storage,
+		"placement": h.readStoragePlacement(r, node.Token),
+		"capacity":  h.storageCapacity(r, node),
 	})
+}
+
+// storageCapacity is the per-path picture the panel shows: what is free, how
+// much of it is already promised to existing servers, and what that leaves.
+// Empty when the node is offline or reported no storage.
+func (h *NodeHandler) storageCapacity(r *http.Request, node *models.Node) []services.DiskPathStatus {
+	if h.state.Redis == nil {
+		return []services.DiskPathStatus{}
+	}
+	hb := services.LoadHeartbeat(r.Context(), h.state.Redis, node.Token)
+	if hb == nil || len(hb.Storage) == 0 {
+		return []services.DiskPathStatus{}
+	}
+	limits, err := h.state.Store.ServerDiskLimitsByNode(node.ID)
+	if err != nil {
+		limits = nil
+	}
+	warn, critical := services.DiskThresholds(h.state.Store)
+	return services.PathStatuses(
+		hb.Storage,
+		services.CommittedBytesByPath(hb.Storage, limits),
+		services.DiskHeadroomGB(h.state.Store),
+		warn, critical,
+	)
+}
+
+// storagePlacementKey is per NODE, not global: the paths differ per node, so a
+// single fleet-wide order could not name them.
+func storagePlacementKey(nodeToken string) string {
+	return "dylaris:node:" + nodeToken + ":storage_placement"
+}
+
+// storagePlacement is the policy for placing NEW servers on a node.
+// Mode "auto" picks the path with the most free space (the historical
+// behaviour); "manual" walks Order and takes the first usable path.
+type storagePlacement struct {
+	Mode  string   `json:"mode"`
+	Order []string `json:"order"`
+}
+
+// readStoragePlacement returns the stored policy, defaulting to auto. A missing
+// or unreadable key is not an error: auto is what the node does anyway.
+func (h *NodeHandler) readStoragePlacement(r *http.Request, nodeToken string) storagePlacement {
+	out := storagePlacement{Mode: "auto", Order: []string{}}
+	if h.state.Redis == nil {
+		return out
+	}
+	val, err := h.state.Redis.Get(r.Context(), storagePlacementKey(nodeToken)).Result()
+	if err != nil || val == "" {
+		return out
+	}
+	var stored storagePlacement
+	if json.Unmarshal([]byte(val), &stored) != nil {
+		return out
+	}
+	if stored.Mode != "manual" {
+		stored.Mode = "auto"
+	}
+	if stored.Order == nil {
+		stored.Order = []string{}
+	}
+	return stored
+}
+
+// SetNodeStoragePlacement PUT /api/nodes/{id}/storage-placement
+// Sets how the node places NEW servers across its storage paths. Existing
+// servers never move: their path is pinned in Redis at creation time.
+func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	node, err := h.state.Store.GetNodeByID(id)
+	if err != nil || node == nil {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
+	if !canManageNode(h.state, r, node) {
+		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	if h.state.Redis == nil {
+		sendJSONError(w, "Redis unavailable", 503)
+		return
+	}
+
+	var req storagePlacement
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid request body", 400)
+		return
+	}
+	if req.Mode != "auto" && req.Mode != "manual" {
+		sendJSONError(w, "mode must be auto or manual", 400)
+		return
+	}
+
+	// Only keep paths this node actually reports, deduped and in the submitted
+	// order. Rejecting instead would strand an admin whose node dropped a disk;
+	// dropping instead would hide a typo. So: reject what the node knows to be
+	// wrong, accept everything when the node is offline and cannot tell us.
+	known := h.nodeStoragePaths(r, node.Token)
+	order := make([]string, 0, len(req.Order))
+	seen := make(map[string]bool, len(req.Order))
+	for _, p := range req.Order {
+		if p == "" || seen[p] {
+			continue
+		}
+		if len(known) > 0 && !known[p] {
+			sendJSONError(w, "unknown storage path: "+p, 400)
+			return
+		}
+		seen[p] = true
+		order = append(order, p)
+	}
+
+	payload, err := json.Marshal(storagePlacement{Mode: req.Mode, Order: order})
+	if err != nil {
+		sendJSONError(w, "Failed to encode placement", 500)
+		return
+	}
+	// No TTL: this is configuration, and the node re-reads it on every settings
+	// poll. It survives a node restart but not a Redis flush - same as the other
+	// dylaris:placement:* settings.
+	if err := h.state.Redis.Set(r.Context(), storagePlacementKey(node.Token), payload, 0).Err(); err != nil {
+		sendJSONError(w, "Failed to store placement", 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"placement": storagePlacement{Mode: req.Mode, Order: order},
+	})
+}
+
+// GetFleetStoragePlacement GET /api/settings/storage-placement
+// The fleet-wide default a node uses when it has no policy of its own, plus
+// every storage path any node currently reports (no single node's list
+// describes the fleet).
+func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
+	if h.state.Redis == nil {
+		sendJSONError(w, "Redis unavailable", 503)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"placement": services.LoadFleetPlacement(r.Context(), h.state.Redis),
+		"paths":     services.FleetStoragePaths(r.Context(), h.state.Redis),
+	})
+}
+
+// SetFleetStoragePlacement PUT /api/settings/storage-placement
+func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
+	if h.state.Redis == nil {
+		sendJSONError(w, "Redis unavailable", 503)
+		return
+	}
+	var req storagePlacement
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid request body", 400)
+		return
+	}
+	if req.Mode != "auto" && req.Mode != "manual" {
+		sendJSONError(w, "mode must be auto or manual", 400)
+		return
+	}
+
+	// Unlike the per-node form, an unknown path is NOT an error here: the fleet
+	// default names paths that only some nodes have, and a node that lacks one
+	// simply skips it. Rejecting would make the setting unusable on a mixed fleet.
+	order := make([]string, 0, len(req.Order))
+	seen := make(map[string]bool, len(req.Order))
+	for _, p := range req.Order {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		order = append(order, p)
+	}
+
+	next := services.NodePlacement{Mode: req.Mode, Order: order}
+	if err := services.SaveFleetPlacement(r.Context(), h.state.Redis, next); err != nil {
+		sendJSONError(w, "Failed to store placement", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "placement": next})
+}
+
+// nodeStoragePaths returns the paths the node last reported, or an empty map
+// when it is offline or has not reported any.
+func (h *NodeHandler) nodeStoragePaths(r *http.Request, nodeToken string) map[string]bool {
+	out := map[string]bool{}
+	if h.state.Redis == nil {
+		return out
+	}
+	val, err := h.state.Redis.Get(r.Context(), "dylaris:discovery:"+nodeToken).Result()
+	if err != nil {
+		return out
+	}
+	var hb struct {
+		Storage []struct {
+			Path string `json:"path"`
+		} `json:"storage"`
+	}
+	if json.Unmarshal([]byte(val), &hb) != nil {
+		return out
+	}
+	for _, s := range hb.Storage {
+		if s.Path != "" {
+			out[s.Path] = true
+		}
+	}
+	return out
 }
 
 // GetDeployBundle GET /api/nodes/{id}/deploy-bundle returns the values a secret-free

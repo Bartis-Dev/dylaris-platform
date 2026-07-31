@@ -5,52 +5,28 @@ import (
 	"fmt"
 )
 
+// createGatewayTables owns only the ONE gateway table Core actually uses.
+//
+// Core used to also create gateway_links, gateway_routes and gateway_system_logs
+// "for first-run", from the era when Core and the Hub shared one database. Core
+// never read or wrote a single row of them - everything crossing the Core/Hub
+// boundary goes through Redis (the dylaris:hub:queue work queue and the route:*
+// keys), never through SQL. Creating them here only meant Core's DDL and the
+// Hub's GORM model raced to define the same tables, which is exactly what made
+// a shared database unusable: Core declared gateway_routes.owner_id as UUID
+// while the Hub modelled an integer, so the Hub's AutoMigrate tried to retype
+// the column on every boot. The Hub now creates its own tables from its own
+// models, so the two can share a database without colliding.
+//
+// Existing databases keep those three tables; they are inert and can be dropped
+// by hand. gateway_route_limits below is Core's own and stays.
 func createGatewayTables(db *sql.DB) error {
 	tables := []string{
-		// Links table (managed by Hub via GORM, but created here for first-run).
-		// Constraint name `uni_gateway_links_token` matches GORM's
-		// uniqueIndex auto-naming so Hub's AutoMigrate doesn't try to
-		// rename it on every startup.
-		`CREATE TABLE IF NOT EXISTS gateway_links (
-			id SERIAL PRIMARY KEY,
-			name TEXT NOT NULL,
-			token TEXT NOT NULL,
-			enabled BOOLEAN DEFAULT TRUE,
-			is_system BOOLEAN DEFAULT FALSE,
-			node_id TEXT DEFAULT NULL,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			deleted_at TIMESTAMPTZ,
-			CONSTRAINT uni_gateway_links_token UNIQUE (token)
-		)`,
-		// Routes table (managed by Hub via GORM). Same naming convention.
-		`CREATE TABLE IF NOT EXISTS gateway_routes (
-			id SERIAL PRIMARY KEY,
-			domain TEXT NOT NULL,
-			target_ip TEXT NOT NULL,
-			target_port INTEGER NOT NULL DEFAULT 25565,
-			link_id INTEGER REFERENCES gateway_links(id) ON DELETE SET NULL,
-			server_id INTEGER REFERENCES servers(id) ON DELETE CASCADE,
-			owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
-			server_uuid TEXT DEFAULT '',
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			deleted_at TIMESTAMPTZ,
-			CONSTRAINT idx_route_domain UNIQUE (domain)
-		)`,
-		// Route limits (still managed by Core raw SQL)
+		// Route limits (managed by Core raw SQL; the Hub has no such table)
 		`CREATE TABLE IF NOT EXISTS gateway_route_limits (
 			id SERIAL PRIMARY KEY,
 			scope TEXT NOT NULL UNIQUE,
 			max_routes INTEGER NOT NULL DEFAULT 0
-		)`,
-		// System logs (managed by Hub via GORM)
-		`CREATE TABLE IF NOT EXISTS gateway_system_logs (
-			id SERIAL PRIMARY KEY,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			level TEXT NOT NULL DEFAULT 'INFO',
-			source TEXT NOT NULL DEFAULT 'GATEWAY',
-			message TEXT NOT NULL
 		)`,
 	}
 	for _, q := range tables {
@@ -59,7 +35,11 @@ func createGatewayTables(db *sql.DB) error {
 		}
 	}
 
-	// Migration: rename old tables and columns for Hub GORM compatibility
+	// Legacy shim, only reachable on a database where an OLD Core created the
+	// Hub's tables: reshape them into what the Hub's AutoMigrate expects so it
+	// does not fatal. On a fresh database the tables do not exist and every
+	// statement here is a no-op (errors are ignored on purpose). Deletable once
+	// no deployment shares a database with a pre-2026-07 Core.
 	migrations := []string{
 		// Rename gateway_logs -> gateway_system_logs (Hub expects "system_logs" with prefix)
 		`DO $$ BEGIN

@@ -41,6 +41,17 @@ type NodeHeartbeat struct {
 	RAMTotal      uint64                 `json:"ramTotal"`
 	TotalCPU      float64                `json:"totalCpu"`
 	Storage       []HeartbeatStoragePath `json:"storage"`
+	// PortRange is the node's effective MC host-port range ("25600-25699") and
+	// PortRangeNotice is set only when the node fell back to its default because
+	// PORT_RANGE was unset or unparseable. Surfaced so an admin sees the ports
+	// the host firewall must open, and sees a typo instead of a silent default.
+	PortRange       string `json:"portRange,omitempty"`
+	PortRangeNotice string `json:"portRangeNotice,omitempty"`
+	// SharedStorage is non-empty when the node found one of its storage paths
+	// mounted into another node too. That topology cannot work - node identity
+	// lives in the first storage path - and it silently destroys a server on the
+	// next migration, so it is carried all the way to the panel.
+	SharedStorage []models.SharedStorageConflict `json:"sharedStorage,omitempty"`
 	// EnrollToken is the per-user BYON enroll token (NODE_ENROLL_TOKEN). When a
 	// NEW node presents a valid one, it is bound to that user (owner_id). Empty
 	// for platform nodes.
@@ -58,6 +69,14 @@ type HeartbeatStoragePath struct {
 	FreeBytes   int64  `json:"free_bytes"`
 	UsedBytes   int64  `json:"used_bytes"`
 	ServerCount int    `json:"server_count"`
+	// ServerUUIDs are the top-level directories the node found on this path.
+	// It is what lets Core attribute each server's PROMISED disk limit to the
+	// path it actually lives on - free space alone cannot show commitment.
+	ServerUUIDs []string `json:"server_uuids"`
+	// QuotaEnforceable reports whether a per-server disk limit can actually be
+	// enforced here (project quotas need xfs/ext4). Surfaced so a limit that
+	// silently does nothing on NFS/CIFS is visible instead of assumed.
+	QuotaEnforceable bool `json:"quota_enforceable"`
 }
 
 // LoadHeartbeats reads every node heartbeat currently in Redis and
@@ -85,6 +104,24 @@ func LoadHeartbeats(ctx context.Context, r *redis.Client) map[string]*NodeHeartb
 		out[hb.ID] = &hb
 	}
 	return out
+}
+
+// LoadHeartbeat reads ONE node's heartbeat by token. Prefer it over
+// LoadHeartbeats when a single node is wanted: the plural form does a KEYS scan
+// over the whole fleet.
+func LoadHeartbeat(ctx context.Context, r *redis.Client, nodeToken string) *NodeHeartbeat {
+	if r == nil || nodeToken == "" {
+		return nil
+	}
+	val, err := r.Get(ctx, "dylaris:discovery:"+nodeToken).Result()
+	if err != nil || val == "" {
+		return nil
+	}
+	var hb NodeHeartbeat
+	if json.Unmarshal([]byte(val), &hb) != nil {
+		return nil
+	}
+	return &hb
 }
 
 type NodeIPs struct {

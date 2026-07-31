@@ -168,6 +168,9 @@ func (f *fakeACLHandshakeStore) NodeLimitReached(ownerID string) bool { return f
 func (f *fakeACLHandshakeStore) CreateBYONNode(token, address, ownerID, displayName string) (int, error) {
 	return 0, nil
 }
+func (f *fakeACLHandshakeStore) CreatePlatformNode(token, address, displayName string) (int, error) {
+	return 0, nil
+}
 func (f *fakeACLHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	if token == f.knownToken {
 		return f.knownNodeID, true, nil

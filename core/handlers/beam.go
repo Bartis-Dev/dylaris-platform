@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/services"
 	beamauth "dylaris-pkg/beam/auth"
 	"github.com/redis/go-redis/v9"
 )
@@ -27,10 +28,15 @@ const beamRegistrySet = "sys:beams"
 // BeamRelayInfo describes one discovered relay. Mirrors what the relay's
 // heartbeat publishes so we can surface it raw in the admin UI.
 type BeamRelayInfo struct {
-	BeamID       string `json:"beam_id"`
-	IP           string `json:"ip"`
-	PrivateIP    string `json:"private_ip,omitempty"`
-	PublicHost   string `json:"public_host,omitempty"` // e.g. "beam.dylaris.com" — preferred over IP
+	BeamID     string `json:"beam_id"`
+	IP         string `json:"ip"`
+	PrivateIP  string `json:"private_ip,omitempty"`
+	PublicHost string `json:"public_host,omitempty"` // e.g. "beam.dylaris.com" — preferred over IP
+	// Region groups relays the way EdgeRegion groups edges. Matched against the
+	// region of the NODE a transfer targets, because the payload path is
+	// client -> relay -> node: a relay near the client but far from the node
+	// makes the round trip worse, not better.
+	Region       string `json:"region,omitempty"`
 	ServicePort  string `json:"service_port"`
 	ClientPort   string `json:"client_port,omitempty"`
 	DownloadPort string `json:"download_port,omitempty"`
@@ -84,12 +90,55 @@ func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []BeamRelayInfo 
 	return out
 }
 
-// PickBeamRelay returns one relay using simple random load-balancing.
-// Returns the zero value when none are registered.
-func PickBeamRelay(ctx context.Context, rdb *redis.Client) (BeamRelayInfo, bool) {
+// BeamRelayAdverts translates the live relay registry into the narrow view the
+// DNS planner needs. It lives here rather than in services because the registry
+// reader does, and services must not import handlers.
+//
+// A relay is only included when it advertises BOTH a public host and an address:
+// the host is the record name and the IP is its value, so one without the other
+// is nothing DNS can act on. Relays are deliberately not part of the panel's
+// name picker - the name comes from the relay's own BEAM_PUBLIC_HOST.
+func BeamRelayAdverts(ctx context.Context, rdb *redis.Client) []services.RelayAdvert {
+	relays := DiscoverBeamRelays(ctx, rdb)
+	out := make([]services.RelayAdvert, 0, len(relays))
+	for _, r := range relays {
+		host := strings.TrimSpace(r.PublicHost)
+		ip := strings.TrimSpace(r.IP)
+		if host == "" || ip == "" {
+			continue
+		}
+		out = append(out, services.RelayAdvert{Name: host, IP: ip})
+	}
+	return out
+}
+
+// PickBeamRelay returns one live relay, preferring preferredRegion and falling
+// back to any relay when that region has none.
+//
+// The random choice among equals is the load balancing: several relays sharing
+// one region (and therefore one DNS name) split traffic and can be rolled one at
+// a time. The region is a HARD filter rather than a score because the wrong
+// region is not "slightly slower" - it can double a transatlantic hop.
+//
+// Falling back to another region rather than failing is deliberate: a transfer
+// over a distant relay beats no transfer at all, and because clients re-resolve
+// on every connect, the next one returns to the right region on its own the
+// moment a relay there registers. No re-check loop is needed for that.
+func PickBeamRelay(ctx context.Context, rdb *redis.Client, preferredRegion string) (BeamRelayInfo, bool) {
 	relays := DiscoverBeamRelays(ctx, rdb)
 	if len(relays) == 0 {
 		return BeamRelayInfo{}, false
+	}
+	if region := strings.TrimSpace(preferredRegion); region != "" {
+		matching := make([]BeamRelayInfo, 0, len(relays))
+		for _, r := range relays {
+			if strings.EqualFold(strings.TrimSpace(r.Region), region) {
+				matching = append(matching, r)
+			}
+		}
+		if len(matching) > 0 {
+			relays = matching
+		}
 	}
 	return relays[rand.Intn(len(relays))], true
 }
@@ -100,16 +149,17 @@ func PickBeamRelay(ctx context.Context, rdb *redis.Client) (BeamRelayInfo, bool)
 // beam.public_host) — the relay's own registered IP is an internal
 // overlay address a desktop client can't reach. Manual override (DB
 // setting beam.relay_address) still wins outright for incident routing.
-func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost string) (string, string) {
+func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost, preferredRegion string) (string, string) {
 	if strings.TrimSpace(manualOverride) != "" {
 		return manualOverride, "manual"
 	}
-	if info, ok := PickBeamRelay(ctx, rdb); ok {
-		// The configured public host is the single source of truth for
-		// the externally reachable hostname — it overrides whatever the
-		// relay reported about itself.
-		if h := strings.TrimSpace(publicHost); h != "" {
-			info.PublicHost = h
+	if info, ok := PickBeamRelay(ctx, rdb, preferredRegion); ok {
+		// A relay that reports its own public host knows better than one
+		// fleet-wide setting can: with several regions there is no single
+		// correct hostname. The setting stays the fallback, which is what a
+		// relay predating BEAM_PUBLIC_HOST relies on.
+		if info.PublicHost == "" {
+			info.PublicHost = strings.TrimSpace(publicHost)
 		}
 		port := info.ClientPort
 		if port == "" {
@@ -282,12 +332,16 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	nodeDiscoveryID := ""
 	var nodePrivateIPs []string
 	var nodePublicIP string
+	// The node's region decides which relay a transfer should use: the payload
+	// runs client -> relay -> node, so the relay belongs near the NODE.
+	nodeRegion := ""
 	if server.NodeID > 0 {
 		node, err := h.state.Store.GetNodeByID(server.NodeID)
 		if err == nil && node != nil {
 			nodeDiscoveryID = node.Token
 			nodePrivateIPs = node.PrivateIPs
 			nodePublicIP = node.PublicIP
+			nodeRegion = node.Region
 		}
 	}
 	if nodeDiscoveryID == "" {
@@ -313,7 +367,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		val, _ := h.state.Store.GetSetting(key)
 		return val
 	}
-	relayAddr, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"))
+	relayAddr, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 
 	// Sign ticket via shared auth package — same format used by gateway
@@ -406,7 +460,9 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 
 	manualOverride := getSetting("beam.relay_address")
 	publicHost := getSetting("beam.public_host")
-	relayAddress, _ := resolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost)
+	// No server context here, so no region to prefer: this endpoint answers
+	// "which relay can I reach at all", and the ticket path applies the region.
+	relayAddress, _ := resolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost, "")
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"

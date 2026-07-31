@@ -1,160 +1,182 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/netip"
+	"sort"
+	"strings"
 	"time"
+
+	"github.com/libdns/cloudflare"
+	"github.com/libdns/libdns"
 )
 
-// DNSRecord is one A record as seen/managed by a DNSProvider.
+// DNS is managed through libdns rather than a hand-written client per provider.
+//
+// The reconciler only ever needs three operations on A records, but writing them
+// against one vendor's REST API meant that supporting a second vendor was a
+// second client. libdns is the abstraction Caddy uses for ~95 provider packages,
+// so adding one here becomes a constructor entry instead of an HTTP client.
+//
+// Only A records are managed: raw Minecraft traffic is TCP/UDP, so these names
+// must resolve to real addresses and can be neither proxied nor CNAMEd.
+
+// dnsRecordTTL is what new records get. Deliberately short - these names follow
+// live edges, and a long TTL would keep sending players to an edge that is
+// already gone. Carried over unchanged from the previous client.
+const dnsRecordTTL = 60 * time.Second
+
+// DNSRecord is one A record as the reconciler sees it.
+//
+// There is deliberately no provider-assigned ID. libdns treats provider data as
+// explicitly non-portable, so a record is identified the way DNS itself does it:
+// by name, type and value. That also removes a class of bug where a stale ID
+// deletes the wrong record.
 type DNSRecord struct {
-	ID      string // provider-assigned id (needed to delete)
-	Name    string // FQDN, e.g. "*.eu.dylaris.com"
-	Type    string // always "A" here
-	Content string // the IPv4 address
+	Name string // FQDN, e.g. "*.eu.dylaris.com"
+	IP   string // the IPv4 address
 }
 
-// DNSProvider is the small surface the reconciler needs from a DNS backend. Only
-// A records are managed (raw Minecraft TCP/UDP needs real IPs, DNS-only).
+// DNSProvider is the surface the reconciler needs from a DNS backend. Every
+// method takes the zone explicitly, because one credential is meant to manage
+// several zones - a hoster offering more than one domain.
 type DNSProvider interface {
-	// ListA returns the existing A records for an exact record name.
-	ListA(ctx context.Context, name string) ([]DNSRecord, error)
-	// CreateA creates a DNS-only (unproxied) A record name -> ip.
-	CreateA(ctx context.Context, name, ip string) error
-	// DeleteRecord removes a record by its provider id.
-	DeleteRecord(ctx context.Context, id string) error
+	ListA(ctx context.Context, zone, name string) ([]DNSRecord, error)
+	CreateA(ctx context.Context, zone, name, ip string) error
+	DeleteA(ctx context.Context, zone, name, ip string) error
+	// Zones lists the zones this credential can see. Optional in libdns, so it
+	// returns ErrZoneListingUnsupported when the provider cannot do it - a
+	// caller must tell that apart from "the call failed" and from "no zones
+	// visible", because the three lead to different remedies.
+	Zones(ctx context.Context) ([]string, error)
 }
 
-// --- Cloudflare ---
+// ErrZoneListingUnsupported means the provider does not implement libdns's
+// optional ZoneLister. The operator has to name their zones by hand; it is not a
+// fault in their configuration and must not be reported as one.
+var ErrZoneListingUnsupported = fmt.Errorf("this DNS provider cannot list zones")
 
-const cfAPIBase = "https://api.cloudflare.com/client/v4"
-
-// CloudflareProvider implements DNSProvider against the Cloudflare API for a
-// single zone. The token + zone live only here (in Core), never on the edges.
-type CloudflareProvider struct {
-	token  string
-	zoneID string
-	http   *http.Client
+// libdnsProvider adapts any libdns provider to DNSProvider.
+type libdnsProvider struct {
+	name     string
+	records  libdns.RecordGetter
+	appender libdns.RecordAppender
+	deleter  libdns.RecordDeleter
+	zones    libdns.ZoneLister // nil when the provider does not support listing
 }
 
-// NewCloudflareProvider returns a provider, or nil when credentials are missing
-// (so the caller can treat "not configured" as "feature off").
-func NewCloudflareProvider(token, zoneID string) *CloudflareProvider {
-	if token == "" || zoneID == "" {
-		return nil
+// NewDNSProvider builds a provider by name. Returns (nil, nil) when the token is
+// missing, so the caller keeps treating "not configured" as "feature off".
+func NewDNSProvider(providerName, token string) (DNSProvider, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, nil
 	}
-	return &CloudflareProvider{
-		token:  token,
-		zoneID: zoneID,
-		http:   &http.Client{Timeout: 10 * time.Second},
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case "", "cloudflare":
+		return wrapLibDNS("cloudflare", &cloudflare.Provider{APIToken: token})
+	default:
+		return nil, fmt.Errorf("unknown DNS provider %q", providerName)
 	}
 }
 
-// cfRecord is the subset of a Cloudflare DNS record we read.
-type cfRecord struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Content string `json:"content"`
-}
+// SupportedDNSProviders is what the panel offers. Kept beside the constructor so
+// the two cannot drift apart.
+func SupportedDNSProviders() []string { return []string{"cloudflare"} }
 
-type cfListResponse struct {
-	Success bool       `json:"success"`
-	Errors  []cfError  `json:"errors"`
-	Result  []cfRecord `json:"result"`
-}
-
-type cfWriteResponse struct {
-	Success bool      `json:"success"`
-	Errors  []cfError `json:"errors"`
-}
-
-type cfError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func cfErrText(errs []cfError) string {
-	if len(errs) == 0 {
-		return "unknown error"
+// wrapLibDNS asserts the three required interfaces plus the optional one. A
+// provider missing a required interface is a wiring mistake here, not a runtime
+// condition, so it fails loudly at construction rather than at 3am.
+func wrapLibDNS(name string, p any) (DNSProvider, error) {
+	getter, ok := p.(libdns.RecordGetter)
+	if !ok {
+		return nil, fmt.Errorf("dns provider %s cannot read records", name)
 	}
-	return fmt.Sprintf("%d: %s", errs[0].Code, errs[0].Message)
+	appender, ok := p.(libdns.RecordAppender)
+	if !ok {
+		return nil, fmt.Errorf("dns provider %s cannot create records", name)
+	}
+	deleter, ok := p.(libdns.RecordDeleter)
+	if !ok {
+		return nil, fmt.Errorf("dns provider %s cannot delete records", name)
+	}
+	lister, _ := p.(libdns.ZoneLister) // optional; nil is a valid state
+	return &libdnsProvider{name: name, records: getter, appender: appender, deleter: deleter, zones: lister}, nil
 }
 
-func (c *CloudflareProvider) do(ctx context.Context, method, url string, body any, out any) error {
-	var reader *bytes.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(b)
-	} else {
-		reader = bytes.NewReader(nil)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+// aRecord builds the libdns record for one name/ip pair. libdns names are
+// RELATIVE to the zone, while the reconciler works in FQDNs throughout.
+func aRecord(zone, name, ip string) (libdns.Address, error) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
 	if err != nil {
-		return err
+		return libdns.Address{}, fmt.Errorf("invalid IP %q: %w", ip, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
-	}
-	return nil
+	return libdns.Address{
+		Name: libdns.RelativeName(strings.TrimSuffix(name, "."), zone),
+		TTL:  dnsRecordTTL,
+		IP:   addr,
+	}, nil
 }
 
-func (c *CloudflareProvider) ListA(ctx context.Context, name string) ([]DNSRecord, error) {
-	url := fmt.Sprintf("%s/zones/%s/dns_records?type=A&name=%s", cfAPIBase, c.zoneID, name)
-	var lr cfListResponse
-	if err := c.do(ctx, http.MethodGet, url, nil, &lr); err != nil {
+func (l *libdnsProvider) ListA(ctx context.Context, zone, name string) ([]DNSRecord, error) {
+	recs, err := l.records.GetRecords(ctx, zone)
+	if err != nil {
 		return nil, err
 	}
-	if !lr.Success {
-		return nil, fmt.Errorf("cloudflare list: %s", cfErrText(lr.Errors))
+	want := strings.TrimSuffix(strings.ToLower(name), ".")
+	out := []DNSRecord{}
+	for _, rec := range recs {
+		rr := rec.RR()
+		if !strings.EqualFold(rr.Type, "A") {
+			continue
+		}
+		// GetRecords returns the whole zone with relative names; compare on the
+		// absolute form so callers keep speaking FQDNs.
+		fqdn := strings.TrimSuffix(strings.ToLower(libdns.AbsoluteName(rr.Name, zone)), ".")
+		if fqdn != want {
+			continue
+		}
+		out = append(out, DNSRecord{Name: name, IP: rr.Data})
 	}
-	out := make([]DNSRecord, 0, len(lr.Result))
-	for _, r := range lr.Result {
-		out = append(out, DNSRecord{ID: r.ID, Name: r.Name, Type: r.Type, Content: r.Content})
-	}
+	// Stable order so logs and tests do not depend on provider iteration order.
+	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
 	return out, nil
 }
 
-func (c *CloudflareProvider) CreateA(ctx context.Context, name, ip string) error {
-	url := fmt.Sprintf("%s/zones/%s/dns_records", cfAPIBase, c.zoneID)
-	body := map[string]any{
-		"type":    "A",
-		"name":    name,
-		"content": ip,
-		"ttl":     60,    // low TTL so failover converges quickly
-		"proxied": false, // DNS-only: raw MC TCP/UDP must reach the edge directly
-	}
-	var wr cfWriteResponse
-	if err := c.do(ctx, http.MethodPost, url, body, &wr); err != nil {
+func (l *libdnsProvider) CreateA(ctx context.Context, zone, name, ip string) error {
+	rec, err := aRecord(zone, name, ip)
+	if err != nil {
 		return err
 	}
-	if !wr.Success {
-		return fmt.Errorf("cloudflare create %s -> %s: %s", name, ip, cfErrText(wr.Errors))
-	}
-	return nil
+	// Append, not Set: several edges answer for one wildcard, and SetRecords
+	// would remove exactly the siblings we deliberately keep.
+	_, err = l.appender.AppendRecords(ctx, zone, []libdns.Record{rec})
+	return err
 }
 
-func (c *CloudflareProvider) DeleteRecord(ctx context.Context, id string) error {
-	url := fmt.Sprintf("%s/zones/%s/dns_records/%s", cfAPIBase, c.zoneID, id)
-	var wr cfWriteResponse
-	if err := c.do(ctx, http.MethodDelete, url, nil, &wr); err != nil {
+func (l *libdnsProvider) DeleteA(ctx context.Context, zone, name, ip string) error {
+	rec, err := aRecord(zone, name, ip)
+	if err != nil {
 		return err
 	}
-	if !wr.Success {
-		return fmt.Errorf("cloudflare delete %s: %s", id, cfErrText(wr.Errors))
+	_, err = l.deleter.DeleteRecords(ctx, zone, []libdns.Record{rec})
+	return err
+}
+
+func (l *libdnsProvider) Zones(ctx context.Context) ([]string, error) {
+	if l.zones == nil {
+		return nil, ErrZoneListingUnsupported
 	}
-	return nil
+	zones, err := l.zones.ListZones(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(zones))
+	for _, z := range zones {
+		if name := strings.TrimSpace(z.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }

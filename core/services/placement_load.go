@@ -49,7 +49,7 @@ func nodeLoadPercent(allocRAMMB int64, allocCPU float64, totalRAMMB int64, total
 // RAM and CPU request under its overcommit ratios, and enough free disk. Mirrors
 // the Available checks in handlers.scoreNode so a rebalance move never lands on
 // a node the scheduler would have rejected.
-func nodeHasCapacityFor(s store.Store, n *models.Node, hb *NodeHeartbeat, srv *models.Server) bool {
+func nodeHasCapacityFor(s store.Store, n *models.Node, hb *NodeHeartbeat, srv *models.Server, placement NodePlacement) bool {
 	allocRAM, allocCPU, err := s.SumAllocatedByNode(n.ID)
 	if err != nil {
 		return false
@@ -69,17 +69,31 @@ func nodeHasCapacityFor(s store.Store, n *models.Node, hb *NodeHeartbeat, srv *m
 			return false
 		}
 	}
-	// Disk floor: pick the largest single path (a server lives on one disk) and
-	// keep a 5 GB buffer. Skip when the disk request or heartbeat is unknown.
+	// Disk floor: measure the path the NODE would actually choose (with a manual
+	// priority order that is not the largest one) and count what the path has
+	// already PROMISED, not just what is free. Skipped when the server has no
+	// disk limit or the node reported no storage.
+	//
+	// srv.DiskLimit is MEGABYTES. It used to be compared against a gigabyte
+	// figure here, which made this check reject every target for any server that
+	// had a limit at all - auto-move was silently dead for those servers.
 	if srv.DiskLimit > 0 && hb != nil {
-		maxFreeGB := int64(0)
-		for _, sp := range hb.Storage {
-			gb := sp.FreeBytes / (1024 * 1024 * 1024)
-			if gb > maxFreeGB {
-				maxFreeGB = gb
-			}
+		limits, err := s.ServerDiskLimitsByNode(n.ID)
+		if err != nil {
+			return false
 		}
-		if maxFreeGB > 0 && maxFreeGB < srv.DiskLimit+5 {
+		res := CheckDiskCapacity(DiskCapacityRequest{
+			Storage:    hb.Storage,
+			Placement:  placement,
+			Committed:  CommittedBytesByPath(hb.Storage, limits),
+			HeadroomGB: DiskHeadroomGB(s),
+			WantMB:     srv.DiskLimit,
+		})
+		// Only hard mode blocks. In soft mode an over-promised path must not
+		// stop a REBALANCE either: refusing to move a server off an overloaded
+		// node because the target is over-promised leaves it where it is, which
+		// is the worse of the two.
+		if !res.Fits && DiskEnforcement(s) == DiskEnforcementHard {
 			return false
 		}
 	}

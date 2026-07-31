@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 )
 
@@ -19,10 +20,16 @@ func NewInfrastructureHandler(state *AppState) *InfrastructureHandler {
 
 // nodeHeartbeatStats is the subset we read from the Redis heartbeat key.
 type nodeHeartbeatStats struct {
-	CPUUsage  float64 `json:"cpuUsage"`
-	RAMFree   int64   `json:"ramFree"`
-	RAMTotal  uint64  `json:"ramTotal"`
-	LinkCount int     `json:"linkCount"`
+	CPUUsage        float64 `json:"cpuUsage"`
+	RAMFree         int64   `json:"ramFree"`
+	RAMTotal        uint64  `json:"ramTotal"`
+	LinkCount       int     `json:"linkCount"`
+	PortRange       string  `json:"portRange"`
+	PortRangeNotice string  `json:"portRangeNotice"`
+	// SharedStorage carries the node's own detection of a storage path mounted
+	// into more than one node. Passed straight through: the node is the only
+	// party that can see it, and it must not stay in that node's log.
+	SharedStorage []models.SharedStorageConflict `json:"sharedStorage"`
 }
 
 // GetOverview GET /api/infrastructure/overview
@@ -57,6 +64,9 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 				nodes[i].RAMFree = hb.RAMFree
 				nodes[i].RAMTotal = hb.RAMTotal
 				nodes[i].LinkCount = hb.LinkCount
+				nodes[i].PortRange = hb.PortRange
+				nodes[i].PortRangeNotice = hb.PortRangeNotice
+				nodes[i].SharedStorage = hb.SharedStorage
 			}
 		}
 	}
