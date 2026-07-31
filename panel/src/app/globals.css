@@ -280,6 +280,16 @@ button:hover {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
+/* Focus ring for interactive elements that are NOT .btn: icon-only buttons,
+   text actions, toggles. Same ring as .btn:focus-visible so a keyboard user
+   sees one consistent indicator everywhere.
+   :focus-visible rather than :focus, so it appears for keyboard navigation
+   without ringing every mouse click. */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ghost);
+  border-radius: var(--radius-sm);
+}
 .btn-sm {
   padding: 5px 10px;
   font-size: 12px;

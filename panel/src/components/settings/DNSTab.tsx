@@ -190,7 +190,7 @@ function RegionNameEditor({
                                 type="button"
                                 onClick={() => onChange(names.filter(x => x !== n))}
                                 aria-label={`Remove ${n} from ${region}`}
-                                className="text-(--base-06) hover:text-(--error-light) transition-colors"
+                                className="focus-ring text-(--base-06) hover:text-(--error-light) transition-colors"
                             >
                                 <X size={11} />
                             </button>
@@ -392,7 +392,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                     </div>
                     <button
                         onClick={() => setEnabled(v => !v)}
-                        className={`toggle-track ${enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
+                        className={`focus-ring toggle-track ${enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
                         role="switch"
                         aria-checked={enabled}
                         aria-label="Automatic DNS updates"
@@ -454,7 +454,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                                             setClearToken(v => !v);
                                             setToken('');
                                         }}
-                                        className="text-xs text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                        className="focus-ring text-xs text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
                                     >
                                         {clearToken ? 'Keep token' : 'Remove token'}
                                     </button>
@@ -480,7 +480,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                             type="button"
                             onClick={loadZones}
                             disabled={zonesLoading || !(settings?.tokenSet || token)}
-                            className="inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light) transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="focus-ring inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light) transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {zonesLoading
                                 ? <Loader2 size={12} className="animate-spin" />
@@ -506,7 +506,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                                         type="button"
                                         onClick={() => removeZone(z)}
                                         aria-label={`Remove zone ${z}`}
-                                        className="shrink-0 text-(--base-06) hover:text-(--error-light) transition-colors"
+                                        className="focus-ring shrink-0 text-(--base-06) hover:text-(--error-light) transition-colors"
                                     >
                                         <X size={13} />
                                     </button>
@@ -525,7 +525,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                                         key={z}
                                         type="button"
                                         onClick={() => addZone(z)}
-                                        className="inline-flex items-center gap-1 rounded-md border border-(--base-03) bg-(--base-02) px-2 py-1 font-mono text-[11px] text-(--base-07) hover:border-(--accent) hover:text-(--accent-light) transition-colors"
+                                        className="focus-ring inline-flex items-center gap-1 rounded-md border border-(--base-03) bg-(--base-02) px-2 py-1 font-mono text-[11px] text-(--base-07) hover:border-(--accent) hover:text-(--accent-light) transition-colors"
                                     >
                                         <Plus size={11} /> {z}
                                     </button>
