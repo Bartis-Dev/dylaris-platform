@@ -217,7 +217,7 @@ func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 // inside a one-shot Java container.
 func installNeoForge(dir, version, javaImage, serverUUID string) error {
 	if version == "" {
-		resp, err := http.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+		resp, err := installerMetaClient.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
 		if err != nil {
 			return fmt.Errorf("neoforge metadata fetch failed: %v", err)
 		}
@@ -289,7 +289,7 @@ func runJavaInstaller(serverUUID, subServerName, javaImage, installerJAR string,
 
 // fetchJSON is a tiny helper that fetches a URL and decodes JSON into target.
 func fetchJSON(url string, target interface{}) error {
-	resp, err := http.Get(url)
+	resp, err := installerMetaClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ func fetchJSON(url string, target interface{}) error {
 // the direct download URL, so there is no longer a URL to reconstruct.
 func installPaper(dir, version string) error {
 	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/paper/versions/%s/builds/latest", version)
-	resp, err := http.Get(apiURL)
+	resp, err := installerMetaClient.Get(apiURL)
 	if err != nil {
 		return fmt.Errorf("failed to query PaperMC API: %v", err)
 	}
@@ -338,7 +338,7 @@ func installPaper(dir, version string) error {
 func installVanilla(dir, version string) error {
 	const manifestURL = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
 
-	resp, err := http.Get(manifestURL)
+	resp, err := installerMetaClient.Get(manifestURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch Mojang manifest: %v", err)
 	}
@@ -365,7 +365,7 @@ func installVanilla(dir, version string) error {
 		return fmt.Errorf("vanilla version %s not found in Mojang manifest", version)
 	}
 
-	resp2, err := http.Get(versionURL)
+	resp2, err := installerMetaClient.Get(versionURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch version info for %s: %v", version, err)
 	}
@@ -612,7 +612,7 @@ func downloadFile(url, destPath string) error {
 	}
 	defer out.Close()
 
-	resp, err := http.Get(url)
+	resp, err := installerDownloadClient.Get(url)
 	if err != nil {
 		return err
 	}
