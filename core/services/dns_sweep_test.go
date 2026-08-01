@@ -12,17 +12,20 @@ import (
 
 // sweepProvider records deletions and can be made to fail on demand.
 type sweepProvider struct {
-	records  map[string][]DNSRecord // "zone|name" -> records
-	deleted  []string               // "zone|name|ip", in order
-	listErr  map[string]error       // keyed by name
-	deleteAt map[string]error       // keyed by "name|ip"
+	records   map[string][]DNSRecord // "zone|name" -> records
+	created   []string               // "zone|name|ip", in order
+	deleted   []string               // "zone|name|ip", in order
+	listErr   map[string]error       // keyed by name
+	deleteAt  map[string]error       // keyed by "name|ip"
+	createErr map[string]error       // keyed by "name|ip"
 }
 
 func newSweepProvider() *sweepProvider {
 	return &sweepProvider{
-		records:  map[string][]DNSRecord{},
-		listErr:  map[string]error{},
-		deleteAt: map[string]error{},
+		records:   map[string][]DNSRecord{},
+		listErr:   map[string]error{},
+		deleteAt:  map[string]error{},
+		createErr: map[string]error{},
 	}
 }
 
@@ -41,7 +44,14 @@ func (p *sweepProvider) ListA(_ context.Context, zone, name string) ([]DNSRecord
 	return p.records[zone+"|"+name], nil
 }
 
-func (p *sweepProvider) CreateA(_ context.Context, _, _, _ string) error { return nil }
+func (p *sweepProvider) CreateA(_ context.Context, zone, name, ip string) error {
+	if err := p.createErr[name+"|"+ip]; err != nil {
+		return err
+	}
+	p.created = append(p.created, zone+"|"+name+"|"+ip)
+	p.records[zone+"|"+name] = append(p.records[zone+"|"+name], DNSRecord{Name: name, IP: ip})
+	return nil
+}
 
 func (p *sweepProvider) DeleteA(_ context.Context, zone, name, ip string) error {
 	if err := p.deleteAt[name+"|"+ip]; err != nil {

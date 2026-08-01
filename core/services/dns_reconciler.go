@@ -134,7 +134,32 @@ func (d *DNSReconciler) reconcile(ctx context.Context) {
 	}
 
 	now := time.Now().UTC()
-	status := DNSReconcilerStatus{LastRunAt: now, OK: true}
+	written, failures, status := applyDNSPlan(ctx, provider, plan)
+	status.LastRunAt = now
+
+	if orphanFailures := d.sweepOrphans(ctx, provider, written, now, cfg.OrphanGrace); len(orphanFailures) > 0 {
+		failures = append(failures, orphanFailures...)
+	}
+
+	sort.Strings(status.ManagedNames)
+	if len(failures) > 0 {
+		sort.Strings(failures)
+		status.OK = false
+		status.Error = strings.Join(failures, "; ")
+	}
+	d.writeStatus(ctx, status)
+}
+
+// applyDNSPlan brings each planned name in line with what the provider holds:
+// create the addresses that are missing, remove the ones that no longer belong.
+// Pure in the sense that matters - it takes a plan and a provider and touches
+// nothing else - so the create/delete rules can be tested without Redis.
+//
+// Returns the names that were written CLEANLY, which is what the caller records
+// as owned. A name whose create or delete failed is deliberately left out: it
+// must not be claimed, because a claim is what makes a name deletable later.
+func applyDNSPlan(ctx context.Context, provider DNSProvider, plan DNSPlan) (DNSPlan, []string, DNSReconcilerStatus) {
+	status := DNSReconcilerStatus{OK: true}
 	var failures []string
 
 	for _, n := range plan.Unroutable {
@@ -144,11 +169,7 @@ func (d *DNSReconciler) reconcile(ctx context.Context) {
 		failures = append(failures, n.Name+": outside every managed zone")
 	}
 
-	// Names the reconciler successfully wrote this pass. Ownership is recorded
-	// from THIS set, not from the plan, so a name whose write failed is never
-	// claimed - and therefore never becomes deletable later.
 	written := DNSPlan{}
-
 	for _, n := range plan.Names {
 		status.ManagedNames = append(status.ManagedNames, n.Name)
 		status.RecordCount += len(n.IPs)
@@ -201,18 +222,7 @@ func (d *DNSReconciler) reconcile(ctx context.Context) {
 			written.Names = append(written.Names, n)
 		}
 	}
-
-	if orphanFailures := d.sweepOrphans(ctx, provider, written, now, cfg.OrphanGrace); len(orphanFailures) > 0 {
-		failures = append(failures, orphanFailures...)
-	}
-
-	sort.Strings(status.ManagedNames)
-	if len(failures) > 0 {
-		sort.Strings(failures)
-		status.OK = false
-		status.Error = strings.Join(failures, "; ")
-	}
-	d.writeStatus(ctx, status)
+	return written, failures, status
 }
 
 // sweepOrphans removes the records of names the reconciler once created and
