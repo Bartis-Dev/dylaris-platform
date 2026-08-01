@@ -229,6 +229,20 @@ button:hover {
   cursor: pointer;
 }
 
+/* Design-system focus ring for every button that does not style focus itself.
+   Buttons are not left without an indicator otherwise - Tailwind v4's preflight
+   keeps the browser's default outline - but that outline is the OS one, so
+   keyboard focus looked different from element to element across the panel.
+   This replaces it with the same ring .btn and .focus-ring use.
+
+   Deliberately a bare element selector (0,1,1): every Tailwind focus utility
+   (0,2,0) and both .btn / .focus-ring rules outrank it, so anything with its
+   own focus treatment keeps it and this only fills the gap. */
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ghost);
+}
+
 /* ══════════════════════════════════════════════════════
    COMPONENT UTILITY CLASSES
    ══════════════════════════════════════════════════════ */
