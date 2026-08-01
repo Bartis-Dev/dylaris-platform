@@ -281,14 +281,17 @@ button:hover {
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
 /* Focus ring for interactive elements that are NOT .btn: icon-only buttons,
-   text actions, toggles. Same ring as .btn:focus-visible so a keyboard user
-   sees one consistent indicator everywhere.
-   :focus-visible rather than :focus, so it appears for keyboard navigation
-   without ringing every mouse click. */
+   text actions, toggles. Same ring as .btn:focus-visible, so focus looks the
+   same across the panel instead of falling back to the browser's own outline.
+   Buttons DO get a default outline (Tailwind v4's preflight does not remove
+   it), so this is about consistency, not about restoring a missing indicator.
+   :focus-visible rather than :focus, so it shows for keyboard navigation
+   without ringing every mouse click.
+   Deliberately does NOT set border-radius: the ring follows the element's own
+   shape, and forcing one distorts a rounded-full button on focus. */
 .focus-ring:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-ghost);
-  border-radius: var(--radius-sm);
 }
 .btn-sm {
   padding: 5px 10px;
