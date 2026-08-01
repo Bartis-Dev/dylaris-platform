@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
 	"dylaris-pkg/storageplacement"
 
@@ -28,11 +29,22 @@ func LoadFleetPlacement(ctx context.Context, rdb *redis.Client) NodePlacement {
 		return out
 	}
 	val, err := rdb.Get(ctx, FleetPlacementKey).Result()
-	if err != nil || val == "" {
+	if err != nil {
+		return out
+	}
+	return decodeFleetPlacement(val)
+}
+
+// decodeFleetPlacement parses a stored policy. An empty or malformed value is
+// auto, never an error: an unreadable default must not stop a server from being
+// placed, it just stops expressing a preference.
+func decodeFleetPlacement(raw string) NodePlacement {
+	out := NodePlacement{Mode: storageplacement.ModeAuto}
+	if raw == "" {
 		return out
 	}
 	var stored NodePlacement
-	if json.Unmarshal([]byte(val), &stored) != nil {
+	if json.Unmarshal([]byte(raw), &stored) != nil {
 		return out
 	}
 	stored.Mode = storageplacement.NormalizeMode(stored.Mode)
@@ -64,20 +76,40 @@ func SaveFleetPlacement(ctx context.Context, rdb *redis.Client, p NodePlacement)
 // auto with no order carries no information, so it falls through to the fleet
 // default rather than pinning the node to auto forever.
 func EffectiveNodePlacement(ctx context.Context, rdb *redis.Client, nodeToken string) NodePlacement {
-	own := LoadNodePlacement(ctx, rdb, nodeToken)
+	return resolvePlacement(LoadNodePlacement(ctx, rdb, nodeToken), LoadFleetPlacement(ctx, rdb))
+}
+
+// resolvePlacement is the precedence rule on its own, so it can be tested
+// without Redis. It decides which disk a server lands on, and Core has to reach
+// the same answer the node will.
+func resolvePlacement(own, fleet NodePlacement) NodePlacement {
 	if own.Mode == storageplacement.ModeManual || len(own.Order) > 0 {
 		return own
 	}
-	return LoadFleetPlacement(ctx, rdb)
+	return fleet
 }
 
 // FleetStoragePaths is every storage path any online node reports, deduplicated
-// and in first-seen order. It is what the fleet-default editor offers, since no
-// single node's path list describes the fleet.
+// and sorted. It is what the fleet-default editor offers, since no single node's
+// path list describes the fleet.
+//
+// It used to claim "first-seen order", which was never true: the heartbeats
+// arrive as a map and Go randomises map iteration, so the editor's list
+// reshuffled on every load.
 func FleetStoragePaths(ctx context.Context, rdb *redis.Client) []string {
+	return collectStoragePaths(LoadHeartbeats(ctx, rdb))
+}
+
+// collectStoragePaths gathers every distinct path the fleet reports. Sorted
+// rather than first-seen: Go randomises map iteration, so a first-seen order
+// would reshuffle the editor's list on every page load.
+func collectStoragePaths(heartbeats map[string]*NodeHeartbeat) []string {
 	out := []string{}
 	seen := map[string]bool{}
-	for _, hb := range LoadHeartbeats(ctx, rdb) {
+	for _, hb := range heartbeats {
+		if hb == nil {
+			continue
+		}
 		for _, sp := range hb.Storage {
 			if sp.Path == "" || seen[sp.Path] {
 				continue
@@ -86,5 +118,6 @@ func FleetStoragePaths(ctx context.Context, rdb *redis.Client) []string {
 			out = append(out, sp.Path)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
