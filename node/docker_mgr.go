@@ -579,8 +579,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 // controller counts threads too, so the configured value must be generous enough
 // for heavy modded (many-thread) servers.
 func applyPidsLimit(hc *container.HostConfig) {
-	if pidsLimit > 0 {
-		pl := pidsLimit
+	if pl := getPidsLimit(); pl > 0 {
 		hc.Resources.PidsLimit = &pl
 	}
 }
@@ -591,8 +590,8 @@ func applyPidsLimit(hc *container.HostConfig) {
 // with an I/O scheduler that honours blkio weight (BFQ/CFQ); it is a harmless
 // no-op otherwise. Applied at both container-build sites alongside applyPidsLimit.
 func applyIOWeight(hc *container.HostConfig) {
-	if ioWeight >= 10 && ioWeight <= 1000 {
-		hc.Resources.BlkioWeight = ioWeight
+	if io := getIOWeight(); io >= 10 && io <= 1000 {
+		hc.Resources.BlkioWeight = io
 	}
 }
 
@@ -699,10 +698,10 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 
 	// Port binding: only in direct port mode (routing_mode != "gateway").
 	// Reuse an already-allocated port if one exists, otherwise allocate a new one.
-	if routingMode != "gateway" && dm.portMgr != nil {
+	if getRoutingMode() != "gateway" && dm.portMgr != nil {
 		cPort := config.Docker.ContainerPort
 		if cPort == 0 {
-			cPort = containerPort
+			cPort = getContainerPort()
 		}
 		hostP := dm.portMgr.GetPort(config.UUID)
 		if hostP == 0 {

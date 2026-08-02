@@ -21,16 +21,21 @@ type PortManager struct {
 	nodeID     string
 	rangeStart int
 	rangeEnd   int
-	portMode   string // "sequential" (default) or "random"
+	// portMode is asked at allocation time, not copied at construction.
+	//
+	// It used to be a plain string field, and the manager is built during
+	// startup BEFORE the first loadModesFromRedis - so it always captured the
+	// compiled-in "sequential" default. The 30s refresh then kept updating a
+	// global that this, its only consumer, had already copied away from.
+	// Setting the allocation strategy to "random" in the panel therefore did
+	// nothing at all, and looked like it had worked.
+	portMode func() string
 
 	mu        sync.Mutex
 	usedPorts map[int]string // port → serverUUID (in-RAM index for fast allocation)
 }
 
-func NewPortManager(rdb *redis.Client, nodeID string, rangeStart, rangeEnd int, portMode string) *PortManager {
-	if portMode == "" {
-		portMode = "sequential"
-	}
+func NewPortManager(rdb *redis.Client, nodeID string, rangeStart, rangeEnd int, portMode func() string) *PortManager {
 	pm := &PortManager{
 		rdb:        rdb,
 		nodeID:     nodeID,
@@ -96,7 +101,7 @@ func (pm *PortManager) AllocatePort(serverUUID string) (int, error) {
 	for i := range candidates {
 		candidates[i] = pm.rangeStart + i
 	}
-	if pm.portMode == "random" {
+	if pm.portMode() == "random" {
 		rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 	}
 

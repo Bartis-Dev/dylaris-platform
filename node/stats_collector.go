@@ -254,7 +254,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	// 25565) so the ping target stays in sync with the port MC actually
 	// listens on inside the container.
 	go func() {
-		resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, containerPort), pingTimeout)
+		resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, getContainerPort()), pingTimeout)
 		if err == nil {
 			pingMu.Lock()
 			lastPing = resp
@@ -369,7 +369,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			collectAndPublish()
 		case <-pingTicker.C:
 			go func() {
-				resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, containerPort), pingTimeout)
+				resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, getContainerPort()), pingTimeout)
 				if err == nil {
 					pingMu.Lock()
 					lastPing = resp

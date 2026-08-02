@@ -18,7 +18,7 @@ func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 	var last string // signature of the last-applied spawn; "" = not running
 	reconcile := func() {
 		secret, proof := getLinkCreds()
-		want := routingMode == "gateway" && secret != "" && proof != "" && linkImage != ""
+		want := getRoutingMode() == "gateway" && secret != "" && proof != "" && linkImage != ""
 		sig := nodeID + "|" + secret + "|" + proof + "|" + linkImage
 		if want {
 			if sig != last {

@@ -39,15 +39,20 @@ WORKDIR /src/core
 RUN CGO_ENABLED=1 go test -race -count=1 ./...
 
 # node joined 2026-08-02, which is the follow-up the header describes: it was
-# checked by hand first, that check found a real race between the shared-storage
-# ticker and the heartbeat, and the module is clean afterwards.
+# checked by hand first, that check found two real races (the shared-storage
+# ticker against the heartbeat, and the 30s mode refresh against every reader of
+# routingMode and friends), and the module is clean afterwards.
 #
-# Worth knowing what this does NOT prove. The race it now guards was invisible
-# to the detector until a test started both goroutines together - node's
-# concurrency lives in production goroutines that tests do not run, so a green
-# result here means "nothing racy in what the tests exercise", not "no races".
-# There is still a known one on the linkSecret / linkDiscoveryProof package
-# vars; no test touches them, so this stays green until one does.
+# Worth knowing what this does NOT prove. Both races were invisible to the
+# detector until a test started the goroutines together - node's concurrency
+# lives in production goroutines that tests do not run, so a green result here
+# means "nothing racy in what the tests exercise", not "no races". Adding a test
+# is what extends the coverage; the gate only reports.
+#
+# And make such a test time-based, not an iteration count: a tight read loop
+# finishes before the writer goroutine is ever scheduled, the detector then sees
+# no conflicting access, and the test passes against completely unguarded
+# globals. That happened here, and the test looked perfectly reasonable.
 #
 # Two RUN lines rather than two build steps: the context upload and the module
 # download are the expensive parts and this way they happen once.

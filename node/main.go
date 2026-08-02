@@ -153,7 +153,8 @@ func applyExternalOverride(routing, file string, external bool) (string, string)
 // package-level mode vars, which the 30s mode-refresh loop keeps in sync, so a
 // runtime switch into/out of beam starts/stops advertising.
 func beamAdvertiseEnabled() bool {
-	return nodeExternal || fileAccessMode == "beam" || fileAccessMode == "both"
+	fam := getFileAccessMode()
+	return nodeExternal || fam == "beam" || fam == "both"
 }
 
 type NodeCommand struct {
@@ -266,11 +267,11 @@ func main() {
 	}
 
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
-	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, portMode)
+	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
 
 	// Load routing modes from Redis, refresh every 30s
-	routingMode = "ip_port"
-	fileAccessMode = "sftp"
+	// Defaults before the first poll; setModes so nothing reads them unguarded.
+	setModes("ip_port", "sftp", portMode, containerPort, ioWeight, pidsLimit)
 	loadModesFromRedis(ctx, rdb)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -583,33 +584,43 @@ func getOutboundIP() string {
 // container_port from Redis. Called on startup and every 30s so the node
 // reacts to admin setting changes without a restart.
 func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
+	// Read the current set, overwrite only what Redis actually carries, then
+	// install the whole thing at once. Assigning the globals field by field would
+	// let a reader see a half-applied round, and every one of them is read from
+	// another goroutine.
+	routing, fileAccess, port, cPort, io, pids := getModes()
+
 	if v, err := rdb.Get(ctx, "dylaris:routing_mode").Result(); err == nil && v != "" {
-		routingMode = v
+		routing = v
 	}
 	if v, err := rdb.Get(ctx, "dylaris:file_access_mode").Result(); err == nil && v != "" {
-		fileAccessMode = v
+		fileAccess = v
 	}
 	if v, err := rdb.Get(ctx, "dylaris:placement:port_mode").Result(); err == nil && (v == "sequential" || v == "random") {
-		portMode = v
+		port = v
 	}
 	if v, err := rdb.Get(ctx, "dylaris:placement:container_port").Result(); err == nil && v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
-			containerPort = n
+			cPort = n
 		}
 	}
 	// Per-container pids cap (anti fork-bomb). Missing key / parse error / negative
 	// leaves it at 0 = unlimited.
 	if v, err := rdb.Get(ctx, "dylaris:placement:pids_limit").Result(); err == nil && v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
-			pidsLimit = n
+			pids = n
 		}
 	}
 	// Per-container blkio weight (fair-share). 0 or out-of-range leaves it unset.
 	if v, err := rdb.Get(ctx, "dylaris:placement:io_weight").Result(); err == nil && v != "" {
 		if n, err := strconv.ParseUint(v, 10, 16); err == nil && (n == 0 || (n >= 10 && n <= 1000)) {
-			ioWeight = uint16(n)
+			io = uint16(n)
 		}
 	}
+	// The external-node override is part of the same round, so it is applied
+	// BEFORE the values are published rather than as a second write afterwards.
+	routing, fileAccess = applyExternalOverride(routing, fileAccess, nodeExternal)
+	setModes(routing, fileAccess, port, cPort, io, pids)
 	// Per-node storage placement for NEW servers. Node-scoped, because the paths
 	// differ per node: a global setting could not name them. Absent/unparseable
 	// leaves the node on auto (most free space), which is the historical default.
@@ -641,8 +652,6 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 		}
 		globalStorageMgr.SetPlacement(mode, order)
 	}
-
-	routingMode, fileAccessMode = applyExternalOverride(routingMode, fileAccessMode, nodeExternal)
 }
 
 // saveNodeConfig persists the ServerConfig as .node_config.json in the server directory.
@@ -688,7 +697,7 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	key := fmt.Sprintf("dylaris:discovery:%s", id)
 
 	// IP-hiding: only expose public IP when at least one mode uses direct access
-	ipHidden := routingMode == "gateway" && fileAccessMode == "beam"
+	ipHidden := getRoutingMode() == "gateway" && getFileAccessMode() == "beam"
 	publicIP := ""
 	if !ipHidden {
 		publicIP = getOutboundIP()
