@@ -179,3 +179,79 @@ func TestDeadLetterAfterMaxDeliveries(t *testing.T) {
 		t.Fatalf("dead-letter len=%d, want 1", n)
 	}
 }
+
+// Parking a poison message can itself fail, and the ACK must not happen when it
+// does. Before this was checked, a failed XAdd still ACKed: the payload was
+// destroyed with no copy anywhere, at exactly the moment an operator most needs
+// to look at it.
+//
+// The failure is injected by giving the dead-letter key the wrong Redis type, so
+// XADD returns WRONGTYPE while every other command on the connection keeps
+// working - closing the server would fail the ACK too and prove nothing.
+func TestDeadLetter_DoesNotAckWhenParkingFails(t *testing.T) {
+	rdb := newTestRedis(t)
+	ctx := context.Background()
+	c := NewConsumer(rdb, "q", "g", "c1")
+	c.MaxDeliveries = 1
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup: %v", err)
+	}
+	if err := rdb.Set(ctx, c.deadKey(), "not-a-stream", 0).Err(); err != nil {
+		t.Fatalf("seed wrong-type dead key: %v", err)
+	}
+	if _, err := Publish(ctx, rdb, "q", []byte("poison")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	m := readNew(t, c)[0]
+	c.handleOne(ctx, m, func(_ context.Context, _ []byte) error { return errors.New("nope") })
+
+	if got := pendingCount(t, c); got != 1 {
+		t.Fatalf("pending=%d, want 1 - the message was ACKed even though it was never parked, "+
+			"so its payload is gone", got)
+	}
+
+	// And once the dead-letter stream is usable again, the retry parks it.
+	if err := rdb.Del(ctx, c.deadKey()).Err(); err != nil {
+		t.Fatalf("clear dead key: %v", err)
+	}
+	c.handleOne(ctx, m, func(_ context.Context, _ []byte) error { return errors.New("nope") })
+	if got := pendingCount(t, c); got != 0 {
+		t.Errorf("pending=%d, want 0 - the retry should have parked and acked it", got)
+	}
+	n, err := rdb.XLen(ctx, c.deadKey()).Result()
+	if err != nil {
+		t.Fatalf("XLen dead: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("dead-letter len=%d, want 1", n)
+	}
+}
+
+// The unparseable path dead-letters BEFORE the handler runs, so it has no
+// attempts counter to fall back on. It must still refuse to ACK a message it
+// could not park.
+func TestDeadLetter_UnparseableIsNotDroppedWhenParkingFails(t *testing.T) {
+	rdb := newTestRedis(t)
+	ctx := context.Background()
+	c := NewConsumer(rdb, "q", "g", "c1")
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup: %v", err)
+	}
+	if err := rdb.Set(ctx, c.deadKey(), "not-a-stream", 0).Err(); err != nil {
+		t.Fatalf("seed wrong-type dead key: %v", err)
+	}
+	// No "data" field: this is what msgData rejects.
+	if err := rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: "q", Values: map[string]interface{}{"nodata": "x"},
+	}).Err(); err != nil {
+		t.Fatalf("XAdd: %v", err)
+	}
+
+	m := readNew(t, c)[0]
+	c.handleOne(ctx, m, func(_ context.Context, _ []byte) error { return nil })
+
+	if got := pendingCount(t, c); got != 1 {
+		t.Errorf("pending=%d, want 1 - an unparseable message was dropped without being parked", got)
+	}
+}

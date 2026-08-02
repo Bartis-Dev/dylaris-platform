@@ -275,13 +275,23 @@ func (c *Consumer) ack(ctx context.Context, id string) {
 
 // deadLetter parks a poison/unparseable message on a side stream and ACKs the
 // original so the main queue keeps flowing. Operators can inspect "<stream>:dead".
+//
+// The ACK is CONDITIONAL on the park succeeding. Acking regardless would mean a
+// failed XAdd silently destroys the payload - the one message an operator most
+// needs to look at, discarded precisely when the system is already unhealthy.
+// Leaving it pending instead costs a retry on the next recovery pass and parks
+// it as soon as Redis accepts the write again.
 func (c *Consumer) deadLetter(ctx context.Context, id string, data []byte) {
-	c.rdb.XAdd(ctx, &redis.XAddArgs{
+	if err := c.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: c.deadKey(),
 		MaxLen: DefaultMaxLen,
 		Approx: true,
 		Values: map[string]interface{}{"data": data, "orig_id": id},
-	})
+	}).Err(); err != nil {
+		log.Printf("queue %s: could NOT park message %s on %s (%v) - leaving it pending rather than dropping it",
+			c.stream, id, c.deadKey(), err)
+		return
+	}
 	c.ack(ctx, id)
 	c.rdb.Del(ctx, c.attemptsKey(id))
 }
