@@ -35,6 +35,41 @@ export function normalizeDNSName(s: string): string {
     return s.trim().toLowerCase().replace(/\.$/, '');
 }
 
+// addZoneTo appends a typed zone, normalised and deduplicated, keeping the list
+// sorted so it does not reorder under the admin as they add entries.
+export function addZoneTo(zones: string[], raw: string): string[] {
+    const z = normalizeDNSName(raw);
+    if (!z || zones.includes(z)) return zones;
+    return [...zones, z].sort();
+}
+
+// removeZoneFrom drops a zone and any per-region name that is left without one.
+//
+// A name is kept when it still resolves against the REMAINING zones, not merely
+// when it fails to match the removed one. With nested zones those differ: given
+// example.com and eu.example.com both managed, "*.eu.example.com" sits inside
+// both, so removing the parent must not take a name that the child still covers.
+// Checking against the removed zone alone deletes it anyway.
+//
+// Names that genuinely lose their zone have to go, because the server rejects a
+// save carrying a name outside every managed zone - and that error surfaces two
+// cards away from the field that caused it.
+export function removeZoneFrom(
+    zones: string[],
+    regionNames: Record<string, string[]>,
+    zone: string,
+): { zones: string[]; regionNames: Record<string, string[]> } {
+    const target = normalizeDNSName(zone);
+    const remaining = zones.filter(z => normalizeDNSName(z) !== target);
+
+    const nextRegions: Record<string, string[]> = {};
+    for (const [region, names] of Object.entries(regionNames)) {
+        const kept = names.filter(n => resolveZone(n, remaining) !== '');
+        if (kept.length > 0) nextRegions[region] = kept;
+    }
+    return { zones: remaining, regionNames: nextRegions };
+}
+
 // originLabel names where a managed record came from. 'edge env' and 'relay' are
 // spelled out because both are set outside the panel - an admin looking for why
 // their selection is not winning needs to know which file to go edit.

@@ -5,6 +5,8 @@ import {
     resolveZone,
     normalizeDNSName,
     originLabel,
+    addZoneTo,
+    removeZoneFrom,
     type DNSZonesResponse,
 } from './dnsZones';
 
@@ -131,5 +133,77 @@ describe('resolveZone', () => {
 
     it('returns empty with no zones configured', () => {
         expect(resolveZone('*.eu.dylaris.com', [])).toBe('');
+    });
+});
+
+describe('addZoneTo', () => {
+    it('normalises and keeps the list sorted', () => {
+        expect(addZoneTo(['b.com'], '  A.com.  ')).toEqual(['a.com', 'b.com']);
+    });
+
+    it('ignores a duplicate', () => {
+        const zones = ['a.com'];
+        expect(addZoneTo(zones, 'A.COM')).toBe(zones);
+    });
+
+    it('ignores an empty entry', () => {
+        const zones = ['a.com'];
+        expect(addZoneTo(zones, '   ')).toBe(zones);
+    });
+});
+
+describe('removeZoneFrom', () => {
+    it('removes the zone', () => {
+        const out = removeZoneFrom(['a.com', 'b.net'], {}, 'a.com');
+        expect(out.zones).toEqual(['b.net']);
+    });
+
+    it('drops per-region names that lose their zone', () => {
+        const out = removeZoneFrom(
+            ['a.com', 'b.net'],
+            { eu: ['*.eu.a.com', '*.eu.b.net'] },
+            'a.com',
+        );
+        expect(out.regionNames.eu).toEqual(['*.eu.b.net']);
+    });
+
+    it('drops a region entirely when nothing of it survives', () => {
+        const out = removeZoneFrom(['a.com'], { eu: ['*.eu.a.com'] }, 'a.com');
+        expect(out.regionNames.eu).toBeUndefined();
+        expect(Object.keys(out.regionNames)).toHaveLength(0);
+    });
+
+    // The case a check against the removed zone alone gets wrong: with both a
+    // parent and a child zone managed, a name inside the child also matches the
+    // parent, so removing the parent would delete a name the child still covers.
+    it('keeps a name that a remaining nested zone still covers', () => {
+        const out = removeZoneFrom(
+            ['example.com', 'eu.example.com'],
+            { eu: ['*.eu.example.com'] },
+            'example.com',
+        );
+        expect(out.zones).toEqual(['eu.example.com']);
+        expect(out.regionNames.eu).toEqual(['*.eu.example.com']);
+    });
+
+    it('is case- and dot-insensitive about which zone to remove', () => {
+        const out = removeZoneFrom(['a.com', 'b.net'], {}, 'A.com.');
+        expect(out.zones).toEqual(['b.net']);
+    });
+
+    it('leaves other regions untouched', () => {
+        const out = removeZoneFrom(
+            ['a.com', 'b.net'],
+            { eu: ['*.eu.a.com'], us: ['*.us.b.net'] },
+            'a.com',
+        );
+        expect(out.regionNames.us).toEqual(['*.us.b.net']);
+        expect(out.regionNames.eu).toBeUndefined();
+    });
+
+    it('is a no-op for a zone that is not in the list', () => {
+        const out = removeZoneFrom(['a.com'], { eu: ['*.eu.a.com'] }, 'nope.com');
+        expect(out.zones).toEqual(['a.com']);
+        expect(out.regionNames.eu).toEqual(['*.eu.a.com']);
     });
 });

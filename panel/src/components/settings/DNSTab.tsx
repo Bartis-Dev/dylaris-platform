@@ -18,10 +18,11 @@ import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import Select from '@/components/ui/Select';
 import {
     zoneHint,
-    isInZone,
     resolveZone,
     normalizeDNSName,
     originLabel,
+    addZoneTo,
+    removeZoneFrom,
     type DNSZonesResponse,
     type DNSZoneState,
 } from './dnsZones';
@@ -320,25 +321,17 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     };
 
     const addZone = (raw: string) => {
-        const z = raw.trim().toLowerCase().replace(/\.$/, '');
-        if (!z || zones.includes(z)) return;
-        setZones(prev => [...prev, z].sort());
+        setZones(prev => addZoneTo(prev, raw));
         setZoneDraft('');
     };
 
-    // Removing a zone also drops every per-region name that lived in it. Leaving
-    // them behind would produce a selection the server rejects on save, with the
-    // reason two cards further up the page.
+    // Removing a zone also drops every per-region name left without one. Keeping
+    // them would produce a selection the server rejects on save, with the reason
+    // two cards further up the page.
     const removeZone = (zone: string) => {
-        setZones(prev => prev.filter(z => z !== zone));
-        setRegionNames(prev => {
-            const next: Record<string, string[]> = {};
-            for (const [region, names] of Object.entries(prev)) {
-                const kept = names.filter(n => !isInZone(n, zone));
-                if (kept.length > 0) next[region] = kept;
-            }
-            return next;
-        });
+        const next = removeZoneFrom(zones, regionNames, zone);
+        setZones(next.zones);
+        setRegionNames(next.regionNames);
     };
 
     const dirty =
