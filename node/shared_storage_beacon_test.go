@@ -278,3 +278,52 @@ func TestNewInstanceID_Unique(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// The heartbeat reads Conflicts() on the discovery goroutine while Check() runs
+// on the detector's own ticker. Nothing in production exercises both at once
+// from a test, which is exactly why the race between them survived review: a
+// plain `go test -race` run finds nothing, because no test ever started the two
+// goroutines together. This one does, so the race detector has something to
+// bite on. It FAILS under -race against a detector without the mutex.
+func TestDetector_ConcurrentCheckAndConflicts(t *testing.T) {
+	dir := t.TempDir()
+	d := newSharedStorageDetector("node-a", func() []string { return []string{dir} })
+
+	// A second node on the same path, so Conflicts() returns a non-empty slice
+	// and a torn read has a length to disagree about.
+	other := newSharedStorageDetector("node-b", func() []string { return []string{dir} })
+	other.Check()
+
+	stop := make(chan struct{})
+	done := make(chan struct{}, 2)
+
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				d.Check()
+			}
+		}
+	}()
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				for _, c := range d.Conflicts() {
+					_ = c.Message() // touch the elements, not just the header
+				}
+			}
+		}
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	close(stop)
+	<-done
+	<-done
+}
