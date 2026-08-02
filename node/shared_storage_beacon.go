@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -182,6 +183,10 @@ type sharedStorageDetector struct {
 	hostname   string
 	paths      func() []string
 
+	// mu guards the fields Check writes. Check runs on its own ticker while
+	// the heartbeat calls Conflicts every 5 seconds, so the two genuinely
+	// race - a torn slice header would hand the heartbeat a bogus length.
+	mu         sync.Mutex
 	firstRound bool
 	conflicts  []sharedStorageConflict
 }
@@ -208,12 +213,20 @@ func (d *sharedStorageDetector) Check() []sharedStorageConflict {
 	var found []sharedStorageConflict
 	now := time.Now().UTC()
 
+	// Snapshot the round flag and publish the result under the lock, but do the
+	// disk work outside it: writeBeacon can block for minutes on a hung NFS
+	// mount, and holding the mutex across that would stall the heartbeat - the
+	// very thing that has to keep reporting when storage misbehaves.
+	d.mu.Lock()
+	firstRound := d.firstRound
+	d.mu.Unlock()
+
 	for _, path := range d.paths() {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
 		found = append(found, evaluateBeacons(
-			path, d.nodeID, d.instanceID, readBeacons(path), now, d.firstRound,
+			path, d.nodeID, d.instanceID, readBeacons(path), now, firstRound,
 		)...)
 
 		if err := writeBeacon(path, nodeBeacon{
@@ -226,16 +239,21 @@ func (d *sharedStorageDetector) Check() []sharedStorageConflict {
 		}
 	}
 
+	d.mu.Lock()
 	d.firstRound = false
 	d.conflicts = found
+	d.mu.Unlock()
 	return found
 }
 
-// Conflicts returns the last result, for the heartbeat.
+// Conflicts returns the last result, for the heartbeat. Called from the
+// discovery goroutine while Check runs on its own ticker, hence the lock.
 func (d *sharedStorageDetector) Conflicts() []sharedStorageConflict {
 	if d == nil {
 		return nil
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.conflicts
 }
 
