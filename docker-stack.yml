@@ -70,6 +70,16 @@ services:
       DB_TYPE: "${DB_TYPE:-timescaledb}"
       EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
       BILLING_SUSPEND_GRACE: "${BILLING_SUSPEND_GRACE:-48h}"
+      # DNS updater (owner/SaaS, off by default). Present here so a value put in
+      # .env actually reaches the container - a .env file is only read to expand
+      # ${VAR} while this YAML is parsed, it is never injected on its own. All of
+      # these can be set in Settings -> Infrastructure -> DNS instead, where the
+      # token is stored encrypted; the environment wins per field when both exist.
+      DNS_UPDATER_ENABLED: "${DNS_UPDATER_ENABLED:-false}"
+      DNS_PROVIDER: "${DNS_PROVIDER:-cloudflare}"
+      DNS_API_TOKEN: "${DNS_API_TOKEN:-}"
+      DNS_ZONE: "${DNS_ZONE:-}"
+      DNS_ZONES: "${DNS_ZONES:-}"
     # Core's shutdown runs a sequence, and the whole of it has to fit inside
     # this window or the later steps simply never execute. Budget: the API
     # listener drains for up to 30s, the tab-proxy listener for up to another
