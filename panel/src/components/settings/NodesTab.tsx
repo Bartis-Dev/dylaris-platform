@@ -12,6 +12,7 @@ import {
 } from '@/lib/api';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import Select from '@/components/ui/Select';
 import StoragePlacement from '@/components/StoragePlacement';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
@@ -901,9 +902,13 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">Disk Buffer</label>
                         <div className="relative w-32">
+                            {/* min matches the server's floor. Below it Core does
+                                not clamp to 10 - it discards the value and falls
+                                back to the 50 GB default, so a typed 5 would
+                                silently become 50. */}
                             <input
                                 type="number"
-                                min={0}
+                                min={10}
                                 value={settings.diskBufferGb}
                                 onChange={e => setSettings(s => ({ ...s, diskBufferGb: Number(e.target.value) }))}
                                 className="input-field input-mono w-full pr-9 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -913,20 +918,24 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                         <p className="text-xs text-(--base-06)">
                             Free space every storage path must retain. Counted against what is already <em>promised</em> to
                             the servers on that path, not just what they have written &mdash; twenty servers with a 50 GB
-                            limit have claimed a terabyte the day they are created. Minimum 10 GB.
+                            limit have claimed a terabyte the day they are created. Minimum 10 GB; anything lower is
+                            discarded and the 50 GB default applies instead.
                         </p>
                     </div>
 
                     <div className="mt-5 flex flex-col gap-[5px]">
                         <label className="input-label">When a placement would eat into the buffer</label>
-                        <select
-                            value={settings.diskEnforcement}
-                            onChange={e => setSettings(s => ({ ...s, diskEnforcement: e.target.value as 'soft' | 'hard' }))}
-                            className="input-field w-64"
-                        >
-                            <option value="soft">Soft &mdash; place it anyway, flag it</option>
-                            <option value="hard">Hard &mdash; refuse the placement</option>
-                        </select>
+                        <div className="w-64">
+                            <Select
+                                value={settings.diskEnforcement}
+                                onChange={v => setSettings(s => ({ ...s, diskEnforcement: v as 'soft' | 'hard' }))}
+                                options={[
+                                    { value: 'soft', label: 'Soft — place it anyway, flag it' },
+                                    { value: 'hard', label: 'Hard — refuse the placement' },
+                                ]}
+                                ariaLabel="Disk buffer enforcement"
+                            />
+                        </div>
                         <p className="text-xs text-(--base-06)">
                             Applies to placing a server and raising a limit. Neither mode stops a server that is already
                             running from writing &mdash; that is what the per-server disk limit does, and only on xfs/ext4.
