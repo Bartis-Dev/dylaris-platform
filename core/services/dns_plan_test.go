@@ -10,6 +10,10 @@ func onlineEdge(id, region, ip, wildcard string) GatewayEdgeInfo {
 	return GatewayEdgeInfo{EdgeID: id, Status: "online", Region: region, IP: ip, Wildcard: wildcard}
 }
 
+// The panel carries its own copy of this rule (panel/src/components/settings/
+// dnsZones.ts resolveZone) because it cannot call Go. The cases below are
+// mirrored there under "parity with Core ResolveZone" - keep the two tables in
+// step, or the screen can offer a zone Core will not actually use.
 func TestResolveZone(t *testing.T) {
 	zones := []string{"dylaris.com", "eu.dylaris.com", "example.org"}
 	tests := []struct {

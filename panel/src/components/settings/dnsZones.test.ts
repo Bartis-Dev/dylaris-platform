@@ -119,16 +119,30 @@ describe('originLabel', () => {
     });
 });
 
-describe('resolveZone', () => {
+// This table is deliberately the SAME set of cases as Go's TestResolveZone in
+// core/services/dns_plan_test.go. The two implementations exist because the
+// panel cannot call Go, so nothing but matching tests keeps them from drifting -
+// and if they drift, the screen shows a zone Core will not actually use.
+describe('resolveZone (parity with Core ResolveZone)', () => {
     const zones = ['dylaris.com', 'eu.dylaris.com', 'example.org'];
 
-    it('picks the longest matching zone', () => {
-        expect(resolveZone('*.eu.dylaris.com', zones)).toBe('eu.dylaris.com');
-        expect(resolveZone('*.us.dylaris.com', zones)).toBe('dylaris.com');
-    });
+    const cases: Array<[string, string, string]> = [
+        ['wildcard under the parent zone', '*.us.dylaris.com', 'dylaris.com'],
+        ['longest match wins over the parent', '*.eu.dylaris.com', 'eu.dylaris.com'],
+        ['the zone apex itself', 'dylaris.com', 'dylaris.com'],
+        ['second managed zone', '*.eu.example.org', 'example.org'],
+        ['trailing dot is normalised', '*.us.dylaris.com.', 'dylaris.com'],
+        ['case is normalised', '*.US.Dylaris.COM', 'dylaris.com'],
+        ['unmanaged zone yields nothing', '*.eu.other.net', ''],
+        ['empty name yields nothing', '', ''],
+        // The label boundary, checked here and not only in isInZone: a rewrite
+        // of resolveZone that lost it would still pass the isInZone tests.
+        ['lookalike domain does not match', 'evil-dylaris.com', ''],
+        ['lookalike subdomain does not match', '*.eu.notdylaris.com', ''],
+    ];
 
-    it('returns empty when nothing matches', () => {
-        expect(resolveZone('*.eu.unmanaged.net', zones)).toBe('');
+    it.each(cases)('%s', (_name, input, want) => {
+        expect(resolveZone(input, zones)).toBe(want);
     });
 
     it('returns empty with no zones configured', () => {
