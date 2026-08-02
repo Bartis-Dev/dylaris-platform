@@ -222,7 +222,17 @@ func parseHostKey(data []byte) ssh.Signer {
 }
 
 func (s *SFTPServer) loadOrGenHostKey() (ssh.Signer, error) {
-	keyPath := sftpHostKeyPath()
+	return loadOrGenHostKeyAt(sftpHostKeyPath(), filepath.FromSlash(legacySFTPHostKeyPath))
+}
+
+// loadOrGenHostKeyAt resolves the host key with both locations passed in, so the
+// adoption path can be tested without touching the real legacy directory.
+//
+// The order is what keeps a client's known_hosts entry valid: an existing key at
+// the persistent location wins, then a key still in the legacy location is
+// ADOPTED and copied across (an upgrading node must not change its fingerprint),
+// and only a node that has neither generates one.
+func loadOrGenHostKeyAt(keyPath, legacyPath string) (ssh.Signer, error) {
 	os.MkdirAll(filepath.Dir(keyPath), 0700)
 
 	if data, err := os.ReadFile(keyPath); err == nil {
@@ -233,8 +243,8 @@ func (s *SFTPServer) loadOrGenHostKey() (ssh.Signer, error) {
 
 	// Adopt a key still sitting in the legacy location so upgrading a node does
 	// not change its fingerprint, and persist it where it will actually survive.
-	if legacy := filepath.FromSlash(legacySFTPHostKeyPath); legacy != keyPath {
-		if data, err := os.ReadFile(legacy); err == nil {
+	if legacyPath != keyPath {
+		if data, err := os.ReadFile(legacyPath); err == nil {
 			if signer := parseHostKey(data); signer != nil {
 				if err := os.WriteFile(keyPath, data, 0600); err != nil {
 					log.Printf("SFTP: could not migrate host key to %s: %v", keyPath, err)
