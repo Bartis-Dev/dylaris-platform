@@ -90,12 +90,14 @@ jobs:
   # environment reasons; .github/race.Dockerfile records what they were so
   # nobody spends the afternoon rediscovering them.
   #
-  # Covers core, node and pkg. It started core-only ON PURPOSE, because a NEW
-  # gate that retroactively fails on untouched code blocks deploys for reasons
-  # nobody chose that day, and the rule was to extend it per module once that
-  # module had been checked by hand. node and pkg were both checked on
-  # 2026-08-02; the checks found two races in node and a dead-letter data-loss
-  # path in pkg, all fixed and covered before the gate moved.
+  # Covers EVERY Go module. It started core-only ON PURPOSE, because a NEW gate
+  # that retroactively fails on untouched code blocks deploys for reasons nobody
+  # chose that day, and the rule was to extend it per module only once that
+  # module had been read by hand. All four others were checked on 2026-08-02/03:
+  # the checks found two races in node and a dead-letter data-loss path in pkg
+  # (all fixed and covered before the gate moved), and found log-shipper and
+  # beam/app already correct. The rule has now been applied everywhere, so a new
+  # module is the only thing that should ever need adding here again.
   #
   # See .github/race.Dockerfile for what a green run here does and does not prove.
   race-tests:
@@ -106,7 +108,7 @@ jobs:
       # BUILDKIT_PROGRESS=plain so the test output lands in the job log. Without
       # it buildx collapses the RUN and a PASSING run tells you nothing about
       # what actually ran; a gate you cannot read is a gate you stop trusting.
-      - name: go test -race (core + node + pkg)
+      - name: go test -race (all Go modules)
         uses: docker/build-push-action@v5
         env:
           BUILDKIT_PROGRESS: plain

@@ -67,3 +67,23 @@ RUN CGO_ENABLED=1 go test -race -count=1 ./...
 # park, which is why the check is worth doing whatever the detector says.
 WORKDIR /src/pkg
 RUN CGO_ENABLED=1 go test -race -count=1 ./...
+
+# log-shipper: nothing to guard. No mutable package state at all, and its two
+# scanner goroutines hand lines to one shipper over a channel that is closed
+# only after a WaitGroup says both writers are done.
+WORKDIR /src/log-shipper
+RUN CGO_ENABLED=1 go test -race -count=1 ./...
+
+# beam/app carries the repo's most exposed concurrency: Wails dispatches every
+# frontend binding call on its own goroutine, so user clicks are the scheduler.
+# The hand check found it already correct throughout - each guarded field is
+# reachable only through a locking accessor, and the teardown paths return the
+# old client so the caller Closes it OUTSIDE the mutex, keeping network I/O off
+# the lock. Gated so it stays that way.
+#
+# The frontend/dist stub is required, not cosmetic: app.go has a //go:embed on a
+# Wails build artifact that a fresh checkout does not carry, so the module does
+# not compile without it. ci.yml's go-tests job stubs it the same way.
+WORKDIR /src/beam/app
+RUN mkdir -p frontend/dist && printf '<!doctype html><title>stub</title>' > frontend/dist/index.html
+RUN CGO_ENABLED=1 go test -race -count=1 ./...
