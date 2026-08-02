@@ -902,15 +902,17 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">Disk Buffer</label>
                         <div className="relative w-32">
-                            {/* min matches the server's floor. Below it Core does
-                                not clamp to 10 - it discards the value and falls
-                                back to the 50 GB default, so a typed 5 would
-                                silently become 50. */}
+                            {/* Clamped in the handler, not just via min: min only
+                                bounds the spinner, a typed value still reaches
+                                state. Below the floor Core does not clamp to 10
+                                either - it discards the value and falls back to
+                                the 50 GB default, so a typed 5 would silently
+                                become 50. Same shape as the overcommit fields. */}
                             <input
                                 type="number"
                                 min={10}
                                 value={settings.diskBufferGb}
-                                onChange={e => setSettings(s => ({ ...s, diskBufferGb: Number(e.target.value) }))}
+                                onChange={e => setSettings(s => ({ ...s, diskBufferGb: Math.max(10, Number(e.target.value)) }))}
                                 className="input-field input-mono w-full pr-9 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                             <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
