@@ -257,12 +257,25 @@ func (h *DNSSettingsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pairs := []struct{ k, v string }{
-		{services.DNSProviderSettingKey, provider},
-		{services.DNSZonesSettingKey, string(zonesJSON)},
-		{services.DNSRegionNamesSettingKey, string(regionJSON)},
-		{services.DNSEnabledSettingKey, boolSetting(req.Enabled)},
+	// There is no transaction across settings, so a failure mid-loop leaves a
+	// partial configuration. The ORDER decides which partial state that is, and
+	// the credential goes FIRST on purpose: if a later write fails, the stored
+	// token is the one that just passed the probe, and the enabled flag still
+	// holds its previous value. Writing it last produced the opposite - the
+	// updater switched on against a credential that was never updated, which
+	// fails in a log every 30 seconds rather than on this screen.
+	var pairs []struct{ k, v string }
+	switch {
+	case req.ClearToken:
+		pairs = append(pairs, struct{ k, v string }{services.DNSTokenSettingKey, ""})
+	case token != "":
+		pairs = append(pairs, struct{ k, v string }{services.DNSTokenSettingKey, token})
 	}
+	pairs = append(pairs,
+		struct{ k, v string }{services.DNSProviderSettingKey, provider},
+		struct{ k, v string }{services.DNSZonesSettingKey, string(zonesJSON)},
+		struct{ k, v string }{services.DNSRegionNamesSettingKey, string(regionJSON)},
+	)
 	// 0 means "not sent", so a client that omits the field cannot reset the
 	// grace period to the floor without meaning to.
 	if req.GraceMinutes > 0 {
@@ -272,12 +285,9 @@ func (h *DNSSettingsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		}
 		pairs = append(pairs, struct{ k, v string }{services.DNSGraceSettingKey, strconv.Itoa(grace)})
 	}
-	switch {
-	case req.ClearToken:
-		pairs = append(pairs, struct{ k, v string }{services.DNSTokenSettingKey, ""})
-	case token != "":
-		pairs = append(pairs, struct{ k, v string }{services.DNSTokenSettingKey, token})
-	}
+	// Last, so the updater only ever switches on over settings that are already
+	// stored.
+	pairs = append(pairs, struct{ k, v string }{services.DNSEnabledSettingKey, boolSetting(req.Enabled)})
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
 			sendJSONError(w, "Failed to save DNS settings", http.StatusInternalServerError)

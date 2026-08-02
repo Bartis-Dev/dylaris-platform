@@ -360,3 +360,57 @@ func TestDNSZones_NoTokenIsErrorState(t *testing.T) {
 		t.Error("zones = null, want an empty array")
 	}
 }
+
+// The save writes settings one key at a time with no transaction, so a DB
+// failure part-way leaves a partial configuration. The ORDER is what decides
+// which partial state that is, and it is a property no other test would notice
+// breaking: everything still ends up stored on the happy path.
+//
+// Credential first, enabled last. The failure this rules out is the updater
+// switching on against a credential that was never written - which does not
+// surface on this screen at all, only in a log line every 30 seconds.
+func TestDNSSave_WritesCredentialFirstAndEnabledLast(t *testing.T) {
+	fs := newDNSFakeStore(nil)
+	h := dnsHandler(services.DNSEnvConfig{}, fs)
+
+	rec := httptest.NewRecorder()
+	h.Save(rec, dnsSaveReq(map[string]any{
+		"provider":     "cloudflare",
+		"zones":        []string{"example.com"},
+		"token":        "a-token",
+		"graceMinutes": 30,
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(fs.writes) < 2 {
+		t.Fatalf("writes = %v, want the whole configuration", fs.writes)
+	}
+	if fs.writes[0] != services.DNSTokenSettingKey {
+		t.Errorf("first write = %q, want the token: a later failure would leave the\n"+
+			"updater enabled against a credential that was never stored", fs.writes[0])
+	}
+	if last := fs.writes[len(fs.writes)-1]; last != services.DNSEnabledSettingKey {
+		t.Errorf("last write = %q, want the enabled flag: it must only flip over\n"+
+			"settings that are already stored", last)
+	}
+}
+
+// Clearing the credential is the same ordering question with the opposite
+// value, and it takes a different branch of the switch.
+func TestDNSSave_ClearedTokenIsAlsoWrittenFirst(t *testing.T) {
+	fs := newDNSFakeStore(map[string]string{services.DNSTokenSettingKey: "stored-token"})
+	h := dnsHandler(services.DNSEnvConfig{}, fs)
+
+	rec := httptest.NewRecorder()
+	h.Save(rec, dnsSaveReq(map[string]any{
+		"provider": "cloudflare", "zones": []string{"example.com"}, "clearToken": true,
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fs.writes[0] != services.DNSTokenSettingKey {
+		t.Errorf("first write = %q, want the token", fs.writes[0])
+	}
+}
