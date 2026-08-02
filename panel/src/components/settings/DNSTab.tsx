@@ -486,6 +486,19 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                         domain. DYLARIS only ever touches the names it created inside these zones -
                         never anything else the zone carries.
                     </p>
+                    {/* Removing a zone is destructive and does not look it: the names in it
+                        stop being advertised, and the sweep then deletes the records DYLARIS
+                        created there. Said here because the paragraph above ("only ever touches
+                        the names it created") otherwise reads as a promise that removal is
+                        merely disengagement. */}
+                    <p className="flex items-start gap-1.5 text-xs text-(--base-06) mb-1">
+                        <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
+                        <span>
+                            Removing a zone here does not just stop managing it: the records
+                            DYLARIS created inside it are deleted once the grace period below
+                            elapses.
+                        </span>
+                    </p>
 
                     {zones.length > 0 && (
                         <ul className="flex flex-col gap-1.5 mb-1">
