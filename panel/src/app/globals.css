@@ -71,6 +71,13 @@
   --accent-ghost: var(--color-accent-ghost);
   --accent-border: var(--color-accent-border);
 
+  /* The one keyboard-focus indicator, so .btn, .focus-ring and the bare-button
+     fallback cannot drift apart. Two layers on purpose: --accent-ghost is 10%
+     alpha, which over --base-00 lands around 1.05:1 and is effectively
+     invisible, so the halo alone would be decoration rather than an indicator.
+     The solid inner ring is the part that carries the contrast. */
+  --focus-ring: 0 0 0 1px var(--color-accent), 0 0 0 4px var(--color-accent-ghost);
+
   --success: var(--color-success);
   --success-light: var(--color-success-light);
   --success-ghost: var(--color-success-ghost);
@@ -235,12 +242,15 @@ button:hover {
    keyboard focus looked different from element to element across the panel.
    This replaces it with the same ring .btn and .focus-ring use.
 
+   Because it removes the browser outline, the replacement has to be at least as
+   visible: --focus-ring, not a bare --accent-ghost halo. See its definition.
+
    Deliberately a bare element selector (0,1,1): every Tailwind focus utility
    (0,2,0) and both .btn / .focus-ring rules outrank it, so anything with its
    own focus treatment keeps it and this only fills the gap. */
 button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ghost);
+  box-shadow: var(--focus-ring);
 }
 
 /* ══════════════════════════════════════════════════════
@@ -292,7 +302,7 @@ button:focus-visible {
 }
 .btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ghost);
+  box-shadow: var(--focus-ring);
 }
 /* Focus ring for interactive elements that are NOT .btn: icon-only buttons,
    text actions, toggles. Same ring as .btn:focus-visible, so focus looks the
@@ -305,7 +315,7 @@ button:focus-visible {
    shape, and forcing one distorts a rounded-full button on focus. */
 .focus-ring:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ghost);
+  box-shadow: var(--focus-ring);
 }
 .btn-sm {
   padding: 5px 10px;
