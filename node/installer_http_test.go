@@ -4,6 +4,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -140,5 +143,70 @@ func TestInstallerDownloadClient_ResponseHeaderStall(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("the request hung despite ResponseHeaderTimeout")
+	}
+}
+
+// A peer that sends headers and then goes quiet MID-BODY is the gap the
+// Transport cannot close: ResponseHeaderTimeout stops applying the moment the
+// headers arrive, and a blanket Client.Timeout would kill a slow-but-working
+// transfer. Without the watchdog this test does not fail, it HANGS - the server
+// never closes and io.Copy waits forever, which is exactly what left a server
+// stuck in `installing` with no way out but a manual reset.
+func TestDownloadFile_AbandonsAStalledBody(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("the first bytes arrive fine"))
+		w.(http.Flusher).Flush()
+		<-release // and then nothing, ever
+	}))
+	// LIFO: the handler has to be let go BEFORE Close waits on it, or Close
+	// blocks on the very stall this test creates.
+	defer srv.Close()
+	defer close(release)
+
+	dest := filepath.Join(t.TempDir(), "server.jar")
+	start := time.Now()
+	err := downloadFileWithin(srv.URL, dest, 150*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a stalled download returned no error")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("error = %v, want it to name the stall so the log says why", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("took %v - the watchdog did not fire", elapsed)
+	}
+}
+
+// The window bounds SILENCE, not total duration: a transfer that keeps
+// delivering bytes must run to completion however long it takes, or a thin link
+// would lose every large JAR.
+func TestDownloadFile_SlowButProgressingSucceeds(t *testing.T) {
+	const chunks = 8
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		for i := 0; i < chunks; i++ {
+			_, _ = w.Write([]byte("chunk"))
+			w.(http.Flusher).Flush()
+			time.Sleep(30 * time.Millisecond)
+		}
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "server.jar")
+	// Total transfer ~240ms, well past the 100ms window, but no single gap is.
+	if err := downloadFileWithin(srv.URL, dest, 100*time.Millisecond); err != nil {
+		t.Fatalf("a slow but progressing download failed: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != chunks*len("chunk") {
+		t.Errorf("wrote %d bytes, want %d", len(data), chunks*len("chunk"))
 	}
 }

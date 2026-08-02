@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // dockerManager is set once at boot by main.go so installers that need a
@@ -606,13 +607,36 @@ func copyDir(src, dst string) error {
 
 // downloadFile downloads a URL to a local file path.
 func downloadFile(url, destPath string) error {
+	return downloadFileWithin(url, destPath, installerStallTimeout)
+}
+
+// downloadFileWithin is downloadFile with the stall window injectable, so the
+// behaviour can be tested without waiting a minute.
+//
+// The window bounds SILENCE, not duration: it is reset by every read that
+// returns bytes, so a slow-but-progressing transfer runs as long as it needs
+// while a peer that sends headers and then stops is abandoned. That gap was the
+// one the Transport timeouts could not close - ResponseHeaderTimeout stops
+// covering the moment the headers arrive - and it lands the server in
+// `installing` forever, which is worse than a failed install because a failure
+// can be retried.
+func downloadFileWithin(url, destPath string, stall time.Duration) error {
 	out, err := os.Create(destPath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	resp, err := installerDownloadClient.Get(url)
+	// Cancelling the request context is what actually unblocks a stalled read;
+	// closing the body from another goroutine is not safe.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := installerDownloadClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -622,6 +646,27 @@ func downloadFile(url, destPath string) error {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	_, err = io.Copy(out, resp.Body)
+	watchdog := time.AfterFunc(stall, cancel)
+	defer watchdog.Stop()
+
+	_, err = io.Copy(out, &stallGuard{r: resp.Body, timer: watchdog, window: stall})
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("download stalled: no data for %s", stall)
+	}
 	return err
+}
+
+// stallGuard pushes the watchdog back on every read that produced bytes.
+type stallGuard struct {
+	r      io.Reader
+	timer  *time.Timer
+	window time.Duration
+}
+
+func (s *stallGuard) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.timer.Reset(s.window)
+	}
+	return n, err
 }

@@ -24,15 +24,21 @@ const installerMetaTimeout = 30 * time.Second
 // installerMetaClient fetches version manifests and build metadata.
 var installerMetaClient = &http.Client{Timeout: installerMetaTimeout}
 
+// installerStallTimeout is how long a download may produce NO bytes at all
+// before it is abandoned. It bounds silence rather than duration, so it can be
+// generous without cutting off a genuinely slow link: a minute of a server
+// sending nothing is not a slow transfer, it is a dead one.
+const installerStallTimeout = 60 * time.Second
+
 // installerDownloadClient fetches server JARs, which are large and legitimately
 // slow on a thin link, so it deliberately has NO overall deadline - a blanket
 // timeout would abort a working download on a slow connection.
 //
 // Instead the phases that must not hang are bounded individually: connecting,
-// the TLS handshake, and waiting for response headers. A stall in the middle of
-// the BODY is still unbounded - catching that needs a per-read deadline around
-// io.Copy, not a Transport setting - so this narrows the window rather than
-// closing it.
+// the TLS handshake, and waiting for response headers. The BODY is bounded
+// separately, by the stall watchdog in downloadFileWithin - a Transport has no
+// setting for it, because "too slow" and "stopped" are only distinguishable by
+// watching for progress.
 //
 // Proxy and ForceAttemptHTTP2 are restated because a custom Transport does NOT
 // inherit http.DefaultTransport's defaults: leaving Proxy nil silently ignores
