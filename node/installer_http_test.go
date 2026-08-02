@@ -82,6 +82,24 @@ func TestInstallerDownloadClient_BoundsTheStallablePhases(t *testing.T) {
 	}
 }
 
+// A custom Transport starts from the ZERO value, not from DefaultTransport, so
+// a nil Proxy means HTTP_PROXY/HTTPS_PROXY are ignored - every download on a
+// node behind a proxy would fail, and only there, which is the worst kind of
+// regression to find. The meta client keeps DefaultTransport and needs no check.
+//
+// Asserting the hook is wired is the whole test: resolving an actual proxy URL
+// would be testing net/http's env parsing, which caches the environment in a
+// sync.Once and so cannot be driven from a test anyway.
+func TestInstallerDownloadClient_HonoursProxyEnvironment(t *testing.T) {
+	tr, ok := installerDownloadClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("installerDownloadClient has no *http.Transport")
+	}
+	if tr.Proxy == nil {
+		t.Fatal("Transport.Proxy is nil - HTTP_PROXY/HTTPS_PROXY would be ignored")
+	}
+}
+
 // A response-header stall is the download client's specific hazard: bytes never
 // start flowing, so no progress-based rule would ever fire.
 func TestInstallerDownloadClient_ResponseHeaderStall(t *testing.T) {
