@@ -27,4 +27,28 @@ DYLARIS platform has a real, maintained test suite. This documents the conventio
 
 ## CI
 
-Every push and pull request runs the Go test matrix (`core`, `node`, `pkg`, `log-shipper`) and the panel vitest suite; see `.github/workflows/test.yml`. A failing test fails the build.
+Every push and pull request runs `.github/workflows/ci.yml`. A failure in any of
+it fails the build.
+
+- **`go-tests`** - a matrix over `core`, `node`, `pkg`, `log-shipper` and
+  `beam/app`. Each cell runs `go build`, `go vet`, **staticcheck** and
+  `go test`. staticcheck is a real gate and catches things the other three do
+  not, so run it before pushing:
+  `go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,-SA1019,-SA1029,-SA9003' ./...`
+  from the module. A push has gone red on SA4000 with everything else green.
+  `beam/app` needs a stub `frontend/dist/index.html` to compile at all (`app.go`
+  has a `//go:embed` on a Wails build artifact); the job creates one.
+- **`race-tests`** - `go test -race` over every Go module, run as a docker BUILD
+  because `-race` needs cgo and this runner has no gcc. See
+  `.github/race.Dockerfile`, which also records why two simpler mechanisms were
+  tried and abandoned. To reproduce locally on a machine without cgo:
+  `docker build -f .github/race.Dockerfile .`
+- **`panel-tests`** - vitest.
+
+**A green race run proves less than it looks like.** It only covers concurrency
+that a TEST creates. Every race found in this repo lived between production
+goroutines no test starts, and `-race` reported nothing before or after the fix
+until a test drove both sides. If you write one, make it **time-based**
+(`time.Sleep`), not an iteration count - a tight loop finishes before the writer
+goroutine is ever scheduled, and then the detector sees no conflicting access and
+passes against completely unguarded globals. That happened here.
