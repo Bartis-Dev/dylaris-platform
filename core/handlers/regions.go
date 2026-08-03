@@ -102,7 +102,7 @@ func (h *RegionsHandler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 
 	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventRegionCreated, actorID, "", map[string]interface{}{
-		"region_id":   region.ID,
+		"region_id":    region.ID,
 		"display_name": region.DisplayName,
 	})
 
@@ -172,11 +172,27 @@ func (h *RegionsHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if n, _ := h.state.Store.CountServersInRegion(id); n > 0 {
+	// Fail CLOSED on both counts. Discarding the error made a database failure
+	// return 0, both guards pass, and the region is deleted with servers and
+	// nodes still in it - and `servers.region` is a plain text column with no
+	// foreign key, so nothing downstream stops it either. Those rows then point
+	// at a region that does not exist, which is what placement, beam region
+	// routing and the per-region DNS records are all keyed on.
+	n, err := h.state.Store.CountServersInRegion(id)
+	if err != nil {
+		sendJSONError(w, "Could not verify the region is empty", http.StatusInternalServerError)
+		return
+	}
+	if n > 0 {
 		sendJSONError(w, "Region still has servers; reassign or delete them first", http.StatusConflict)
 		return
 	}
-	if n, _ := h.state.Store.CountNodesInRegion(id); n > 0 {
+	n, err = h.state.Store.CountNodesInRegion(id)
+	if err != nil {
+		sendJSONError(w, "Could not verify the region is empty", http.StatusInternalServerError)
+		return
+	}
+	if n > 0 {
 		sendJSONError(w, "Region still has nodes; reassign or delete them first", http.StatusConflict)
 		return
 	}

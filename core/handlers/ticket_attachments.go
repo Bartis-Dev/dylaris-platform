@@ -403,7 +403,14 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	}
 	maxTicket := int64(settings.MaxTicketSizeMB) * 1024 * 1024
 	if maxTicket > 0 {
-		current, _ := h.state.Store.SumAttachmentBytesByTicket(t.ID)
+		// A quota that cannot be read must not read as empty: discarding this
+		// error made `current` 0, so only the per-FILE limit still applied and
+		// the per-ticket total could be exceeded freely.
+		current, cerr := h.state.Store.SumAttachmentBytesByTicket(t.ID)
+		if cerr != nil {
+			sendJSONError(w, "Could not verify the ticket attachment quota", http.StatusInternalServerError)
+			return
+		}
 		if current+size > maxTicket {
 			sendJSONError(w, fmt.Sprintf("Adding this file would exceed the %d MB per-ticket limit", settings.MaxTicketSizeMB), http.StatusRequestEntityTooLarge)
 			return
@@ -411,7 +418,11 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	}
 	maxUser := int64(settings.MaxUserSizeMB) * 1024 * 1024
 	if maxUser > 0 {
-		current, _ := h.state.Store.SumAttachmentBytesByUser(userID)
+		current, cerr := h.state.Store.SumAttachmentBytesByUser(userID)
+		if cerr != nil {
+			sendJSONError(w, "Could not verify your attachment quota", http.StatusInternalServerError)
+			return
+		}
 		if current+size > maxUser {
 			sendJSONError(w, fmt.Sprintf("Adding this file would exceed your %d MB attachment quota", settings.MaxUserSizeMB), http.StatusRequestEntityTooLarge)
 			return
