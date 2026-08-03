@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
 )
 
 type StatsHandler struct {
@@ -57,7 +59,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 
 	// Set watching key so the node knows to publish live updates
 	h.state.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
-	defer h.state.Redis.Del(r.Context(), watchKey)
+	defer clearStatsWatch(h.state.Redis, watchKey)
 
 	// Refresh watching key in background
 	watchDone := make(chan struct{})
@@ -213,4 +215,22 @@ func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(data))
+}
+
+// clearStatsWatch removes the watch key so the node stops publishing live stats
+// as soon as the last viewer leaves.
+//
+// It takes a DETACHED context on purpose. This runs from a deferred call in an
+// SSE handler whose normal exit is `<-r.Context().Done()` - the client
+// disconnecting IS how the handler ends - so by the time the cleanup runs the
+// request context is already cancelled, go-redis checks ctx.Err() before it
+// dispatches, and the Del never reaches Redis at all. The key then lingers for
+// the rest of its 10s TTL and the node keeps publishing to nobody.
+func clearStatsWatch(rdb *redis.Client, watchKey string) {
+	if rdb == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	rdb.Del(ctx, watchKey)
 }
