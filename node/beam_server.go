@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -659,8 +660,16 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	}
 
 	if stat.IsDir() {
-		// TODO: zip directory and stream
-		return status.Errorf(codes.Unimplemented, "directory download not yet implemented in Beam")
+		// ZipIfDir is what the client sets when the user picked a folder. Refuse
+		// rather than silently sending something else when it is not set: the
+		// caller asked for a file and a zip is not that.
+		if !req.ZipIfDir {
+			return status.Error(codes.InvalidArgument, "path is a directory; set zip_if_dir to download it as an archive")
+		}
+		root := s.storageMgr.GetServerDir(serverUUID)
+		return s.streamZip(stream, zipNameFor(filePath), func(zw *zip.Writer) error {
+			return addTreeToZip(zw, root, filePath, filePath)
+		})
 	}
 
 	f, err := os.Open(filePath)
@@ -990,8 +999,179 @@ func (s *beamServer) recordBeamDailyUsage(ctx context.Context, username string, 
 }
 
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
-	// TODO: implement selective zip download (reuse StreamHandler pattern)
-	return status.Errorf(codes.Unimplemented, "selective download not yet implemented in Beam")
+	serverUUID := s.extractServerUUID(stream.Context())
+	basePath, err := s.validateBeamPathRead(req.BasePath, serverUUID)
+	if err != nil {
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
+	if !req.SelectAll && len(req.Selected) == 0 {
+		return status.Error(codes.InvalidArgument, "no paths selected")
+	}
+	root := s.storageMgr.GetServerDir(serverUUID)
+
+	return s.streamZip(stream, zipNameFor(basePath), func(zw *zip.Writer) error {
+		if req.SelectAll {
+			return addTreeToZip(zw, root, basePath, basePath)
+		}
+		for _, sel := range req.Selected {
+			// Containment per entry: `selected` is client-supplied, so each one
+			// is re-anchored under basePath rather than trusted.
+			selPath, err := resolveWithinDir(basePath, sel)
+			if err != nil {
+				continue
+			}
+			// Names stay relative to basePath so the archive reproduces the
+			// layout the user selected, not an absolute tree.
+			if err := addTreeToZip(zw, root, basePath, selPath); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// zipNameFor derives the archive name the client saves under, matching the
+// control-plane path in grpc_handler.go so both transports name it the same.
+func zipNameFor(path string) string {
+	if base := filepath.Base(path); base != "." && base != string(filepath.Separator) && base != "" {
+		return base + ".zip"
+	}
+	return "download.zip"
+}
+
+// withinRoot reports whether abs is root itself or lies underneath it. Same
+// trailing-separator containment rule as resolveWithinDir, but for a path that
+// is already absolute rather than one being joined onto a base.
+func withinRoot(root, abs string) bool {
+	cleanRoot := filepath.Clean(root)
+	cleanAbs := filepath.Clean(abs)
+	return cleanAbs == cleanRoot || strings.HasPrefix(cleanAbs, cleanRoot+string(os.PathSeparator))
+}
+
+// addTreeToZip writes target (a file or a whole directory) into zw with names
+// relative to nameBase.
+//
+// root is the server's data directory and is used ONLY as the symlink boundary:
+// filepath.Walk reports links via Lstat, but os.Open follows them, so a link
+// planted inside the server directory pointing anywhere on the host would
+// otherwise be dereferenced and its content written into the archive. Links
+// resolving outside root are omitted entirely.
+func addTreeToZip(zw *zip.Writer, root, nameBase, target string) error {
+	// Resolve the boundary once, and compare resolved-against-resolved: a
+	// storage path that is itself reached through a symlink (a mounted
+	// STORAGE_PATHS entry, say) would otherwise make every contained link look
+	// like an escape.
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolvedRoot = filepath.Clean(root)
+	}
+
+	return filepath.Walk(target, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(nameBase, path)
+		if relErr != nil || rel == "." {
+			return nil
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, rerr := filepath.EvalSymlinks(path)
+			if rerr != nil {
+				return nil // dangling link: nothing to archive
+			}
+			if !withinRoot(resolvedRoot, resolved) {
+				return nil // escapes the server directory: omit
+			}
+			ti, serr := os.Stat(resolved)
+			// Walk does not descend into symlinked directories, so a link to one
+			// would otherwise be added as a file and fail on io.Copy. Skip it
+			// rather than write a half-entry.
+			if serr != nil || ti.IsDir() {
+				return nil
+			}
+			info = ti
+		}
+
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(rel)
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(w, f)
+		return err
+	})
+}
+
+// streamZip builds an archive with writeEntries and streams it out in chunks.
+//
+// The zip is produced through an io.Pipe and forwarded as it is written, so a
+// multi-gigabyte world folder never lands in memory or in a temp file. TotalSize
+// stays 0 because a streamed archive has no known length up front; the client
+// treats 0 as "unknown" and reports bytes-loaded only.
+func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], filename string, writeEntries func(*zip.Writer) error) error {
+	ctx := stream.Context()
+	pr, pw := io.Pipe()
+
+	go func() {
+		zw := zip.NewWriter(pw)
+		err := writeEntries(zw)
+		// Close the zip writer first either way: it flushes the central
+		// directory, and skipping that on the error path would leave the reader
+		// blocked on a pipe that never ends.
+		if cerr := zw.Close(); err == nil {
+			err = cerr
+		}
+		pw.CloseWithError(err)
+	}()
+	// Unblocks the producer if the client goes away mid-transfer; without it the
+	// goroutine would sit in pw.Write until the whole tree had been walked.
+	defer pr.Close()
+
+	buf := make([]byte, beamChunkSize)
+	var offset int64
+	first := true
+
+	for {
+		n, readErr := pr.Read(buf)
+		if n > 0 {
+			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
+				return status.Errorf(codes.Canceled, "throttle: %v", err)
+			}
+			chunk := &pb.BeamChunk{Data: buf[:n], Offset: offset}
+			if first {
+				chunk.Filename = filename
+				first = false
+			}
+			if err := stream.Send(chunk); err != nil {
+				return err
+			}
+			offset += int64(n)
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return status.Errorf(codes.Internal, "zip stream: %v", readErr)
+		}
+	}
 }
 
 // ─── Quota ───────────────────────────────────────────────────────────
