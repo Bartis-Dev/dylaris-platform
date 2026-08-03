@@ -196,29 +196,51 @@ func TestMintToken_FingerprintDisclosureGate(t *testing.T) {
 	}
 }
 
-// TestMintToken_MalformedBodyIgnored documents real (not "fixed") behavior:
-// MintToken discards the json.Decode error entirely
-// (`json.NewDecoder(r.Body).Decode(&req)` - return value unused), so a
-// malformed body does not 400; it silently proceeds with a zero-value
-// request (empty label, expiresDays=0 -> the 7-day default applies).
-func TestMintToken_MalformedBodyIgnored(t *testing.T) {
-	fs := &nodeEnrollFakeStore{}
-	state := newNodeEnrollState(fs, true, false, "")
-	h := NewNodeEnrollHandler(state)
-	r := httptest.NewRequest("POST", "/api/nodes/enroll-token", bytes.NewReader([]byte("not json")))
-	r = r.WithContext(context.WithValue(r.Context(), "userID", "u1"))
-	rec := httptest.NewRecorder()
-
-	h.MintToken(rec, r)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (malformed body is silently ignored, not 400): %s", rec.Code, rec.Body.String())
+// TestMintToken_BodyHandling pins the two halves of the decode contract, which
+// have to be distinguished rather than collapsed: BOTH fields are optional, so
+// an empty body legitimately means "mint one with the defaults" (io.EOF), while
+// anything else is malformed and must not mint.
+//
+// This previously documented the opposite - the decode error was discarded
+// entirely, so a caller who sent `{"expiresDays": 30}` with a typo elsewhere in
+// the JSON got a silent 7-day token and no way to tell. Rejecting outright
+// would have been just as wrong, because it would break the no-body call.
+func TestMintToken_BodyHandling(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        []byte
+		wantStatus  int
+		wantCreates int
+	}{
+		{"malformed", []byte("not json"), http.StatusBadRequest, 0},
+		{"truncated", []byte(`{"label":`), http.StatusBadRequest, 0},
+		{"empty body means defaults", nil, http.StatusOK, 1},
+		{"explicit empty object", []byte(`{}`), http.StatusOK, 1},
 	}
-	if len(fs.createCalls) != 1 {
-		t.Fatalf("expected 1 CreateNodeEnrollToken call despite the malformed body, got %d", len(fs.createCalls))
-	}
-	if fs.createCalls[0].label != "" {
-		t.Fatalf("label = %q, want empty (zero-value request)", fs.createCalls[0].label)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := &nodeEnrollFakeStore{}
+			state := newNodeEnrollState(fs, true, false, "")
+			h := NewNodeEnrollHandler(state)
+			r := httptest.NewRequest("POST", "/api/nodes/enroll-token", bytes.NewReader(tt.body))
+			r = r.WithContext(context.WithValue(r.Context(), "userID", "u1"))
+			rec := httptest.NewRecorder()
+
+			h.MintToken(rec, r)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if len(fs.createCalls) != tt.wantCreates {
+				t.Fatalf("CreateNodeEnrollToken calls = %d, want %d", len(fs.createCalls), tt.wantCreates)
+			}
+			// A rejected body must not mint anything - the whole point of the
+			// 400 is that no credential is issued for input we could not read.
+			if tt.wantStatus == http.StatusOK && fs.createCalls[0].label != "" {
+				t.Fatalf("label = %q, want empty (zero-value request)", fs.createCalls[0].label)
+			}
+		})
 	}
 }
 

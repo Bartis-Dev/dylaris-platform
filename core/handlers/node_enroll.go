@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -45,7 +46,14 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		Label       string `json:"label"`
 		ExpiresDays int    `json:"expiresDays"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	// io.EOF is fine: both fields are optional and an empty body means "mint one
+	// with the defaults". Anything else is a malformed body, and swallowing it
+	// meant a caller who sent `{"expiresDays": 30}` with a typo elsewhere in the
+	// JSON got a silent 7-day token back and no way to tell.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
