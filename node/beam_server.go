@@ -1039,32 +1039,14 @@ func zipNameFor(path string) string {
 	return "download.zip"
 }
 
-// withinRoot reports whether abs is root itself or lies underneath it. Same
-// trailing-separator containment rule as resolveWithinDir, but for a path that
-// is already absolute rather than one being joined onto a base.
-func withinRoot(root, abs string) bool {
-	cleanRoot := filepath.Clean(root)
-	cleanAbs := filepath.Clean(abs)
-	return cleanAbs == cleanRoot || strings.HasPrefix(cleanAbs, cleanRoot+string(os.PathSeparator))
-}
-
 // addTreeToZip writes target (a file or a whole directory) into zw with names
 // relative to nameBase.
 //
-// root is the server's data directory and is used ONLY as the symlink boundary:
-// filepath.Walk reports links via Lstat, but os.Open follows them, so a link
-// planted inside the server directory pointing anywhere on the host would
-// otherwise be dereferenced and its content written into the archive. Links
-// resolving outside root are omitted entirely.
+// root is the server's data directory and is used ONLY as the symlink boundary
+// for zipEntryInfo (grpc_handler.go), which is shared with the control-plane zip
+// paths so both transports archive exactly the same thing.
 func addTreeToZip(zw *zip.Writer, root, nameBase, target string) error {
-	// Resolve the boundary once, and compare resolved-against-resolved: a
-	// storage path that is itself reached through a symlink (a mounted
-	// STORAGE_PATHS entry, say) would otherwise make every contained link look
-	// like an escape.
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		resolvedRoot = filepath.Clean(root)
-	}
+	resolvedRoot := resolveZipRoot(root)
 
 	return filepath.Walk(target, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -1075,22 +1057,9 @@ func addTreeToZip(zw *zip.Writer, root, nameBase, target string) error {
 			return nil
 		}
 
-		if info.Mode()&os.ModeSymlink != 0 {
-			resolved, rerr := filepath.EvalSymlinks(path)
-			if rerr != nil {
-				return nil // dangling link: nothing to archive
-			}
-			if !withinRoot(resolvedRoot, resolved) {
-				return nil // escapes the server directory: omit
-			}
-			ti, serr := os.Stat(resolved)
-			// Walk does not descend into symlinked directories, so a link to one
-			// would otherwise be added as a file and fail on io.Copy. Skip it
-			// rather than write a half-entry.
-			if serr != nil || ti.IsDir() {
-				return nil
-			}
-			info = ti
+		info, ok := zipEntryInfo(resolvedRoot, path, info)
+		if !ok {
+			return nil
 		}
 
 		header, err := zip.FileInfoHeader(info)

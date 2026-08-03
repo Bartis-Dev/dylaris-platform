@@ -96,7 +96,7 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 	}
 
 	if stat.IsDir() && readReq.ZipIfDir {
-		h.streamDirAsZip(msg.RequestId, filePath, sendFn)
+		h.streamDirAsZip(msg.RequestId, msg.ServerUuid, filePath, sendFn)
 		return
 	}
 
@@ -123,6 +123,67 @@ func resolveWithinDir(dataPath, reqPath string) (string, error) {
 		return "", fmt.Errorf("access denied: path traversal")
 	}
 	return cleanPath, nil
+}
+
+// withinRoot reports whether abs is root itself or lies underneath it. Same
+// trailing-separator containment rule as resolveWithinDir, but for a path that
+// is already absolute rather than one being joined onto a base.
+func withinRoot(root, abs string) bool {
+	cleanRoot := filepath.Clean(root)
+	cleanAbs := filepath.Clean(abs)
+	return cleanAbs == cleanRoot || strings.HasPrefix(cleanAbs, cleanRoot+string(os.PathSeparator))
+}
+
+// resolveZipRoot prepares the symlink boundary for zipEntryInfo. Resolving the
+// root once matters: a STORAGE_PATHS entry that is itself a symlink would
+// otherwise make every contained link look like an escape, because zipEntryInfo
+// compares against an EvalSymlinks'd target.
+func resolveZipRoot(root string) string {
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		return r
+	}
+	return filepath.Clean(root)
+}
+
+// zipEntryInfo decides whether a walked path belongs in an archive and which
+// FileInfo describes it.
+//
+// This closes a symlink hole shared by every zip path here: filepath.Walk
+// reports links via Lstat, but os.Open FOLLOWS them, so a link planted inside a
+// tenant's server directory would have its target read and written into the
+// archive - an arbitrary-file-read out of that directory, dressed up as a folder
+// download. A tenant can plant one: the server directory is bind-mounted into
+// their Minecraft container and reachable over SFTP.
+//
+// Contained links are still archived, so this is not a blanket "drop all
+// symlinks" that would break legitimate layouts.
+func zipEntryInfo(resolvedRoot, path string, info os.FileInfo) (os.FileInfo, bool) {
+	if info.Mode()&os.ModeSymlink == 0 {
+		return info, true
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, false // dangling: nothing to archive
+	}
+	if !withinRoot(resolvedRoot, resolved) {
+		return nil, false // escapes the server directory
+	}
+	target, err := os.Stat(resolved)
+	// Walk does not descend into symlinked directories, so one added as a file
+	// would fail on io.Copy. Skip it rather than write a half-entry.
+	if err != nil || target.IsDir() {
+		return nil, false
+	}
+	return target, true
+}
+
+// serverDir returns the server's data directory, the root every path guard in
+// this file is measured against.
+func (h *StreamHandler) serverDir(serverUUID string) string {
+	if h.storageMgr != nil {
+		return h.storageMgr.GetServerDir(serverUUID)
+	}
+	return filepath.Join(h.baseDir, "dylaris_data", "servers", serverUUID)
 }
 
 // validatePath ensures the path stays within the server's data directory.
@@ -270,7 +331,8 @@ func (h *StreamHandler) streamFile(reqID, filePath string, sendFn func(*pb.NodeM
 
 // streamDirAsZip creates a zip of the directory using io.Pipe and streams chunks
 // as they are produced. Constant ~128KB RAM usage regardless of directory size.
-func (h *StreamHandler) streamDirAsZip(reqID, dirPath string, sendFn func(*pb.NodeMessage) error) {
+func (h *StreamHandler) streamDirAsZip(reqID, serverUUID, dirPath string, sendFn func(*pb.NodeMessage) error) {
+	resolvedRoot := resolveZipRoot(h.serverDir(serverUUID))
 	filename := filepath.Base(dirPath) + ".zip"
 
 	// Send metadata first (filename for Content-Disposition header)
@@ -294,6 +356,11 @@ func (h *StreamHandler) streamDirAsZip(reqID, dirPath string, sendFn func(*pb.No
 			}
 			relPath, _ := filepath.Rel(dirPath, path)
 			if relPath == "." {
+				return nil
+			}
+
+			info, ok := zipEntryInfo(resolvedRoot, path, info)
+			if !ok {
 				return nil
 			}
 
@@ -384,7 +451,7 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 
 	// If select_all, just zip the whole directory
 	if req.SelectAll {
-		h.streamDirAsZip(reqID, basePath, sendFn)
+		h.streamDirAsZip(reqID, serverUUID, basePath, sendFn)
 		return
 	}
 
@@ -403,6 +470,7 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 		return
 	}
 
+	resolvedRoot := resolveZipRoot(h.serverDir(serverUUID))
 	pr, pw := io.Pipe()
 
 	go func() {
@@ -417,8 +485,15 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 				continue
 			}
 
-			stat, err := os.Stat(selPath)
+			// Lstat, not Stat: a selected entry that is ITSELF a symlink has to
+			// be judged as a link, and Stat would already have followed it past
+			// the containment check below.
+			linkInfo, err := os.Lstat(selPath)
 			if err != nil {
+				continue
+			}
+			stat, ok := zipEntryInfo(resolvedRoot, selPath, linkInfo)
+			if !ok {
 				continue
 			}
 
@@ -429,6 +504,10 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 						return err
 					}
 					relPath, _ := filepath.Rel(basePath, path)
+					info, ok := zipEntryInfo(resolvedRoot, path, info)
+					if !ok {
+						return nil
+					}
 					header, err := zip.FileInfoHeader(info)
 					if err != nil {
 						return err
