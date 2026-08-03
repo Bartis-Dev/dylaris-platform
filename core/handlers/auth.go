@@ -254,29 +254,51 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		ctx := context.WithValue(r.Context(), "username", claims.Username)
 		ctx = context.WithValue(ctx, "isAdmin", claims.IsAdmin)
 
-		// Resolve userID from DB for invite checks
+		// Resolve userID from DB for invite checks.
+		//
+		// FAIL CLOSED on a failed lookup. Everything below used to sit inside
+		// `if err == nil`, so an error silently produced a session that was
+		// authenticated but had NO userID and had skipped the demo read-only
+		// gate entirely. Two consequences: handlers that scope by owner
+		// (gateway link routes) asserted a missing value and panicked, and the
+		// demo gate fixed one level down in 2b0b6d5 never ran at all.
+		//
+		// A missing row means the account was deleted while its token was still
+		// valid, which is a 401 - the token names someone who no longer exists.
+		// Any other error is infrastructure, and must not read as "your login is
+		// bad": that would log everyone out during a database blip and hide the
+		// outage.
 		if h.state.Store != nil {
-			if user, err := h.state.Store.GetUserByUsername(claims.Username); err == nil {
-				ctx = context.WithValue(ctx, "userID", user.ID)
-				// The demo account is read-only: reject every mutating verb so a
-				// public demo session can only ever view, never change anything.
-				// One central gate covers all write endpoints (power, files, RCON,
-				// profile, server-create, ...) without per-handler checks.
-				if !claims.IsAdmin &&
-					r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-					// Refuse when the answer is UNKNOWN, not just when it is
-					// "yes". The lookup's error used to be discarded, and its
-					// zero value said "not the demo account" - so a failed
-					// settings read silently lifted the read-only gate.
-					demo, derr := isDemoAccountChecked(h.state, user.ID)
-					if derr != nil {
-						sendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
-						return
-					}
-					if demo {
-						sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
-						return
-					}
+			user, err := h.state.Store.GetUserByUsername(claims.Username)
+			if errors.Is(err, sql.ErrNoRows) || (err == nil && user == nil) {
+				sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+				return
+			}
+			if err != nil {
+				log.Printf("auth: could not resolve %q: %v", claims.Username, err)
+				sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
+				return
+			}
+
+			ctx = context.WithValue(ctx, "userID", user.ID)
+			// The demo account is read-only: reject every mutating verb so a
+			// public demo session can only ever view, never change anything.
+			// One central gate covers all write endpoints (power, files, RCON,
+			// profile, server-create, ...) without per-handler checks.
+			if !claims.IsAdmin &&
+				r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+				// Refuse when the answer is UNKNOWN, not just when it is
+				// "yes". The lookup's error used to be discarded, and its
+				// zero value said "not the demo account" - so a failed
+				// settings read silently lifted the read-only gate.
+				demo, derr := isDemoAccountChecked(h.state, user.ID)
+				if derr != nil {
+					sendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
+					return
+				}
+				if demo {
+					sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
+					return
 				}
 			}
 		}
