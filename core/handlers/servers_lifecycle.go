@@ -732,6 +732,20 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// owner) so support keeps control. Detect such an admin start/restart so the
 	// power-action audit entry below records the override instead of it being
 	// silent.
+	//
+	// The override is genuinely temporary, which is what makes letting an admin
+	// through safe: suspension state lives in user_billing, NOT on the server
+	// row, so starting the server cannot clear it. GetUserBilling still reports
+	// suspended afterwards and the hourly billing-lifecycle enforcement pass
+	// stops the tenant's servers again.
+	//
+	// srv.Status == "suspended" is a different matter: no code path in either
+	// repo ever writes that value (verified repo-wide incl. SQL - suspension is
+	// modelled entirely on the owner), so today it is only reachable by editing
+	// the row by hand. The gate stays because it is an authorization check on a
+	// power action, and a guard that costs one comparison is the wrong place to
+	// economise - but do not read it as evidence that per-server suspension
+	// exists.
 	suspendOverride := ""
 	if isAdmin && (req.Action == "start" || req.Action == "restart") {
 		if srv.Status == "suspended" {
