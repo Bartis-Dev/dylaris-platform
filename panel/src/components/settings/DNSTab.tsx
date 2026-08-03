@@ -286,7 +286,18 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
     useEffect(() => {
         getDNSSettings().then(res => {
-            if (res.success && res.settings) applySettings(res.settings);
+            if (res.success && res.settings) {
+                applySettings(res.settings);
+            } else {
+                // Without this the panel renders the seed state - DNS disabled,
+                // no zones - as though that were the stored config, on the one
+                // screen where removing a zone later DELETES its records.
+                // applySettings is what sets snapshotRef, so it stays null here
+                // and `dirty` stays false: the save bar never appears and these
+                // unconfirmed values cannot be written back. Only the display
+                // was lying.
+                showToast('Failed to load DNS settings - shown values are unconfirmed', false);
+            }
             setLoading(false);
         });
     }, [applySettings]);

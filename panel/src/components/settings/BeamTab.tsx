@@ -244,6 +244,11 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             if (res.success && res.settings) {
                 setSettings(res.settings);
                 snapshotRef.current = beamSnapshot(res.settings);
+            } else {
+                // snapshotRef stays null, so `dirty` stays false and the save
+                // bar never appears - the seed values cannot be written back.
+                // Say the load failed rather than presenting them as stored.
+                showToast('Failed to load Beam settings - shown values are unconfirmed', false);
             }
             setLoading(false);
         });

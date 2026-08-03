@@ -18,7 +18,13 @@ export default function FeaturesTab() {
     const { routingMode, coreInfo } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
-    const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: true });
+    // Seeded with the SERVER's defaults, not optimistic ones: Core reads
+    // gateway as `val == "true"` (default off) and proxy as `val != "false"`
+    // (default on). These are only ever visible if the load below fails - the
+    // normal path renders a skeleton until the fetch resolves - but a settings
+    // screen that shows "on" for a subsystem that is off is worse than one that
+    // errs the other way. Same reasoning as storageConfigured's `null` below.
+    const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: false });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -61,6 +67,14 @@ export default function FeaturesTab() {
             if (res.success && res.settings) {
                 setSettings(res.settings);
                 snapshotRef.current = res.settings;
+            } else {
+                // Say so instead of rendering the seed values as if they were
+                // fetched. snapshotRef stays null on this path, which keeps
+                // `dirty` false and the save bar hidden - so the admin cannot
+                // write these unconfirmed values back over the real ones - but
+                // without a message the screen just quietly lies about what is
+                // enabled.
+                showToast(res.message || 'Failed to load feature settings - shown values are unconfirmed', false);
             }
             setLoading(false);
         });
