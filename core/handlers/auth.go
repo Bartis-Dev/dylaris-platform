@@ -262,10 +262,21 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				// public demo session can only ever view, never change anything.
 				// One central gate covers all write endpoints (power, files, RCON,
 				// profile, server-create, ...) without per-handler checks.
-				if !claims.IsAdmin && isDemoAccount(h.state, user.ID) &&
+				if !claims.IsAdmin &&
 					r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-					sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
-					return
+					// Refuse when the answer is UNKNOWN, not just when it is
+					// "yes". The lookup's error used to be discarded, and its
+					// zero value said "not the demo account" - so a failed
+					// settings read silently lifted the read-only gate.
+					demo, derr := isDemoAccountChecked(h.state, user.ID)
+					if derr != nil {
+						sendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
+						return
+					}
+					if demo {
+						sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
+						return
+					}
 				}
 			}
 		}

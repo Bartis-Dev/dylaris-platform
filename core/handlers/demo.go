@@ -29,11 +29,32 @@ const demoAccountUUIDSetting = "demo_account_uuid"
 // Always false when the store integration is off — the whole demo feature only
 // exists on the hosted build (STORE_URL + STORE_SHARED_KEY set).
 func isDemoAccount(s *AppState, userID string) bool {
+	demo, _ := isDemoAccountChecked(s, userID)
+	return demo
+}
+
+// isDemoAccountChecked is isDemoAccount with the lookup failure kept.
+//
+// The error used to be discarded, and the zero value is the PERMISSIVE answer:
+// a failed settings read made the demo account look like an ordinary user, so
+// AuthMiddleware skipped its read-only gate and a public demo session could
+// mutate. Callers that gate a WRITE must use this form and refuse when the
+// answer is unknown; callers that only decide how to render may keep the
+// boolean, where being wrong costs a misdrawn button.
+//
+// Deliberately NOT "assume demo on error": isDemoAccount is consulted for every
+// non-admin, so returning true on a failed read would turn one unreadable
+// setting into a fleet-wide write outage. Unknown is its own answer, and only
+// the write paths have to care.
+func isDemoAccountChecked(s *AppState, userID string) (bool, error) {
 	if s == nil || !s.StoreEnabled || userID == "" {
-		return false
+		return false, nil
 	}
-	v, _ := s.Store.GetSetting(demoAccountUUIDSetting)
-	return v != "" && v == userID
+	v, err := s.Store.GetSetting(demoAccountUUIDSetting)
+	if err != nil {
+		return false, err
+	}
+	return v != "" && v == userID, nil
 }
 
 // loadDemoServerUUIDs returns the admin-flagged demo server UUIDs.
