@@ -283,10 +283,33 @@ Every variable below maps to a real env read in the code; nothing is invented. C
 
 **Which of these actually reach the container.** This trips people up, so it is worth stating plainly: Compose and Swarm only pass a variable into a service if that service's `environment:` block lists it. A `.env` file is read when the YAML is *parsed*, to expand `${VAR}` placeholders; it is never injected into the containers by itself. A documented variable that is missing from the `environment:` block is therefore ignored no matter what you put in `.env`.
 
-Both shipped files forward everything an operator normally needs. What they deliberately do **not** forward, so you must add it to the `environment:` block yourself if you want it:
+**A set-but-empty variable is not the same as an absent one.** Core reads its
+configuration with `os.LookupEnv`, which returns a variable that exists even when
+its value is `""`. So writing `SOME_VAR: "${SOME_VAR:-}"` in an `environment:`
+block **overrides** whatever default `core/config/config.go` has for it. For most
+variables the default is `""` anyway and it makes no difference; for the ones that
+have a real default it matters, which is why the shipped files repeat those
+defaults literally (`DYLARIS_GRPC_PORT: "${DYLARIS_GRPC_PORT:-25501}"`). Keep
+those in sync with `config.go` if you add more.
 
-- **Owner / SaaS integrations:** `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `DNS_API_TOKEN`, `DNS_ZONE`, `STORE_URL`, `STORE_SHARED_KEY`, `UPDATES_FEED_URL_PLATFORM`, `UPDATES_FEED_URL_GATEWAY`, `BEAM_MANIFEST_URL`, `CLAMAV_ADDR`.
-- **Identity and tuning knobs with working defaults:** `DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`, `NODE_MANAGES_LINK`, `LINK_IMAGE`, `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN`.
+That behaviour is also the supported way to *disable* something whose default is
+non-empty: setting `UPDATES_FEED_URL_PLATFORM=""` turns the update feed off. It is
+deliberately not listed in the shipped files, because listing it with any shell
+default would take that away.
+
+Both shipped files now forward everything an operator normally needs, including
+the owner/SaaS integrations (`DNS_*`, `STORE_URL`, `STORE_SHARED_KEY`,
+`UPDATES_FEED_URL_GATEWAY`, `CLAMAV_ADDR`) and the identity/tuning knobs
+(`DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`). Earlier versions did not,
+and this section used to tell you to add them by hand.
+
+Still not forwarded, and why:
+
+- `UPDATES_FEED_URL_PLATFORM` - see the disable-by-empty note above.
+- `BEAM_MANIFEST_URL`, `NODE_MANAGES_LINK`, `LINK_IMAGE`,
+  `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN` - these belong to the
+  **Node**, which is deployed separately (the panel generates its env block), not
+  by these two files.
 - **Port variables** (`API_PORT`, `SFTP_PORT`, `BEAM_GRPC_PORT`, `BEAM_LAN_FASTPATH`, `MIGRATION_PORT`, `PORT_RANGE`) and `CORE_GRPC_ADDR`. These are set as literals in the YAML because the matching `ports:` publication lives there too. Changing a port means editing both lines anyway, so edit the file.
 
 ### Secrets (Docker / Portainer secrets via `*_FILE`)

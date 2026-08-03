@@ -80,6 +80,32 @@ services:
       DNS_API_TOKEN: "${DNS_API_TOKEN:-}"
       DNS_ZONE: "${DNS_ZONE:-}"
       DNS_ZONES: "${DNS_ZONES:-}"
+
+      # SaaS-only store integration. Documented in .env.example since it shipped,
+      # but never listed here - so setting it in .env did nothing at all and Core
+      # kept booting with the store surface off. Exactly the trap the comment
+      # above describes. Both unset = self-host / open-core build, unchanged.
+      STORE_URL: "${STORE_URL:-}"
+      STORE_SHARED_KEY: "${STORE_SHARED_KEY:-}"
+
+      # Documented in the README as configurable, but previously not listed here,
+      # so a .env value never reached Core.
+      #
+      # WATCH THE DEFAULTS. Core reads these with os.LookupEnv, which returns a
+      # SET-BUT-EMPTY value rather than falling through - so writing "${X:-}" for
+      # a var that has a non-empty default in config.go OVERRIDES that default
+      # with "". That is why the two below repeat their code defaults literally
+      # instead of being empty; keep them in sync with core/config/config.go.
+      DYLARIS_GRPC_PORT: "${DYLARIS_GRPC_PORT:-25501}"
+      REDIS_DB: "${REDIS_DB:-0}"
+      # These three default to "" in code, so an empty value is a no-op.
+      DYLARIS_CORE_ID: "${DYLARIS_CORE_ID:-}"
+      CLAMAV_ADDR: "${CLAMAV_ADDR:-}"
+      UPDATES_FEED_URL_GATEWAY: "${UPDATES_FEED_URL_GATEWAY:-}"
+      # UPDATES_FEED_URL_PLATFORM is deliberately NOT listed. Its code default is
+      # the public feed URL, and setting it to "" is the supported way to DISABLE
+      # the feed - which listing it here with any shell default would take away.
+      # Set it directly on the service if you need to point it elsewhere.
     # Core's shutdown runs a sequence, and the whole of it has to fit inside
     # this window or the later steps simply never execute. Budget: the API
     # listener drains for up to 30s, the tab-proxy listener for up to another
