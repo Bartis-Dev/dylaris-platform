@@ -864,11 +864,16 @@ func (s *PostgresStore) GetUsedHostPortsOnNode(nodeID int) ([]int, error) {
 	var ports []int
 	for rows.Next() {
 		var p int
-		if err := rows.Scan(&p); err == nil {
-			ports = append(ports, p)
+		// Errors are RETURNED, not skipped. This list is a conflict check: a
+		// port dropped here reads as free and the caller hands it to a second
+		// server, which then fails to bind at start time - far from the admin
+		// action that caused it.
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
 		}
+		ports = append(ports, p)
 	}
-	return ports, nil
+	return ports, rows.Err()
 }
 
 func (s *PostgresStore) GetAllActiveServers() ([]models.Server, error) {

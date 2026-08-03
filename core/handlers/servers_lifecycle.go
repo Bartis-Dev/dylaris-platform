@@ -991,7 +991,14 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 		// Conflict check: ensure no other server on this node uses the same host port
 		if req.HostPort > 0 && req.HostPort != srv.HostPort {
-			usedPorts, _ := h.state.Store.GetUsedHostPortsOnNode(srv.NodeID)
+			// Fail CLOSED. Discarding this error left usedPorts empty, the
+			// loop below found no conflict, and the port was assigned anyway -
+			// so a database hiccup turned a conflict check into a rubber stamp.
+			usedPorts, uerr := h.state.Store.GetUsedHostPortsOnNode(srv.NodeID)
+			if uerr != nil {
+				sendJSONError(w, "Could not verify host port availability", http.StatusInternalServerError)
+				return
+			}
 			for _, p := range usedPorts {
 				if p == req.HostPort {
 					sendJSONError(w, "Host port already in use on this node", 409)
