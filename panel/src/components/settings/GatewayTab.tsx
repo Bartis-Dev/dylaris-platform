@@ -1137,7 +1137,22 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Minecraft-Aware Filters</h3>
-                <p className="text-xs text-(--base-06)">Protocol-level filters using the Edge's MC handshake parser. Catches scanners and malformed-packet floods that pass plain rate-limiting.</p>
+                <p className="text-xs text-(--base-06)">Protocol-level filters intended to catch scanners and malformed-packet floods that pass plain rate-limiting.</p>
+                {/* These values are stored and reach the edge, but nothing feeds
+                    the counter that would act on them, so saving a limit here
+                    grants no protection. Said plainly rather than left implied:
+                    a security control that looks armed and is not is worse than
+                    one that is visibly off. */}
+                <div className="alert alert-warning text-xs">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                        <span className="font-medium">Not currently enforced.</span> These limits are
+                        saved and delivered to the edge, but no handshake ever reaches the counter, so
+                        setting them does not block anything today. Enforcement has to live in the
+                        splice sidecar, which is the only component that sees the player&apos;s own IP
+                        address. The rate limit and whitelist above are unaffected and do apply.
+                    </span>
+                </div>
 
                 <div className="grid grid-cols-2 gap-4">
                     <div className="flex flex-col gap-[5px]">
