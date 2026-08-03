@@ -50,9 +50,26 @@ export const handleResponse = async (response: Response) => {
     // Check for an expired session before touching the body: a 401 can carry a
     // non-JSON body (Go http.Error is text/plain), which would throw here.
     if (handleUnauthorized(response)) return { success: false, message: 'Session expired' };
-    const data = await response.json();
-    if (response.ok) return { success: true, ...data };
-    return { success: false, message: data.message || 'Unknown error' };
+
+    // A non-JSON body is not exclusive to 401. Go's http.Error writes
+    // text/plain, an unmatched route gives the default text 404, and a proxy in
+    // front of Core answers 502/504 with HTML - none of which parse. This used
+    // to throw, the caller's catch turned it into handleError, and the operator
+    // was told "Connection failed" about a server that had in fact answered.
+    // That is the same trap as merging "the call failed" into "no results".
+    let data: any = null;
+    let parsed = true;
+    try {
+        data = await response.json();
+    } catch {
+        // Body was not JSON. Keep the status - it is the only thing left that
+        // distinguishes a 404 from a 502.
+        parsed = false;
+    }
+
+    if (response.ok) return { success: true, ...(data ?? {}) };
+    if (parsed) return { success: false, message: data?.message || 'Unknown error' };
+    return { success: false, message: `Request failed (${response.status})` };
 };
 
 export const handleError = (err: any) => {
