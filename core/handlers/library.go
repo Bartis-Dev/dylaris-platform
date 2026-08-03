@@ -257,10 +257,15 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 			sendJSONError(w, "Could not open file", http.StatusInternalServerError)
 			return
 		}
-		defer f.Close()
-
-		if err := prov.WriteFile(r.Context(), destPath, f); err != nil {
-			sendJSONError(w, fmt.Sprintf("Upload failed for %s: %v", cleanName, err), http.StatusInternalServerError)
+		// Closed here, per FILE, rather than deferred. ParseMultipartForm spills
+		// anything over its in-memory threshold to a temp file, so those parts
+		// each hold an OS file descriptor - and a defer inside this loop would
+		// keep every one of them open until the whole upload finished. Nothing
+		// caps how many files one request may carry.
+		werr := prov.WriteFile(r.Context(), destPath, f)
+		f.Close()
+		if werr != nil {
+			sendJSONError(w, fmt.Sprintf("Upload failed for %s: %v", cleanName, werr), http.StatusInternalServerError)
 			return
 		}
 	}
