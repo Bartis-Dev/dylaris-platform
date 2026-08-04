@@ -54,7 +54,11 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 	// on-connect re-apply is the safety net, and the node retries on NOPERM).
 	if q.acl != nil && aclRelevantAction(action) {
 		if err := q.acl.EnsureForToken(ctx, nodeToken); err != nil {
-			log.Printf("redisacl: pre-placement ACL ensure failed for node %s (action %s): %v — node self-heals on next reconnect", nodeToken, action, err)
+			// tokenPrefix, not the raw token: this is the credential a node
+			// presents to GetNodeByToken, and every other message about a node
+			// truncates it (grpc/server.go, acl_reconciler.go both carry their
+			// own copy of the helper for exactly that). Logs are shipped.
+			log.Printf("redisacl: pre-placement ACL ensure failed for node %s (action %s): %v — node self-heals on next reconnect", tokenPrefix(nodeToken), action, err)
 		}
 	}
 

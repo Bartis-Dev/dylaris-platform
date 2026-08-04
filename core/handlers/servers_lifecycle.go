@@ -193,7 +193,10 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "create", configPayload, nil); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
 		} else {
-			log.Printf("Create command queued for %s", node.Token)
+			// node.ID, not node.Token: the token is the node's gRPC credential.
+			// node.Name is no safer - CreateNode seeds it FROM the token, so it
+			// is the same string until an operator sets a display name.
+			log.Printf("Create command queued for node %d", node.ID)
 		}
 	}
 
