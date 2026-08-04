@@ -88,8 +88,25 @@ func (m *RoutingMigrationService) Run(ctx context.Context, newMode string) (int,
 
 	m.writeStatus(ctx, MigrationStatus{Running: true, Total: len(servers)})
 	go func() {
+		// Same guard the other two migration jobs use (db_migration_job,
+		// storage_migration_job): a panic in a job that holds a cluster-wide
+		// lock must not strand it. Without this the SETNX lock sat for its full
+		// 2h TTL and the status stayed Running:true, so the panel showed a
+		// migration that no longer existed and no Core could start another.
+		//
+		// The lock release is OUTSIDE the recover check on purpose, so it runs
+		// on the normal path too - that is what the deferred form buys over the
+		// trailing statement this replaces.
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[RoutingMigration] panicked, releasing the lock and clearing the running flag: %v", rec)
+				s := m.readStatus(context.Background())
+				s.Running = false
+				m.writeStatus(context.Background(), s)
+			}
+			_ = m.releaseLock(context.Background())
+		}()
 		m.runBatches(context.Background(), servers, newMode)
-		_ = m.releaseLock(context.Background())
 	}()
 	return len(servers), nil
 }
@@ -120,17 +137,39 @@ func (m *RoutingMigrationService) runBatches(ctx context.Context, servers []mode
 			wg.Add(1)
 			go func(s models.Server) {
 				defer wg.Done()
-				if err := m.redeployServer(ctx, s, newMode); err != nil {
+				// A panic here used to take the whole Core down: this is a bare
+				// goroutine, and the recover on the caller cannot reach into it.
+				// Count it as a failed server instead, which is what an error
+				// from redeployServer would have done anyway.
+				defer func() {
+					if rec := recover(); rec != nil {
+						log.Printf("[RoutingMigration] server %s panicked: %v", s.UUID, rec)
+						mu.Lock()
+						failed++
+						d, f := done, failed
+						mu.Unlock()
+						m.updateProgress(ctx, d, f, len(servers))
+					}
+				}()
+
+				err := m.redeployServer(ctx, s, newMode)
+
+				// Read the counters under the SAME lock that increments them.
+				// updateProgress used to be called with unsynchronised reads of
+				// done/failed while sibling goroutines in the batch were
+				// incrementing them - a data race, and one no test reached
+				// because it needs two servers migrating at once.
+				mu.Lock()
+				if err != nil {
 					log.Printf("[RoutingMigration] server %s failed: %v", s.UUID, err)
-					mu.Lock()
 					failed++
-					mu.Unlock()
 				} else {
-					mu.Lock()
 					done++
-					mu.Unlock()
 				}
-				m.updateProgress(ctx, done, failed, len(servers))
+				d, f := done, failed
+				mu.Unlock()
+
+				m.updateProgress(ctx, d, f, len(servers))
 			}(srv)
 		}
 		wg.Wait()
