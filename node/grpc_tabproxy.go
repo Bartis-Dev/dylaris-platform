@@ -52,6 +52,11 @@ var nodeHopByHop = map[string]bool{
 // container does not listen on), the node fell through to probing its OWN
 // loopback on a caller-chosen port, which is exactly the "never an arbitrary
 // host, no SSRF pivot" property the file header claims.
+//
+// This one name is enough in every deployment: without tenant isolation the
+// container sits on dylaris_net with the node, and WITH isolation
+// TenantNetworkManager.connectNode pins the node into each tenant net for
+// exactly this reason ("so mc_<uuid> DNS + RCON/stats work").
 func containerAddr(serverUUID string, port int) string {
 	return fmt.Sprintf("mc_%s:%d", serverUUID, port)
 }
