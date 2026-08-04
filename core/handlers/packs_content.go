@@ -36,11 +36,22 @@ func (h *PacksHandler) loadOwnedBuild(r *http.Request) (*models.PackBuild, bool)
 }
 
 func (h *PacksHandler) ListContent(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.ownsPack(r, atoiVar(r, "id")); !ok {
+	packID := atoiVar(r, "id")
+	if _, ok := h.ownsPack(r, packID); !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	// Owning the pack in the path says nothing about the build in it. Without
+	// this binding a caller could pair their own packId with any other tenant's
+	// buildId and read that build's content, storage keys included. Every other
+	// build-scoped route already carries it, via loadOwnedBuild or explicitly
+	// like ExportMrpack; this one was the exception.
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
+	b, err := h.state.Store.GetPackBuild(buildID)
+	if err != nil || b == nil || b.PackID != packID {
+		sendJSONError(w, "Build not found", http.StatusNotFound)
+		return
+	}
 	entries, err := h.state.Store.ListBuildContent(buildID)
 	if err != nil {
 		sendJSONError(w, "Failed to list content", http.StatusInternalServerError)
