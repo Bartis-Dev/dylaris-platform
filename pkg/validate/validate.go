@@ -145,8 +145,14 @@ func ResourceBounds(ramMB int, cpu float64, diskMB int64, hostCPU float64) strin
 	if ramMB < 256 {
 		return "RAM must be at least 256 MB"
 	}
-	if cpu <= 0 {
-		return "CPU limit must be greater than 0"
+	// 0 means "no limit", exactly like diskMB below, and rejecting it broke
+	// server creation at the panel's own default: the wizard ships CPU LIMIT as
+	// 0 and labels it "0 = no limit". The node agrees - it passes the value
+	// straight to Docker as NanoCPUs, where 0 is Docker's own "uncapped" - and
+	// so does the stats collector, which guards its scaling with `cpuLimit > 0`.
+	// Only this check disagreed, so nothing could be created out of the box.
+	if cpu < 0 {
+		return "CPU limit cannot be negative"
 	}
 	if hostCPU > 0 && cpu > hostCPU {
 		return "CPU limit exceeds the node's core count"

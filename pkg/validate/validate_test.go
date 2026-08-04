@@ -198,11 +198,21 @@ func TestResourceBounds(t *testing.T) {
 	if ResourceBounds(128, 2, 5120, 8) == "" {
 		t.Error("RAM 128 should be rejected")
 	}
-	if ResourceBounds(1024, 0, 5120, 8) == "" {
-		t.Error("CPU 0 should be rejected")
+	// CPU 0 = no limit, the same convention diskMB uses and the value the panel
+	// ships as its default. Rejecting it made the default create fail.
+	if r := ResourceBounds(1024, 0, 5120, 8); r != "" {
+		t.Errorf("CPU 0 (no limit) rejected: %q", r)
+	}
+	if ResourceBounds(1024, -1, 5120, 8) == "" {
+		t.Error("negative CPU should be rejected")
 	}
 	if ResourceBounds(1024, 16, 5120, 8) == "" {
 		t.Error("CPU over host cap should be rejected")
+	}
+	// An uncapped server must still not be read as "0 cores, so under the cap"
+	// on a host whose count is known.
+	if r := ResourceBounds(1024, 0, 5120, 1); r != "" {
+		t.Errorf("CPU 0 rejected against a known host cap: %q", r)
 	}
 	if ResourceBounds(1024, 2, -1, 8) == "" {
 		t.Error("negative disk should be rejected")
