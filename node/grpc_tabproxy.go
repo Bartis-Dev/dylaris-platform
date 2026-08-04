@@ -2,10 +2,10 @@ package main
 
 // Node-side handler for the custom-tab HTTP reverse proxy (WS5). Core sends
 // HttpProxyReq; we dial the server's own container exactly like RCON does
-// (mc_<uuid>:port on the dylaris_net overlay, 127.0.0.1:port fallback),
-// perform the HTTP request, and stream the response head + body back to Core.
-// The target is always the server's own container port - never an arbitrary
-// host - so this introduces no SSRF pivot.
+// (mc_<uuid>:port on the dylaris_net overlay, and nothing else), perform the
+// HTTP request, and stream the response head + body back to Core. The target
+// is always the server's own container port - never an arbitrary host - so
+// this introduces no SSRF pivot.
 
 import (
 	"bytes"
@@ -40,14 +40,20 @@ var nodeHopByHop = map[string]bool{
 	"upgrade":             true,
 }
 
-// resolveContainerAddrs returns the dial order for a server's container: the
-// overlay DNS name first, then localhost for single-host dev. Mirrors
-// grpc_rcon.go's ordering.
-func resolveContainerAddrs(serverUUID string, port int) []string {
-	return []string{
-		fmt.Sprintf("mc_%s:%d", serverUUID, port),
-		fmt.Sprintf("127.0.0.1:%d", port),
-	}
+// containerAddr returns the ONE address a proxied tab may be dialled at: the
+// server's own container on the dylaris_net overlay.
+//
+// There used to be a 127.0.0.1:<port> fallback here, described as "for
+// single-host dev" and as mirroring grpc_rcon.go. It mirrored nothing: RCON
+// deliberately has no such fallback, and says why - the node is containerized,
+// so its own loopback is never the MC container. The difference that made it
+// worse here is that the port comes from the tab config, i.e. from the tenant
+// who owns the server. Whenever the container dial failed (any port their
+// container does not listen on), the node fell through to probing its OWN
+// loopback on a caller-chosen port, which is exactly the "never an arbitrary
+// host, no SSRF pivot" property the file header claims.
+func containerAddr(serverUUID string, port int) string {
+	return fmt.Sprintf("mc_%s:%d", serverUUID, port)
 }
 
 // nodeStripHopByHop returns the subset of headers that are safe to forward.
@@ -85,36 +91,30 @@ func (h *StreamHandler) handleHTTPProxy(reqID, serverUUID string, req *pb.HttpPr
 		method = http.MethodGet
 	}
 
-	var lastErr error
-	for _, addr := range resolveContainerAddrs(serverUUID, int(req.TargetPort)) {
-		url := "http://" + addr + req.Path
-		var bodyReader io.Reader
-		if len(req.Body) > 0 {
-			bodyReader = bytes.NewReader(req.Body)
-		}
-		hreq, err := http.NewRequest(method, url, bodyReader)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		// Forward only the sanitized headers Core sent. Core already dropped
-		// the panel session cookie/Authorization; we drop hop-by-hop here too.
-		for _, kv := range nodeStripHopByHop(req.Headers) {
-			hreq.Header.Add(kv.Key, kv.Value)
-		}
-		resp, err := proxyHTTPClient.Do(hreq)
-		if err != nil {
-			lastErr = err
-			continue // try the next candidate address
-		}
-		h.streamProxyResponse(reqID, resp, send)
+	// One address, one attempt: there is no second candidate to fall through to
+	// (see containerAddr), so a failure here is reported rather than retried
+	// somewhere the target cannot be.
+	url := "http://" + containerAddr(serverUUID, int(req.TargetPort)) + req.Path
+	var bodyReader io.Reader
+	if len(req.Body) > 0 {
+		bodyReader = bytes.NewReader(req.Body)
+	}
+	hreq, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		send(errorMsg(reqID, 502, err.Error()))
 		return
 	}
-	msg := "container unreachable"
-	if lastErr != nil {
-		msg = lastErr.Error()
+	// Forward only the sanitized headers Core sent. Core already dropped
+	// the panel session cookie/Authorization; we drop hop-by-hop here too.
+	for _, kv := range nodeStripHopByHop(req.Headers) {
+		hreq.Header.Add(kv.Key, kv.Value)
 	}
-	send(errorMsg(reqID, 502, msg))
+	resp, err := proxyHTTPClient.Do(hreq)
+	if err != nil {
+		send(errorMsg(reqID, 502, err.Error()))
+		return
+	}
+	h.streamProxyResponse(reqID, resp, send)
 }
 
 // streamProxyResponse writes the response head then the body in 64KB chunks.

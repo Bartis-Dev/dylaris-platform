@@ -2,20 +2,39 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	pb "dylaris-proto/node"
 )
 
-func TestResolveContainerAddrs(t *testing.T) {
-	got := resolveContainerAddrs("abc-123", 8100)
-	want := []string{"mc_abc-123:8100", "127.0.0.1:8100"}
-	if len(got) != len(want) {
-		t.Fatalf("resolveContainerAddrs len = %d, want %d (%v)", len(got), len(want), got)
+// TestContainerAddrIsTheOnlyTarget locks the proxy's stated security property:
+// the target is the server's own container and nothing else.
+//
+// This test previously asserted the opposite - that a 127.0.0.1:<port>
+// candidate followed the container name. The port comes from the tab config,
+// so that fallback let the owner of any server aim the node's own loopback at
+// a port of their choosing simply by picking one their container does not
+// listen on. grpc_rcon.go had already dropped the same fallback, and says why:
+// the node is containerized, so its loopback is never the MC container.
+func TestContainerAddrIsTheOnlyTarget(t *testing.T) {
+	got := containerAddr("abc-123", 8100)
+	if want := "mc_abc-123:8100"; got != want {
+		t.Fatalf("containerAddr = %q, want %q", got, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("resolveContainerAddrs[%d] = %q, want %q", i, got[i], want[i])
+	if strings.Contains(got, "127.0.0.1") || strings.Contains(got, "localhost") {
+		t.Fatalf("containerAddr = %q, which points at the node itself rather than the container", got)
+	}
+}
+
+// TestContainerAddrNeverLeavesTheContainerForAnyPort walks the port range a tab
+// can be configured with: none of them may produce a target other than the
+// server's own container.
+func TestContainerAddrNeverLeavesTheContainerForAnyPort(t *testing.T) {
+	for _, port := range []int{1, 22, 80, 2375, 6379, 25500, 25565, 25600, 65535} {
+		got := containerAddr("srv-uuid", port)
+		if !strings.HasPrefix(got, "mc_srv-uuid:") {
+			t.Errorf("port %d produced target %q, which is not the server's container", port, got)
 		}
 	}
 }
