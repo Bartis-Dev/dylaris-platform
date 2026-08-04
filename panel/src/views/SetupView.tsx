@@ -213,6 +213,12 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             const res = await fetch(`${API_URL}/versions?software=${software}`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
+            // A non-2xx with a valid JSON body would otherwise fall through to
+            // "no versions" and look identical to an upstream with nothing to
+            // offer. Turn it into the error path so the message below fires.
+            if (!res.ok) {
+                throw new Error(`request failed (${res.status})`);
+            }
             const data = await res.json();
             if (data.versions && data.versions.length > 0) {
                 const sorted = [...data.versions].sort(
@@ -223,7 +229,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 setSelectedBuild(sorted[0].build);
                 prefillVersionFromServer(sorted);
             }
-        } catch {}
+        } catch (e) {
+            // Swallowing this left the user in the setup wizard staring at an
+            // empty version dropdown with nothing to say why - the same failure
+            // shape as a software that genuinely has no builds. The list is the
+            // one thing this step cannot proceed without, so it has to say so.
+            const detail = e instanceof Error ? `: ${e.message}` : '';
+            setError(`Could not load ${software} versions${detail}. Check the connection and try again.`);
+        }
         setLoadingVersions(false);
     };
 
