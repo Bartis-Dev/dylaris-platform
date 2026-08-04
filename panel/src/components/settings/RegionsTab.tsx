@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { adminListRegions, createRegion, updateRegion, deleteRegion, Region } from '@/lib/api/regions';
 import { Globe, Plus, Pencil, Trash2, X, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 interface RegionFormState {
     id: string;
@@ -85,7 +86,7 @@ export default function RegionsTab() {
             showToast('Cannot delete the default region.', false);
             return;
         }
-        if (!confirm(`Delete region "${id}"? Servers and nodes in this region must be reassigned first.`)) return;
+        if (!(await confirmDialog({ title: 'Delete region', message: `Delete region "${id}"? Servers and nodes in this region must be reassigned first.` }))) return;
         setDeleting(id);
         const res = await deleteRegion(id);
         setDeleting(null);

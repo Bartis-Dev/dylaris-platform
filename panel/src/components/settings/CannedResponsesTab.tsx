@@ -8,6 +8,7 @@ import {
     CannedResponse, TicketCategory,
 } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 const TEMPLATE_VARS = ['{{user_name}}', '{{ticket_id}}', '{{server_name}}', '{{actor_name}}'];
 
@@ -82,7 +83,7 @@ export default function CannedResponsesTab() {
     };
 
     const handleDelete = async (c: CannedResponse) => {
-        if (!confirm(`Delete "${c.name}"?`)) return;
+        if (!(await confirmDialog({ title: 'Delete canned response', message: `Delete "${c.name}"?` }))) return;
         setDeleting(c.id);
         const res = await deleteCannedResponse(c.id);
         setDeleting(null);

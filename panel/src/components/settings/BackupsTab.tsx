@@ -12,6 +12,7 @@ import {
     getBackupConfig, saveBackupConfig,
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 interface LocalConfig {
     basePath: string;
@@ -266,7 +267,7 @@ export default function BackupsTab() {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('Delete this storage? Existing backups in this storage become inaccessible.')) return;
+        if (!(await confirmDialog({ title: 'Delete storage', message: 'Delete this storage? Existing backups in this storage become inaccessible.' }))) return;
         const res = await deleteBackupStorage(id);
         if (res.success) reload();
     };

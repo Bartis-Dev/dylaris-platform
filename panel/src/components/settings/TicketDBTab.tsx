@@ -13,6 +13,7 @@ import {
     BackupSummary,
 } from '@/lib/api/ticketMigration';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
@@ -147,7 +148,7 @@ function MigrationCard({ onChanged, flash }: { onChanged: () => void; flash: (ms
 
     const handleExecute = async () => {
         if (!url.trim()) return;
-        if (!confirm('Run the migration now? Schema will be applied to the target if missing, and rows will be copied. Safe to re-run.')) return;
+        if (!(await confirmDialog({ title: 'Run ticket DB migration', message: 'Run the migration now? Schema will be applied to the target if missing, and rows will be copied. Safe to re-run.', confirmLabel: 'Run migration' }))) return;
         setExecuting(true);
         const res = await executeTicketMigration(url);
         setExecuting(false);
@@ -253,7 +254,7 @@ function BackupCard({ onChanged, flash }: { onChanged: () => void; flash: (msg: 
     };
 
     const handleDelete = async (b: BackupSummary) => {
-        if (!confirm(`Delete backup ${b.name}?`)) return;
+        if (!(await confirmDialog({ title: 'Delete backup', message: `Delete backup ${b.name}?` }))) return;
         setDeleting(b.name);
         const res = await deleteTicketBackup(b.name);
         setDeleting(null);

@@ -19,6 +19,7 @@ import {
     arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 interface ModulesTabProps {
     modules: AppModule[];
@@ -189,7 +190,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
     };
 
     const handleDeleteModule = async (id: number) => {
-        if (!confirm("Do you really want to delete this module?")) return;
+        if (!(await confirmDialog({ title: 'Delete module', message: "Do you really want to delete this module?" }))) return;
         await deleteModule(id);
         onModulesChange();
     };

@@ -15,6 +15,7 @@ import {
 } from '@/lib/api';
 import Spinner from '@/components/Spinner';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 function formatBytes(b: number): string {
     if (!b) return '—';
@@ -270,7 +271,7 @@ export default function ServerBackupsView() {
         }
     };
     const handleDeleteJob = async (id: number) => {
-        if (!confirm('Delete this job? Existing runs stay in storage but become unmanaged.')) return;
+        if (!(await confirmDialog({ title: 'Delete backup job', message: 'Delete this job? Existing runs stay in storage but become unmanaged.' }))) return;
         const res = await deleteBackupJob(id);
         if (res.success) reload();
     };
@@ -283,7 +284,7 @@ export default function ServerBackupsView() {
         reload();
     };
     const handleDeleteRun = async (runId: number) => {
-        if (!confirm('Delete this backup? The archive will be removed from storage.')) return;
+        if (!(await confirmDialog({ title: 'Delete backup', message: 'Delete this backup? The archive will be removed from storage.' }))) return;
         await deleteBackupRun(runId);
         reload();
     };

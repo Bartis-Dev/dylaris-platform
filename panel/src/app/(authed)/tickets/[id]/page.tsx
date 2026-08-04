@@ -20,6 +20,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonText, SkeletonCard, Skeleton } from '@/components/Skeleton';
 import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 import { useRouter } from 'next/navigation';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'waiting_user', 'resolved', 'closed'];
 
@@ -183,7 +184,7 @@ export default function TicketDetailPage() {
     };
 
     const handleDeleteAttachment = async (attachmentId: number) => {
-        if (!confirm('Delete this attachment?')) return;
+        if (!(await confirmDialog({ title: 'Delete attachment', message: 'Delete this attachment?' }))) return;
         const res = await deleteTicketAttachment(ticketId, attachmentId);
         if (res.success) {
             setAttachments(prev => prev.filter(a => a.id !== attachmentId));

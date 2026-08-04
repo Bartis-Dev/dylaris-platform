@@ -7,6 +7,7 @@ import {
     TicketCategory, TicketPriority,
 } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 
@@ -105,7 +106,7 @@ export default function TicketCategoriesTab() {
     };
 
     const handleDelete = async (c: TicketCategory) => {
-        if (!confirm(`Delete category "${c.name}"? Categories with tickets attached cannot be deleted — disable them instead.`)) return;
+        if (!(await confirmDialog({ title: 'Delete category', message: `Delete category "${c.name}"? Categories with tickets attached cannot be deleted — disable them instead.` }))) return;
         setDeleting(c.id);
         const res = await deleteTicketCategory(c.id);
         setDeleting(null);

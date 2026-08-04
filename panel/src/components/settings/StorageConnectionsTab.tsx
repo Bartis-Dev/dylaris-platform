@@ -9,6 +9,7 @@ import {
     listStorageConnections, createStorageConnection, updateStorageConnection, deleteStorageConnection, testStorageConnection,
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 // editing holds a StorageConnection plus a transient secret. The list never
 // carries the secret (secretSet only); a save sends secretAccessKey only when
@@ -92,7 +93,7 @@ export default function StorageConnectionsTab() {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('Delete this storage connection? Features that reference it will fall back to their inline configuration.')) return;
+        if (!(await confirmDialog({ title: 'Delete storage connection', message: 'Delete this storage connection? Features that reference it will fall back to their inline configuration.' }))) return;
         const res = await deleteStorageConnection(id);
         if (res.success) reload();
         else showToast('Delete failed.', false);

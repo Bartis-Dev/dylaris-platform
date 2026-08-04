@@ -23,6 +23,7 @@ import { getPlans, setUserPlan, setUserLimitOverrides, type Plan } from '@/lib/a
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -187,7 +188,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     };
 
     const handleDeleteUser = async (id: string) => {
-        if(!confirm("Do you really want to delete this user?")) return;
+        if (!(await confirmDialog({ title: 'Delete user', message: "Do you really want to delete this user?" }))) return;
         await deleteUser(id);
         loadUsers();
     };
@@ -246,7 +247,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleReset2FA = async () => {
         if (!settingsUser) return;
-        if (!confirm(`Reset 2FA for "${settingsUser.username}"? They will be able to log in with just their password until they re-enable 2FA.`)) return;
+        if (!(await confirmDialog({ title: 'Reset two-factor', message: `Reset 2FA for "${settingsUser.username}"? They will be able to log in with just their password until they re-enable 2FA.`, confirmLabel: 'Reset 2FA' }))) return;
         setResetting2FA(true);
         try {
             const res = await adminResetTOTP(settingsUser.id);

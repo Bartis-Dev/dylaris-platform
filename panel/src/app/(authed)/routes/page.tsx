@@ -10,6 +10,7 @@ import {
     getLinkRoutes, createLinkRoute, deleteLinkRoute,
     listLinkKits, mintLinkKit, revokeLinkKit,
 } from '@/lib/api';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 // Route-only ("via Link"): a DDoS-protected address pointed at a server the user
 // runs on their OWN machine, reached through their own outbound Link tunnel. No
@@ -88,7 +89,7 @@ export default function RoutesPage() {
     };
 
     const revoke = async (linkIdToRevoke: string) => {
-        if (!confirm('Revoke this link? Its tunnel drops and it can no longer connect.')) return;
+        if (!(await confirmDialog({ title: 'Revoke link', message: 'Revoke this link? Its tunnel drops and it can no longer connect.', confirmLabel: 'Revoke' }))) return;
         try {
             // fetchAPI resolves (does not throw) on an HTTP error whose body is JSON, so a
             // 404/500 arrives here as { success: false }. Check it, or a failed revoke of a
@@ -121,7 +122,7 @@ export default function RoutesPage() {
     };
 
     const removeRoute = async (domain: string) => {
-        if (!confirm(`Delete the route ${domain}?`)) return;
+        if (!(await confirmDialog({ title: 'Delete route', message: `Delete the route ${domain}?` }))) return;
         try {
             const res = await deleteLinkRoute(domain);
             if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to delete route');

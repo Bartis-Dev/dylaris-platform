@@ -12,6 +12,7 @@ import ProfilePopup from '@/components/ProfilePopup';
 import MaintenanceBanner from '@/components/MaintenanceBanner';
 import BillingBanner from '@/components/BillingBanner';
 import StorageBanner from '@/components/StorageBanner';
+import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
@@ -69,6 +70,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
 
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+            {/* Single host for confirmDialog(). Mounted here so every authed
+                screen can ask without threading a node through its own JSX. */}
+            <ConfirmDialogRoot />
             {/* Global maintenance banner. Renders nothing when off. */}
             <MaintenanceBanner />
             {/* Non-dismissible billing banner for past_due/suspended tenants. */}
