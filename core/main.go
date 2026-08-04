@@ -32,8 +32,10 @@ import (
 )
 
 // detectBeamPlatform maps a browser User-Agent header to one of the platform
-// slugs the gateway's beam-relay serves at /download/{slug}.
-// Conservative: anything unrecognised falls back to linux-amd64.
+// slugs in handlers.validBeamPlatforms, which is what /api/beam/download
+// resolves against the signed release manifest. (It used to name the
+// beam-relay's /download/{slug}; the relay stopped serving binaries in
+// eeff445.) Conservative: anything unrecognised falls back to linux-amd64.
 func detectBeamPlatform(ua string) string {
 	u := strings.ToLower(ua)
 	switch {

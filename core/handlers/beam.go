@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -503,8 +502,15 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// validBeamPlatforms mirrors gateway/beam/relay/binaries.go validPlatforms.
-// Keep in sync — adding a new platform requires both ends.
+// validBeamPlatforms is the set of platform slugs Core will serve.
+//
+// It used to say it mirrored gateway/beam/relay/binaries.go. That file was
+// deleted in eeff445 (the app was decoupled from the relay and now releases via
+// GitHub), so the pointer sent anyone adding a platform to a file that no
+// longer exists. The two places that must actually agree today are BOTH in this
+// repo: detectBeamPlatform in core/main.go, and the BeamPlatform union in
+// panel/src/app/(authed)/servers/[id]/files/page.tsx - the panel's is the one
+// that decides what the browser asks for.
 var validBeamPlatforms = map[string]bool{
 	"windows-amd64": true,
 	"linux-amd64":   true,
@@ -513,20 +519,27 @@ var validBeamPlatforms = map[string]bool{
 	"darwin-arm64":  true,
 }
 
-// downloadRelayClient is a tuned HTTP client that talks to relays over
-// HTTPS. The relay listens on a self-signed cert by default (with a
-// proper one configured via TLS_CERT_PATH only on production deploys),
-// so we skip verification when the request is between Core and Relay
-// over the internal overlay network. The byte stream is end-to-end via
-// Core's own TLS to the browser, so the user-facing path stays trusted.
+// beamBinaryClient fetches the Beam executable that Core then streams to the
+// browser.
 //
-// Tight connect + response-header timeouts so a missing/unreachable
-// relay surfaces as a 502 in a few seconds instead of leaving the
-// browser spinning for minutes.
-var downloadRelayClient = &http.Client{
+// It VERIFIES TLS. It used to set InsecureSkipVerify, and the reason was sound
+// at the time: the upstream was a beam-relay on the internal overlay holding a
+// self-signed cert. That upstream is gone - eeff445 decoupled the app from the
+// relay and deleted the relay's binaries.go, so the only upstreams left are the
+// GitHub release asset from the signed manifest and an operator-set
+// beam.download_link (documented as a CDN/mirror). Skipping verification on a
+// public-internet fetch of an EXECUTABLE meant anyone able to intercept Core's
+// egress could substitute the binary, and the browser would still see it
+// arriving over Core's own trusted TLS with no signal that anything was wrong.
+//
+// An operator pointing beam.download_link at an internal host with a
+// self-signed cert now needs a real certificate there.
+//
+// Tight connect + response-header timeouts so an unreachable upstream surfaces
+// as a 502 in a few seconds instead of leaving the browser spinning.
+var beamBinaryClient = &http.Client{
 	Timeout: 30 * time.Minute, // total — leaves room for slow networks on large binaries
 	Transport: &http.Transport{
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		ResponseHeaderTimeout: 10 * time.Second,
 		IdleConnTimeout:       60 * time.Second,
 		DialContext: (&net.Dialer{
@@ -568,13 +581,18 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		return val
 	}
 
-	// Try every discovered candidate in turn. The first relay's overlay
-	// IP can be unreachable from Core if Core happens to live in a
-	// different overlay (multi-stack deploys), so we fall through to
-	// the public host name and then the next relay in sequence.
+	// The upstream is the signed release manifest's URL for this platform, or
+	// the beam.download_link override. Relays have not served binaries since
+	// eeff445; the loop below survives because the override may still name
+	// several hosts in future, and one attempt is the normal case.
 	candidates := resolveDownloadCandidates(r.Context(), h.state.Redis, getSetting, platform)
 	if len(candidates) == 0 {
-		sendJSONError(w, "No Beam relay available", http.StatusServiceUnavailable)
+		// Naming the real subsystem matters here: this fires when the signed
+		// manifest is missing, unreachable, or its signature does not verify -
+		// none of which an operator would find by looking at relays.
+		sendJSONError(w, "No verified Beam release found for "+platform+
+			" (check the signed release manifest, or set beam.download_link)",
+			http.StatusServiceUnavailable)
 		return
 	}
 
@@ -591,7 +609,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		if ua := r.Header.Get("User-Agent"); ua != "" {
 			req.Header.Set("User-Agent", ua)
 		}
-		r2, doErr := downloadRelayClient.Do(req)
+		r2, doErr := beamBinaryClient.Do(req)
 		if doErr != nil {
 			log.Printf("beam-download: %s failed: %v", upstream, doErr)
 			lastErr = doErr
@@ -601,7 +619,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(io.LimitReader(r2.Body, 512))
 			r2.Body.Close()
 			log.Printf("beam-download: %s returned %d: %s", upstream, r2.StatusCode, strings.TrimSpace(string(body)))
-			lastErr = fmt.Errorf("relay returned %d", r2.StatusCode)
+			lastErr = fmt.Errorf("upstream returned %d", r2.StatusCode)
 			continue
 		}
 		resp = r2
@@ -609,7 +627,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		break
 	}
 	if resp == nil {
-		msg := "Could not reach any Beam relay"
+		msg := "Could not fetch the Beam binary from its release URL"
 		if lastErr != nil {
 			msg += ": " + lastErr.Error()
 		}
@@ -667,37 +685,12 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 	if manifestURL == "" {
 		manifestURL = defaultBeamManifestURL
 	}
-	if u, err := manifestPlatformURL(ctx, manifestURL, platform); err == nil && u != "" {
-		return []string{u}
+	// Signature-checked: this URL is where an executable comes from.
+	u, err := fetchVerifiedBeamPlatformURL(ctx, manifestURL, beamUpdatePublicKeyB64, platform)
+	if err != nil {
+		log.Printf("beam-download: no verified manifest entry for %s: %v", platform, err)
+		return nil
 	}
-	return nil
+	return []string{u}
 }
 
-// manifestPlatformURL fetches the GitHub release manifest and returns the
-// download URL for the given platform slug (e.g. windows-amd64).
-func manifestPlatformURL(ctx context.Context, manifestURL, platform string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("manifest: %d", resp.StatusCode)
-	}
-	var m struct {
-		Platforms map[string]struct {
-			URL string `json:"url"`
-		} `json:"platforms"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return "", err
-	}
-	if p, ok := m.Platforms[platform]; ok && p.URL != "" {
-		return p.URL, nil
-	}
-	return "", fmt.Errorf("no manifest entry for %s", platform)
-}

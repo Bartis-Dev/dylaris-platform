@@ -61,11 +61,46 @@ const beamMinAutoTTL = 5 * time.Minute
 var errBeamManifestUnverified = errors.New("beam: manifest signature verification failed")
 
 // beamManifest is Core's read view of the signed latest.json. Only the fields
-// Core needs are modeled; the platforms map and per-binary sigs are ignored here
-// (the app consumes those). Read ONLY after the signature verifies.
+// Core needs are modeled; the per-binary sigs are ignored here (the app consumes
+// those). Read ONLY after the signature verifies.
+//
+// Platforms joined this struct when the download endpoint stopped decoding the
+// same document on its own: it used to unmarshal latest.json without ever
+// fetching latest.json.sig, so the URL it streamed an executable from came out
+// of a document nothing had authenticated.
 type beamManifest struct {
 	Version    string `json:"version"`
 	MinVersion string `json:"minVersion"`
+	Platforms  map[string]struct {
+		URL string `json:"url"`
+	} `json:"platforms"`
+}
+
+// fetchVerifiedBeamPlatformURL returns the download URL for one platform slug
+// from the SIGNED manifest, or an error if the signature does not verify.
+//
+// Fail-CLOSED, unlike fetchVerifiedBeamMinVersion next to it, and the asymmetry
+// is deliberate: an unverifiable manifest must not raise the min-version floor
+// (that would lock every client out), but it equally must not be the source of
+// a URL Core hands an executable down from. No manifest, no download.
+func fetchVerifiedBeamPlatformURL(ctx context.Context, manifestURL, pubB64, platform string) (string, error) {
+	body, err := httpGetBeamManifestBytes(ctx, manifestURL)
+	if err != nil {
+		return "", err
+	}
+	sig, err := httpGetBeamManifestBytes(ctx, manifestURL+".sig")
+	if err != nil {
+		return "", err
+	}
+	m, err := verifyBeamManifest(pubB64, body, sig)
+	if err != nil {
+		return "", err
+	}
+	p, ok := m.Platforms[platform]
+	if !ok || strings.TrimSpace(p.URL) == "" {
+		return "", fmt.Errorf("signed manifest has no entry for %s", platform)
+	}
+	return strings.TrimSpace(p.URL), nil
 }
 
 // verifyBeamManifest verifies sigB64 (base64-std, over the exact body bytes)
