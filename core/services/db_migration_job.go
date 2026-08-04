@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -144,7 +145,14 @@ func (s *DBMigrationService) Start(ctx context.Context, target DBConnParams, sta
 		return nil, ErrMigrationRunning
 	}
 
-	prevBlockLevel := s.enableMaintenance(startedBy)
+	// Refuse to start if the platform is not actually blocked. Copying a live
+	// database while users keep writing to it is the failure this job exists to
+	// avoid, and the lock has to go back or nobody can retry until it expires.
+	prevBlockLevel, err := s.enableMaintenance(startedBy)
+	if err != nil {
+		s.redis.Del(context.Background(), dbMigrationLockKey)
+		return nil, fmt.Errorf("enable maintenance mode: %w", err)
+	}
 
 	now := time.Now()
 	job := &DBMigrationJob{
@@ -346,17 +354,56 @@ func (s *DBMigrationService) jobID() string {
 	return s.job.ID
 }
 
-func (s *DBMigrationService) enableMaintenance(actorID string) (prevBlockLevel string) {
-	prevBlockLevel, _ = s.store.GetSetting("maintenance.block_level")
-	_ = s.store.SetSettingBy("maintenance.block_level", "block_all", actorID)
-	_ = s.store.SetSettingBy("maintenance.active", "true", actorID)
-	return prevBlockLevel
+// enableMaintenance puts the platform into block_all and reports whether it
+// actually got there.
+//
+// The result is not optional. Every one of these writes used to be discarded,
+// so a failed write still produced a job recorded as MaintenanceOn:true, a job
+// log line stating "Maintenance mode enabled (block_all)" as fact, and a
+// migration copying the database WHILE users kept writing to it. The caller now
+// refuses to start on an error - a migration without maintenance is worse than
+// no migration.
+//
+// A missing maintenance.block_level row is the normal first-run state, not a
+// failure: GetSetting reports it as sql.ErrNoRows, and it simply means there is
+// no previous level to restore afterwards.
+func (s *DBMigrationService) enableMaintenance(actorID string) (prevBlockLevel string, err error) {
+	prevBlockLevel, err = s.store.GetSetting("maintenance.block_level")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("read current block level: %w", err)
+	}
+
+	if err := s.store.SetSettingBy("maintenance.block_level", "block_all", actorID); err != nil {
+		return "", fmt.Errorf("set block level: %w", err)
+	}
+	if err := s.store.SetSettingBy("maintenance.active", "true", actorID); err != nil {
+		// Undo the level we just raised, or the platform is left at block_all
+		// with maintenance inactive - a state nobody asked for and nothing else
+		// clears.
+		if prevBlockLevel != "" {
+			if rerr := s.store.SetSettingBy("maintenance.block_level", prevBlockLevel, actorID); rerr != nil {
+				log.Printf("db migration: could not restore block level %q after a failed activation: %v", prevBlockLevel, rerr)
+			}
+		}
+		return "", fmt.Errorf("activate maintenance: %w", err)
+	}
+	return prevBlockLevel, nil
 }
 
+// disableMaintenance lifts the block after the migration finishes.
+//
+// This one cannot abort anything - the migration is already over - but it must
+// not fail silently either. A lost "false" write leaves the whole platform in
+// block_all indefinitely, which is a self-inflicted outage that an operator can
+// only clear by hand, and previously there was nothing in the log to point at.
 func (s *DBMigrationService) disableMaintenance(actorID, prevBlockLevel string) {
-	_ = s.store.SetSettingBy("maintenance.active", "false", actorID)
+	if err := s.store.SetSettingBy("maintenance.active", "false", actorID); err != nil {
+		log.Printf("db migration: FAILED to lift maintenance mode - the platform stays in block_all until this is cleared manually: %v", err)
+	}
 	if prevBlockLevel != "" && prevBlockLevel != "block_all" {
-		_ = s.store.SetSettingBy("maintenance.block_level", prevBlockLevel, actorID)
+		if err := s.store.SetSettingBy("maintenance.block_level", prevBlockLevel, actorID); err != nil {
+			log.Printf("db migration: could not restore the previous block level %q: %v", prevBlockLevel, err)
+		}
 	}
 }
 
