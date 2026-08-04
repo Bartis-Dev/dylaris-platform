@@ -10,13 +10,22 @@ var commandCats = []string{
 }
 
 // globalReadKeys are the shared keys the node accesses (NOT the shipper). The
-// three the node only ever reads are read-only (%R~); dylaris:migration:* stays
-// read+write because the node writes its own migration status/meta/endpoint keys.
+// ones the node only ever reads are read-only (%R~); dylaris:migration:* stays
+// read+write because the node writes its own migration status/meta/endpoint keys,
+// and dylaris:beam:daily:* because it increments that counter.
+//
+// These are GLOBAL, not node-scoped, so a read+write grant here is a write
+// handed to every node in the fleet, tenant-owned BYON nodes included. The three
+// beam:bw_* keys are the bandwidth throttle the node is subject to - writable by
+// the throttled party is the wrong way round - and routing_mode/file_access_mode
+// are Core-authoritative platform switches. node/main.go reads all five with
+// rdb.Get and writes none of them, node/beam_throttle.go likewise; verified by
+// sweeping node/ for writes to each key.
 func globalReadKeys() []string {
 	return []string{
-		"~dylaris:routing_mode", "~dylaris:file_access_mode",
+		"%R~dylaris:routing_mode", "%R~dylaris:file_access_mode",
 		"%R~dylaris:placement:*",
-		"~beam:bw_limit", "~beam:bw_up_internal", "~beam:bw_down_internal",
+		"%R~beam:bw_limit", "%R~beam:bw_up_internal", "%R~beam:bw_down_internal",
 		// Upload-limit config the node enforces on the beam + SFTP + SaveFileContent
 		// write paths (read-only), plus the per-user daily counter it reads AND
 		// increments (read+write). Without these the node's quota reads return

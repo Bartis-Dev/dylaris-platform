@@ -38,6 +38,48 @@ func TestBuildNodeACLRules(t *testing.T) {
 	}
 }
 
+// TestNodeGlobalKeysAreReadOnlyWhereTheNodeOnlyReads pins least privilege on the
+// GLOBAL (not node-scoped) keys. A read+write grant here is a write handed to
+// every node in the fleet, tenant-owned BYON nodes included, and three of these
+// are the bandwidth throttle the node itself is subject to.
+//
+// Token comparison, not strings.Contains: "~beam:bw_limit" is a substring of
+// "%R~beam:bw_limit", so a Contains check passes either way and would not have
+// caught the grant this test exists for.
+func TestNodeGlobalKeysAreReadOnlyWhereTheNodeOnlyReads(t *testing.T) {
+	rules := BuildNodeACLRules("n1", "pw", []string{"uuid-a"})
+	tokens := make(map[string]bool, len(rules))
+	for _, v := range rules {
+		tokens[v.(string)] = true
+	}
+
+	// node/main.go and node/beam_throttle.go read every one of these with
+	// rdb.Get and write none of them.
+	readOnly := []string{
+		"dylaris:routing_mode",
+		"dylaris:file_access_mode",
+		"beam:bw_limit",
+		"beam:bw_up_internal",
+		"beam:bw_down_internal",
+	}
+	for _, k := range readOnly {
+		if tokens["~"+k] {
+			t.Errorf("%s is granted read+write; the node only reads it, and it is global", k)
+		}
+		if !tokens["%R~"+k] {
+			t.Errorf("%s is missing its read-only grant (%%R~%s)", k, k)
+		}
+	}
+
+	// The counterpart: keys the node genuinely writes must stay read+write, so a
+	// blanket tightening cannot pass this test either.
+	for _, k := range []string{"dylaris:migration:*", "dylaris:beam:daily:*"} {
+		if !tokens["~"+k] {
+			t.Errorf("%s must stay read+write - the node writes it", k)
+		}
+	}
+}
+
 func TestBuildShipperACLRulesIsNarrow(t *testing.T) {
 	r := joinRules(BuildShipperACLRules("pw", []string{"uuid-a"}))
 	if !strings.Contains(r, "~dylaris:server:uuid-a:*") {
