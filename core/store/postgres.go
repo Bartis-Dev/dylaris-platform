@@ -1365,10 +1365,19 @@ func (s *PostgresStore) ListDisabledLibraryPaths() ([]string, error) {
 	var paths []string
 	for rows.Next() {
 		var p string
+		// This list is a DENYLIST, so a dropped row silently un-blocks a path.
+		// Skipping on a scan error (and ignoring rows.Err below) turned a
+		// truncated read into "nothing is disabled" - fail open. Same reasoning
+		// as ListLinkKitsForACLTeardown, which already returns on both.
 		if err := rows.Scan(&p); err != nil {
-			continue
+			return nil, err
 		}
 		paths = append(paths, p)
+	}
+	// nil rather than the partial slice on purpose: a caller that ignores the
+	// error must not end up with a denylist that is silently missing entries.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return paths, nil
 }

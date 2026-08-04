@@ -42,7 +42,11 @@ func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	disabledSet := h.disabledPathSet()
+	disabledSet, err := h.disabledPathSet()
+	if err != nil {
+		sendJSONError(w, "Could not verify library access", http.StatusServiceUnavailable)
+		return
+	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 
 	if !isAdmin && isPathBlocked(path, disabledSet) {
@@ -107,19 +111,24 @@ func (h *LibraryHandler) ToggleLibraryPathHandler(w http.ResponseWriter, r *http
 
 // disabledPathSet loads all disabled library paths into a lookup set,
 // keyed by the normalized path string.
-func (h *LibraryHandler) disabledPathSet() map[string]struct{} {
+//
+// Returns an error rather than an empty set when the denylist cannot be read:
+// an empty set means "nothing is disabled", so swallowing the error handed a
+// non-admin every path an admin had explicitly turned off. Callers must fail
+// closed - same choice AuthMiddleware makes for a failed user lookup.
+func (h *LibraryHandler) disabledPathSet() (map[string]struct{}, error) {
 	set := map[string]struct{}{}
 	if h.state.Store == nil {
-		return set
+		return nil, fmt.Errorf("no store configured")
 	}
 	paths, err := h.state.Store.ListDisabledLibraryPaths()
 	if err != nil {
-		return set
+		return nil, err
 	}
 	for _, p := range paths {
 		set[normalizeLibraryPath(p)] = struct{}{}
 	}
-	return set
+	return set, nil
 }
 
 // normalizeLibraryPath strips leading/trailing slashes so paths from
@@ -292,7 +301,11 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 	// a file that lives under an admin-disabled path (the browse listing hides
 	// these, but download took the path verbatim).
 	if isAdmin, _ := r.Context().Value("isAdmin").(bool); !isAdmin {
-		disabledSet := h.disabledPathSet()
+		disabledSet, err := h.disabledPathSet()
+		if err != nil {
+			sendJSONError(w, "Could not verify library access", http.StatusServiceUnavailable)
+			return
+		}
 		if _, blocked := disabledSet[normalizeLibraryPath(path)]; blocked || isPathBlocked(path, disabledSet) {
 			sendJSONError(w, "Access denied", http.StatusForbidden)
 			return
