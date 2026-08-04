@@ -72,6 +72,13 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [selectedRegion, setSelectedRegion] = useState<string>('');
     const [availableRegions, setAvailableRegions] = useState<string[]>([]);
 
+    // Validation and create failures used to go to window.alert. A native alert
+    // is not part of the design system, blocks the thread, and - the reason it
+    // is a correctness problem and not only a cosmetic one - a browser that has
+    // suppressed further dialogs swallows it silently, so the wizard just
+    // stopped doing anything with no visible cause.
+    const [formError, setFormError] = useState<string | null>(null);
+
     const [ownerId, setOwnerId] = useState<string | null>(null);
     const [serverType, setServerType] = useState<'game' | 'proxy'>('game');
     const [ram, setRam] = useState(2048);
@@ -195,11 +202,12 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
     const handleCreate = async () => {
         setLoading(true);
-        if (!ownerId) { alert("Please select an owner."); setLoading(false); return; }
-        if (targetMode === 'node' && !nodeId) { alert("Please select a Node."); setLoading(false); return; }
+        setFormError(null);
+        const fail = (msg: string) => { setFormError(msg); setLoading(false); };
+        if (!ownerId) { fail("Please select an owner."); return; }
+        if (targetMode === 'node' && !nodeId) { fail("Please select a Node."); return; }
         if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
-            alert("Please select a region or at least one tag.");
-            setLoading(false);
+            fail("Please select a region or at least one tag.");
             return;
         }
 
@@ -237,7 +245,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             }
             onClose();
         } else {
-            alert("Error: " + result.message);
+            setFormError(result.message || "Could not create the container.");
         }
         setLoading(false);
     };
@@ -705,6 +713,12 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     )}
                 </div>
 
+                {formError && (
+                    <div className="px-6 pb-2">
+                        <p role="alert" className="text-sm text-(--error)">{formError}</p>
+                    </div>
+                )}
+
                 {/* Footer */}
                 <div className="modal-footer">
                     {showNoNodeMsg ? (
@@ -723,10 +737,11 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     {step < 2 ? (
                         <button
                             onClick={() => {
-                                if (!ownerId) return alert("Please assign an owner.");
-                                if (targetMode === 'node' && !nodeId) return alert("Please select a node.");
+                                setFormError(null);
+                                if (!ownerId) return setFormError("Please assign an owner.");
+                                if (targetMode === 'node' && !nodeId) return setFormError("Please select a node.");
                                 if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
-                                    return alert("Please select a region or at least one tag.");
+                                    return setFormError("Please select a region or at least one tag.");
                                 }
                                 setStep(2);
                             }}

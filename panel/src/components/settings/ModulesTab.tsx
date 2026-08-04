@@ -140,6 +140,9 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
 export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [error, setError] = useState("");
+    // Separate from `error`, which belongs to the add-module modal. These are
+    // failures of the inline row actions, which used to go to window.alert.
+    const [actionError, setActionError] = useState("");
     const [modForm, setModForm] = useState({ name: "", type: "iframe", icon: "link", url: "" });
     const [sortedModules, setSortedModules] = useState<AppModule[]>([]);
 
@@ -194,18 +197,20 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
     const handleToggleModule = async (id: number, currentStatus: boolean) => {
         const res = await toggleModule(id, !currentStatus);
         if (res.success) {
+            setActionError("");
             onModulesChange();
         } else {
-            alert("Error toggling module.");
+            setActionError(res.message || "Could not toggle the module.");
         }
     };
 
     const handleRoleChange = async (id: number, role: 'all' | 'admin') => {
         const res = await setModuleAccessRole(id, role);
         if (res.success) {
+            setActionError("");
             onModulesChange();
         } else {
-            alert(res.message || "Error changing role.");
+            setActionError(res.message || "Could not change the module role.");
         }
     };
 
@@ -218,6 +223,8 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                     Add Module
                 </button>
             </div>
+
+            {actionError && <p role="alert" className="text-sm text-(--error) mb-4">{actionError}</p>}
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={sortedModules.map(m => m.id)} strategy={verticalListSortingStrategy}>
