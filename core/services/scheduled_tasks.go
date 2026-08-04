@@ -110,7 +110,12 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 		if parseErr != nil {
 			status = "error"
 			errMsg = parseErr.Error()
-			_ = s.store.SetScheduledTaskEnabled(t.ID, false, nil)
+			// Disabling is the whole remedy for an unparseable schedule. If it
+			// does not stick the task stays enabled and errors on every tick
+			// from here on, so the failure has to be visible.
+			if derr := s.store.SetScheduledTaskEnabled(t.ID, false, nil); derr != nil {
+				log.Printf("scheduled-tasks: task #%d has an unparseable schedule but could not be disabled; it will keep failing every tick: %v", t.ID, derr)
+			}
 		} else {
 			nextPtr = &next
 		}

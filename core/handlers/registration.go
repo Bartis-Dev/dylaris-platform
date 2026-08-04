@@ -150,14 +150,18 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 			// Roll back the user since the policy requirement wasn't met.
 			// In practice the frontend should never submit without questions
 			// when the status endpoint reports required=true.
-			_ = h.state.Store.DeleteUser(user.ID)
+			if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
+				log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
+			}
 			sendJSONError(w, "Security questions are required for registration", http.StatusBadRequest)
 			return
 		}
 		if len(req.SecurityQuestions) > 0 {
 			hashedJSON, err := buildHashedQAJSON(req.SecurityQuestions, LoadSecurityQuestionPool(h.state), policy.SecurityQuestionsCount)
 			if err != nil {
-				_ = h.state.Store.DeleteUser(user.ID)
+				if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
+					log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
+				}
 				sendJSONError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -166,7 +170,9 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 				if policy.SecurityQuestionsRequiredAtSignup {
 					// Required by policy — don't leave a half-created account
 					// without the questions it must have; roll back instead.
-					_ = h.state.Store.DeleteUser(user.ID)
+					if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
+						log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
+					}
 					sendJSONError(w, "Failed to save security questions", http.StatusInternalServerError)
 					return
 				}
@@ -195,7 +201,16 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Verification not required → mark verified immediately so the user
 		// can log in right away.
-		_ = h.state.Store.MarkEmailVerified(user.ID)
+		//
+		// Harmless today if it fails - the login gate only checks
+		// EmailVerifiedAt when EmailVerifyRequired is on, which it is not on
+		// this branch. It becomes a lockout the moment an admin turns the
+		// policy ON later: this account would then be treated as unverified and
+		// never received a verification mail, because none was sent. Not worth
+		// failing the registration over, very much worth being able to find.
+		if err := h.state.Store.MarkEmailVerified(user.ID); err != nil {
+			log.Printf("registration: could not mark %s (userID=%s) verified while verification is disabled; they will be locked out if the policy is enabled later: %v", user.Username, user.ID, err)
+		}
 	}
 
 	LogIdentityAudit(h.state, r, "user_registered", "", user.ID, map[string]interface{}{
