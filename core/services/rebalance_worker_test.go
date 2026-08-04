@@ -125,7 +125,19 @@ func TestRebalanceWorker_MigrationLocked(t *testing.T) {
 		}
 		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 		w := &RebalanceWorker{redis: rdb}
-		mr.Close() // subsequent commands error out (nothing listening).
+
+		// The error has to come from the CLIENT, not from the address. Closing
+		// only miniredis leaves the test asserting that nothing else binds the
+		// freed port for the duration of one call - an assumption about the
+		// machine, not about the code. It held locally over 20 runs and failed
+		// on CI (run 30894163959), where this package leaks background workers
+		// that keep dialling. A closed client returns redis.ErrClosed for every
+		// command, with no network involved at all.
+		mr.Close()
+		if err := rdb.Close(); err != nil {
+			t.Fatalf("close client: %v", err)
+		}
+
 		if !w.migrationLocked(context.Background(), "srv-3") {
 			t.Error("expected migrationLocked=true (fail-safe) on a redis error")
 		}
