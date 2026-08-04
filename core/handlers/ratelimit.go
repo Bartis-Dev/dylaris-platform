@@ -20,6 +20,38 @@ func NewIPRateLimiter() *IPRateLimiter {
 	return &IPRateLimiter{buckets: make(map[string]*rateBucket)}
 }
 
+// CredentialBodyLimit bounds a request body on the UNAUTHENTICATED surface.
+//
+// 64 KiB is roughly a thousand times what these payloads need - a username, a
+// password, a token, a TOTP code, at most a handful of security questions - and
+// still far below anything that can hurt.
+const CredentialBodyLimit = 64 << 10
+
+// LimitBody caps how many bytes a handler can read from the request body.
+//
+// The IP rate limiter above bounds how MANY requests an anonymous caller may
+// send; it says nothing about how BIG one may be. Every public handler decodes
+// with json.NewDecoder(r.Body).Decode(&req), which allocates whatever a string
+// field contains, so one request carrying a multi-gigabyte value was enough to
+// exhaust Core - no credential, no second request needed.
+//
+// A body over the cap makes the handler's existing Decode fail, which its
+// existing "Invalid JSON" 400 already covers, so no handler changes.
+//
+// Deliberately NOT applied as blanket middleware on /api: the upload handlers
+// set their own, much larger MaxBytesReader, and an outer wrapper would win
+// (the inner one only wraps the already-capped reader) and silently break every
+// upload at the smaller limit. Wrapping the routes that take credentials keeps
+// the two from interacting.
+func LimitBody(max int64, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, max)
+		}
+		next(w, r)
+	}
+}
+
 // Map-size bounds. maxBuckets is the ceiling that triggers eviction;
 // bucketEvictTarget is how far down eviction brings it, leaving headroom so the
 // sweep does not run on every call once busy.

@@ -645,7 +645,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	authLimiter := handlers.NewIPRateLimiter()
 
 	// --- PUBLIC ENDPOINTS ---
-	api.HandleFunc("/auth/login", authLimiter.Limit(10, authHandler.LoginHandler)).Methods("POST")
+	api.HandleFunc("/auth/login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.LoginHandler))).Methods("POST")
 	api.HandleFunc("/status", authHandler.StatusHandler).Methods("GET")
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
 	// Public - used by the topbar to display "Connected to <region> Core".
@@ -663,7 +663,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// mode. Atomic CTE in Store.CreateFirstAdmin prevents racing inserts
 	// across N Cores.
 	api.HandleFunc("/setup/status", setupHandler.Status).Methods("GET")
-	api.HandleFunc("/setup/admin", authLimiter.Limit(10, setupHandler.CreateAdmin)).Methods("POST")
+	api.HandleFunc("/setup/admin", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, setupHandler.CreateAdmin))).Methods("POST")
 
 	// --- Scheduled Tasks ---
 	// Cron preview - pure transform, available to anyone authed.
@@ -1298,10 +1298,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	storeHandler := handlers.NewStoreHandler(appState)
 	api.HandleFunc("/store/link/start", authHandler.AuthMiddleware(storeHandler.LinkStart)).Methods("POST")
 	api.HandleFunc("/store/status", authHandler.AuthMiddleware(storeHandler.Status)).Methods("GET")
-	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, storeHandler.LinkVerify)).Methods("POST")
+	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
 	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
 	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")
-	api.HandleFunc("/store/provision", authLimiter.Limit(60, storeHandler.Provision)).Methods("POST")
+	api.HandleFunc("/store/provision", authLimiter.Limit(60, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.Provision))).Methods("POST")
 	// Migration progress poll - owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
 	// /gateway/route-options stays EXEMPT-authed: the user-facing route form needs
@@ -1363,16 +1363,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Registration + Email Verify ---
 	// Public - login page polls registration-status to decide whether to show the register link.
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
-	api.HandleFunc("/auth/register", authLimiter.Limit(5, registrationHandler.Register)).Methods("POST")
+	api.HandleFunc("/auth/register", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.Register))).Methods("POST")
 	// Public one-click read-only demo session (rate-limited). 404 when no demo account is set.
-	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, authHandler.DemoLogin)).Methods("POST")
-	api.HandleFunc("/auth/verify-email", registrationHandler.VerifyEmail).Methods("POST")
-	api.HandleFunc("/auth/resend-verification", registrationHandler.ResendVerification).Methods("POST")
+	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.DemoLogin))).Methods("POST")
+	api.HandleFunc("/auth/verify-email", handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.VerifyEmail)).Methods("POST")
+	api.HandleFunc("/auth/resend-verification", handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.ResendVerification)).Methods("POST")
 
 	// --- Password reset - all public, all enumeration-safe ---
-	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, passwordResetHandler.ForgotPassword)).Methods("POST")
-	api.HandleFunc("/auth/validate-reset-token", passwordResetHandler.ValidateResetToken).Methods("POST")
-	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, passwordResetHandler.ResetPassword)).Methods("POST")
+	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ForgotPassword))).Methods("POST")
+	api.HandleFunc("/auth/validate-reset-token", handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ValidateResetToken)).Methods("POST")
+	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ResetPassword))).Methods("POST")
 
 	// --- Security questions ---
 	// Public: pool query used by /register and /reset-password to render pickers.
