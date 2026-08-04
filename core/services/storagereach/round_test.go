@@ -196,12 +196,24 @@ func TestRunRound_OnProgressStaysZeroWhenAPeerNeverAppears(t *testing.T) {
 // an exact key (unlike the currentRoundKey match in the publish-fails test,
 // which is known up front).
 //
-// Margins: PollEvery is 20ms; the report delay is 150ms, a 7.5x gap, clear of
-// this file's 5x floor, so at least one poll is guaranteed to run before the
-// delayed report lands. Deadline is 1s, a 6.7x gap over the delay, so the
-// round never expires while waiting for it. RunRound still returns as soon
-// as both reports are in rather than waiting out the deadline, so the real
-// cost of this test is roughly the 150ms delay, not the 1s cap.
+// Margins, both of which the CI race gate has now corrected once each:
+//
+// The deadline uses settlingRound() (10s) rather than an inline 1s. This test
+// belongs to the settling class 8a7c774 defined - the round ends on its own
+// once the last report lands, so the deadline is a safety cap and never the
+// thing under test - but it was missed by that pass because it builds its
+// options inline for the custom OnProgress. A 1s cap was not enough under
+// -race on a runner busy with the rest of the matrix: the round expired, and
+// the failure surfaced as a healthy 2/2 round reported as 0/2 with core-a
+// not-shared and core-b no-response.
+//
+// The report delay is 500ms against PollEvery's 20ms, a 25x gap. What the
+// delay has to buy is one NON-final poll: RunRound fires OnProgress on its
+// first poll unconditionally and again on the final one, so a round already
+// complete at the first poll yields a single call and the len(seen) >= 2
+// assertion below fails. 150ms held on an idle box and is the same kind of
+// margin that did not survive instrumentation. RunRound still returns as soon
+// as both reports are in, so the cost is the 500ms delay, not the 10s cap.
 func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -213,7 +225,7 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 	ctx := context.Background()
 
 	const delayedReportKeySuffix = ":report:core-b"
-	const reportDelay = 150 * time.Millisecond
+	const reportDelay = 500 * time.Millisecond
 	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
 		if cmd == "SET" && len(args) > 0 && strings.HasSuffix(args[0], delayedReportKeySuffix) {
 			time.Sleep(reportDelay)
@@ -235,7 +247,7 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 	}()
 
 	var seen []int
-	opts := RoundOptions{Deadline: time.Second, PollEvery: 20 * time.Millisecond}
+	opts := settlingRound()
 	opts.OnProgress = func(r RoundResult) { seen = append(seen, r.Confirmed) }
 
 	c := NewCoordinator(rdb, "core-a", sharedFactory(root))
@@ -295,10 +307,11 @@ func TestRunRound_DeletesTheStagedConfigWhenItEnds(t *testing.T) {
 // OnProgress does NOT fire on every poll tick, only when the aggregate result
 // actually changes (plus the always-on final call).
 //
-// Same delayed-report rig as the sequence test above, but with a much shorter
-// PollEvery (10ms) against the same 150ms delay, so roughly 14 poll iterations
-// elapse with an IDENTICAL "1/2, not done" result before core-b's report
-// finally lands. The old, undeduplicated behavior would have called
+// Same delayed-report rig as the sequence test above, including the same
+// settling deadline and the same 500ms report delay for the same reasons, but
+// with a much shorter PollEvery (10ms), so roughly 50 poll iterations elapse
+// with an IDENTICAL "1/2, not done" result before core-b's report finally
+// lands. The old, undeduplicated behavior would have called
 // OnProgress once per poll - order a dozen or more times; the fix collapses
 // every one of those identical polls into the single call at which the result
 // first became "1/2, not done", plus the final "2/2, done" call. Exactly 2,
@@ -314,7 +327,7 @@ func TestRunRound_OnProgressSkipsUnchangedPolls(t *testing.T) {
 	ctx := context.Background()
 
 	const delayedReportKeySuffix = ":report:core-b"
-	const reportDelay = 150 * time.Millisecond
+	const reportDelay = 500 * time.Millisecond
 	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
 		if cmd == "SET" && len(args) > 0 && strings.HasSuffix(args[0], delayedReportKeySuffix) {
 			time.Sleep(reportDelay)
@@ -336,7 +349,8 @@ func TestRunRound_OnProgressSkipsUnchangedPolls(t *testing.T) {
 	}()
 
 	var calls int
-	opts := RoundOptions{Deadline: time.Second, PollEvery: 10 * time.Millisecond}
+	opts := settlingRound()
+	opts.PollEvery = 10 * time.Millisecond // deliberately shorter than the helper's: this test wants many identical polls
 	opts.OnProgress = func(RoundResult) { calls++ }
 
 	c := NewCoordinator(rdb, "core-a", sharedFactory(root))
