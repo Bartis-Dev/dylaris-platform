@@ -52,6 +52,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	targetDir := rootDir
 	if cmd.SubServer != "" {
 		targetDir = filepath.Join(rootDir, cmd.SubServer)
+		// Same containment guard as the backup path. Here the consequence is a
+		// WRITE: the staging directory and the rename that follows would land
+		// outside the server root.
+		if !withinRoot(rootDir, targetDir) {
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "sub-server escapes the server directory")
+			return
+		}
 	}
 
 	// Stage the new content in a sibling directory so we can swap it in

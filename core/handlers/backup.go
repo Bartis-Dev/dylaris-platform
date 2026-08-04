@@ -16,10 +16,33 @@ import (
 	backupstorage "dylaris-core/storage/backup"
 
 	pbNode "dylaris-proto/node"
+	"dylaris-pkg/validate"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
+
+// validSubServer rejects a backup job's sub-server name that is not a plain
+// directory name.
+//
+// The value reaches the Node as-is and is filepath.Join'ed onto the server's
+// data directory there, and Join CLEANS rather than confines: a "../.." walks
+// out of the server root, so an unchecked name turns a backup into an archive
+// of whatever the node process can read, and a restore into a write outside the
+// server. The name is decoded straight from the request body into models.BackupJob
+// (only ID/ServerID/schedule are forced), so it is caller-controlled.
+// validate.IsSubServerName is the same rule the console handlers already apply
+// to this exact parameter.
+func validSubServer(w http.ResponseWriter, sub *string) bool {
+	if sub == nil || *sub == "" {
+		return true // NULL / empty means the whole container, which is a valid job
+	}
+	if !validate.IsSubServerName(*sub) {
+		sendJSONError(w, "Invalid sub-server name", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
 
 type BackupHandler struct {
 	state *AppState
@@ -203,6 +226,9 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", 400)
 		return
 	}
+	if !validSubServer(w, req.SubServer) {
+		return
+	}
 	req.ServerID = serverID
 	if req.RetentionCount <= 0 {
 		req.RetentionCount = 3
@@ -228,6 +254,9 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	var req models.BackupJob
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	if !validSubServer(w, req.SubServer) {
 		return
 	}
 	req.ID = jobID

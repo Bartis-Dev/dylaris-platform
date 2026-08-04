@@ -73,9 +73,18 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 		return
 	}
 
-	rootDir := resolveServerRoot(sm, cmd.ServerUUID)
+	serverRoot := resolveServerRoot(sm, cmd.ServerUUID)
+	rootDir := serverRoot
 	if cmd.SubServer != "" {
-		rootDir = filepath.Join(rootDir, cmd.SubServer)
+		rootDir = filepath.Join(serverRoot, cmd.SubServer)
+		// Core validates the name, but this is where it becomes a path: Join
+		// cleans "..", it does not confine, so an unconfined name here would
+		// archive whatever the node process can read - other tenants' servers
+		// and the cached .node_secret included.
+		if !withinRoot(serverRoot, rootDir) {
+			reportBackup(ctx, rdb, cmd.RunID, "failed", "sub-server escapes the server directory", 0)
+			return
+		}
 	}
 	if _, err := os.Stat(rootDir); err != nil {
 		reportBackup(ctx, rdb, cmd.RunID, "failed", "source directory not found: "+rootDir, 0)
