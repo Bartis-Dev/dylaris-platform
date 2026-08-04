@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -239,11 +240,54 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
+	// Read the node BEFORE the row goes: everything below is keyed by its token.
+	node, nodeErr := h.state.Store.GetNodeByID(id)
+
 	if err := h.state.Store.DeleteNode(id); err != nil {
 		sendJSONError(w, "Delete failed", 500)
 		return
 	}
+
+	if nodeErr == nil && node != nil {
+		h.cleanupDeletedNode(r, node.Token)
+	} else {
+		log.Printf("node delete: could not read node %d before deleting it, so its Redis ACL and keys were left behind: %v", id, nodeErr)
+	}
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// cleanupDeletedNode drops the Redis state a deleted node leaves behind.
+//
+// The ACL half is the one that matters. Deleting the row alone left all three
+// scoped Redis users live, and a node caches its secret in dylaris_data (it
+// survives a container recreate on purpose), so removing a node from the panel
+// did NOT revoke its Redis access - it kept authenticating with the credential
+// it already had. RemoveNodeACL's own doc names this as its case ("e.g. node
+// deleted"); the only caller was the pairing-reset path in node_admission.go.
+// Same hard cut here: ACL DELUSER disconnects live clients rather than waiting
+// for a reconnect that a deleted node has no reason to make.
+//
+// The keys are housekeeping: none of them expire and nothing else removes them,
+// so every deleted node left a few behind for good.
+//
+// Both are best-effort. The row is already gone and the request has succeeded;
+// a Redis hiccup here must not turn a completed delete into a 500.
+func (h *NodeHandler) cleanupDeletedNode(r *http.Request, token string) {
+	if h.state.Redis == nil || token == "" {
+		return
+	}
+	redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), token)
+
+	keys := []string{
+		storagePlacementKey(token),
+		"dylaris:node:" + token + ":cpu",
+		"dylaris:node:" + token + ":cpu:sig",
+		"dylaris:node:" + token + ":cmds",
+	}
+	if err := h.state.Redis.Del(r.Context(), keys...).Err(); err != nil {
+		log.Printf("node delete: leftover Redis keys for the deleted node could not be removed: %v", err)
+	}
 }
 
 // GetNodeServers returns all servers assigned to a node

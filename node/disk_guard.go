@@ -49,6 +49,16 @@ func recordDiskLimit(ctx context.Context, rdb *redis.Client, uuid string, limitM
 	rdb.Set(ctx, diskLimitKey(uuid), limitMB, 0)
 }
 
+// forgetDiskLimit drops the cached limit for a server that is going away.
+// recordDiskLimit only deletes when Core pushes "unlimited", which a delete
+// never does, so the delete path has to say so explicitly.
+func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
+	if rdb == nil || uuid == "" {
+		return
+	}
+	rdb.Del(ctx, diskLimitKey(uuid))
+}
+
 // loadDiskLimit returns the cached limit in MB, or 0 for "no limit known".
 func loadDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) int64 {
 	if rdb == nil {

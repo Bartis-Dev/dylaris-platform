@@ -1090,6 +1090,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		os.RemoveAll(serverPath)
 		storage.RemoveServerPath(cmd.Config.UUID)
+		// The cached disk limit has no TTL and its only other delete fires when
+		// Core pushes "unlimited", so without this every deleted server left a
+		// key behind for good. The port and storage keys next to it were already
+		// released on this path; this one was missed.
+		forgetDiskLimit(ctx, rdb, cmd.Config.UUID)
 		dm.ReleaseTenant(cmd.Config.UUID)
 		log.Printf("Server %s data fully deleted", cmd.Config.UUID)
 
