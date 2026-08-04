@@ -170,6 +170,14 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	// BYON nodes (with a valid enroll token). There is no OFF path anymore.
 	ctx := stream.Context()
 	sendFail := func(msg string) {
+		// The reason reaches the node and reached nothing else: every rejection
+		// below returns a descriptive error into gRPC, which has no interceptor,
+		// so the authority side logged nothing at all. A node locked out of the
+		// cluster was undebuggable from Core, and someone probing enroll tokens
+		// or challenge responses left no trace. Logged in the closure rather
+		// than at the call sites so a future rejection path cannot forget it.
+		// Token is prefixed, never whole - it is a credential.
+		log.Printf("acl: node auth rejected (%s) for %s from %v", msg, tokenPrefix(auth.NodeToken), peerIP(ctx))
 		_ = stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
 			AuthResult: &pb.AuthResult{Ok: false, Message: msg},
 		}})
