@@ -41,6 +41,8 @@ export default function TicketCategoriesTab() {
     const [deleting, setDeleting] = useState<number | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [error, setError] = useState('');
+    // Distinct from `error`, which belongs to the create/edit modal.
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -49,7 +51,12 @@ export default function TicketCategoriesTab() {
 
     const load = async () => {
         const res = await adminListTicketCategories();
-        if (res.success) setCategories(res.categories || []);
+        // Dropping the failure left categories empty, which renders as "No
+        // categories yet" - and Core answers 503 feature_disabled here when
+        // tickets are off, so that misread was the normal view on such an
+        // install, telling the admin to add one to enable a disabled feature.
+        if (res.success) { setCategories(res.categories || []); setLoadError(null); }
+        else setLoadError(res.message || 'Failed to load ticket categories.');
         setLoading(false);
     };
 
@@ -147,7 +154,13 @@ export default function TicketCategoriesTab() {
                         </tr>
                     </thead>
                     <tbody>
-                        {categories.length === 0 && (
+                        {loadError ? (
+                            <tr>
+                                <td colSpan={6} className="text-center py-8 text-(--error) text-sm">
+                                    {loadError}
+                                </td>
+                            </tr>
+                        ) : categories.length === 0 && (
                             <tr>
                                 <td colSpan={6} className="text-center py-8 text-(--base-06) text-sm">
                                     No categories yet. Add one to enable ticket creation.

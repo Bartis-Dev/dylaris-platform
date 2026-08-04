@@ -109,6 +109,9 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     const [revealingId, setRevealingId] = useState<number | null>(null);
     const [resettingId, setResettingId] = useState<number | null>(null);
     const [resetReveal, setResetReveal] = useState<{ nodeId: string; token: string; env: string } | null>(null);
+    // Sticky rather than a toast: loadNodes runs on a 5s interval, so a toast
+    // per failed poll would be a stream of them.
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     useEffect(() => {
         loadNodes();
@@ -118,7 +121,13 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 
     const loadNodes = async () => {
         const res = await getNodes();
-        if (res.success) setNodes(res.nodes);
+        // A dropped failure left the list at its last value - empty on the first
+        // poll - and the panel then stated "No nodes connected". For an operator
+        // checking whether the fleet is up, that is the worst possible thing to
+        // get wrong: it reads as an answer about the nodes when it is an answer
+        // about the request.
+        if (res.success) { setNodes(res.nodes); setLoadError(null); }
+        else setLoadError(res.message || 'Could not load the node list.');
     };
 
     const revealDeployBundle = async (nodeId: number) => {
@@ -178,7 +187,12 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
             <div>
                 <h3 className="text-base font-display font-bold text-(--base-09) mb-4">Connected Nodes</h3>
                 <div className="space-y-3">
-                    {nodes.length === 0 ? (
+                    {loadError && (
+                        <div className="p-3 border border-(--error) rounded-md text-(--error) text-sm">
+                            {loadError} The list below may be out of date.
+                        </div>
+                    )}
+                    {nodes.length === 0 && !loadError ? (
                         <div className="text-center p-8 border border-dashed border-(--base-04) rounded-lg text-(--base-06) text-sm">
                             No nodes connected. Start a node!
                         </div>

@@ -23,6 +23,8 @@ export default function RegionsTab() {
     const [deleting, setDeleting] = useState<string | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [error, setError] = useState('');
+    // Distinct from `error`, which belongs to the create/edit modal.
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const showToast = (msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -31,7 +33,11 @@ export default function RegionsTab() {
 
     const load = useCallback(async () => {
         const res = await adminListRegions();
-        if (res.success) setRegions(res.regions || []);
+        // Dropping the failure left regions empty, which the table renders as
+        // "No regions configured" - a claim about the config, not about a call
+        // that never answered.
+        if (res.success) { setRegions(res.regions || []); setLoadError(null); }
+        else setLoadError(res.message || 'Failed to load regions.');
         setLoading(false);
     }, []);
 
@@ -127,7 +133,13 @@ export default function RegionsTab() {
                         </tr>
                     </thead>
                     <tbody>
-                        {regions.length === 0 && (
+                        {loadError ? (
+                            <tr>
+                                <td colSpan={5} className="text-center py-8 text-(--error) text-sm">
+                                    {loadError}
+                                </td>
+                            </tr>
+                        ) : regions.length === 0 && (
                             <tr>
                                 <td colSpan={5} className="text-center py-8 text-(--base-06) text-sm">
                                     No regions configured. Add one to get started.

@@ -18,12 +18,18 @@ export default function PlansTab() {
     const [editing, setEditing] = useState<{ id: number | null; data: PlanInput } | null>(null);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
     const load = useCallback(async () => {
         const res = await getPlans();
-        if (res.success) setPlans(res.plans || []);
+        // A dropped failure left plans empty, which renders as "No plans yet" -
+        // the one thing it is not. Core answers 503 feature_disabled when BYON
+        // is off, so that misread was the NORMAL view on such an install, next
+        // to a live "Add plan" button whose write would fail the same way.
+        if (res.success) { setPlans(res.plans || []); setLoadError(null); }
+        else setLoadError(res.message || 'Failed to load plans.');
         setLoading(false);
     }, []);
 
@@ -67,7 +73,9 @@ export default function PlansTab() {
             </div>
 
             <div className="space-y-3">
-                {plans.length === 0 && <p className="text-sm text-(--base-06)">No plans yet. Add one below.</p>}
+                {loadError
+                    ? <p className="text-sm text-(--error)">{loadError}</p>
+                    : plans.length === 0 && <p className="text-sm text-(--base-06)">No plans yet. Add one below.</p>}
                 {plans.map(p => (
                     <div key={p.id} className="rounded-md border border-(--base-04) p-4 space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
