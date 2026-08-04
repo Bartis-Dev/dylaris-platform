@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,14 +35,11 @@ func (h *TicketsHandler) ticketVisibilityFilter(userID string, perms EffectivePe
 		if settings.CrossTeamVisibility {
 			return store.TicketFilter{}
 		}
-		// Restricted to team — fall back to assigned-to-me when no team.
-		if perms.AllowedRegions == nil {
-			// AllowedRegions is just used as a placeholder for "team" here?
-			// No — distinct. Use the support_team that lives on the user row.
-			// We don't have it on EffectivePermissions yet; load on demand.
-		}
-		// Without a team string we can't apply the team filter — fall back
-		// to the support's own assignments only.
+		// Restricted to team, but the team string is not on
+		// EffectivePermissions - it lives on the user row (support_team) and is
+		// not loaded here. Without it the team filter cannot be built, so fall
+		// back to the support user's own assignments, which is the narrower and
+		// therefore safe answer.
 		return store.TicketFilter{AssignedUserID: &userID}
 	}
 	return store.TicketFilter{UserID: &userID}
@@ -179,7 +177,12 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		Body:     body,
 	}
 	if _, err := h.state.Store.AddTicketMessage(msg); err != nil {
-		// Non-fatal: ticket exists but first message failed. User can retry.
+		// Non-fatal by design: the ticket row exists, so failing the request
+		// would leave the user unable to tell whether anything was created.
+		// But it must not be SILENT - support then opens a ticket with no body
+		// and nothing anywhere says why. Log it with the id so the message can
+		// be recovered or the ticket chased up.
+		log.Printf("tickets: ticket %d created but its first message failed to save: %v", id, err)
 	}
 	actor := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
