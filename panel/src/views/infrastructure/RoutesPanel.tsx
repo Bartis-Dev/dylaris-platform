@@ -233,7 +233,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                     {routes.length === 0 ? (
                         <p className="text-(--base-06) text-sm italic py-8 text-center">No routes configured. Add a route from a Server&apos;s setup tab.</p>
                     ) : filteredRoutes.length === 0 ? (
-                        <p className="text-(--base-06) text-sm italic py-8 text-center">No routes match „{search}"</p>
+                        <p className="text-(--base-06) text-sm italic py-8 text-center">No routes match &ldquo;{search}&rdquo;</p>
                     ) : (
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-(--base-02) z-10">

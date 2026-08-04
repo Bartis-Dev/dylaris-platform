@@ -21,7 +21,7 @@ export default function ServersIndexPage() {
             {servers.length === 0 && (
                 <p className="text-xs text-(--base-05) italic flex items-center gap-1.5">
                     <PlusCircle size={12} />
-                    Use the „New Container" button at the bottom of the sidebar.
+                    Use the &ldquo;New Container&rdquo; button at the bottom of the sidebar.
                 </p>
             )}
         </div>
