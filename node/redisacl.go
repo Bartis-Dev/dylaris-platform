@@ -69,8 +69,29 @@ func loadNodeSecret(workdir string) ([]byte, bool) {
 	return raw, true
 }
 
+// ensureSecretDir creates workdir if it is not there yet. On a first boot the
+// node writes its identity and secret BEFORE anything creates that directory:
+// parseConfig resolves nodeSecretDir, main calls ensureNodeSecret ~60 lines
+// later, and the StorageManager that actually MkdirAll's the path is
+// constructed after THAT. So every save below failed with ENOENT on a fresh
+// volume, was only WARNed, and the node started its NEXT boot with no cached
+// identity - re-enrolling as a brand new node and orphaning the old row plus its
+// three Redis ACL users. Creating it here rather than fixing the call order
+// keeps it correct whatever the order becomes.
+//
+// 0755, matching what the StorageManager creates the same path with: the MC
+// server subdirectories live under it and MkdirAll does not touch the mode of a
+// directory that already exists, so creating it 0700 here would silently change
+// the permissions of the whole server tree. The files themselves stay 0600.
+func ensureSecretDir(workdir string) error {
+	return os.MkdirAll(workdir, 0755)
+}
+
 // saveNodeSecret persists the secret as hex with 0600 perms.
 func saveNodeSecret(workdir string, secret []byte) error {
+	if err := ensureSecretDir(workdir); err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(workdir, ".node_secret"), []byte(hex.EncodeToString(secret)), 0600)
 }
 
@@ -90,6 +111,9 @@ func loadNodeID(workdir string) (string, bool) {
 
 // saveNodeID persists the server-assigned node id with 0600 perms.
 func saveNodeID(workdir, id string) error {
+	if err := ensureSecretDir(workdir); err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(workdir, ".node_id"), []byte(id), 0600)
 }
 
@@ -114,6 +138,9 @@ func loadLinkCreds(workdir string) (secret, proof string, ok bool) {
 
 // saveLinkCreds persists the Link tunnel token + discovery proof (0600).
 func saveLinkCreds(workdir, secret, proof string) error {
+	if err := ensureSecretDir(workdir); err != nil {
+		return err
+	}
 	if err := os.WriteFile(filepath.Join(workdir, ".link_secret"), []byte(secret), 0600); err != nil {
 		return err
 	}

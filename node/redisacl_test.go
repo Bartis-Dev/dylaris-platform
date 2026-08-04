@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -43,5 +44,63 @@ func TestNodeSecretRoundTrip(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, ".node_secret"), []byte("nothex"), 0600)
 	if _, ok := loadNodeSecret(dir); ok {
 		t.Fatal("malformed secret must yield ok=false")
+	}
+}
+
+// TestFirstBootPersistsIntoAMissingDir is the first-boot case, which is the one
+// that actually shipped broken. parseConfig resolves nodeSecretDir, main writes
+// the identity + secret into it, and only afterwards does the StorageManager
+// MkdirAll that path - so on a fresh volume every save failed with ENOENT, was
+// merely WARNed, and the NEXT boot found no cached identity. The node then
+// re-enrolled as a brand new node, orphaning the previous row and its three
+// Redis ACL users. Observed live: two node rows and three ACL identities for one
+// physical node.
+func TestFirstBootPersistsIntoAMissingDir(t *testing.T) {
+	// Two levels down so a single implicit MkdirAll cannot pass by accident.
+	dir := filepath.Join(t.TempDir(), "dylaris_data", "servers")
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("precondition: %s must not exist yet (err=%v)", dir, err)
+	}
+
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	const id = "1f12fc89-2c39-49c4-a630-e2b6d406901b"
+	const linkSecret, linkProof = "link-secret-value", "link-proof-value"
+
+	if err := saveNodeSecret(dir, secret); err != nil {
+		t.Fatalf("saveNodeSecret into a missing dir: %v", err)
+	}
+	if err := saveNodeID(dir, id); err != nil {
+		t.Fatalf("saveNodeID into a missing dir: %v", err)
+	}
+	if err := saveLinkCreds(dir, linkSecret, linkProof); err != nil {
+		t.Fatalf("saveLinkCreds into a missing dir: %v", err)
+	}
+
+	// The point is not that the writes returned nil, it is that the NEXT boot
+	// finds them. That read is what decides re-enrol vs reconnect.
+	got, ok := loadNodeSecret(dir)
+	if !ok || string(got) != string(secret) {
+		t.Errorf("secret did not survive: ok=%v got=%q", ok, got)
+	}
+	if gotID, ok := loadNodeID(dir); !ok || gotID != id {
+		t.Errorf("node id did not survive: ok=%v got=%q", ok, gotID)
+	}
+	if s, p, ok := loadLinkCreds(dir); !ok || s != linkSecret || p != linkProof {
+		t.Errorf("link creds did not survive: ok=%v s=%q p=%q", ok, s, p)
+	}
+
+	// 0755, not 0700: the MC server subdirectories live under this path and
+	// MkdirAll leaves an existing directory's mode alone, so tightening it here
+	// would silently change permissions for the whole server tree. Windows has
+	// no Unix mode bits (MkdirAll always reports 0777 there), so this half only
+	// means anything on the platform the node actually ships on.
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if perm := fi.Mode().Perm(); perm != 0755 {
+			t.Errorf("secret dir mode = %o, want 0755", perm)
+		}
 	}
 }
