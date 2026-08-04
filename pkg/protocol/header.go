@@ -13,6 +13,22 @@ import (
 
 // ReadToken reads the auth token (String + Newline) from the stream.
 // This is used by the Gate to authenticate the Link.
+//
+// UNUSED IN THIS REPO, AND DO NOT START USING IT AS WRITTEN. platform imports
+// exactly one symbol from this package (WriteBeamHeader); the rest is a copy of
+// gateway/pkg/protocol that was taken before gateway fixed this function, and
+// the fix did not travel back. gateway's version reads the conn ONE BYTE AT A
+// TIME and caps the read at 4096 bytes, for two reasons this copy still gets
+// wrong:
+//
+//   - bufio reads AHEAD past the newline and buffers bytes belonging to the
+//     next protocol phase (the yamux preface). Those bytes are dropped when
+//     this returns, which surfaces as "error reading server preface: EOF".
+//   - there is no length bound here, so a peer that never sends a newline
+//     streams unbounded bytes into memory.
+//
+// If platform ever needs a token handshake, port gateway's implementation
+// rather than this one.
 func ReadToken(r io.Reader) (string, error) {
 	// We use bufio for efficient reading until the newline
 	reader := bufio.NewReader(r)
