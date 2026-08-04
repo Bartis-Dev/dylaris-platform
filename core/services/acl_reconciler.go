@@ -184,10 +184,54 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		}
 	}
 
+	r.pruneOrphanNodeACLs(ctx, nodes)
+
 	// One persist for the whole sweep (best-effort, loud + throttled on failure).
 	r.prov.SaveACL(ctx)
 	if applied > 0 {
 		log.Printf("acl reconciler: re-applied %d Redis ACL user set(s)", applied)
+	}
+}
+
+// pruneOrphanNodeACLs deletes ACL users in Core's per-node namespace that no
+// longer have a node row. Nothing else does: the loop above only ENSURES ACLs
+// for nodes it can see, and DeleteNode's teardown is deliberately best-effort
+// (47f6d6b) so a failed DELUSER was never retried. A node row that disappeared
+// by any other route - a DB restore predating it, a re-enrolment that minted a
+// fresh identity - left three live scoped credentials behind permanently. A
+// live stack was observed with three node identities in ACL LIST against one
+// database row.
+//
+// This is the node-side counterpart of the link-kit teardown sweep above, which
+// has existed for exactly the same reason.
+func (r *ACLReconciler) pruneOrphanNodeACLs(ctx context.Context, nodes []models.Node) {
+	// Safety rail. An empty node list is a legitimate state (nobody has paired
+	// yet), and in that state every node-* user IS an orphan - but it is also
+	// what an unexpected result looks like, and the cost of being wrong is
+	// deleting the credentials of the entire fleet at once. Skipping costs one
+	// tick: the next node to pair makes the list non-empty and the orphans go
+	// then.
+	if len(nodes) == 0 {
+		return
+	}
+
+	res, err := r.redis.Do(ctx, "ACL", "USERS").StringSlice()
+	if err != nil {
+		log.Printf("acl reconciler: list ACL users for prune: %v", err)
+		return
+	}
+	tokens := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		tokens = append(tokens, n.Token)
+	}
+	orphans := redisacl.UnknownNodeACLUsers(res, redisacl.ExpectedNodeACLUsers(tokens))
+	for _, u := range orphans {
+		// Named in full on purpose: this deletes a credential, and an operator
+		// needs to be able to tell afterwards which ones went and why.
+		log.Printf("acl reconciler: removing orphan node ACL user %q (no matching node row)", u)
+		if derr := r.redis.Do(ctx, "ACL", "DELUSER", u).Err(); derr != nil {
+			log.Printf("acl reconciler: DELUSER %q: %v", u, derr)
+		}
 	}
 }
 

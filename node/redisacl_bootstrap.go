@@ -208,11 +208,26 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("auth rejected: %s", msg)
 	}
 	if res.AssignedId != "" && res.AssignedId != nodeID {
+		// Distinguish the two cases this branch covers. They look identical in a
+		// log and mean opposite things: a first pairing is routine, while
+		// REPLACING an identity the node already held means the old node row and
+		// its three scoped Redis ACL users have just been orphaned, and any
+		// server assigned to the old id is now on a node that no longer exists.
+		// One line for both read as the benign one and hid that for a whole
+		// investigation.
+		previous := nodeID
 		nodeID = res.AssignedId
 		if werr := saveNodeID(nodeSecretDir, res.AssignedId); werr != nil {
 			log.Printf("redisacl: WARN failed to persist assigned node id: %v", werr)
 		}
-		log.Println("redisacl: adopted server-assigned node identity")
+		if previous == "" {
+			log.Printf("redisacl: paired, Core assigned node identity %s", res.AssignedId)
+		} else {
+			log.Printf("redisacl: WARN identity REPLACED: was %s, Core assigned %s. "+
+				"The previous node row and its Redis ACL users are now orphaned; "+
+				"this happens when the cached secret is missing at boot.",
+				previous, res.AssignedId)
+		}
 	}
 	if res.LinkSecret != "" && res.LinkDiscoveryProof != "" {
 		setLinkCreds(res.LinkSecret, res.LinkDiscoveryProof, true)
