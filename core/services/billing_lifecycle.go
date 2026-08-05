@@ -381,6 +381,31 @@ func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string)
 	return nil
 }
 
+// stopTenantServers is the cutoff both suspension paths rely on: the deferred
+// one (enforceSuspensions) and the admin-immediate one (SuspendNow).
+//
+// It must flip desired_state to "stopped" BEFORE queueing the stop, not just
+// queue it. The node runs a reconciler that restarts any container that is not
+// running while its desired_state is "online", treating it as a crash. Queueing
+// a bare stop therefore did not suspend anything: the container went down and
+// came straight back, observed live as
+//
+//	13:35:52 Server <uuid> stopped
+//	13:35:57 reconciler: restarting crashed container mc_<uuid> (attempt 1/5)
+//
+// so a non-paying tenant kept their servers with a five-second blip, and the
+// panel still read "online" because nothing wrote the row either.
+//
+// This is the same rule the rest of the codebase already follows and states -
+// PowerAction sets desired_state=stopped then sends "stop", the migration
+// orchestrator's stopServer says so in its doc comment, and DeleteSubServer
+// spells the race out in full. This path was the one place that only sent the
+// command.
+//
+// The status write is "stopping", matching PowerAction: the node's own status
+// publish moves it to "stopped" when the container is actually down. No
+// "suspended" server status is introduced here - that value has no producer
+// anywhere in the codebase and adding one is a UI-wide change, not a fix.
 func (s *BillingLifecycleService) stopTenantServers(ctx context.Context, userID string) {
 	servers, err := s.store.ListServersByOwner(userID)
 	if err != nil {
@@ -394,6 +419,15 @@ func (s *BillingLifecycleService) stopTenantServers(ctx context.Context, userID 
 		node, err := s.store.GetNodeByID(srv.NodeID)
 		if err != nil {
 			continue
+		}
+		// Before the command: the reconciler reads desired_state, and losing the
+		// race means the stop is undone rather than merely delayed.
+		if err := s.store.UpdateServerDesiredState(srv.ID, "stopped"); err != nil {
+			log.Printf("billing lifecycle: desired_state for %s: %v — NOT sending the stop, the node reconciler would restart it", srv.UUID, err)
+			continue
+		}
+		if err := s.store.UpdateServerStatus(srv.ID, "stopping"); err != nil {
+			log.Printf("billing lifecycle: status for %s: %v", srv.UUID, err)
 		}
 		if err := s.queue.SendCommand(ctx, node.Token, "stop", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
 			log.Printf("billing lifecycle: stop %s: %v", srv.UUID, err)
