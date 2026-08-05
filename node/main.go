@@ -931,6 +931,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Set install-start timestamp for cooldown tracking
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
 
+		// Same interlock as the reinstall path: InstallServer can run for
+		// minutes (Forge/NeoForge spin up an installer container) and
+		// RecreateWithCommand below stop+remove+creates, so without this the
+		// reconciler can start a half-installed server or recreate one it
+		// thinks was deleted by hand, straight into the installer's directory.
+		releaseSetupBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
+		defer releaseSetupBusy()
+
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 
 		// Forge / NeoForge installers need to run inside a Java
