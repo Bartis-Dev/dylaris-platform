@@ -41,6 +41,16 @@ type BackupRestoreCommand struct {
 // restore can never corrupt a running world. The container is stopped
 // before the swap and started again afterwards.
 func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRestoreCommand) {
+	// At-least-once delivery: a redelivery while this restore is still running
+	// would extract into the same directory a second time and stop/restart the
+	// container under the first. See backup_inflight.go.
+	key := fmt.Sprintf("%d", cmd.RestoreID)
+	if !restoresInFlight.enter(key) {
+		log.Printf("backup_restore: restore %s is already running on this node, ignoring the redelivery", key)
+		return
+	}
+	defer restoresInFlight.leave(key)
+
 	started := time.Now()
 	storage := storageInfo{}
 	if err := json.Unmarshal(cmd.Storage, &storage); err != nil {

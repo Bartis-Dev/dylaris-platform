@@ -66,6 +66,15 @@ type s3Cfg struct {
 // other end and pushes them out. For multi-GB worlds this keeps the
 // node's working set under a few megabytes regardless of archive size.
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd BackupRunCommand) {
+	// At-least-once delivery: a redelivery while this run is still going would
+	// archive the same tree twice into the same key. See backup_inflight.go.
+	key := fmt.Sprintf("%d", cmd.RunID)
+	if !backupsInFlight.enter(key) {
+		log.Printf("backup_run: run %s is already running on this node, ignoring the redelivery", key)
+		return
+	}
+	defer backupsInFlight.leave(key)
+
 	started := time.Now()
 	storage := storageInfo{}
 	if err := json.Unmarshal(cmd.Storage, &storage); err != nil {
