@@ -61,6 +61,18 @@ func resolveLaunch(subServerDir string) launchForm {
 // ("java -Xms -Xmx <flags> -jar …") and the buildStartCommand format
 // ("java <flags> -Xms -Xmx -jar …" / "java <flags> @argsfile …").
 // Returns "" when the command is empty or contains no recognised extra flags.
+//
+// gcLogFlag is structural too, even though it does not look it: buildStartCommand
+// injects it itself on every build. Leaving it in the "extra flags" made each
+// recreate carry the previous copy back IN and prepend a fresh one, so the
+// command grew by one copy per restart. Observed on a test server after six
+// starts:
+//
+//	java -Xlog:gc::utctime,level,tags -Xlog:gc::utctime,level,tags (x6) … -jar server.jar
+//
+// Matched exactly, not by "-Xlog:" prefix: an admin-set -Xlog directive of their
+// own (e.g. -Xlog:gc*:file=gc.log) is a user flag and must still survive a
+// restart. Only the one string this node injects is dropped.
 func extractJvmFlagsFromCommand(cmd string) string {
 	parts := strings.Fields(cmd)
 	var flags []string
@@ -73,6 +85,7 @@ func extractJvmFlagsFromCommand(cmd string) string {
 		switch {
 		case p == "java":
 		case strings.HasPrefix(p, "-Xms"), strings.HasPrefix(p, "-Xmx"):
+		case p == gcLogFlag: // re-injected by buildStartCommand; see the doc comment
 		case p == "-jar":
 			skipNext = true // skip the jar filename that follows
 		case p == "nogui":

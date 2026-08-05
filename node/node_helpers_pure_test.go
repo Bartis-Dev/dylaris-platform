@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -237,20 +238,50 @@ func TestStripJava8IncompatibleFlags(t *testing.T) {
 func TestExtractJvmFlagsFromCommand(t *testing.T) {
 	t.Run("buildStartCommand-style jar command", func(t *testing.T) {
 		cmd := "java -Xlog:gc::utctime,level,tags -XX:+UseG1GC -Xms4096M -Xmx4096M -jar paper-1.20.1.jar nogui"
-		// Real (non-obvious) behavior: extraction only special-cases java,
-		// -Xms*/-Xmx*, "-jar <file>", "nogui" and "@..." tokens. It has NO
-		// special case for -Xlog:, so the platform's own GC-logging flag
-		// (added by buildStartCommand, see launch.go gcLogFlag) is NOT
-		// stripped and comes back out as if it were a user-set flag. Any
-		// caller that round-trips extract -> buildStartCommand would end up
-		// with -Xlog re-added twice conceptually (once via extraJvmFlags,
-		// once via the isJava8-gated gcLogFlag itself in buildStartCommand -
-		// buildStartCommand only prepends gcLogFlag once, but if this
-		// extracted string is persisted as "extra flags" it now carries the
-		// GC flag baked in). Flagging as a smell, not fixing.
-		want := "-Xlog:gc::utctime,level,tags -XX:+UseG1GC"
+		// This case used to assert the opposite - that gcLogFlag comes back out
+		// as if it were a user-set flag - and said so: "Any caller that
+		// round-trips extract -> buildStartCommand would end up with -Xlog
+		// re-added ... Flagging as a smell, not fixing."
+		//
+		// Both callers do exactly that round trip (RestartContainer and
+		// UpdateResources in docker_mgr.go), so it was not a smell, it was the
+		// bug. A live test server's container Cmd after six starts:
+		//
+		//	java -Xlog:gc::utctime,level,tags (x6) -Dterminal.ansi=true … -jar server.jar nogui
+		//
+		// one more copy per restart, forever. gcLogFlag is now dropped on
+		// extraction, so the round trip is stable.
+		want := "-XX:+UseG1GC"
 		if got := extractJvmFlagsFromCommand(cmd); got != want {
 			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	// TestExtractJvmFlags_RoundTripIsStable is the property the bug broke: the
+	// command buildStartCommand produces must survive extract -> build
+	// unchanged, because that is what every container recreate does.
+	t.Run("round trip through buildStartCommand is stable", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "server.jar"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		first, err := buildStartCommand(dir, 2048, "-XX:+UseG1GC", "ghcr.io/x/mc-java21:latest")
+		if err != nil {
+			t.Fatalf("buildStartCommand: %v", err)
+		}
+		cmd := first
+		for i := range 5 {
+			next, err := buildStartCommand(dir, 2048, extractJvmFlagsFromCommand(cmd), "ghcr.io/x/mc-java21:latest")
+			if err != nil {
+				t.Fatalf("rebuild %d: %v", i, err)
+			}
+			if next != first {
+				t.Fatalf("rebuild %d drifted:\n first: %s\n  now:  %s", i+1, first, next)
+			}
+			cmd = next
+		}
+		if n := strings.Count(cmd, gcLogFlag); n != 1 {
+			t.Errorf("gcLogFlag appears %d times after 5 rebuilds, want 1", n)
 		}
 	})
 
