@@ -186,20 +186,25 @@ func TestDownloadFile_AbandonsAStalledBody(t *testing.T) {
 // delivering bytes must run to completion however long it takes, or a thin link
 // would lose every large JAR.
 func TestDownloadFile_SlowButProgressingSucceeds(t *testing.T) {
-	const chunks = 8
+	const chunks = 30
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		for i := 0; i < chunks; i++ {
 			_, _ = w.Write([]byte("chunk"))
 			w.(http.Flusher).Flush()
-			time.Sleep(30 * time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 		}
 	}))
 	defer srv.Close()
 
 	dest := filepath.Join(t.TempDir(), "server.jar")
-	// Total transfer ~240ms, well past the 100ms window, but no single gap is.
-	if err := downloadFileWithin(srv.URL, dest, 100*time.Millisecond); err != nil {
+	// The property under test is that a download which keeps PROGRESSING is not
+	// killed even though its total time exceeds the stall window. That needs
+	// total > window and every gap << window. It used to be a 30ms gap against a
+	// 100ms window - a 3.3x margin, which a loaded CI runner ate (this failed on
+	// run 30961020147, on a commit that touched only the panel). Now ~600ms total
+	// against a 300ms window, with a 15x margin per gap.
+	if err := downloadFileWithin(srv.URL, dest, 300*time.Millisecond); err != nil {
 		t.Fatalf("a slow but progressing download failed: %v", err)
 	}
 	data, err := os.ReadFile(dest)

@@ -291,7 +291,11 @@ func TestStart_RunsABootCheckAndStopsWithTheContext(t *testing.T) {
 	// The boot check must run immediately, not on the first 120s tick: a Core
 	// joining a broken deployment has to report it the moment it joins the
 	// load balancer.
-	deadline := time.Now().Add(3 * time.Second)
+	// Generous, and free when it passes: the loop breaks the moment a fault
+	// appears, so a healthy run still finishes in milliseconds. Three seconds
+	// was not enough on a CI runner executing six test jobs at once (run
+	// 30959610457 failed here on a commit that changed only an ACL rule list).
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if faults, _ := Faults(ctx, deps.Redis); len(faults) > 0 {
 			break
