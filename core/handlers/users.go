@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"dylaris-core/models"
+	"dylaris-core/store"
 	"dylaris-pkg/validate"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -170,7 +172,19 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.state.Store.DeleteUser(id); err != nil {
-		sendJSONError(w, "Delete failed", 500)
+		// These two are not faults, they are the current state of the data, so
+		// they answer 409 and say what to do about it. Postgres already produces
+		// a precise reason ("still referenced from table servers"); collapsing it
+		// into "Delete failed" left an admin with a button that does nothing and
+		// no way to find out why.
+		switch {
+		case errors.Is(err, store.ErrUserOwnsServers):
+			sendJSONError(w, "This user still owns servers. Transfer or delete their servers first.", 409)
+		case errors.Is(err, store.ErrUserStillReferenced):
+			sendJSONError(w, "This user is still referenced by other records (for example server invites they issued) and cannot be deleted yet.", 409)
+		default:
+			sendJSONError(w, "Delete failed", 500)
+		}
 		return
 	}
 

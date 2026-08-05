@@ -237,8 +237,33 @@ func (s *PostgresStore) UpdateUserPassword(id string, hashedPassword string) err
 	return err
 }
 
+// ErrUserOwnsServers means the user still owns servers. servers.owner_id is
+// REFERENCES users(id) with no ON DELETE clause, so Postgres refuses the delete -
+// which is the safe outcome, the alternative being servers with no owner. The
+// handler used to collapse it into a bare "Delete failed" 500, leaving an admin
+// with a button that does not work and no hint that the remedy is to reassign or
+// delete those servers first.
+var ErrUserOwnsServers = errors.New("user still owns servers")
+
+// ErrUserStillReferenced is the same shape for the other NO ACTION reference:
+// server_invites.invited_by. A user who has invited members to a server cannot be
+// deleted while those invites exist, even when they own nothing themselves.
+var ErrUserStillReferenced = errors.New("user is still referenced by other records")
+
 func (s *PostgresStore) DeleteUser(id string) error {
 	_, err := s.db.Exec("DELETE FROM users WHERE id = $1", id)
+	if err != nil {
+		var pqErr *pq.Error
+		// 23503 = foreign_key_violation. Every other reference to users either
+		// cascades or nulls out, so reaching here means one of the two NO ACTION
+		// constraints held.
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
+			if pqErr.Constraint == "servers_owner_id_fkey" {
+				return ErrUserOwnsServers
+			}
+			return ErrUserStillReferenced
+		}
+	}
 	return err
 }
 
