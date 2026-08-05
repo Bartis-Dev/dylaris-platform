@@ -290,6 +290,20 @@ jobs:
             echo "TAG_SHA=dev-sha-${SHA}" >> $GITHUB_OUTPUT
           fi
 
+      # Minecraft 26.1+ refuses to start on anything below Java 25 ("Minecraft
+      # 26.1 and newer requires running the server with Java 25 or above"), and
+      # the version pickers offer 26.x, so without this image the newest
+      # selectable version installs a server that can never boot.
+      - name: Build and push java25
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/mc-server
+          file: docker/mc-server/Dockerfile.java25
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java25:${{ steps.tags.outputs.TAG_PRIMARY }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java25:${{ steps.tags.outputs.TAG_SHA }}
+
       - name: Build and push java21
         uses: docker/build-push-action@v5
         with:

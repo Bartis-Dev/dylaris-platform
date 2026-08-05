@@ -5,7 +5,8 @@ import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, delete
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
-import { JAVA_IMAGES, recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
+import { recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
+import { JAVA_21 } from '@/lib/javaVersion';
 import { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import SubServerSidebar from './setup/SubServerSidebar';
 import SetupViewMode from './setup/SetupViewMode';
@@ -47,7 +48,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // Form fields
     const [subName, setSubName] = useState('');
     const [subNameError, setSubNameError] = useState('');
-    const [javaImage, setJavaImage] = useState(JAVA_IMAGES[0].id);
+    const [javaImage, setJavaImage] = useState(JAVA_21);
     const [extraFlags, setExtraFlags] = useState('');
     const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'modpack' | 'pack'>('online');
     // Selected Modrinth modpack (project + version + .mrpack URL).
@@ -245,7 +246,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const enterViewMode = () => {
         setFormMode('view');
         setSubName(server.activeSubServer || '');
-        setJavaImage(server.image || JAVA_IMAGES[0].id);
+        setJavaImage(server.image || JAVA_21);
         setExtraFlags(server.extraJvmFlags || '');
         setSwitchTarget(null);
     };
@@ -253,7 +254,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const enterEditMode = () => {
         setFormMode('edit');
         setSubName(server.activeSubServer || '');
-        setJavaImage(server.image || JAVA_IMAGES[0].id);
+        setJavaImage(server.image || JAVA_21);
         setExtraFlags(server.extraJvmFlags || '');
         const sType = server.installerType || defaultSoftware;
         if (sType === 'library') {
@@ -271,7 +272,10 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         setFormMode('new');
         setSubName('');
         setSubNameError('');
-        setJavaImage(JAVA_IMAGES[0].id); // Java 21 for both game and proxy
+        // Java 21 for both game and proxy. Named, not JAVA_IMAGES[0]: the list
+        // now leads with Java 25 and an index would have moved this default
+        // silently onto a runtime that cannot run 1.8-1.16.
+        setJavaImage(JAVA_21);
         setExtraFlags(isProxy ? PROXY_GC_FLAGS : DEFAULT_GC_FLAGS);
         setInstallTab('online');
         setSoftware(defaultSoftware);
