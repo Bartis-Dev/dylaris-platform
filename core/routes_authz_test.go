@@ -543,7 +543,7 @@ func TestCap_AuditForceNeedsSettingsWrite(t *testing.T) {
 	fs.addUser("owner-id", "owner", false)
 	fs.addUser("viewer-id", "viewer", false)
 	fs.servers = map[int]*models.Server{10: {ID: 10, OwnerID: "owner-id", OwnerName: "owner"}}
-	// viewer holds overview.read only (can view audit) but NOT server.settings.write
+	// viewer holds overview.read only - neither viewing nor forcing the audit
 	fs.serverRoles = map[int]*store.ServerRole{41: {ID: 41, Capabilities: []string{"overview.read"}}}
 	fs.serverGrants = map[string]*store.ServerGrant{skey(10, "viewer-id"): {UserID: "viewer-id", ServerRoleID: intPtr(41)}}
 	srv := newAuthzTestServer(t, fs)
@@ -551,12 +551,59 @@ func TestCap_AuditForceNeedsSettingsWrite(t *testing.T) {
 	if c := doAs(t, srv, "PUT", "/api/servers/10/audit/force", testIdentity{UserID: "owner-id", Username: "owner"}); c == 403 {
 		t.Error("owner must be able to force their own server audit")
 	}
-	// overview.read-only viewer CAN view audit but CANNOT force
-	if c := doAs(t, srv, "GET", "/api/servers/10/audit", testIdentity{UserID: "viewer-id", Username: "viewer"}); c == 403 {
-		t.Error("overview.read holder must view the audit log")
-	}
 	if c := doAs(t, srv, "PUT", "/api/servers/10/audit/force", testIdentity{UserID: "viewer-id", Username: "viewer"}); c != 403 {
 		t.Errorf("overview.read-only holder must be 403 on audit/force (needs server.settings.write), got %d", c)
+	}
+}
+
+// TestCap_AuditViewIsNotOverviewRead pins the fix: the per-server audit log is
+// gated on its own server.audit.read, not on overview.read.
+//
+// This assertion is inverted from what it used to be ("overview.read holder
+// must view the audit log"). overview.read is the cap every invite carries, so
+// the old gate let each invited member read the record of what all the OTHER
+// members did - including the IP address and user agent of the owner and of
+// each of them. The panel greyed the tab out for non-owners and its comment
+// claimed that was the rule; only the UI enforced it.
+func TestCap_AuditViewIsNotOverviewRead(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("member-id", "member", false)
+	fs.addUser("auditor-id", "auditor", false)
+	fs.servers = map[int]*models.Server{10: {ID: 10, OwnerID: "owner-id", OwnerName: "owner"}}
+	// A "Server admin" grant: every cap the full-access preset hands out. Even
+	// that must not reach the audit log - the preset gives a friend the server,
+	// not the log of what that friend did and from which address.
+	fullAccess := []string{}
+	for _, p := range authz.Presets() {
+		if p.ID == "admin" {
+			fullAccess = append(fullAccess, p.Capabilities...)
+		}
+	}
+	if len(fullAccess) == 0 {
+		t.Fatal("full-access preset not found; the assertion below would be vacuous")
+	}
+	fs.serverRoles = map[int]*store.ServerRole{
+		42: {ID: 42, Capabilities: fullAccess},
+		43: {ID: 43, Capabilities: []string{"server.audit.read"}},
+	}
+	fs.serverGrants = map[string]*store.ServerGrant{
+		skey(10, "member-id"):  {UserID: "member-id", ServerRoleID: intPtr(42)},
+		skey(10, "auditor-id"): {UserID: "auditor-id", ServerRoleID: intPtr(43)},
+	}
+	srv := newAuthzTestServer(t, fs)
+
+	for _, path := range []string{"/api/servers/10/audit", "/api/servers/10/audit/status"} {
+		if c := doAs(t, srv, "GET", path, testIdentity{UserID: "member-id", Username: "member"}); c != 403 {
+			t.Errorf("%s: full-access member must be 403 without server.audit.read, got %d", path, c)
+		}
+		if c := doAs(t, srv, "GET", path, testIdentity{UserID: "owner-id", Username: "owner"}); c == 403 {
+			t.Errorf("%s: the owner must read their own server's audit log", path)
+		}
+		// Delegation still works when the owner asks for it explicitly.
+		if c := doAs(t, srv, "GET", path, testIdentity{UserID: "auditor-id", Username: "auditor"}); c == 403 {
+			t.Errorf("%s: an explicit server.audit.read holder must pass", path)
+		}
 	}
 }
 

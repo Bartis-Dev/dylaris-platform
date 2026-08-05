@@ -100,8 +100,8 @@ func NewServerAuditHandler(state *AppState) *ServerAuditHandler {
 }
 
 // gateView loads the server for an audit-log read. Access control lives at
-// the route (RequireCap(overview.read)); this only resolves the path id and
-// 404s on a missing server.
+// the route (RequireCap(server.audit.read)); this only resolves the path id
+// and 404s on a missing server.
 func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*models.Server, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {

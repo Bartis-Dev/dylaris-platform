@@ -70,6 +70,10 @@ var demoReadDeny = map[string]bool{
 	// content redaction via viaDemoBypass); the resolver must NOT grant it on a
 	// demo server or redaction would be skipped for demo viewers.
 	"files.read": true,
+	// server.audit.read discloses the IP address and user agent of the owner and
+	// of every member, which is the sharpest disclosure on this list - a public
+	// showcase must never hand that to an arbitrary authenticated viewer.
+	"server.audit.read": true,
 }
 
 // HasCap reports whether the resolution grants capID. An unknown capability is

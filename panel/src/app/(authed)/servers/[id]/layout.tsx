@@ -597,6 +597,15 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         // Audit tab. Owner + admin only; non-owners (even with
         // permission bundles) can't see who changed what on someone else's
         // server. The view itself self-hides empty audit gracefully.
+        //
+        // This used to be the ONLY place that rule existed: the API gated the
+        // audit log on overview.read, the cap every invite carries, so graying
+        // the tab out was all that stood between a member and the log of what
+        // the other members did. Core now enforces it with its own
+        // server.audit.read cap. The one case this line is still stricter than
+        // the backend is a member the owner explicitly delegated that cap to in
+        // Admin-roles mode: they may call the API but see a gray tab, because
+        // the server list carries the legacy TabPermissions blob, not caps.
         { slug: 'audit',   icon: 'file-text',       label: 'Audit',         disabled: !isOwner && !user?.isAdmin },
     ];
 

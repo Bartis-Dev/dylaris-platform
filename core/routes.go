@@ -96,15 +96,16 @@ var requiredCaps = map[string]string{
 
 	// Phase 4 Task 8: stats + per-server audit. Stats reads rely on the demo-read
 	// short-circuit (stats.read is not in authz.demoReadDeny) rather than any
-	// in-handler isDemoServer check. Audit view is overview.read; audit/force
-	// moves from admin-only to server.settings.write so an owner (or a
-	// role-holder with that cap) controls their own server's forced audit -
-	// admin still passes via the resolver's admin short-circuit.
+	// in-handler isDemoServer check. Audit view is server.audit.read (it was
+	// overview.read, which every invite grants - see the route registration
+	// below); audit/force moves from admin-only to server.settings.write so an
+	// owner (or a role-holder with that cap) controls their own server's forced
+	// audit - admin still passes via the resolver's admin short-circuit.
 	"/api/servers/{id:[0-9]+}/stats/stream":  "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/history": "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/disk":    "stats.read",
-	"/api/servers/{id:[0-9]+}/audit":         "overview.read",
-	"/api/servers/{id:[0-9]+}/audit/status":  "overview.read",
+	"/api/servers/{id:[0-9]+}/audit":         "server.audit.read",
+	"/api/servers/{id:[0-9]+}/audit/status":  "server.audit.read",
 	"/api/servers/{id:[0-9]+}/audit/force":   "server.settings.write",
 
 	// Phase 4 Task 9: members (SERVER scope) + owner server-roles/grants (OWNER
@@ -1024,12 +1025,19 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkAllRead))).Methods("POST")
 
 	// --- Server audit ---
-	// View is overview.read (owner + admin + any role-holder with overview.read).
+	// View is server.audit.read: owner + admin via the resolver short-circuits,
+	// plus anyone the owner explicitly delegates it to. It used to be
+	// overview.read, which is the cap EVERY invite carries - so every invited
+	// member could read the log of what all the other members did, including the
+	// IP address and user agent of the owner and of each of them. The panel has
+	// always said otherwise ("Audit tab. Owner + admin only; non-owners, even
+	// with permission bundles, can't see who changed what on someone else's
+	// server"), but it only greyed the tab out; the API answered anyone.
 	// Force-on is server.settings.write: the owner (or a role-holder with that
 	// cap) controls their own server's forced audit; admin still passes via the
 	// resolver's admin short-circuit.
-	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverAuditHandler.ListAudit))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverAuditHandler.GetStatus))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.audit.read")(serverAuditHandler.ListAudit))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.audit.read")(serverAuditHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/audit/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverAuditHandler.SetForce))).Methods("PUT")
 	// Platform-wide audit retention policy (PANEL settings.*).
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(auditSettingsHandler.GetPolicy))).Methods("GET")

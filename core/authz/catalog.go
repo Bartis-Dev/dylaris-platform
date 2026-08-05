@@ -114,6 +114,16 @@ var catalog = []Capability{
 	{ID: "server.settings.write", Label: "Edit server settings", Category: "Server", Scope: ScopeServer, Verb: VerbWrite},
 	{ID: "server.delete", Label: "Delete server", Category: "Server", Scope: ScopeServer, Verb: VerbDelete},
 
+	// The per-server audit trail is the OWNER's accountability record over the
+	// people they invited: it carries every actor's IP address and user agent.
+	// It therefore gets its own cap instead of riding on overview.read, which
+	// every invite grants - that made the record readable by exactly the people
+	// it records. Deliberately NOT in any preset (presets.go): "Full access"
+	// hands a friend the server, not the log of what that friend did and where
+	// from. An owner who wants to delegate it does so explicitly in Admin-roles
+	// mode. Owner and panel admin hold it via the resolver short-circuits.
+	{ID: "server.audit.read", Label: "View server audit log", Category: "Audit", Scope: ScopeServer, Verb: VerbRead},
+
 	// --- OWNER scope ---
 	{ID: "modpack.read", Label: "View modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbRead},
 	{ID: "modpack.write", Label: "Edit modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbWrite},

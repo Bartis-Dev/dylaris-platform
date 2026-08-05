@@ -247,9 +247,30 @@ func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
 	// files.read is also denied: the file browser handler owns demo file access
 	// itself (via viaDemoBypass) so it can redact secrets; if the resolver granted
 	// files.read here, the handler would skip its own redaction path.
-	for _, id := range []string{"network.read", "members.read", "files.read"} {
+	// server.audit.read is the sharpest of the four: the audit rows carry the IP
+	// address and user agent of the owner and of every member.
+	for _, id := range []string{"network.read", "members.read", "files.read", "server.audit.read"} {
 		if res.HasCap(id) {
 			t.Errorf("demo server must NOT grant sensitive read cap %q to a stranger", id)
+		}
+	}
+}
+
+// TestDemoReadDenyEntriesAreRealServerReadCaps keeps the deny list from going
+// silently inert. Its entries are bare strings matched against a cap id, and
+// the short-circuit they guard is "grant every ScopeServer read cap that is not
+// on this list" - so a typo, a renamed cap or a wrong-scope entry does not fail
+// anywhere, it just quietly starts granting the thing the entry was written to
+// withhold.
+func TestDemoReadDenyEntriesAreRealServerReadCaps(t *testing.T) {
+	for id := range demoReadDeny {
+		c, ok := Get(id)
+		if !ok {
+			t.Errorf("demoReadDeny lists %q, which is not a catalog capability: the entry withholds nothing", id)
+			continue
+		}
+		if c.Scope != ScopeServer || c.Verb != VerbRead {
+			t.Errorf("demoReadDeny lists %q (scope %q, verb %q); the demo short-circuit only ever grants server/read caps, so this entry is dead weight", id, c.Scope, c.Verb)
 		}
 	}
 }
