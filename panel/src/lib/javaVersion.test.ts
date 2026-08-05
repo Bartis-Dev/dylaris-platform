@@ -27,11 +27,15 @@ describe('recommendJavaForVersion', () => {
         ['1.17', JAVA_8],
         ['1.16.5', JAVA_8],
         ['1.8', JAVA_8],
+        // The picker offers 1.7 and 1.7.10 runs on Java 8; starting the range at
+        // 1.8 left the oldest selectable version unmapped.
+        ['1.7', JAVA_8],
+        ['1.7.10', JAVA_8],
     ])('old scheme %s -> %s', (v, want) => {
         expect(recommendJavaForVersion(v)).toBe(want);
     });
 
-    it.each(['', 'latest', 'snapshot-23w45a', '1.7', '2.0', 'abc.def'])('rejects %s', (v) => {
+    it.each(['', 'latest', 'snapshot-23w45a', '1.6', '2.0', 'abc.def'])('rejects %s', (v) => {
         expect(recommendJavaForVersion(v)).toBeNull();
     });
 });

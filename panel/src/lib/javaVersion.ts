@@ -16,7 +16,7 @@ export const JAVA_IMAGES: JavaImage[] = [
     { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java25:latest', label: 'Java 25', note: '26.1+', proxyNote: 'Newest' },
     { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest', label: 'Java 21', note: '1.20.5 - 26.0', proxyNote: 'Recommended' },
     { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for Velocity' },
-    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java8:latest', label: 'Java 8', note: '1.8 - 1.16', proxyNote: 'BungeeCord only' },
+    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java8:latest', label: 'Java 8', note: '1.7 - 1.16', proxyNote: 'BungeeCord only' },
 ];
 
 export const JAVA_25 = JAVA_IMAGES[0].id;
@@ -56,7 +56,10 @@ export function recommendJavaForVersion(version: string): string | null {
     const patch = parts[2] ?? 0;
     if (minor >= 21 || (minor === 20 && patch >= 5)) return JAVA_21;
     if (minor >= 18) return JAVA_17;
-    if (minor >= 8) return JAVA_8;
+    // 1.7, not 1.8: the version picker offers 1.7 and 1.7.10 runs on Java 8, so
+    // starting the range at 1.8 left the oldest selectable version with no
+    // recommendation - the same gap as the 26.x one, at the other end.
+    if (minor >= 7) return JAVA_8;
     return null;
 }
 
