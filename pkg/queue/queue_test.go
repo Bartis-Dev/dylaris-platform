@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -255,3 +256,66 @@ func TestDeadLetter_UnparseableIsNotDroppedWhenParkingFails(t *testing.T) {
 		t.Errorf("pending=%d, want 1 - an unparseable message was dropped without being parked", got)
 	}
 }
+
+// TestSlowHandlerIsNotRunTwiceByRecovery is the regression guard for a
+// concurrent duplicate execution found live on a node.
+//
+// Recovery lists this consumer's PENDING entries, and pending covers both "the
+// worker died" and "the worker is still busy" - Redis cannot tell them apart.
+// The dedup marker cannot either: it is written after the handler returns, so a
+// handler still running looks identical to one that never ran. A node "stop"
+// takes longer than Block (it sends save-all, waits, then gives the server up to
+// 30s), so the read timed out mid-handler, the idle tick called recoverPending,
+// and the same stop ran a second time in parallel. The second one's own deadline
+// then SIGKILLed a Minecraft server the first was shutting down cleanly.
+func TestSlowHandlerIsNotRunTwiceByRecovery(t *testing.T) {
+	rdb := newTestRedis(t)
+	ctx := context.Background()
+	c := NewConsumer(rdb, "q", "g", "c1")
+	// Block far shorter than the handler takes, which is the whole point: the
+	// read must time out while the handler is still working, exactly as a 5s
+	// Block does against a stop that runs for tens of seconds.
+	c.Block = 50 * time.Millisecond
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup: %v", err)
+	}
+	if _, err := Publish(ctx, rdb, "q", []byte("slow")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	var mu sync.Mutex
+	starts := 0
+	done := make(chan struct{})
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go c.Run(runCtx, func(_ context.Context, _ []byte) error {
+		mu.Lock()
+		starts++
+		first := starts == 1
+		mu.Unlock()
+		if first {
+			time.Sleep(600 * time.Millisecond) // spans several Block timeouts
+			close(done)
+		}
+		return nil
+	})
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never ran")
+	}
+	// Give the loop a few more idle ticks to try to re-deliver it.
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if starts != 1 {
+		t.Fatalf("handler ran %d times, want 1: recovery re-delivered an entry that was still being processed", starts)
+	}
+}
+
+// The other half of this guarantee - that the in-flight mark is RELEASED, so a
+// handler that failed on purpose is still retried by the next recovery pass - is
+// already covered by TestRetryThenAckOnRecovery above, which now also exercises
+// beginInflight/endInflight across its two handleOne calls.

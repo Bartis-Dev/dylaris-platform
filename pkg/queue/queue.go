@@ -74,6 +74,50 @@ type Consumer struct {
 	// server commands); keep 1 where ordering/exclusivity matters (e.g. the
 	// migration orchestrator, which serializes via per-server locks).
 	Concurrency int
+
+	// inflight holds the ids this process is running RIGHT NOW. Recovery reads
+	// (recoverPending, claimStale) list pending entries, and "pending" includes
+	// entries whose handler simply has not finished yet - so without this they
+	// re-run work that is still in progress, in parallel with itself. See
+	// beginInflight.
+	mu       sync.Mutex
+	inflight map[string]struct{}
+}
+
+// beginInflight claims id for this process, reporting false when it is already
+// being handled here. endInflight releases it.
+//
+// This is what keeps recovery from racing live work. A pending entry means
+// "delivered, not yet ACKed", which covers both of "the worker died" and "the
+// worker is still busy" - and recovery cannot tell them apart from Redis alone.
+// The dedup marker does not help either: it is written AFTER the handler
+// returns, so a handler that is still running looks exactly like one that never
+// ran.
+//
+// Found live: a node "stop" takes over 5 seconds (it sends save-all, waits, then
+// gives the server up to 30s to exit), and Block is 5 seconds - so the read
+// timed out mid-handler, the idle tick called recoverPending, and the same stop
+// ran a second time concurrently. The second one's 30s deadline then expired and
+// SIGKILLed a Minecraft server that the first one was still shutting down
+// cleanly. The same window applies to every command slower than Block: install,
+// backup, restore, migrate_storage.
+func (c *Consumer) beginInflight(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inflight == nil {
+		c.inflight = make(map[string]struct{})
+	}
+	if _, busy := c.inflight[id]; busy {
+		return false
+	}
+	c.inflight[id] = struct{}{}
+	return true
+}
+
+func (c *Consumer) endInflight(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.inflight, id)
 }
 
 // NewConsumer builds a Consumer with sane defaults. stream is the Redis key,
@@ -113,9 +157,12 @@ func (c *Consumer) EnsureGroup(ctx context.Context) error {
 // Run blocks until ctx is cancelled, processing messages with up to
 // Concurrency workers. On start and whenever the read times out it also
 // reclaims stale pending (XAUTOCLAIM) and reprocesses its own pending entries,
-// so a crash mid-work is recovered. The worker pool gives natural back-pressure:
-// when all workers are busy, Run stops reading ">" so undelivered entries simply
-// wait durably in the stream.
+// so a crash mid-work is recovered. Entries this process is still handling are
+// skipped by that recovery (see beginInflight) - "pending" alone does not mean
+// "abandoned", and re-running live work in parallel with itself is what the
+// recovery pass used to do to any handler slower than Block. The worker pool
+// gives natural back-pressure: when all workers are busy, Run stops reading ">"
+// so undelivered entries simply wait durably in the stream.
 func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	if err := c.EnsureGroup(ctx); err != nil {
 		return err
@@ -234,6 +281,14 @@ func (c *Consumer) claimStale(ctx context.Context, handler Handler) {
 
 // handleOne runs the dedup → handler → mark-done → ACK sequence for one message.
 func (c *Consumer) handleOne(ctx context.Context, m redis.XMessage, handler Handler) {
+	// Already running here: a recovery read listed an entry whose handler has
+	// not returned yet. Drop it - the live run owns the ACK. Guarding here
+	// covers all three delivery paths (live ">", recoverPending, claimStale).
+	if !c.beginInflight(m.ID) {
+		return
+	}
+	defer c.endInflight(m.ID)
+
 	// Already processed (ACK lost / redelivered): just ACK and move on.
 	if n, _ := c.rdb.Exists(ctx, c.doneKey(m.ID)).Result(); n == 1 {
 		c.ack(ctx, m.ID)
