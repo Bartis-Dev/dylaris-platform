@@ -21,26 +21,34 @@ import (
 )
 
 const (
-	rconTypeAuth        = 3
-	rconTypeAuthResp    = 2
-	rconTypeExec        = 2
-	rconTypeRespValue   = 0
-	rconRequestExec     = 1
-	rconRequestAuth     = 2
-	rconMaxBodyLen      = 4096
-	rconDefaultPortVar  = 25575
-	rconDefaultTimeout  = 3 * time.Second
+	rconTypeAuth       = 3
+	rconTypeAuthResp   = 2
+	rconTypeExec       = 2
+	rconTypeRespValue  = 0
+	rconRequestExec    = 1
+	rconRequestAuth    = 2
+	rconMaxBodyLen     = 4096
+	rconDefaultPortVar = 25575
+	rconDefaultTimeout = 3 * time.Second
+	// rconIdleGap is how long to wait for a FURTHER reply packet once one has
+	// arrived. Minecraft splits long replies (e.g. a big "list") across
+	// packets and sends them back to back, so this only has to cover the gap
+	// between them, not the server's think time - that is what the first
+	// packet's full timeout is for. Too long and every command pays it; too
+	// short and a split reply gets truncated.
+	rconIdleGap = 250 * time.Millisecond
 )
 
 // execRcon dials addr, auths, runs cmd, returns the server's reply.
 //
 // Implementation notes:
-//   * MC servers may split long replies into multiple RESPONSE_VALUE packets.
-//     We send a small SERVERDATA_RESPONSE_VALUE (type=2 actually, the
-//     "request" type) as a sentinel right after the exec — the server
-//     echoes it back AFTER any reply chunks, telling us we're done.
-//     This is the standard trick documented in the Valve wiki.
-//   * If the server only sends one reply we still terminate via timeout.
+//   - MC servers may split long replies into multiple RESPONSE_VALUE packets,
+//     so the reply is assembled until an idle gap rather than after one packet.
+//   - The Valve end-of-reply sentinel is deliberately NOT used. This comment
+//     used to describe sending one and even disagreed with the code beneath it
+//     about its type; the code sent RESPONSE_VALUE(0), Minecraft rejects any
+//     request that is not AUTH(3) or EXECCOMMAND(2), and closed the connection.
+//     Every command failed with "read exec resp: EOF".
 func execRcon(addr, password, command string, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = rconDefaultTimeout
@@ -78,29 +86,44 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 	if err := writeRconPacket(conn, rconRequestExec, rconTypeExec, command); err != nil {
 		return "", fmt.Errorf("write exec: %w", err)
 	}
-	// Sentinel: a second RESPONSE_VALUE packet whose echo signals end-of-reply.
-	const sentinelID = rconRequestExec + 1
-	if err := writeRconPacket(conn, sentinelID, rconTypeRespValue, ""); err != nil {
-		return "", fmt.Errorf("write sentinel: %w", err)
-	}
-
+	// NO sentinel packet. The Valve trick - echoing back a RESPONSE_VALUE(0)
+	// request to mark the end of a multi-packet reply - does not work against
+	// Minecraft: its RCON accepts only AUTH(3) and EXECCOMMAND(2) as requests
+	// and closes the connection on anything else. Sending it made EVERY command
+	// fail with "read exec resp: EOF", which took out live player management,
+	// the whitelist, operators and Scheduled Tasks "say" jobs.
+	//
+	// Verified against Paper 26.2 with a byte-identical client: with the
+	// sentinel, EOF in ~2ms and no reply; without it, the reply arrives. It
+	// looked intermittent at first because a slower client can win the race and
+	// receive the reply before the server acts on the sentinel - so "it worked
+	// once" is not evidence here.
+	//
+	// End-of-reply is instead detected by an idle gap: the first packet gets the
+	// caller's full timeout, and every packet after it a short one, so a reply
+	// split across packets is still assembled while a single-packet reply does
+	// not cost the whole timeout.
 	var out strings.Builder
+	got := false
 	for {
+		if got {
+			_ = conn.SetReadDeadline(time.Now().Add(rconIdleGap))
+		} else {
+			_ = conn.SetReadDeadline(time.Now().Add(timeout))
+		}
 		rid, rtyp, body, err := readRconPacket(conn)
 		if err != nil {
-			// If we already collected output, treat read-timeout as "done".
-			if out.Len() > 0 {
+			// Once something arrived, a read timeout is the end of the reply,
+			// not a failure.
+			if got {
 				break
 			}
 			return "", fmt.Errorf("read exec resp: %w", err)
 		}
-		if rtyp != rconTypeRespValue {
-			continue
+		if rtyp != rconTypeRespValue || rid != rconRequestExec {
+			continue // not our reply
 		}
-		// Sentinel echo → finished.
-		if rid == sentinelID {
-			break
-		}
+		got = true
 		out.WriteString(body)
 	}
 	return strings.TrimRight(out.String(), "\x00 \r\n"), nil
