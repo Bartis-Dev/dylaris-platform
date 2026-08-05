@@ -172,7 +172,13 @@ func (m *MeshManager) dialWSBridge(cc *coreConnection, reqID, serverUUID string,
 
 	// The dialer takes a candidate list, but policy says there is exactly one
 	// legitimate target: the server's own container. See containerAddr.
-	conn, err := wsDialContainer([]string{containerAddr(serverUUID, int(open.TargetPort))}, open.Path, hdr)
+	addr, err := containerAddr(serverUUID, int(open.TargetPort))
+	if err != nil {
+		cc.send(errorMsg(reqID, 502, err.Error()))
+		m.closeWSBridge(reqID)
+		return
+	}
+	conn, err := wsDialContainer([]string{addr}, open.Path, hdr)
 	if err != nil {
 		cc.send(errorMsg(reqID, 502, err.Error()))
 		m.closeWSBridge(reqID) // drop the pending bridge

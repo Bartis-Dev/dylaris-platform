@@ -57,8 +57,17 @@ var nodeHopByHop = map[string]bool{
 // container sits on dylaris_net with the node, and WITH isolation
 // TenantNetworkManager.connectNode pins the node into each tenant net for
 // exactly this reason ("so mc_<uuid> DNS + RCON/stats work").
-func containerAddr(serverUUID string, port int) string {
-	return fmt.Sprintf("mc_%s:%d", serverUUID, port)
+//
+// One name is still not one HOST, which is why this resolves rather than
+// formats. When the container is absent from the network, Docker's embedded
+// resolver forwards the name upstream and a wildcard DNS record answers with a
+// public address - observed live via the RCON path, which composes the same
+// name. That reopens precisely the SSRF pivot the loopback removal closed, and
+// worse: the port is already tenant-chosen (it comes from the tab config), so
+// the tenant picks the port while DNS picks the host, and the node streams the
+// response back to the caller.
+func containerAddr(serverUUID string, port int) (string, error) {
+	return resolveContainerIP(fmt.Sprintf("mc_%s", serverUUID), port)
 }
 
 // nodeStripHopByHop returns the subset of headers that are safe to forward.
@@ -99,7 +108,12 @@ func (h *StreamHandler) handleHTTPProxy(reqID, serverUUID string, req *pb.HttpPr
 	// One address, one attempt: there is no second candidate to fall through to
 	// (see containerAddr), so a failure here is reported rather than retried
 	// somewhere the target cannot be.
-	url := "http://" + containerAddr(serverUUID, int(req.TargetPort)) + req.Path
+	addr, err := containerAddr(serverUUID, int(req.TargetPort))
+	if err != nil {
+		send(errorMsg(reqID, 502, err.Error()))
+		return
+	}
+	url := "http://" + addr + req.Path
 	var bodyReader io.Reader
 	if len(req.Body) > 0 {
 		bodyReader = bytes.NewReader(req.Body)
