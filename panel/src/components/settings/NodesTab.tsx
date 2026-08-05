@@ -13,6 +13,7 @@ import {
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import Select from '@/components/ui/Select';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import StoragePlacement from '@/components/StoragePlacement';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
@@ -147,7 +148,11 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     };
 
     const resetPairing = async (node: Node) => {
-        if (!window.confirm(`Reset pairing for "${node.name}"? Its current secret is invalidated immediately; the node must re-pair with the one-time recovery token you are about to receive. Server data is preserved.`)) return;
+        if (!await confirmDialog({
+            title: `Reset pairing for "${node.name}"?`,
+            message: 'Its current secret is invalidated immediately; the node must re-pair with the one-time recovery token you are about to receive. Server data is preserved.',
+            confirmLabel: 'Reset pairing',
+        })) return;
         setResettingId(node.id);
         const res = await resetNodePairing(node.id);
         setResettingId(null);

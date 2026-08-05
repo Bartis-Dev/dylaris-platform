@@ -21,6 +21,7 @@ import {
 import { pickNewestMatchingVersion, compareInstalledVsLatest, type ModStatus } from '@/lib/modVersionCompare';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import { isMcVersion } from '@/lib/validation';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
@@ -313,24 +314,38 @@ export default function ServerContentPage() {
 
     // ----- Install / uninstall -----
 
-    // Advisory, non-blocking modpack cross-check. Differentiated by wording
-    // (window.confirm cannot carry visual tone): the same-version case is
-    // informational, the other two lead with "Warning:". Returns false if the
-    // user cancels (or the confirm should block the install). Shared by every
-    // install path (detail-pane version list, row Install, row Update) so a
-    // cancelled confirm is always evaluated BEFORE any destructive action
-    // (e.g. the row Update flow must not remove the old file first).
-    const confirmModpackCrossCheck = (project: ModrinthProject, version: ModrinthVersion): boolean => {
+    // Advisory, non-blocking modpack cross-check. The tone is now carried by the
+    // dialog itself - the same-version case is informational, the other two are
+    // rendered as warnings - which is what the "Warning:" prefixes were standing
+    // in for while this went through window.confirm. Returns false if the user
+    // cancels. Shared by every install path (detail-pane version list, row
+    // Install, row Update) so a cancelled confirm is always evaluated BEFORE any
+    // destructive action (e.g. the row Update flow must not remove the old file
+    // first).
+    const confirmModpackCrossCheck = async (project: ModrinthProject, version: ModrinthVersion): Promise<boolean> => {
         const inPack = packByProject.get(project.id);
         if (inPack) {
             if (inPack.versionId === version.id) {
-                return window.confirm(`"${project.title}" is already in this server's modpack at this version. Install it again anyway?`);
+                return confirmDialog({
+                    title: `"${project.title}" is already in this modpack`,
+                    message: `This server's modpack already ships this exact version. Install it again anyway?`,
+                    confirmLabel: 'Install anyway',
+                    destructive: false,
+                });
             }
             const packVer = inPack.versionNumber || 'a different version';
-            return window.confirm(`Warning: this server's modpack ships ${packVer} of "${project.title}". Installing ${version.version_number} may stop the server from starting, or leave players on the pack version unable to connect. Install anyway?`);
+            return confirmDialog({
+                title: `This overrides the modpack's version`,
+                message: `This server's modpack ships ${packVer} of "${project.title}". Installing ${version.version_number} may stop the server from starting, or leave players on the pack version unable to connect.`,
+                confirmLabel: 'Install anyway',
+            });
         }
         if (packByProject.size > 0 && project.client_side === 'required') {
-            return window.confirm(`Warning: "${project.title}" must run on each player's client too, or they will not be able to connect. It is not part of the distributed modpack. Install anyway?`);
+            return confirmDialog({
+                title: `"${project.title}" is client-side too`,
+                message: `It must run on each player's client as well, or they will not be able to connect, and it is not part of the distributed modpack.`,
+                confirmLabel: 'Install anyway',
+            });
         }
         return true;
     };
@@ -358,7 +373,7 @@ export default function ServerContentPage() {
     };
 
     const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
-        if (!confirmModpackCrossCheck(project, version)) return;
+        if (!await confirmModpackCrossCheck(project, version)) return;
         await doInstall(project, version);
     };
 
@@ -415,7 +430,7 @@ export default function ServerContentPage() {
         withBusy(hit.project_id, async () => {
             const project = await getModrinthProject(hit.slug);
             if (!project) { showToast('Failed to load project details', false); return; }
-            if (!confirmModpackCrossCheck(project, latest)) return;
+            if (!await confirmModpackCrossCheck(project, latest)) return;
             const removeRes = await uninstallMod(serverId, installedMod.id);
             if (!removeRes.success) {
                 showToast(removeRes.message || 'Update failed: could not remove the old version', false);

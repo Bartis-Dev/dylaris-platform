@@ -13,17 +13,16 @@ import { AlertTriangle } from 'lucide-react';
  * and the user is told nothing.
  *
  * Deliberately a module-level singleton driven by one <ConfirmDialogRoot/> in the
- * authed layout, rather than a per-component hook: the call sites are 15 handlers
- * spread over 12 files, and this way each changes by an import and an `await`
- * instead of also having to thread a node into its JSX. The markup is the
- * hand-rolled confirm that was already inside RoutesModal, so nothing about the
- * look changes.
+ * authed layout, rather than a per-component hook: there are ~19 call sites spread
+ * over 14 files, and this way each changes by an import and an `await` instead of
+ * also having to thread a node into its JSX. The markup is the hand-rolled confirm
+ * that was already inside RoutesModal, so nothing about the look changes.
  */
 export interface ConfirmOptions {
     title: string;
     /** Body text. A plain string: every call site is one sentence. */
     message: string;
-    /** Defaults to "Delete" - every current caller is a deletion. */
+    /** Defaults to "Delete", which most callers are. Set it when they are not. */
     confirmLabel?: string;
     cancelLabel?: string;
     /** false renders the primary button instead of the danger one. */
