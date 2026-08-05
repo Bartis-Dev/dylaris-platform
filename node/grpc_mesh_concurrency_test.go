@@ -12,8 +12,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -188,6 +190,17 @@ func TestHandleWSOpenPendingDeliversBufferedFrames(t *testing.T) {
 	}))
 	defer srv.Close()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	// dialWSBridge resolves before it dials, and the resolution is a real DNS
+	// lookup that refuses any non-private answer - so on any machine where
+	// mc_srvA is not a container it returns an error and the stubbed dialer
+	// below is never reached. Stub it to the loopback the httptest server is on
+	// (the private-address rule the resolver enforces in production).
+	origResolve := wsResolveContainer
+	defer func() { wsResolveContainer = origResolve }()
+	wsResolveContainer = func(serverUUID string, port int) (string, error) {
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
+	}
 
 	// Gate the dial so we can observe the pending window and prove the blocked
 	// dial for reqA does not stall handling reqB.

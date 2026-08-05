@@ -86,6 +86,16 @@ func (b *wsBridge) appendInbound(fr *pb.WsFrame) (payload []byte, opcode int, fl
 	return payload, op, true, false
 }
 
+// wsResolveContainer resolves the one legitimate target for a proxied tab. It
+// is a package var for the same reason wsDialContainer below is: the bridge
+// tests substitute the dial, and this step reaches the network too - it does a
+// real DNS lookup and refuses any non-private answer. Left un-substitutable it
+// fails in every environment where mc_<uuid> does not resolve to a container
+// (i.e. every test machine and every CI runner), so dialWSBridge would return
+// before the stubbed dialer was ever called and a test waiting on that dial
+// would wait forever.
+var wsResolveContainer = containerAddr
+
 // wsDialContainer dials the container WS, trying each candidate address in
 // order and returning the first that upgrades. It is a package var so tests can
 // substitute a controllable dialer; production uses gorilla with the 10s
@@ -172,7 +182,7 @@ func (m *MeshManager) dialWSBridge(cc *coreConnection, reqID, serverUUID string,
 
 	// The dialer takes a candidate list, but policy says there is exactly one
 	// legitimate target: the server's own container. See containerAddr.
-	addr, err := containerAddr(serverUUID, int(open.TargetPort))
+	addr, err := wsResolveContainer(serverUUID, int(open.TargetPort))
 	if err != nil {
 		cc.send(errorMsg(reqID, 502, err.Error()))
 		m.closeWSBridge(reqID)
