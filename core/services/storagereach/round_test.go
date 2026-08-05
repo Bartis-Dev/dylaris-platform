@@ -311,11 +311,18 @@ func TestRunRound_DeletesTheStagedConfigWhenItEnds(t *testing.T) {
 // settling deadline and the same 500ms report delay for the same reasons, but
 // with a much shorter PollEvery (10ms), so roughly 50 poll iterations elapse
 // with an IDENTICAL "1/2, not done" result before core-b's report finally
-// lands. The old, undeduplicated behavior would have called
-// OnProgress once per poll - order a dozen or more times; the fix collapses
-// every one of those identical polls into the single call at which the result
-// first became "1/2, not done", plus the final "2/2, done" call. Exactly 2,
-// not "at least 2" (the sequence test's weaker bound), is the point here.
+// lands. The old, undeduplicated behavior would have called OnProgress once per
+// poll - order a dozen or more times; the fix collapses every one of those
+// identical polls into a single call per distinct result.
+//
+// The bound is a RANGE, not an exact 2, and that is deliberate. It asserted
+// exactly 2 and failed once in CI with 1: the intermediate "1/2" state is only
+// observed if a poll lands inside the window where exactly one report exists,
+// and on a loaded shared runner the coordinator's first poll can arrive after
+// core-b's delayed report has already landed. That is a property of the machine,
+// not of the dedup. What the dedup guarantees is one call per distinct aggregate
+// result - at most one per reachable state (0/2, 1/2, 2/2), never one per tick.
+// A regression here does not produce 4, it produces ~50.
 func TestRunRound_OnProgressSkipsUnchangedPolls(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -366,8 +373,14 @@ func TestRunRound_OnProgressSkipsUnchangedPolls(t *testing.T) {
 		t.Fatalf("res = %+v, want a passing 2/2 round", res)
 	}
 
-	if calls != 2 {
-		t.Fatalf("OnProgress fired %d times, want exactly 2 (one for the unchanged 1/2 state, one for the final 2/2); a dozen or more identical calls means the dedup regressed", calls)
+	// One call per distinct aggregate result: 1/2 then 2/2 normally, just 2/2 if
+	// the machine was slow enough that no poll saw the intermediate state, and
+	// 0/2 first if one landed before any report. Never one per poll.
+	const maxDistinctStates = 3 // 0/2, 1/2, 2/2
+	if calls < 1 || calls > maxDistinctStates {
+		t.Fatalf("OnProgress fired %d times, want between 1 and %d (one per distinct result); "+
+			"roughly 50 polls elapse in this test, so a count near that means the dedup regressed",
+			calls, maxDistinctStates)
 	}
 }
 
