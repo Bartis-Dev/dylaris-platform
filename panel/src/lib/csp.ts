@@ -30,11 +30,25 @@ export function buildCsp(nonce: string, isDev: boolean, apiOrigin?: string): str
     "'self'",
     ...(apiOrigin ? [apiOrigin] : []),
   ].join(' ');
+  // img-src needs the API origin for the same reason connect-src does, and it
+  // was missed when connect-src got it: the server-icon preview on
+  // Config -> Display is an <img> pointing at Core's /files/download, so on a
+  // split-origin deployment the browser refused it and the icon simply never
+  // appeared. The vendor hosts stay - those are fixed third parties (skin
+  // avatars, Modrinth thumbnails), not operator config.
+  const imgSrc = [
+    "'self'",
+    'data:',
+    'blob:',
+    ...(apiOrigin ? [apiOrigin] : []),
+    'https://cravatar.eu',
+    'https://cdn.modrinth.com',
+  ].join(' ');
   return [
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com",
+    `img-src ${imgSrc}`,
     "font-src 'self'",
     `connect-src ${connectSrc}`,
     "object-src 'none'",

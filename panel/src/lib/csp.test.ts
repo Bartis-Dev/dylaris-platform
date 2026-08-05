@@ -49,4 +49,27 @@ describe('buildCsp', () => {
     const connectSrc = csp.split('; ').find(d => d.startsWith('connect-src '))!;
     expect(connectSrc).toBe("connect-src 'self' http://localhost:25500");
   });
+
+  // img-src was left behind when connect-src learned about apiOrigin. The
+  // server-icon preview on Config -> Display is an <img> at Core's
+  // /files/download, so on a split-origin deployment the browser refused it and
+  // the icon never rendered. Observed on the local stack (panel :25510,
+  // API :25500) as "violates the following Content Security Policy directive".
+  it('cross-origin apiOrigin is appended to img-src too', () => {
+    const csp = buildCsp(nonce, false, 'http://localhost:25500');
+    const imgSrc = csp.split('; ').find(d => d.startsWith('img-src '))!;
+    expect(imgSrc).toContain('http://localhost:25500');
+    // The fixed vendor hosts must survive the change.
+    expect(imgSrc).toContain('https://cravatar.eu');
+    expect(imgSrc).toContain('https://cdn.modrinth.com');
+    expect(imgSrc).toContain("'self'");
+    expect(imgSrc).toContain('data:');
+    expect(imgSrc).toContain('blob:');
+  });
+
+  it('no apiOrigin: img-src gains nothing beyond the vendor hosts', () => {
+    const csp = buildCsp(nonce, false);
+    const imgSrc = csp.split('; ').find(d => d.startsWith('img-src '))!;
+    expect(imgSrc).toBe("img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com");
+  });
 });
