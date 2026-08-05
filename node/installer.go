@@ -656,10 +656,20 @@ func downloadFileWithin(url, destPath string, stall time.Duration) error {
 	return err
 }
 
+// deadlineTimer is the part of *time.Timer stallGuard uses. Narrowed to an
+// interface so the reset behaviour can be asserted directly instead of inferred
+// from how long a download took: the end-to-end version of that test sleeps its
+// way through real chunks and has now failed twice on a loaded CI runner, once
+// at a 3.3x timing margin and once at 15x. The property is "a read carrying
+// bytes pushes the deadline back", which owes nothing to the clock.
+type deadlineTimer interface {
+	Reset(time.Duration) bool
+}
+
 // stallGuard pushes the watchdog back on every read that produced bytes.
 type stallGuard struct {
 	r      io.Reader
-	timer  *time.Timer
+	timer  deadlineTimer
 	window time.Duration
 }
 

@@ -4,7 +4,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,33 +184,54 @@ func TestDownloadFile_AbandonsAStalledBody(t *testing.T) {
 // The window bounds SILENCE, not total duration: a transfer that keeps
 // delivering bytes must run to completion however long it takes, or a thin link
 // would lose every large JAR.
-func TestDownloadFile_SlowButProgressingSucceeds(t *testing.T) {
-	const chunks = 30
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		for i := 0; i < chunks; i++ {
-			_, _ = w.Write([]byte("chunk"))
-			w.(http.Flusher).Flush()
-			time.Sleep(20 * time.Millisecond)
-		}
-	}))
-	defer srv.Close()
+//
+// Asserted on stallGuard directly rather than by timing a real download. The
+// end-to-end version slept through 30 chunks and relied on the total exceeding
+// the stall window while every gap stayed far under it; it failed twice on a
+// loaded CI runner, first at a 3.3x margin and then at 15x, both times on
+// commits that could not have touched it. Widening the margin is a race against
+// whatever else the machine happens to be doing. What the guard actually
+// promises owes nothing to the clock: a read that produced bytes pushes the
+// deadline back, and a read that produced none does not.
+type resetRecorder struct{ windows []time.Duration }
 
-	dest := filepath.Join(t.TempDir(), "server.jar")
-	// The property under test is that a download which keeps PROGRESSING is not
-	// killed even though its total time exceeds the stall window. That needs
-	// total > window and every gap << window. It used to be a 30ms gap against a
-	// 100ms window - a 3.3x margin, which a loaded CI runner ate (this failed on
-	// run 30961020147, on a commit that touched only the panel). Now ~600ms total
-	// against a 300ms window, with a 15x margin per gap.
-	if err := downloadFileWithin(srv.URL, dest, 300*time.Millisecond); err != nil {
-		t.Fatalf("a slow but progressing download failed: %v", err)
+func (r *resetRecorder) Reset(d time.Duration) bool {
+	r.windows = append(r.windows, d)
+	return true
+}
+
+func TestStallGuard_ProgressPushesTheDeadlineBack(t *testing.T) {
+	const window = 300 * time.Millisecond
+	rec := &resetRecorder{}
+	sg := &stallGuard{r: strings.NewReader("chunkchunkchunk"), timer: rec, window: window}
+
+	buf := make([]byte, 5)
+	for i := range 3 {
+		if n, err := sg.Read(buf); err != nil || n == 0 {
+			t.Fatalf("read %d: n=%d err=%v", i, n, err)
+		}
 	}
-	data, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatal(err)
+	if len(rec.windows) != 3 {
+		t.Fatalf("deadline pushed back %d times for 3 reads carrying bytes, want 3", len(rec.windows))
 	}
-	if len(data) != chunks*len("chunk") {
-		t.Errorf("wrote %d bytes, want %d", len(data), chunks*len("chunk"))
+	for i, w := range rec.windows {
+		if w != window {
+			t.Errorf("reset %d used %v, want the full window %v", i, w, window)
+		}
+	}
+}
+
+// A read that produced nothing must NOT push the deadline back, or a peer that
+// holds the connection open while sending zero bytes would never be timed out -
+// which is the case the watchdog exists for.
+func TestStallGuard_NoBytesDoesNotPushTheDeadlineBack(t *testing.T) {
+	rec := &resetRecorder{}
+	sg := &stallGuard{r: strings.NewReader(""), timer: rec, window: time.Second}
+
+	if n, err := sg.Read(make([]byte, 4)); n != 0 || err == nil {
+		t.Fatalf("read = (%d, %v), want (0, EOF) from an empty reader", n, err)
+	}
+	if len(rec.windows) != 0 {
+		t.Fatalf("deadline pushed back %d times on a read that carried no bytes", len(rec.windows))
 	}
 }
