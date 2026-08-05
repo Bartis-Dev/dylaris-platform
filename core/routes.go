@@ -54,7 +54,9 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/sub-servers/{subServerName}": "server.delete",
 	"/api/servers/{id:[0-9]+}/proxy":                       "network.write",
 	"/api/servers/{id:[0-9]+}/proxy-endpoint":              "network.read",
-	"/api/servers/{id:[0-9]+}/storage-path":                "overview.read",
+	// storage-path answers NODE-wide (every path on the machine + capacity), so
+	// it takes the same cap as the migrate action it feeds - see the handler.
+	"/api/servers/{id:[0-9]+}/storage-path":                "server.settings.write",
 	"/api/servers/{id:[0-9]+}/migrate-storage":             "server.settings.write",
 	"/api/servers/{id:[0-9]+}/sftp-credentials":            "sftp.access",
 	"/api/servers/{id:[0-9]+}/migration-status":            "overview.read",
@@ -1166,7 +1168,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.LinkServerToProxy))).Methods("PUT")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.UnlinkServerFromProxy))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-endpoint", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(serverHandler.GetProxyEndpoint))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/storage-path", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetServerStoragePath))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/storage-path", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.GetServerStoragePath))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/migrate-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.MigrateServerStorage))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/sftp-credentials", authHandler.AuthMiddleware(appState.Authz.RequireCap("sftp.access")(serverHandler.GetSftpCredentials))).Methods("GET")
 

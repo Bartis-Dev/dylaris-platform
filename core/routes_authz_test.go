@@ -561,6 +561,24 @@ func TestCap_GrantsOwnerScopedChokepointOpen(t *testing.T) {
 	}
 }
 
+// TestCap_StoragePathIsNotOverviewRead: the node-wide storage answer takes the
+// same cap as the migration it feeds, not the cap every invite carries.
+func TestCap_StoragePathIsNotOverviewRead(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("viewer-id", "viewer", false)
+	fs.servers = map[int]*models.Server{11: {ID: 11, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{44: {ID: 44, Capabilities: []string{"overview.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(11, "viewer-id"): {UserID: "viewer-id", ServerRoleID: intPtr(44)}}
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "GET", "/api/servers/11/storage-path", testIdentity{UserID: "viewer-id", Username: "viewer"}); c != 403 {
+		t.Errorf("overview.read holder must be 403 on storage-path (needs server.settings.write), got %d", c)
+	}
+	if c := doAs(t, srv, "GET", "/api/servers/11/storage-path", testIdentity{UserID: "owner-id", Username: "owner"}); c == 403 {
+		t.Error("the owner must reach storage-path on their own server")
+	}
+}
+
 func TestCap_AuditForceNeedsSettingsWrite(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("owner-id", "owner", false)

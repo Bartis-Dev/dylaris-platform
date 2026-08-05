@@ -10,9 +10,38 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// stripStorageServerUUIDs removes the per-path server_uuids list from a decoded
+// heartbeat storage payload. The payload is whatever the node sent, so anything
+// that is not the expected shape is returned untouched EXCEPT that a non-list
+// or a non-object entry cannot carry the key in the first place.
+func stripStorageServerUUIDs(v interface{}) interface{} {
+	entries, ok := v.([]interface{})
+	if !ok {
+		return v
+	}
+	for _, e := range entries {
+		if m, ok := e.(map[string]interface{}); ok {
+			delete(m, "server_uuids")
+		}
+	}
+	return entries
+}
+
 // GetServerStoragePath returns the current storage path for a server and all available
 // storage paths on its node (from the node's Redis heartbeat).
-// GET /api/servers/{id}/storage-path  (gated by RequireCap("overview.read") at the route)
+// GET /api/servers/{id}/storage-path  (gated by RequireCap("server.settings.write") at the route)
+//
+// The answer is NODE-wide, not server-wide: every storage path configured on
+// the machine with its capacity and how many servers sit on each. It exists to
+// feed the migrate-storage picker, whose action takes server.settings.write, so
+// the read takes the same cap rather than overview.read - the cap every invite
+// carries, which had a viewer on one server reading the operator's disk layout.
+//
+// The heartbeat entries also carry server_uuids, the top-level directories on
+// each path, i.e. the identifiers of every OTHER tenant's servers on that node.
+// Nothing renders it (the panel's StoragePathInfo has no such field), so it is
+// stripped here rather than merely re-gated: on a shared node, no per-server
+// endpoint should enumerate co-tenants for anyone, owner included.
 func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
@@ -50,7 +79,7 @@ func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Requ
 			var heartbeat map[string]interface{}
 			if json.Unmarshal([]byte(val), &heartbeat) == nil {
 				if s, ok := heartbeat["storage"]; ok {
-					storagePaths = s
+					storagePaths = stripStorageServerUUIDs(s)
 				}
 			}
 		}
