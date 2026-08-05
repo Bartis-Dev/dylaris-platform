@@ -220,7 +220,7 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof string) []string {
 // Idempotent recreate: always force-removes any stale same-name container first.
 func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof string) error {
 	dm.pullImage(image)
-	netID, err := dm.ensureGlobalNetwork()
+	netID, netName, err := dm.ensureGlobalNetwork()
 	if err != nil {
 		return err
 	}
@@ -234,9 +234,10 @@ func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDisc
 	// StopLinkContainer still does an explicit ContainerStop+ContainerRemove, which
 	// tears it down regardless of restart policy whenever the node wants it gone.
 	hc := &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: "unless-stopped"}}
+	// Keyed by the resolved name, not the literal: see ensureGlobalNetwork.
 	nc := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"dylaris_net": {NetworkID: netID},
+			netName: {NetworkID: netID},
 		},
 	}
 	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
@@ -257,29 +258,51 @@ func (dm *DockerManager) StopLinkContainer() {
 	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
 }
 
-func (dm *DockerManager) ensureGlobalNetwork() (string, error) {
+// ensureGlobalNetwork resolves the shared server network and returns BOTH its id
+// and its real name.
+//
+// The name matters as much as the id. Lookup deliberately accepts a
+// compose/stack prefix ("platform_dylaris_net"), so on most deployments the
+// network is NOT called "dylaris_net" - and an endpoint has to be attached under
+// the name Docker actually knows. Returning only the id let callers key their
+// EndpointsConfig on the literal "dylaris_net", which on a prefixed deployment
+// names nothing: the container is then created with no endpoint at all, on the
+// default bridge, and Docker reports success.
+//
+// The result is a server that looks perfectly healthy and cannot reach anything.
+// Observed live: a container recreated this way sat "Up" for nine minutes with
+// no networks, its log-shipper retrying "Redis not reachable ... network is
+// unreachable" every 32 seconds, never starting Java at all.
+func (dm *DockerManager) ensureGlobalNetwork() (id string, name string, err error) {
 	netName := "dylaris_net"
-	nets, err := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
-	if err != nil {
-		return "", fmt.Errorf("network list error: %v", err)
+	nets, lerr := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
+	if lerr != nil {
+		return "", "", fmt.Errorf("network list error: %v", lerr)
 	}
 	for _, n := range nets {
 		if n.Name == netName || strings.HasSuffix(n.Name, "_"+netName) {
 			log.Printf("Found overlay network %q (ID: %s)", n.Name, n.ID[:12])
-			return n.ID, nil
+			return n.ID, n.Name, nil
 		}
 	}
-	return "", fmt.Errorf("overlay network %q not found — ensure it exists in the Swarm stack", netName)
+	return "", "", fmt.Errorf("overlay network %q not found — ensure it exists in the Swarm stack", netName)
 }
 
 // tenantEndpoints builds the NetworkingConfig for a server container. Isolation
 // off (dm.tenant == nil) or any resolution/allocation error falls back to
 // dylaris_net so a server is never left unstartable by the isolation layer. The
 // enlarge-on-overflow retry is added in a later task.
-func (dm *DockerManager) tenantEndpoints(serverUUID, ownerID, globalNetID string) *network.NetworkingConfig {
+func (dm *DockerManager) tenantEndpoints(serverUUID, ownerID, globalNetID, globalNetName string) *network.NetworkingConfig {
+	// Keyed by the network's REAL name, which carries the compose/stack prefix
+	// on most deployments. Keying it "dylaris_net" there names no network and
+	// Docker creates the container with no endpoint at all - see
+	// ensureGlobalNetwork.
+	if globalNetName == "" {
+		globalNetName = "dylaris_net"
+	}
 	fallback := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"dylaris_net": {NetworkID: globalNetID},
+			globalNetName: {NetworkID: globalNetID},
 		},
 	}
 	if dm.tenant == nil {
@@ -519,7 +542,7 @@ func (dm *DockerManager) PullImage(image string) {
 func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	log.Printf("Creating stopped container for: %s", config.UUID)
 
-	netID, err := dm.ensureGlobalNetwork()
+	netID, netName, err := dm.ensureGlobalNetwork()
 	if err != nil {
 		return err
 	}
@@ -558,7 +581,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	applyPidsLimit(hc)
 	applyIOWeight(hc)
 
-	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID)
+	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID, netName)
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
@@ -604,12 +627,12 @@ func (dm *DockerManager) RecreateWithCommand(config ServerConfig) error {
 	dm.cli.ContainerStop(dm.ctx, containerName, container.StopOptions{Timeout: &timeout})
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
-	netID, err := dm.ensureGlobalNetwork()
+	netID, netName, err := dm.ensureGlobalNetwork()
 	if err != nil {
 		return err
 	}
 
-	_, err = dm.startMinecraftContainer(config, netID)
+	_, err = dm.startMinecraftContainer(config, netID, netName)
 	return err
 }
 
@@ -650,7 +673,7 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 	return nil
 }
 
-func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID string) (string, error) {
+func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, netName string) (string, error) {
 	dm.pullImage(config.Docker.Image)
 
 	// Create directory locally (via StorageManager or legacy path)
@@ -726,7 +749,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 		log.Printf("Container %s: binding host port %d → container port %d/tcp", containerName, hostP, cPort)
 	}
 
-	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID)
+	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID, netName)
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
@@ -737,6 +760,25 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID stri
 
 	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
 		return "", fmt.Errorf("mc container start error: %v", err)
+	}
+
+	// Confirm the container actually landed on a network. Docker accepts an
+	// EndpointsConfig naming a network that does not exist and creates the
+	// container anyway, on the default bridge with no endpoint - a container
+	// that starts, stays Up, and can reach nothing. From the outside that is
+	// indistinguishable from a healthy server: the reconciler sees it running,
+	// the stats collector sees it running, the panel says online, and the
+	// log-shipper inside sits retrying "Redis not reachable" until someone looks.
+	//
+	// Reported rather than repaired: this is a deployment mismatch (the shared
+	// network is missing or renamed), and quietly re-attaching would hide it. A
+	// hard error surfaces at the point of creation, which is the only place the
+	// cause is still visible.
+	if info, ierr := dm.cli.ContainerInspect(dm.ctx, resp.ID); ierr == nil && len(info.NetworkSettings.Networks) == 0 {
+		dm.cli.ContainerRemove(dm.ctx, resp.ID, container.RemoveOptions{Force: true})
+		return "", fmt.Errorf("mc container %s was created with no network attached (wanted %q, id %s) — "+
+			"the shared network is missing or named differently on this host; refusing to leave a server "+
+			"that is Up but unreachable", containerName, netName, netID)
 	}
 
 	return containerName, nil

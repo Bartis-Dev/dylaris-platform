@@ -141,10 +141,37 @@ func TestEndpointsForUnknownServerErrors(t *testing.T) {
 
 func TestTenantEndpointsFallbackWhenDisabled(t *testing.T) {
 	dm := &DockerManager{} // tenant == nil (isolation off)
-	nc := dm.tenantEndpoints("srv-1", "owner-A", "global-net-id")
+	nc := dm.tenantEndpoints("srv-1", "owner-A", "global-net-id", "dylaris_net")
 	ep, ok := nc.EndpointsConfig["dylaris_net"]
 	if !ok || ep.NetworkID != "global-net-id" {
 		t.Fatalf("fallback endpoints = %v, want dylaris_net -> global-net-id", nc.EndpointsConfig)
+	}
+}
+
+// TestTenantEndpointsUsesTheResolvedNetworkName: the endpoint has to be keyed by
+// the name Docker knows the network by, which on a compose or stack deployment
+// carries a project prefix. Keying the literal "dylaris_net" there names no
+// network, and Docker then creates the container with NO endpoint at all rather
+// than failing - a server that is Up and can reach nothing.
+func TestTenantEndpointsUsesTheResolvedNetworkName(t *testing.T) {
+	dm := &DockerManager{}
+	nc := dm.tenantEndpoints("srv-1", "owner-A", "global-net-id", "platform_dylaris_net")
+	if _, wrong := nc.EndpointsConfig["dylaris_net"]; wrong {
+		t.Error("endpoint keyed by the bare name; on this host no such network exists")
+	}
+	ep, ok := nc.EndpointsConfig["platform_dylaris_net"]
+	if !ok || ep.NetworkID != "global-net-id" {
+		t.Fatalf("endpoints = %v, want platform_dylaris_net -> global-net-id", nc.EndpointsConfig)
+	}
+}
+
+// TestTenantEndpointsFallsBackToTheBareNameWhenUnresolved keeps the old
+// behaviour for a caller that has no resolved name to give.
+func TestTenantEndpointsFallsBackToTheBareNameWhenUnresolved(t *testing.T) {
+	dm := &DockerManager{}
+	nc := dm.tenantEndpoints("srv-1", "owner-A", "global-net-id", "")
+	if _, ok := nc.EndpointsConfig["dylaris_net"]; !ok {
+		t.Fatalf("endpoints = %v, want the bare dylaris_net key", nc.EndpointsConfig)
 	}
 }
 
