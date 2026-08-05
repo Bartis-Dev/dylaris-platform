@@ -241,7 +241,9 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 	// spills to a temp file and the request is read in full either way - so
 	// bound the body first. Admin-only, so this is a footgun rather than a
 	// privilege issue; the ceiling matches the file manager's admin upload default.
-	r.Body = http.MaxBytesReader(w, r.Body, maxLibraryUploadBytes)
+	if !capBody(w, r, maxLibraryUploadBytes) {
+		return
+	}
 
 	// 32MiB in memory; larger files spill to a temp file on disk. Passing 2GiB
 	// here would buffer the whole upload in RAM.

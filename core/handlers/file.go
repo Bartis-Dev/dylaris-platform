@@ -305,7 +305,9 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	// without this an authenticated user could POST an arbitrarily large body and
 	// have it decoded into RAM. Reuse the per-user upload ceiling (the same one
 	// UploadFileHandler applies via MaxBytesReader).
-	r.Body = http.MaxBytesReader(w, r.Body, h.getTransferLimit(r, "upload"))
+	if !capBody(w, r, h.getTransferLimit(r, "upload")) {
+		return
+	}
 
 	var req struct {
 		Path    string `json:"path"`
@@ -761,7 +763,9 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 // then streams them to the Node via gRPC chunks.
 func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) {
 	uploadLimit := h.getTransferLimit(r, "upload")
-	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit)
+	if !capBody(w, r, uploadLimit) {
+		return
+	}
 	// 32MiB in memory; anything larger spills to a temp file on disk. Passing
 	// uploadLimit here would buffer the whole (up to multi-GB) upload in RAM.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {

@@ -43,6 +43,13 @@ const CredentialBodyLimit = 64 << 10
 // (the inner one only wraps the already-capped reader) and silently break every
 // upload at the smaller limit. Wrapping the routes that take credentials keeps
 // the two from interacting.
+// Deliberately NOT using capBody below. capBody answers an over-limit request
+// itself with a 413, and this wrapper's contract is the opposite: it stays
+// silent and lets the handler's own Decode fail into its existing 400, which is
+// what TestLimitBody_OversizedJSONBecomesA400 pins. The 100-continue hang
+// capBody exists for needs a client that sends a body larger than the cap, and
+// these caps are credential-sized, so the case is a caller doing something
+// deliberate rather than a legitimate upload being refused.
 func LimitBody(max int64, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -50,6 +57,36 @@ func LimitBody(max int64, next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// capBody bounds the request body, answering an over-limit request from the
+// declared Content-Length alone when there is one. It reports whether the
+// caller should continue; false means the response is already written.
+//
+// The Content-Length check is not an optimization, it is what keeps an
+// over-limit upload from HANGING the client. A client that sends
+// "Expect: 100-continue" (curl does for any body over 1KB, as do several HTTP
+// libraries; browsers do not, so the panel never hit this) waits for the
+// server's go-ahead. Go emits that 100 Continue the moment the handler first
+// reads the body - so with only a MaxBytesReader the sequence is: read a little,
+// send 100, client streams megabytes, the reader trips its limit, the handler
+// answers 413 - and the client, still blocked writing into a socket nobody is
+// draining, never gets to read it. Measured against the ticket attachment
+// upload: 60 seconds and no reply, versus 50 milliseconds for the same request
+// with Expect disabled.
+//
+// Refusing before the first read means Go sends the 413 INSTEAD of the 100
+// Continue, which is exactly what Expect is for. MaxBytesReader stays for the
+// cases Content-Length cannot cover: chunked bodies, and a header that lies.
+func capBody(w http.ResponseWriter, r *http.Request, max int64) bool {
+	if r.ContentLength > max {
+		sendJSONError(w, "Request body is too large", http.StatusRequestEntityTooLarge)
+		return false
+	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, max)
+	}
+	return true
 }
 
 // Map-size bounds. maxBuckets is the ceiling that triggers eviction;

@@ -194,7 +194,9 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	// down this path checks a size at all, so without this an ordinary user who
 	// owns a pack could write an unbounded file to Core's disk and then have it
 	// streamed on into modpack storage. The ticket upload had the same gap.
-	r.Body = http.MaxBytesReader(w, r.Body, maxPackContentUploadBytes)
+	if !capBody(w, r, maxPackContentUploadBytes) {
+		return
+	}
 
 	// multipart: field "file", plus form fields side + contentType. The memory
 	// budget is small on purpose: it is how much of the file part is held in RAM

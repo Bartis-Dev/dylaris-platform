@@ -407,7 +407,12 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	// LimitBody's own comment already assumed this was handled - "the upload
 	// handlers set their own, much larger MaxBytesReader" - and the server file
 	// upload does exactly that. This handler did not.
-	r.Body = http.MaxBytesReader(w, r.Body, ticketUploadBodyLimit(settings.MaxFileSizeMB))
+	// capBody, not a bare MaxBytesReader: an over-limit upload has to be refused
+	// before the first body read or a client using Expect: 100-continue hangs
+	// instead of being told (see capBody).
+	if !capBody(w, r, ticketUploadBodyLimit(settings.MaxFileSizeMB)) {
+		return
+	}
 
 	// Multipart parse with a generous max-memory; the file is streamed to
 	// disk regardless.
