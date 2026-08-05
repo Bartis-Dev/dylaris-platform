@@ -352,6 +352,28 @@ func attachmentUploadBody(file multipart.File) (body io.Reader, head []byte, err
 // Multipart with field name "file". Optional form field "messageId" links
 // the attachment to a specific message (useful when posting a new reply
 // with attachments — frontend posts message first, then attaches by id).
+const (
+	// ticketUploadHardCapMB applies when the per-file limit is 0 ("unlimited").
+	// Unlimited is about what an operator wants to ALLOW, not an invitation to
+	// write unbounded data to Core's disk before any check runs. 1024 is the same
+	// ceiling LoadTicketSettings already refuses to read a larger value than.
+	ticketUploadHardCapMB = 1024
+
+	// ticketUploadEnvelopeSlack covers the multipart boundaries, part headers and
+	// the small messageId field, so a file of EXACTLY the per-file limit still
+	// gets through to the quota check that is meant to judge it.
+	ticketUploadEnvelopeSlack = 1 << 20
+)
+
+// ticketUploadBodyLimit converts the per-file setting into a request-body cap.
+func ticketUploadBodyLimit(maxFileMB int) int64 {
+	mb := int64(maxFileMB)
+	if mb <= 0 || mb > ticketUploadHardCapMB {
+		mb = ticketUploadHardCapMB
+	}
+	return mb*1024*1024 + ticketUploadEnvelopeSlack
+}
+
 func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	t, perms, userID, ok := h.loadTicketAndGate(w, r)
 	if !ok {
@@ -375,9 +397,26 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 
 	settings := LoadTicketSettings(h.state)
 
+	// Bound the body BEFORE parsing it. ParseMultipartForm reads the WHOLE
+	// request first - spilling everything past its memory budget to a temp file -
+	// and only then do the per-file / per-ticket / per-user quota checks below
+	// run. Without a cap, a caller holding attach rights could write an
+	// arbitrarily large file to Core's disk and be told "too large" afterwards,
+	// which is the wrong order for a limit to be applied in.
+	//
+	// LimitBody's own comment already assumed this was handled - "the upload
+	// handlers set their own, much larger MaxBytesReader" - and the server file
+	// upload does exactly that. This handler did not.
+	r.Body = http.MaxBytesReader(w, r.Body, ticketUploadBodyLimit(settings.MaxFileSizeMB))
+
 	// Multipart parse with a generous max-memory; the file is streamed to
 	// disk regardless.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			sendJSONError(w, "Upload is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		sendJSONError(w, "Failed to parse upload", http.StatusBadRequest)
 		return
 	}
