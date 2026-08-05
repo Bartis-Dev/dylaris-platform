@@ -938,6 +938,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// thinks was deleted by hand, straight into the installer's directory.
 		releaseSetupBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseSetupBusy()
+		// An install ends by starting the server, so it is a deliberate retry and
+		// clears the give-up marker like start/restart do. Without this the marker
+		// outlives the install and Core keeps forcing the freshly installed server
+		// back to offline/stopped.
+		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 
@@ -1287,6 +1292,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// container whose desired_state is still "online" and then delete its JARs.
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseBusy()
+		// Same as the setup path: a reinstall ends by starting the server.
+		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
 
 		// Stop the container first
 		dm.PowerAction(cmd.Config.UUID, "stop")
