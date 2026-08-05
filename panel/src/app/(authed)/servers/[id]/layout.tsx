@@ -38,6 +38,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [editedName, setEditedName] = useState('');
 
     const [showDeletePopup, setShowDeletePopup] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
+    const [deleteWarning, setDeleteWarning] = useState('');
     const [deleteCountdown, setDeleteCountdown] = useState(5);
 
     const [showEditResourcesPopup, setShowEditResourcesPopup] = useState(false);
@@ -269,10 +271,36 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
             });
         }, 1000);
     };
+    // The result was discarded, and this is the button where that costs the most:
+    // on a refusal the popup closed and the router navigated to /servers anyway,
+    // so a delete that never happened looked exactly like one that did - the
+    // server is simply still in the list. Core refuses here for a real reason
+    // (deleting servers needs elevated permissions, 403), not only on faults.
+    //
+    // Core also answers with a `warning` when the row went but the node was never
+    // told to remove the container. That is not a failure, so it must not read as
+    // one - but it says data is left behind on a machine, so the modal stays open
+    // until the operator has acknowledged it rather than navigating away with a
+    // toast the route change would take with it.
     const handleDelete = async () => {
-        await deleteServer(selectedServer.id);
-        setShowDeletePopup(false);
+        setDeleteError('');
+        const res: any = await deleteServer(selectedServer.id);
+        if (res && (res.success === false || res.error)) {
+            setDeleteError(res.error || res.message || 'Delete failed.');
+            return;
+        }
         await refreshServers();
+        if (res?.warning) {
+            setDeleteWarning(res.warning);
+            return;
+        }
+        setShowDeletePopup(false);
+        router.push('/servers');
+    };
+
+    const dismissDeleteWarning = () => {
+        setDeleteWarning('');
+        setShowDeletePopup(false);
         router.push('/servers');
     };
 
@@ -928,21 +956,34 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 Delete Server
                             </h3>
                         </div>
-                        <div className="modal-body">
-                            <p className="text-sm text-(--base-07)">
-                                Are you sure you want to delete <span className="font-semibold text-(--base-09)">{selectedServer.name}</span>?
-                                This cannot be undone and all server data will be lost.
-                            </p>
+                        <div className="modal-body space-y-3">
+                            {deleteWarning ? (
+                                <p className="text-sm text-(--warning-light)">{deleteWarning}</p>
+                            ) : (
+                                <p className="text-sm text-(--base-07)">
+                                    Are you sure you want to delete <span className="font-semibold text-(--base-09)">{selectedServer.name}</span>?
+                                    This cannot be undone and all server data will be lost.
+                                </p>
+                            )}
+                            {deleteError && (
+                                <p className="text-sm text-(--error-light)">{deleteError}</p>
+                            )}
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setShowDeletePopup(false)} className="btn btn-secondary">Cancel</button>
-                            <button
-                                onClick={handleDelete}
-                                disabled={deleteCountdown > 0}
-                                className="btn btn-danger disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                {deleteCountdown > 0 ? `Delete (${deleteCountdown}s)` : 'Delete'}
-                            </button>
+                            {deleteWarning ? (
+                                <button onClick={dismissDeleteWarning} className="btn btn-primary">Understood</button>
+                            ) : (
+                                <>
+                                    <button onClick={() => { setDeleteError(''); setShowDeletePopup(false); }} className="btn btn-secondary">Cancel</button>
+                                    <button
+                                        onClick={handleDelete}
+                                        disabled={deleteCountdown > 0}
+                                        className="btn btn-danger disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        {deleteCountdown > 0 ? `Delete (${deleteCountdown}s)` : 'Delete'}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

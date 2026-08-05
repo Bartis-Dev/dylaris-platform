@@ -1339,13 +1339,30 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
-	if err == nil && h.state.Queue != nil {
+	// Same silence as DeleteServer had, with the same consequence one level down:
+	// the slot disappears from the panel while its directory stays on disk,
+	// counting against the server's quota with nothing left in the UI pointing at
+	// it. An offline node is fine (durable stream); a missing node row, no queue,
+	// or an unreachable Redis is not.
+	dispatchWarning := ""
+	node, nodeErr := h.state.Store.GetNodeByID(srv.NodeID)
+	switch {
+	case nodeErr != nil:
+		dispatchWarning = "the node record is gone"
+	case h.state.Queue == nil:
+		dispatchWarning = "the command queue is unavailable"
+	default:
 		configPayload := map[string]interface{}{
 			"uuid":            srv.UUID,
 			"activeSubServer": subServerName,
 		}
-		h.state.Queue.SendCommand(context.Background(), node.Token, "delete_sub_server", configPayload, nil)
+		if sendErr := h.state.Queue.SendCommand(context.Background(), node.Token, "delete_sub_server", configPayload, nil); sendErr != nil {
+			dispatchWarning = fmt.Sprintf("the delete command could not be queued: %v", sendErr)
+		}
+	}
+	if dispatchWarning != "" {
+		log.Printf("DeleteSubServer: sub-server %q of %s removed from the panel but the node was never told to delete it — %s; its files remain on node %d",
+			subServerName, srv.UUID, dispatchWarning, srv.NodeID)
 	}
 
 	// If deleting the active sub-server, reset to pending_setup AND
@@ -1364,7 +1381,12 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	resp := map[string]interface{}{"success": true}
+	if dispatchWarning != "" {
+		resp["warning"] = "The sub-server was removed from the panel, but the node was never told to delete it (" +
+			dispatchWarning + "). Its files are still on the node and still count against the disk limit."
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 // DeleteServer: Completely delete a server
@@ -1397,12 +1419,36 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
-	if err == nil && h.state.Queue != nil {
+	// Dispatching the node-side delete is the only thing that removes the
+	// container and the server's files. SendCommand XADDs to a durable stream, so
+	// an offline node is NOT a failure - it picks the command up on reconnect.
+	// A failure here means the node row is gone, the queue is unconfigured, or
+	// Redis is unreachable, and in all three the data survives on disk while the
+	// DB row below disappears: an orphan only the adoption flow can find again,
+	// still holding its host port, its RAM and its disk.
+	//
+	// Deleting anyway is deliberate - refusing would make a server unremovable
+	// whenever its node is permanently gone, which is precisely when an operator
+	// needs to remove it. But it must not be silent, which it was: no log line,
+	// no word in the response.
+	dispatchWarning := ""
+	node, nodeErr := h.state.Store.GetNodeByID(srv.NodeID)
+	switch {
+	case nodeErr != nil:
+		dispatchWarning = "the node record is gone"
+	case h.state.Queue == nil:
+		dispatchWarning = "the command queue is unavailable"
+	default:
 		configPayload := map[string]interface{}{
 			"uuid": srv.UUID,
 		}
-		h.state.Queue.SendCommand(context.Background(), node.Token, "delete", configPayload, nil)
+		if sendErr := h.state.Queue.SendCommand(context.Background(), node.Token, "delete", configPayload, nil); sendErr != nil {
+			dispatchWarning = fmt.Sprintf("the delete command could not be queued: %v", sendErr)
+		}
+	}
+	if dispatchWarning != "" {
+		log.Printf("DeleteServer: server %s (id=%d) removed from the DB but the node was never told to delete it — %s; its container and files remain on node %d",
+			srv.UUID, serverID, dispatchWarning, srv.NodeID)
 	}
 
 	// Gateway routes are stored independently from the DB row (in Redis +
@@ -1467,5 +1513,10 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	resp := map[string]interface{}{"success": true}
+	if dispatchWarning != "" {
+		resp["warning"] = "The server was removed from the panel, but the node was never told to delete it (" +
+			dispatchWarning + "). Its container and files are still on the node and must be cleaned up there."
+	}
+	json.NewEncoder(w).Encode(resp)
 }
