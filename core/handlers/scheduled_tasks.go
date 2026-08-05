@@ -37,6 +37,52 @@ type scheduledTaskRequest struct {
 // cases without a third execution path.
 var validTaskTypes = map[string]bool{"restart": true, "say": true}
 
+const (
+	scheduledTaskMaxName    = 128
+	scheduledTaskMaxPayload = 512
+)
+
+// normalizeTaskName and normalizeTaskPayload are the ONE place either field is
+// cleaned. They exist because Create did all of this inline and Update did none
+// of it - it only TrimSpace'd the payload - so a PATCH could store what a POST
+// refuses.
+//
+// The payload becomes "say " + payload on the server's stdin queue, so an
+// embedded newline is a second console command. Today the log-shipper strips
+// CR/LF again before writing to the JVM's stdin, which is what kept the PATCH
+// gap from being a live console-command injection for anyone holding
+// schedule.write but not console.send. That is one line in a different service
+// standing between a stored payload and command execution; the value must not
+// carry a newline in the first place.
+func normalizeTaskPayload(s string) string {
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", "")
+	return strings.TrimSpace(s)
+}
+
+func normalizeTaskName(s string) string {
+	return strings.TrimSpace(s)
+}
+
+// validateTaskFields runs the checks both Create and Update need, against the
+// already-normalized values. Returns "" when the task is acceptable.
+func validateTaskFields(name, taskType, payload string) string {
+	if len(name) > scheduledTaskMaxName {
+		return "Name too long (max 128 characters)"
+	}
+	if len(payload) > scheduledTaskMaxPayload {
+		return "Payload too long (max 512 characters)"
+	}
+	if !validTaskTypes[taskType] {
+		return "Unsupported task type"
+	}
+	// A task flipped to "say" with nothing to say errors on every tick forever.
+	// Create refuses it; Update could reach it by changing only the type.
+	if taskType == "say" && payload == "" {
+		return "Payload (message) required for 'say' task"
+	}
+	return ""
+}
+
 func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	tasks, err := h.state.Store.ListScheduledTasksByServer(serverID)
@@ -57,27 +103,11 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
+	req.Name = normalizeTaskName(req.Name)
 	req.ScheduleCron = strings.TrimSpace(req.ScheduleCron)
-	req.Payload = strings.TrimSpace(req.Payload)
-	// Strip CR/LF so a "say" payload can't smuggle extra console commands via
-	// newline injection once the Node forwards it to the server stdin, and cap
-	// lengths so a task row can't carry an unbounded blob.
-	req.Payload = strings.ReplaceAll(strings.ReplaceAll(req.Payload, "\r", ""), "\n", "")
-	if len(req.Name) > 128 {
-		sendJSONError(w, "Name too long (max 128 characters)", http.StatusBadRequest)
-		return
-	}
-	if len(req.Payload) > 512 {
-		sendJSONError(w, "Payload too long (max 512 characters)", http.StatusBadRequest)
-		return
-	}
-	if !validTaskTypes[req.TaskType] {
-		sendJSONError(w, "Unsupported task type", http.StatusBadRequest)
-		return
-	}
-	if req.TaskType == "say" && req.Payload == "" {
-		sendJSONError(w, "Payload (message) required for 'say' task", http.StatusBadRequest)
+	req.Payload = normalizeTaskPayload(req.Payload)
+	if msg := validateTaskFields(req.Name, req.TaskType, req.Payload); msg != "" {
+		sendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	next, err := services.ComputeNextRun(req.ScheduleCron, time.Now().UTC())
@@ -139,18 +169,22 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if req.TaskType != "" && !validTaskTypes[req.TaskType] {
-		sendJSONError(w, "Unsupported task type", http.StatusBadRequest)
-		return
-	}
+	// Apply the patch onto a copy first, then validate the RESULT with the same
+	// rules Create uses. Validating the request alone would miss the combination
+	// that only a patch can reach - changing taskType to "say" while leaving the
+	// existing empty payload in place.
 	if req.Name != "" {
-		existing.Name = strings.TrimSpace(req.Name)
+		existing.Name = normalizeTaskName(req.Name)
 	}
 	if req.TaskType != "" {
 		existing.TaskType = req.TaskType
 	}
 	if req.Payload != "" {
-		existing.Payload = strings.TrimSpace(req.Payload)
+		existing.Payload = normalizeTaskPayload(req.Payload)
+	}
+	if msg := validateTaskFields(existing.Name, existing.TaskType, existing.Payload); msg != "" {
+		sendJSONError(w, msg, http.StatusBadRequest)
+		return
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled

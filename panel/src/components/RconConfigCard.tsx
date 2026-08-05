@@ -165,7 +165,12 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                 <div className="min-w-0 flex-1">
                     <h2 className="text-base font-display font-semibold text-(--base-09)">RCON</h2>
                     <p className="text-xs text-(--base-06) mt-0.5">
-                        Remote console. Powers live player management (kick / ban / op) and Scheduled Tasks &ldquo;say&rdquo; jobs.
+                        {/* Scheduled Tasks used to be named here too. They do not use RCON:
+                            a "say" job is pushed onto the server's stdin queue and runs with
+                            RCON off, so the sentence was talking people into opening a
+                            password-authenticated port they did not need. */}
+                        Remote console. Powers live player management — the online list, kick / ban / op,
+                        the whitelist and the operators list.
                         Enabling writes <code className="font-mono">enable-rcon=true</code> + this password into server.properties for you — restart the server to apply.
                     </p>
                 </div>
