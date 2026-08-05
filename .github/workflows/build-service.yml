@@ -33,8 +33,38 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     steps:
+      # Give this job its own Docker credential store, before anything logs in.
+      #
+      # The runner is self-hosted and runs jobs concurrently, so every job on it
+      # otherwise shares one ~/.docker/config.json. docker/login-action writes
+      # the job's GITHUB_TOKEN there, and that token is revoked the moment ITS
+      # job finishes - so a neighbouring build that logged in later, or an
+      # earlier one that has since ended, decides what credential is on disk
+      # when this job pushes. The symptom is a push that fails with
+      #
+      #   denied: permission_denied ... 403 Forbidden
+      #   failed to authorize: failed to fetch oauth token ... 403 Forbidden
+      #
+      # on a run whose tests all passed, and that succeeds on a rerun because
+      # the rerun is alone on the machine. Seen twice in one afternoon of rapid
+      # pushes, both times while other runs were in flight, both times only on
+      # the reusable-workflow builds - never on build-core, which happens to be
+      # first in the queue.
+      #
+      # This is the failure mode the evidence fits; it is not proven root cause.
+      # It costs nothing if the real cause is elsewhere, and it removes a shared
+      # mutable file two jobs can both write, which is worth doing regardless.
+      #
+      # Set here rather than in a job-level env: block because the runner
+      # context is only available inside steps.
+      - name: Isolate Docker credentials for this job
+        run: |
+          DIR="${RUNNER_TEMP}/docker-${{ github.run_id }}-${{ inputs.component }}"
+          mkdir -p "$DIR"
+          echo "DOCKER_CONFIG=$DIR" >> "$GITHUB_ENV"
+
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
