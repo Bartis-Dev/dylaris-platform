@@ -2,12 +2,18 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// maxLibraryUploadBytes bounds one library upload. Matches the file manager's
+// admin upload default (getTransferLimit in file.go), which is the closest
+// existing expression of "how much an admin may push through Core at once".
+const maxLibraryUploadBytes = 2 << 30 // 2 GiB
 
 type LibraryHandler struct {
 	state *AppState
@@ -231,10 +237,23 @@ func (h *LibraryHandler) MkdirLibraryHandler(w http.ResponseWriter, r *http.Requ
 // Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former
 // in-handler `if !isAdmin` block is now the chokepoint's job.
 func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Request) {
+	// The memory budget below is not a limit on what is ACCEPTED - the rest
+	// spills to a temp file and the request is read in full either way - so
+	// bound the body first. Admin-only, so this is a footgun rather than a
+	// privilege issue; the ceiling matches the file manager's admin upload default.
+	r.Body = http.MaxBytesReader(w, r.Body, maxLibraryUploadBytes)
+
 	// 32MiB in memory; larger files spill to a temp file on disk. Passing 2GiB
 	// here would buffer the whole upload in RAM.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		sendJSONError(w, "File too large", http.StatusBadRequest)
+		// The old message said "File too large" for every parse failure,
+		// including a malformed body. Now it only says that when it is true.
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			sendJSONError(w, "File too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		sendJSONError(w, "Malformed upload", http.StatusBadRequest)
 		return
 	}
 

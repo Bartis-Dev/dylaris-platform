@@ -3,6 +3,7 @@ package handlers
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,14 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// maxPackContentUploadBytes bounds one uploaded pack artifact. A mod jar, a
+// plugin or a resource pack is comfortably under this; the number exists to put
+// a ceiling on what an ordinary pack owner can write to Core's disk, not to
+// express a product limit. Deliberately a constant rather than a new setting -
+// there is no modpack upload setting today, and reusing the file manager's
+// (fm.user_upload_limit) would couple two unrelated features.
+const maxPackContentUploadBytes = 1 << 30 // 1 GiB
 
 // loadOwnedBuild returns the build if the caller owns its pack. Frozen state is
 // left for callers to gate on (list/read is allowed on frozen builds; writes
@@ -179,12 +188,25 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := r.Context().Value("userID").(string)
 
+	// Bound the body before parsing it. The small memory budget below decides how
+	// much is held in RAM, NOT how much is accepted: ParseMultipartForm reads the
+	// whole request either way and spills the rest to a temp file. Nothing further
+	// down this path checks a size at all, so without this an ordinary user who
+	// owns a pack could write an unbounded file to Core's disk and then have it
+	// streamed on into modpack storage. The ticket upload had the same gap.
+	r.Body = http.MaxBytesReader(w, r.Body, maxPackContentUploadBytes)
+
 	// multipart: field "file", plus form fields side + contentType. The memory
 	// budget is small on purpose: it is how much of the file part is held in RAM
 	// before the rest spills to a temp file, so a large upload costs a few MiB
 	// of heap plus disk rather than its whole size in memory. The stored .zip
 	// path then reads that temp-backed part by streaming.
 	if err := r.ParseMultipartForm(8 << 20); err != nil { // 8 MiB in RAM, rest to disk
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			sendJSONError(w, "Upload exceeds the 1 GiB per-file limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		sendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
 		return
 	}
