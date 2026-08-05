@@ -225,6 +225,25 @@ func (s *BillingLifecycleService) cleanupExpiredR2(ctx context.Context) {
 	}
 }
 
+// deleteTenantBackups is the part of retention that actually deletes data, so
+// the two things it must never do are skip an object and forget an object.
+//
+// It used to do both. A run whose job has no storage_id had its object deletion
+// skipped entirely and its row deleted anyway - and storage_id is NULL for every
+// job created with the panel's FIRST dropdown option, "Default storage", so that
+// was the common case, not an edge one. The archive then survives the retention
+// window with nothing left pointing at it: the tenant's data is still there, the
+// operator is still paying for it, and the record that would let either be found
+// is gone. Same NULL-means-default confusion that made those backups
+// unrestorable (fixed in 1c08ded); this site was missed.
+//
+// Second, a FAILED delete also dropped the row, which turns a transient fault
+// into the same permanent orphan. The row is now kept whenever the object was not
+// confirmed gone, and the hourly pass retries. That cannot spin forever on an
+// already-deleted object: S3 maps NoSuchKey to nil and local ignores
+// os.IsNotExist, so a missing object reports success and the row goes on the
+// first pass. A node-local archive on an unreachable node does keep retrying,
+// which is the correct answer - the data is still out there.
 func (s *BillingLifecycleService) deleteTenantBackups(ctx context.Context, userID string) {
 	refs, err := s.store.ListBackupRunsByOwner(userID)
 	if err != nil {
@@ -233,14 +252,22 @@ func (s *BillingLifecycleService) deleteTenantBackups(ctx context.Context, userI
 	}
 	deps := backupstorage.Deps{Registry: s.registry, NodeStore: s.store}
 	for _, ref := range refs {
-		if ref.StorageID != nil {
-			if storage, err := s.store.GetBackupStorage(*ref.StorageID); err == nil && storage != nil {
-				if provider, err := backupstorage.Open(ctx, storage, deps); err == nil {
-					if err := provider.Delete(ctx, ref.StorageKey); err != nil {
-						log.Printf("billing lifecycle: delete backup object %s: %v", ref.StorageKey, err)
-					}
-				}
-			}
+		storage, err := ResolveJobStorage(s.store, ref.StorageID)
+		if err != nil {
+			log.Printf("billing lifecycle: run %d (%s): cannot resolve storage: %v — keeping the row so the object is not orphaned",
+				ref.RunID, ref.StorageKey, err)
+			continue
+		}
+		provider, err := backupstorage.Open(ctx, storage, deps)
+		if err != nil {
+			log.Printf("billing lifecycle: run %d (%s): cannot open storage %q: %v — keeping the row",
+				ref.RunID, ref.StorageKey, storage.Name, err)
+			continue
+		}
+		if err := provider.Delete(ctx, ref.StorageKey); err != nil {
+			log.Printf("billing lifecycle: delete backup object %s: %v — keeping the row so the next pass retries",
+				ref.StorageKey, err)
+			continue
 		}
 		if err := s.store.DeleteBackupRun(ref.RunID); err != nil {
 			log.Printf("billing lifecycle: delete backup run %d: %v", ref.RunID, err)

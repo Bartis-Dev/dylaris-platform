@@ -189,14 +189,24 @@ func (b *BackupScheduler) enforceRetention(ctx context.Context, jobID int) {
 	if err != nil || len(pruned) == 0 {
 		return
 	}
-	var storage *models.BackupStorage
-	if job.StorageID != nil {
-		storage, _ = b.store.GetBackupStorage(*job.StorageID)
-	}
-	if storage == nil {
+	// A nil StorageID means the platform default, not "no storage". Reading it as
+	// the latter left `storage` nil and returned HERE - after PruneOldBackupRuns
+	// above had already deleted the rows. So on a job using the panel's default
+	// storage option, every retention cycle dropped the records and left the
+	// archives behind, permanently and without a log line. That is the failure
+	// mode with no ceiling: it repeats on every prune, for every such job, and
+	// nothing afterwards knows those objects exist.
+	storage, err := ResolveJobStorage(b.store, job.StorageID)
+	if err != nil {
+		log.Printf("retention prune: job %d — cannot resolve storage: %v; %d pruned archive(s) are now untracked",
+			jobID, err, len(pruned))
 		return
 	}
-	// Best-effort delete from storage — DB rows are already gone.
+	// Best-effort delete from storage — DB rows are already gone. That ordering
+	// is pre-existing: PruneOldBackupRuns both prunes and reports, so a failure
+	// here still orphans that one archive. Resolving the storage correctly turns
+	// "always orphans" into "orphans on a transient fault", which is the part
+	// worth fixing without restructuring the store call.
 	for _, run := range pruned {
 		if err := b.deleteStorageObject(ctx, storage, run.StorageKey); err != nil {
 			log.Printf("retention prune: %s delete failed: %v", run.StorageKey, err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -527,10 +528,18 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Best-effort object delete first; even if the storage is unreachable we
 	// still remove the DB row so the UI doesn't keep a phantom entry.
-	if job.StorageID != nil {
-		if bs, sErr := h.state.Store.GetBackupStorage(*job.StorageID); sErr == nil {
-			if provider, pErr := backupstorage.Open(r.Context(), bs, h.backupDeps()); pErr == nil {
-				provider.Delete(r.Context(), run.StorageKey)
+	//
+	// That trade is about an UNREACHABLE storage. It used to cover a second case
+	// it was never meant to: `job.StorageID != nil` skipped the delete outright
+	// for a job on the platform default, where storage_id is NULL and the storage
+	// is perfectly reachable. Since the panel's storage dropdown offers "Default
+	// storage" first, deleting a backup from the UI usually removed the row and
+	// left the archive behind for good.
+	if bs, sErr := services.ResolveJobStorage(h.state.Store, job.StorageID); sErr == nil {
+		if provider, pErr := backupstorage.Open(r.Context(), bs, h.backupDeps()); pErr == nil {
+			if dErr := provider.Delete(r.Context(), run.StorageKey); dErr != nil {
+				log.Printf("DeleteBackupRun: run %d object %s not deleted: %v — the row is removed anyway, so this archive is now untracked",
+					runID, run.StorageKey, dErr)
 			}
 		}
 	}
