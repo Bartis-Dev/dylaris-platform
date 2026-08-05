@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-pkg/validate"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -1140,7 +1141,22 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The node read this out of a .active_server file on its own disk and it is
+	// about to become a DB value that gets filepath.Join'ed onto server data
+	// directories - by the node on every install_mod / remove_mod / reconcile,
+	// and by Core on the backup paths. Join CLEANS rather than confines, so a
+	// name carrying ".." walks out of the server root. Every other entry point
+	// for this field already checks it (SwitchSubServer sanitizes, the backup
+	// handlers run validate.IsSubServerName with a comment spelling out this
+	// exact hazard); adoption was the one that did not, and it is the one whose
+	// input comes from a machine the platform does not own - a BYON node.
 	activeSubServer := orphanInfo.ActiveSubServer
+	if activeSubServer != "" && !validate.IsSubServerName(activeSubServer) {
+		log.Printf("AssignOrphan: node %d reported an unusable active sub-server name %q for %s; refusing adoption",
+			req.NodeID, activeSubServer, req.UUID)
+		sendJSONError(w, "The node reported an invalid active sub-server name for this server", 400)
+		return
+	}
 	installerType := ""
 	minecraftVersion := ""
 	buildNumber := ""

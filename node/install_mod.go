@@ -10,6 +10,9 @@ package main
 //
 // remove_mod payload (from core):
 //   uuid, activeSubServer, targetDir, fileName
+//
+// Every field below that becomes part of a path is re-checked here for that
+// reason, activeSubServer included - see validActiveSubServer.
 
 import (
 	"crypto/sha512"
@@ -23,6 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dylaris-pkg/validate"
 )
 
 type installModPayload struct {
@@ -60,6 +65,10 @@ func runInstallMod(storage *StorageManager, payload string) {
 	}
 	if !validSubDir(pl.TargetDir) {
 		log.Printf("install_mod: invalid target dir %q", pl.TargetDir)
+		return
+	}
+	if !validActiveSubServer(pl.ActiveSubServer) {
+		log.Printf("install_mod: invalid active sub-server %q", pl.ActiveSubServer)
 		return
 	}
 	cleanName := filepath.Base(pl.FileName)
@@ -107,6 +116,10 @@ func runRemoveMod(storage *StorageManager, payload string) {
 		log.Printf("remove_mod: invalid target dir %q", pl.TargetDir)
 		return
 	}
+	if !validActiveSubServer(pl.ActiveSubServer) {
+		log.Printf("remove_mod: invalid active sub-server %q", pl.ActiveSubServer)
+		return
+	}
 	cleanName := filepath.Base(pl.FileName)
 	if cleanName == "" || cleanName == "." || cleanName == ".." || strings.ContainsAny(cleanName, "/\\") {
 		log.Printf("remove_mod: invalid file name %q", pl.FileName)
@@ -129,6 +142,21 @@ func validateModrinthURL(u string) error {
 
 func validSubDir(d string) bool {
 	return d == "mods" || d == "plugins"
+}
+
+// validActiveSubServer is the check the header comment above already promised
+// and this file did not make. Both functions filepath.Join the field onto the
+// server's data directory, and Join CLEANS rather than confines: a name carrying
+// ".." walks out of the server root, which for install_mod means writing a
+// downloaded jar outside it and for remove_mod means deleting a file outside it.
+// targetDir and fileName were both re-checked here; this one was not, and it is
+// the field that arrives from a .active_server file on a node's own disk.
+//
+// Same rule Core applies (validate.IsSubServerName): one plain directory name.
+// Empty is allowed - a server with no sub-server keeps its files at the root and
+// Join skips an empty element.
+func validActiveSubServer(s string) bool {
+	return s == "" || validate.IsSubServerName(s)
 }
 
 func downloadAndVerify(url, dest, expectedSHA512 string) error {
