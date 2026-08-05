@@ -81,7 +81,9 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/tabs":                           "tabs.read",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":            "tabs.write",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link": "tabs.write",
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth": "overview.read",
+	// proxy-auth mints the ticket that IS the access to a tab's proxied content,
+	// so it takes tabs.read like the listing does - see the route registration.
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth": "tabs.read",
 
 	// Phase 4 Task 7: scheduled tasks + spark. GET+POST /scheduled-tasks share
 	// one template -> schedule.read representative; the fine POST->schedule.write
@@ -725,7 +727,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Registered on the normal /api subrouter (unlike the proxy itself) so it
 	// runs through AuthMiddleware and inherits 2FA-setup-lock + demo
 	// read-only gating instead of re-implementing them (WS5 Task 8 fast-follow).
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(proxyHandler.MintProxyAuth))).Methods("GET")
+	//
+	// tabs.read, matching the listing on line 720. This was overview.read, which
+	// left the tabs guarded inconsistently: a member without tabs.read got a 403
+	// asking WHICH tabs exist, yet could mint a ticket for one and reach its
+	// proxied content in full. The ticket is not a hint, it is the access - the
+	// proxy below is registered on the ROOT router and deliberately re-checks
+	// nothing but the cookie (see resolveProxyTicket), because minting is where
+	// authorization was supposed to happen. A tab points at a container port the
+	// owner chose, so that content is whatever they run there.
+	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.read")(proxyHandler.MintProxyAuth))).Methods("GET")
 	// Mints the same dyl_tabproxy cookie, but Path-scoped to a share token's
 	// proxy prefix (/api/tabproxy/{token}/) for the standalone Public path
 	// (Task 9) instead of the in-dashboard one. Registered here (not on the

@@ -149,7 +149,7 @@ func proxyBasePath(serverID, tabID int) string {
 
 // MintProxyAuth: GET /api/servers/{id}/tabs/{tabId}/proxy-auth, registered on
 // the NORMAL /api subrouter behind AuthMiddleware and the router's
-// overview.read RequireCap - this inherits the full session gating
+// tabs.read RequireCap - this inherits the full session gating
 // (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access
 // enforcement for free instead of re-implementing it here. After the feature
 // gate, it mints a short-lived tab-proxy-scoped ticket and stamps it as an
@@ -174,7 +174,7 @@ func (h *ProxyHandler) MintProxyAuth(w http.ResponseWriter, r *http.Request) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 
-	// Existence check only: the route's overview.read RequireCap already
+	// Existence check only: the route's tabs.read RequireCap already
 	// enforced access before this handler ran (formerly a checkServerAccess
 	// call here).
 	if _, serr := h.state.Store.GetServerByID(serverID); serr != nil {
@@ -220,7 +220,7 @@ func (h *ProxyHandler) MintProxyAuth(w http.ResponseWriter, r *http.Request) {
 // design, this handler does NOT re-derive identity from a bearer/query
 // session token - the ticket's claims are trusted as-is because they were
 // only ever minted by MintProxyAuth, which already ran the full
-// AuthMiddleware + overview.read RequireCap + feature-gate chain.
+// AuthMiddleware + tabs.read RequireCap + feature-gate chain.
 func (h *ProxyHandler) resolveProxyTicket(r *http.Request, serverID, tabID int) (username string, isAdmin, readOnly, ok bool) {
 	c, err := r.Cookie(proxyCookieName)
 	if err != nil || c.Value == "" {
