@@ -91,6 +91,13 @@ func applyPhase10Schema(db *sql.DB) error {
 		modrinth_version_id    VARCHAR(64) NOT NULL,
 		title                  VARCHAR(255) NOT NULL DEFAULT '',
 		file_name              VARCHAR(255) NOT NULL,
+		-- Which directory the jar actually went into. Must be REMEMBERED, not
+		-- re-derived: the uninstall path used to recompute it from the server's
+		-- current installer_type, and PATCH /loader-metadata can change that after
+		-- the install, which pointed the removal at the wrong directory.
+		-- '' means a row written before this column existed; the handler falls
+		-- back to deriving it, which is what those rows were installed with.
+		target_dir             VARCHAR(16) NOT NULL DEFAULT '',
 		sha512                 VARCHAR(128) NOT NULL DEFAULT '',
 		installed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		installed_by           UUID REFERENCES users(id) ON DELETE SET NULL,

@@ -11,8 +11,8 @@ import (
 var errServerModNotFound = errors.New("server mod not found")
 
 const serverModCols = `id, server_id, sub_server_name, modrinth_project_id,
-		modrinth_project_slug, modrinth_version_id, title, file_name, sha512,
-		installed_at, installed_by`
+		modrinth_project_slug, modrinth_version_id, title, file_name, target_dir,
+		sha512, installed_at, installed_by`
 
 func scanServerMod(row interface {
 	Scan(dest ...interface{}) error
@@ -20,8 +20,8 @@ func scanServerMod(row interface {
 	var m models.ServerMod
 	var installedBy sql.NullString
 	if err := row.Scan(&m.ID, &m.ServerID, &m.SubServerName, &m.ModrinthProjectID,
-		&m.ModrinthProjectSlug, &m.ModrinthVersionID, &m.Title, &m.FileName, &m.SHA512,
-		&m.InstalledAt, &installedBy); err != nil {
+		&m.ModrinthProjectSlug, &m.ModrinthVersionID, &m.Title, &m.FileName, &m.TargetDir,
+		&m.SHA512, &m.InstalledAt, &installedBy); err != nil {
 		return nil, err
 	}
 	if installedBy.Valid {
@@ -39,20 +39,21 @@ func (s *PostgresStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 	var id int
 	err := s.db.QueryRow(`INSERT INTO server_mods
 		(server_id, sub_server_name, modrinth_project_id, modrinth_project_slug,
-		 modrinth_version_id, title, file_name, sha512, installed_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		 modrinth_version_id, title, file_name, target_dir, sha512, installed_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (server_id, sub_server_name, modrinth_project_id)
 		DO UPDATE SET
 			modrinth_project_slug = EXCLUDED.modrinth_project_slug,
 			modrinth_version_id   = EXCLUDED.modrinth_version_id,
 			title                 = EXCLUDED.title,
 			file_name             = EXCLUDED.file_name,
+			target_dir            = EXCLUDED.target_dir,
 			sha512                = EXCLUDED.sha512,
 			installed_at          = NOW(),
 			installed_by          = EXCLUDED.installed_by
 		RETURNING id`,
 		m.ServerID, m.SubServerName, m.ModrinthProjectID, m.ModrinthProjectSlug,
-		m.ModrinthVersionID, m.Title, m.FileName, m.SHA512, installedBy,
+		m.ModrinthVersionID, m.Title, m.FileName, m.TargetDir, m.SHA512, installedBy,
 	).Scan(&id)
 	return id, err
 }

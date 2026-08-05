@@ -179,8 +179,12 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		ModrinthVersionID:   req.VersionID,
 		Title:               req.Title,
 		FileName:            cleanName,
-		SHA512:              req.SHA512,
-		InstalledBy:         installedBy,
+		// The directory the node was just told to write into. Uninstall reads it
+		// back rather than recomputing, so a later loader change cannot point the
+		// removal at a directory the jar was never in.
+		TargetDir:   targetDir,
+		SHA512:      req.SHA512,
+		InstalledBy: installedBy,
 	}
 	if _, err := h.state.Store.UpsertServerMod(mod); err != nil {
 		sendJSONError(w, "Install queued, but DB write failed: "+err.Error(), http.StatusInternalServerError)
@@ -223,14 +227,24 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	targetDir := defaultTargetDirForLoader(srv.InstallerType)
-	if h.state.Queue != nil {
-		_ = h.state.Queue.SendCommand(context.Background(), node.Token, "remove_mod", map[string]interface{}{
-			"uuid":            srv.UUID,
-			"activeSubServer": srv.ActiveSubServer,
-			"targetDir":       targetDir,
-			"fileName":        target.FileName,
-		}, nil)
+	targetDir := uninstallTargetDir(target, srv.InstallerType)
+	// The DB row is the only handle the panel has on this jar, so it must not be
+	// dropped until the node has actually been told to delete the file. Install
+	// already refuses on both of these; this path used to discard the send error
+	// and delete the row regardless, which left the jar loading on the server with
+	// nothing in the UI left to remove it with.
+	if h.state.Queue == nil {
+		sendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "remove_mod", map[string]interface{}{
+		"uuid":            srv.UUID,
+		"activeSubServer": srv.ActiveSubServer,
+		"targetDir":       targetDir,
+		"fileName":        target.FileName,
+	}, nil); err != nil {
+		sendJSONError(w, "Failed to queue removal", http.StatusInternalServerError)
+		return
 	}
 	if err := h.state.Store.DeleteServerMod(modID, serverID); err != nil {
 		sendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
@@ -257,6 +271,25 @@ func isAllowedModrinthURL(u string) bool {
 	}
 	host := rest[:slash]
 	return modrinthAllowedHosts[host]
+}
+
+// uninstallTargetDir picks the directory to delete a mod's jar from.
+//
+// It is the directory the install RECORDED, not one re-derived from the server's
+// loader, because the loader can change after the install: PATCH
+// /api/servers/{id}/loader-metadata exists for exactly that (declaring the real
+// loader of an imported server). A paper server whose plugin went into "plugins"
+// and was then re-declared as fabric had its removal aimed at "mods", where the
+// file has never been; the node deletes nothing, Core drops the row anyway, and
+// the jar keeps loading with no entry in the UI left to remove it with.
+//
+// Rows written before target_dir existed hold "", and those were placed by the
+// derived value, so falling back to it is what they need.
+func uninstallTargetDir(m *models.ServerMod, installerType string) string {
+	if m.TargetDir == "mods" || m.TargetDir == "plugins" {
+		return m.TargetDir
+	}
+	return defaultTargetDirForLoader(installerType)
 }
 
 // defaultTargetDirForLoader returns "mods" for fabric/forge/quilt/neoforge,

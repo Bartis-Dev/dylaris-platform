@@ -15,6 +15,10 @@ type ServerMod struct {
 	ModrinthVersionID   string    `json:"modrinthVersionId"`
 	Title               string    `json:"title"`
 	FileName            string    `json:"fileName"`
+	// TargetDir is the directory the jar was installed into ("mods"/"plugins").
+	// Empty on rows written before the column existed; the uninstall path then
+	// falls back to deriving it from the loader, which is how they were placed.
+	TargetDir           string    `json:"targetDir"`
 	SHA512              string    `json:"sha512"`
 	InstalledAt         time.Time `json:"installedAt"`
 	InstalledBy         *string   `json:"installedBy,omitempty"`

@@ -207,6 +207,11 @@ func migrateSchema(db *sql.DB) error {
 		// content is embedded under overrides/ instead.
 		{"modversions", "modrinth_download_url", "TEXT NOT NULL DEFAULT ''"},
 		{"nodes", "display_name", "TEXT"},
+		// Which directory a Modrinth install actually put the jar in
+		// ("mods"/"plugins"). Remembered rather than re-derived at uninstall,
+		// because the server's installer_type can change in between and the
+		// removal then targeted the wrong directory. '' = pre-column row.
+		{"server_mods", "target_dir", "VARCHAR(16) NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)
