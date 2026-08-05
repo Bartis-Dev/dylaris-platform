@@ -29,9 +29,12 @@ func TestReapAbandonedRuns_KeepsBackendDetailOutOfTheOperatorMessage(t *testing.
 			ID: 9, JobID: 7, Status: "running",
 			StartedAt: now.Add(-8 * time.Hour), StorageKey: "backups/uuid/run.tar.gz",
 		}},
-		// A job with no storage configured: Open is never reached, and the
-		// error names the condition rather than a backend.
-		job: &models.BackupJob{ID: 7},
+		// A job pointing at a storage row that is gone: Open is never reached,
+		// and the error names the condition rather than a backend. It has to be
+		// a DANGLING id rather than no storage at all - a job with no storage of
+		// its own now legitimately falls back to the platform default, which is
+		// the bug ResolveJobStorage exists to fix.
+		job: &models.BackupJob{ID: 7, StorageID: func() *int { i := 42; return &i }()},
 	}
 
 	newReaper(fs).reapAbandonedRuns(context.Background(), now)

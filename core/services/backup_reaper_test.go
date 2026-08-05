@@ -31,12 +31,13 @@ type reapUpdate struct {
 type reaperFakeStore struct {
 	store.Store
 
-	abandoned []models.BackupRun
-	listErr   error
-	job       *models.BackupJob
-	jobErr    error
-	storage   *models.BackupStorage
-	updateErr error
+	abandoned      []models.BackupRun
+	listErr        error
+	job            *models.BackupJob
+	jobErr         error
+	storage        *models.BackupStorage
+	defaultStorage *models.BackupStorage
+	updateErr      error
 
 	// Captured for assertions.
 	gotCutoff  time.Time
@@ -63,6 +64,13 @@ func (f *reaperFakeStore) GetBackupJob(int) (*models.BackupJob, error) { return 
 func (f *reaperFakeStore) GetBackupStorage(int) (*models.BackupStorage, error) {
 	f.storageHit++
 	return f.storage, nil
+}
+
+// Needed since storage resolution falls back to the default for a job with no
+// storage of its own. The embedded store.Store is nil, so without this the
+// fallback path nil-panics instead of returning "no storage".
+func (f *reaperFakeStore) GetDefaultBackupStorage() (*models.BackupStorage, error) {
+	return f.defaultStorage, nil
 }
 
 // localStorageAt builds a real "local" backup storage rooted at a temp dir, so
@@ -156,7 +164,11 @@ func TestReapAbandonedRuns_ResolvesRunsAccordingToWhatIsInStorage(t *testing.T) 
 			if tt.jobStorage {
 				fs.job = jobWithStorage(1)
 			} else {
-				fs.job = &models.BackupJob{ID: 7} // no storage configured
+				// No storage on the job AND none set as the platform default
+				// (defaultStorage is nil here), so resolution genuinely has
+				// nothing to open. A job with no storage of its own is NOT
+				// enough on its own any more - it falls back to the default.
+				fs.job = &models.BackupJob{ID: 7}
 			}
 
 			newReaper(fs).reapAbandonedRuns(context.Background(), now)

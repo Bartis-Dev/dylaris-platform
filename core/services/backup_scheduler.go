@@ -344,15 +344,13 @@ func (b *BackupScheduler) statBackupObject(ctx context.Context, run models.Backu
 	if err != nil {
 		return backupstorage.Object{}, fmt.Errorf("load job: %w", err)
 	}
-	if job.StorageID == nil {
-		return backupstorage.Object{}, fmt.Errorf("the job has no storage configured")
-	}
-	bs, err := b.store.GetBackupStorage(*job.StorageID)
+	// Same resolution runJob uses a few lines below. Refusing on a nil
+	// StorageID meant a job on the default storage could not even be checked
+	// for whether its archive existed, so every one of its runs was reported
+	// as UNVERIFIED.
+	bs, err := ResolveJobStorage(b.store, job.StorageID)
 	if err != nil {
-		return backupstorage.Object{}, fmt.Errorf("load storage: %w", err)
-	}
-	if bs == nil {
-		return backupstorage.Object{}, fmt.Errorf("the job's storage no longer exists")
+		return backupstorage.Object{}, fmt.Errorf("resolve storage: %w", err)
 	}
 	provider, err := backupstorage.Open(ctx, bs, b.storageDeps())
 	if err != nil {

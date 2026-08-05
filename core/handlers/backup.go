@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -344,13 +345,16 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
-	if job.StorageID == nil {
-		sendJSONError(w, "Job has no storage configured", 400)
-		return
-	}
-	bs, err := h.state.Store.GetBackupStorage(*job.StorageID)
+	// Same resolution the run path uses: the job's storage, else the default.
+	// Refusing on a nil StorageID made every job created with the panel's
+	// "Default storage" option undownloadable even though its backup succeeded.
+	bs, err := services.ResolveJobStorage(h.state.Store, job.StorageID)
 	if err != nil {
-		sendJSONError(w, "Storage not found", 404)
+		if errors.Is(err, services.ErrNoBackupStorage) {
+			sendJSONError(w, "No backup storage is configured", 400)
+		} else {
+			sendJSONError(w, "Storage not found", 404)
+		}
 		return
 	}
 	provider, err := backupstorage.Open(r.Context(), bs, h.backupDeps())
@@ -417,13 +421,16 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Node not found", 404)
 		return
 	}
-	if job.StorageID == nil {
-		sendJSONError(w, "Job has no storage configured", 400)
-		return
-	}
-	storage, err := h.state.Store.GetBackupStorage(*job.StorageID)
+	// Same resolution the run path uses. This is the one that matters most: a
+	// backup that cannot be restored is worse than no backup, because the
+	// failure only shows up when someone is already recovering.
+	storage, err := services.ResolveJobStorage(h.state.Store, job.StorageID)
 	if err != nil {
-		sendJSONError(w, "Storage not found", 404)
+		if errors.Is(err, services.ErrNoBackupStorage) {
+			sendJSONError(w, "No backup storage is configured", 400)
+		} else {
+			sendJSONError(w, "Storage not found", 404)
+		}
 		return
 	}
 
