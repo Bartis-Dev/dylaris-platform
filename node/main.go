@@ -1031,6 +1031,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "start":
 		log.Printf("Power Action 'start' for Server %s ...", cmd.Config.UUID)
+		// A deliberate start is the retry after the reconciler gave up, so it
+		// clears the give-up marker. Without this the marker outlives the
+		// decision it recorded: Core reads it (status_watcher's
+		// consumeReconcileFailures), concludes the server should not be running,
+		// and stops the server the user just asked for.
+		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
 		dm.PullContainerImage(cmd.Config.UUID)
 		if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
 			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
@@ -1056,6 +1062,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "restart":
 		log.Printf("Graceful restart for Server %s ...", cmd.Config.UUID)
+		// Same reason as "start" above: this is a deliberate retry.
+		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
 		gracefulStop(rdb, cmd.Config.UUID, dm)
 		// Clean up stop-requested key to prevent race with new log-shipper instance
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))

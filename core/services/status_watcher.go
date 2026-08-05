@@ -90,6 +90,11 @@ func (s *StatusWatcherService) scan() {
 		}
 	}
 
+	// Land the node's give-up signal (see consumeReconcileFailures).
+	if s.consumeReconcileFailures(ctx) {
+		dirty = true
+	}
+
 	// Publish desired states to Redis so nodes can reconcile
 	s.publishDesiredStates(ctx)
 
@@ -168,6 +173,61 @@ func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) bool {
 		}
 	}
 	return changed
+}
+
+// consumeReconcileFailures lands the node's "I have given up" signal.
+//
+// When a container has crashed past the node reconciler's retry limit it writes
+// dylaris:server:<uuid>:reconcile_failed, with the comment "Set failed key so
+// core can surface it". Nothing surfaced it: no code outside the node ever read
+// that key. The server was left reading "restarting" forever - the last status
+// the reconciler published before it stopped trying - so the one state the user
+// most needs to act on looked like the one state that resolves itself.
+//
+// Two writes, and both matter. The status becomes "offline" because that is what
+// the server is, and desired_state becomes "stopped" so the platform stops
+// intending to run something it has just concluded it cannot run - otherwise the
+// next reconciler pass on a fresh tracker starts the whole cycle again.
+//
+// The reason is not lost by writing a plain status: the log-shipper puts a line
+// in the server's console stream naming the exit code before it gives up, and
+// that is where an owner looks. Starting the server again clears the key on the
+// node side and is the deliberate retry.
+func (s *StatusWatcherService) consumeReconcileFailures(ctx context.Context) bool {
+	var cursor uint64
+	changed := false
+	for {
+		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:server:*:reconcile_failed", 100).Result()
+		if err != nil {
+			return changed
+		}
+		for _, key := range keys {
+			parts := strings.Split(key, ":")
+			if len(parts) != 4 {
+				continue
+			}
+			uuid := parts[2]
+			reason, rerr := s.redis.Get(ctx, key).Result()
+			if rerr != nil {
+				continue
+			}
+			srv, serr := s.store.GetServerByUUID(uuid)
+			if serr != nil || srv == nil {
+				continue
+			}
+			if srv.Status == "offline" && srv.DesiredState == "stopped" {
+				continue // already landed; leave the key for the node to clear on a restart
+			}
+			log.Printf("Server %s: node gave up restarting it (%s) — marking offline and clearing the intent to run it", uuid, reason)
+			s.store.UpdateServerStatus(srv.ID, "offline")
+			s.store.UpdateServerDesiredState(srv.ID, "stopped")
+			changed = true
+		}
+		cursor = next
+		if cursor == 0 {
+			return changed
+		}
+	}
 }
 
 // publishDesiredStates syncs desired_state from DB to Redis for node reconciliation.
