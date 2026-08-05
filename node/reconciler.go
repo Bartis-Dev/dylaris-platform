@@ -34,8 +34,33 @@ type reconcileInfo struct {
 	lastSeenAlive time.Time
 }
 
+// nodeBusyKey marks a server this node is deliberately holding down while it
+// works on the server's files (reinstall, storage migration). See isNodeBusy.
+func nodeBusyKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:node_busy", uuid)
+}
+
+// isNodeBusy reports whether this node is mid-operation on the server.
+//
+// This exists because protectedStatuses below CANNOT carry that information.
+// The status key it reads is a one-shot mailbox, not a state field: Core's
+// status watcher GETs it and immediately DELETEs it, every 5 seconds. So any
+// marker written there is gone within 5s no matter how often it is refreshed,
+// and the reconciler's own Get then finds nothing and treats the server as
+// unprotected. Measured during a reinstall - the key alternated between the
+// written value and absent, and the reconciler restarted the container anyway.
+//
+// The busy key is node-local and nothing else consumes it, so it means what it
+// says for as long as the node keeps it alive.
+func isNodeBusy(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	n, err := rdb.Exists(ctx, nodeBusyKey(uuid)).Result()
+	return err == nil && n == 1
+}
+
 // protectedStatuses are statuses that indicate the server is in a transitional
 // state managed by core/node commands — the reconciler must not interfere.
+// Kept as a cheap early-out for the brief window before Core drains the status
+// key; isNodeBusy is what actually holds across a long operation.
 var protectedStatuses = map[string]bool{
 	"installing":    true,
 	"pending_setup": true,
@@ -88,6 +113,14 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 			// Skip if in a protected transitional status.
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
 			if status, err := rdb.Get(ctx, statusKey).Result(); err == nil && protectedStatuses[status] {
+				continue
+			}
+			// This pass is the more dangerous of the two here: a reinstall REMOVES
+			// the container (RecreateWithCommand is stop+remove+create), so during
+			// one the server looks exactly like a manually deleted container, and
+			// recreating it from the saved config would race the installer over the
+			// same directory.
+			if isNodeBusy(ctx, rdb, uuid) {
 				continue
 			}
 
@@ -198,6 +231,11 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 			// Container is NOT running but desired_state is "online" — check for protected status
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", c.UUID)
 			if status, err := rdb.Get(ctx, statusKey).Result(); err == nil && protectedStatuses[status] {
+				continue
+			}
+			// ... and for an operation this node is running right now, which the
+			// status key cannot tell us (see isNodeBusy).
+			if isNodeBusy(ctx, rdb, c.UUID) {
 				continue
 			}
 

@@ -1396,36 +1396,50 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	}
 }
 
-// gracefulStop sends save-all and stop commands via the Redis stdin queue,
-// waits for the container to exit, and falls back to docker stop if needed.
 // busyStatusTTL is the lifetime of one busy marker. It is refreshed at a third
-// of this, so the marker survives as long as the work does.
+// of this, so the marker survives as long as the work does, and it expires on
+// its own if the node dies mid-operation rather than pinning the server down
+// forever.
 const busyStatusTTL = 30 * time.Second
 
-// holdBusyStatus publishes a reconciler-protected status for this server and
-// keeps refreshing it until the returned release func is called. Callers stop a
-// possibly-RUNNING container and then do long work on its files; without this
-// the reconciler sees a container that is not running while desired_state is
-// still "online", calls it a crash, and starts it again in the middle of that
-// work - against half-installed JARs, or a directory being moved out from under
-// it.
+// holdBusyStatus holds the node's reconciler off a server while this node works
+// on its files, and reports the reason to the panel. Released via the returned
+// func.
 //
-// The reconciler already has the guard: it skips any server whose status is in
-// protectedStatuses, and "installing" is in that map. Nothing ever wrote it.
-// Core setting the DB row to "installing" does not count - the reconciler reads
-// the REDIS status key, which is the node->core channel (the status watcher
-// consumes and DELETES it), so the DB value never reaches the reconciler.
+// Callers stop a possibly-RUNNING container and then do long work on it. Without
+// this the reconciler sees a container that is not running while desired_state
+// is still "online", calls that a crash, and starts it again in the middle of
+// the work - against half-installed JARs, or a directory being moved out from
+// under it.
 //
-// Refreshing matters as much as setting: the key's TTL is 30s and these
-// operations are not. A Paper reinstall measured 10s end to end, which is why
-// the 15s reconcile tick usually missed it, but Forge/NeoForge run their
-// installer in a one-shot container and take minutes.
+// TWO keys, because they are two different things and the first cannot do the
+// second's job:
+//
+//   - the status key is a report for the panel. It is a one-shot mailbox: Core's
+//     status watcher GETs it and DELETEs it every 5 seconds. Anything written
+//     there is gone within 5s however often it is refreshed. Writing the reason
+//     there is still right (the panel shows "installing"), it just cannot be the
+//     interlock.
+//   - the node_busy key is the interlock. Nothing else reads or drains it, so it
+//     holds for exactly as long as this node keeps it alive. reconciler.go's
+//     isNodeBusy is the only consumer.
+//
+// This was learned the hard way: the first version of this helper wrote only the
+// status key, and a live reinstall showed the key alternating between the value
+// and absent - with the reconciler logging "restarting crashed container" in one
+// of the gaps.
+//
 // ttl is a parameter only so the tests can drive the refresh loop; every caller
 // passes busyStatusTTL.
 func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) func() {
-	key := fmt.Sprintf("dylaris:server:%s:status", uuid)
+	statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
+	busyKey := nodeBusyKey(uuid)
 	ctx := context.Background()
-	rdb.Set(ctx, key, status, ttl)
+	write := func() {
+		rdb.Set(ctx, busyKey, status, ttl)
+		rdb.Set(ctx, statusKey, status, ttl)
+	}
+	write()
 	done := make(chan struct{})
 	go func() {
 		t := time.NewTicker(ttl / 3)
@@ -1435,15 +1449,21 @@ func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) f
 			case <-done:
 				return
 			case <-t.C:
-				rdb.Set(ctx, key, status, ttl)
+				write()
 			}
 		}
 	}()
-	// The caller writes the real terminal status right after releasing, so the
-	// marker is replaced rather than deleted here.
-	return func() { close(done) }
+	return func() {
+		close(done)
+		// The interlock is dropped immediately so the reconciler can resume
+		// looking after this server. The status key is left for the caller, which
+		// writes the real terminal status right after.
+		rdb.Del(ctx, busyKey)
+	}
 }
 
+// gracefulStop sends save-all and stop commands via the Redis stdin queue,
+// waits for the container to exit, and falls back to docker stop if needed.
 func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 	ctx := context.Background()
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)

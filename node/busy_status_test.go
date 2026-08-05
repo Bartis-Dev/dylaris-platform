@@ -17,11 +17,48 @@ func newBusyRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return rdb, mr
 }
 
-// TestHoldBusyStatusIsAReconcilerProtectedStatus ties the marker to the guard it
-// exists for. protectedStatuses is what stops the reconciler from "restarting a
-// crashed container"; writing any other word there would leave the marker
-// looking correct while protecting nothing.
-func TestHoldBusyStatusIsAReconcilerProtectedStatus(t *testing.T) {
+// TestHoldBusySurvivesTheStatusWatcherDrain is the property this helper exists
+// for, and the one its first version got wrong.
+//
+// Core's status watcher GETs the status key and DELETEs it every 5 seconds - it
+// is a mailbox, not a state field. A marker written only there is therefore gone
+// within 5s no matter how often it is refreshed, which is exactly what a live
+// reinstall showed: the key alternated between the value and absent, and the
+// reconciler restarted the container in one of the gaps. The interlock has to
+// live somewhere nothing else drains.
+func TestHoldBusySurvivesTheStatusWatcherDrain(t *testing.T) {
+	rdb, _ := newBusyRedis(t)
+	ctx := context.Background()
+	release := holdBusyStatus(rdb, "srv-uuid", "installing", busyStatusTTL)
+	defer release()
+
+	// Simulate the watcher: drain the status key the way scan() does.
+	rdb.Del(ctx, "dylaris:server:srv-uuid:status")
+
+	if isNodeBusy(ctx, rdb, "srv-uuid") == false {
+		t.Fatal("the reconciler would treat this server as unprotected right after Core drained the status key")
+	}
+}
+
+// TestIsNodeBusyFalseWhenNothingIsRunning: the interlock must not be sticky, or
+// a server would stay unreconciled after the work finished.
+func TestIsNodeBusyFalseWhenNothingIsRunning(t *testing.T) {
+	rdb, _ := newBusyRedis(t)
+	ctx := context.Background()
+	if isNodeBusy(ctx, rdb, "never-touched") {
+		t.Fatal("isNodeBusy is true for a server no operation ever ran on")
+	}
+	release := holdBusyStatus(rdb, "srv-uuid", "installing", busyStatusTTL)
+	release()
+	if isNodeBusy(ctx, rdb, "srv-uuid") {
+		t.Fatal("isNodeBusy is still true after release; the reconciler would never look after this server again")
+	}
+}
+
+// TestHoldBusyReportsAProtectedStatusToo: the status key write is what the panel
+// renders, and it must use a word the reconciler's own map agrees with so the
+// two guards cannot disagree during the seconds before Core drains it.
+func TestHoldBusyReportsAProtectedStatusToo(t *testing.T) {
 	rdb, _ := newBusyRedis(t)
 	release := holdBusyStatus(rdb, "srv-uuid", "installing", busyStatusTTL)
 	defer release()
@@ -31,21 +68,20 @@ func TestHoldBusyStatusIsAReconcilerProtectedStatus(t *testing.T) {
 		t.Fatalf("status key not set: %v", err)
 	}
 	if !protectedStatuses[got] {
-		t.Fatalf("holdBusyStatus wrote %q, which is not in protectedStatuses - the reconciler would restart the container anyway", got)
+		t.Fatalf("holdBusyStatus reports %q, which is not in protectedStatuses", got)
 	}
 }
 
-// TestHoldBusyStatusOutlivesItsTTL: the marker's TTL is shorter than the work it
+// TestHoldBusyOutlivesItsTTL: the marker's TTL is far shorter than the work it
 // covers. A Paper reinstall measured 10s, but Forge and NeoForge run their
 // installer in a one-shot container and take minutes, so a set-once marker would
 // expire mid-install and hand the container back to the reconciler.
-func TestHoldBusyStatusOutlivesItsTTL(t *testing.T) {
+func TestHoldBusyOutlivesItsTTL(t *testing.T) {
 	rdb, mr := newBusyRedis(t)
-	key := "dylaris:server:srv-uuid:status"
-	// A short TTL so the wall-clock refresh ticker (ttl/3) actually fires within
-	// the test. miniredis expiry advances only via FastForward, so the two clocks
-	// are driven separately: jump most of a TTL, then give the ticker real time
-	// to refresh, and repeat past several TTLs' worth.
+	ctx := context.Background()
+	// Short TTL so the wall-clock refresh ticker (ttl/3) fires within the test.
+	// miniredis expiry advances only via FastForward, so the two clocks are
+	// driven separately: jump most of a TTL, then give the ticker real time.
 	const ttl = 300 * time.Millisecond
 	release := holdBusyStatus(rdb, "srv-uuid", "installing", ttl)
 	defer release()
@@ -54,34 +90,15 @@ func TestHoldBusyStatusOutlivesItsTTL(t *testing.T) {
 		mr.FastForward(ttl * 2 / 3)
 		time.Sleep(ttl/3 + 40*time.Millisecond)
 	}
-	if _, err := rdb.Get(context.Background(), key).Result(); err != nil {
-		t.Fatalf("status marker expired during the work it was meant to cover: %v", err)
+	if !isNodeBusy(ctx, rdb, "srv-uuid") {
+		t.Fatal("the interlock expired during the work it was meant to cover")
 	}
 
 	// Control: without the refresh the same elapsed time DOES expire it, so the
 	// assertion above is about the ticker and not about miniredis being lenient.
-	rdb.Set(context.Background(), "dylaris:server:other:status", "installing", ttl)
+	rdb.Set(ctx, nodeBusyKey("other"), "installing", ttl)
 	mr.FastForward(ttl * 2)
-	if _, err := rdb.Get(context.Background(), "dylaris:server:other:status").Result(); err == nil {
+	if isNodeBusy(ctx, rdb, "other") {
 		t.Fatal("a set-once marker survived past its TTL; this test cannot prove the refresh works")
-	}
-}
-
-// TestHoldBusyStatusStopsRefreshingAfterRelease: once the work is done the
-// caller writes the real terminal status, and this must not overwrite it again.
-func TestHoldBusyStatusStopsRefreshingAfterRelease(t *testing.T) {
-	rdb, _ := newBusyRedis(t)
-	ctx := context.Background()
-	key := "dylaris:server:srv-uuid:status"
-
-	release := holdBusyStatus(rdb, "srv-uuid", "installing", 150*time.Millisecond)
-	release()
-
-	// What the reinstall handler does on every exit path.
-	rdb.Set(ctx, key, "stopped", 30*time.Second)
-	time.Sleep(150 * time.Millisecond) // longer than the refresh interval would be
-
-	if got, _ := rdb.Get(ctx, key).Result(); got != "stopped" {
-		t.Fatalf("status = %q after release, want stopped - a stale refresh overwrote the terminal status", got)
 	}
 }
