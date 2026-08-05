@@ -161,7 +161,14 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				// Check desired state before reporting status — but don't overwrite protected statuses
 				statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
 				currentStatus, _ := rdb.Get(ctx, statusKey).Result()
-				if !statsWriteProtectedStatuses[currentStatus] {
+				// statsWriteProtectedStatuses alone cannot answer this: it reads the
+				// status key, which Core's status watcher drains every 5 seconds, so
+				// during a long operation it usually reads empty and the guard passes.
+				// Observed live during a reinstall - the collector wrote "restarting"
+				// over the node's own "installing". That is not just a wrong label:
+				// the message it stands for ("Reconciler will handle restart") is
+				// false while the node is deliberately holding the reconciler off.
+				if !statsWriteProtectedStatuses[currentStatus] && !isNodeBusy(ctx, rdb, uuid) {
 					desiredKey := fmt.Sprintf("dylaris:server:%s:desired_state", uuid)
 					desired, _ := rdb.Get(ctx, desiredKey).Result()
 					if desired == "online" {
