@@ -19,6 +19,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// recordCrash folds one process exit into the consecutive-crash count and says
+// whether the supervisor should stop restarting.
+//
+// A process that ran for a while and then died is a crash to recover from; one
+// that dies immediately, again and again, is a server that cannot start. Only
+// the second kind counts, so a server that runs for hours and then crashes
+// always gets its restart, however many times it has crashed before.
+func recordCrash(prev int, ranFor time.Duration) (count int, giveUp bool) {
+	if ranFor >= crashAliveThreshold {
+		prev = 0
+	}
+	count = prev + 1
+	return count, count >= maxConsecutiveCrashes
+}
+
 const (
 	batchSize     = 50
 	batchInterval = 200 * time.Millisecond
@@ -29,6 +44,28 @@ const (
 	// hasn't fired in 5min the value is effectively stale anyway, and the
 	// panel falls back to the container metric.
 	heapKeyTTL = 5 * time.Minute
+
+	// Crash-loop limits. This supervisor is PID 1 of the server container, so
+	// for as long as it keeps restarting a process that cannot live, the
+	// container stays Up - and every layer above reads that as a healthy
+	// server. The node's reconciler only ever looks at containers that are NOT
+	// running, the stats collector likewise, so a JVM dying every five seconds
+	// is invisible to all of them and the panel reads "online".
+	//
+	// Measured: a server whose jar was missing sat at "online" for eight
+	// minutes while java exited instantly on a loop; nothing anywhere noticed.
+	// It would have stayed that way indefinitely.
+	//
+	// So the supervisor gives up on a process that will not stay alive, and the
+	// container exits with it. That hands the situation to the machinery that
+	// already exists for a dead container: the node reconciler retries it, and
+	// on repeated failure writes the reconcile_failed key Core surfaces. A
+	// container that is Up means a server that is running again.
+	//
+	// Thresholds mirror node/reconciler.go deliberately (maxCrashRetries 5,
+	// aliveThreshold 60s), so an operator reading either file sees one policy.
+	maxConsecutiveCrashes = 5
+	crashAliveThreshold   = 60 * time.Second
 )
 
 // gcLineRegex matches the GC summary lines emitted by both Java 9+
@@ -344,7 +381,10 @@ func main() {
 
 	stopKey := fmt.Sprintf("dylaris:server:%s:stop-requested", serverUUID)
 
-	// Restart loop: re-launches Java on crash, exits on manual stop.
+	// Restart loop: re-launches Java on crash, exits on manual stop, and gives
+	// up once the process has proven it cannot stay alive (see
+	// maxConsecutiveCrashes).
+	consecutiveCrashes := 0
 	for {
 		javaCmd := exec.Command(os.Args[1], os.Args[2:]...)
 		javaCmd.Env = append(os.Environ(), "TERM=xterm-256color")
@@ -367,6 +407,7 @@ func main() {
 			log.Fatalf("log-shipper: failed to start process %q: %v", os.Args[1], err)
 		}
 		log.Printf("log-shipper: started PID %d: %s", javaCmd.Process.Pid, strings.Join(os.Args[1:], " "))
+		startedAt := time.Now()
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -412,13 +453,32 @@ func main() {
 			os.Exit(0)
 		}
 
+		var giveUp bool
+		consecutiveCrashes, giveUp = recordCrash(consecutiveCrashes, time.Since(startedAt))
+
+		if giveUp {
+			msg := fmt.Sprintf("[Server failed to start %d times in a row (last exit code %d) - giving up. "+
+				"The container is stopping so this shows as a failure instead of appearing online. "+
+				"Check the log above for the reason.]", consecutiveCrashes, exitCode)
+			log.Printf("log-shipper: %d consecutive fast crashes, exiting with code %d so the container does not stay Up on a dead server", consecutiveCrashes, exitCode)
+			rdb.XAdd(context.Background(), &redis.XAddArgs{
+				Stream: streamKey,
+				MaxLen: maxStreamLen,
+				Approx: true,
+				Values: map[string]interface{}{"line": msg},
+			})
+			// Give the stream write a moment to land before the container dies.
+			time.Sleep(200 * time.Millisecond)
+			os.Exit(exitCode)
+		}
+
 		// Crash recovery: restart after delay
-		log.Printf("log-shipper: process crashed (exit %d), restarting in 5s...", exitCode)
+		log.Printf("log-shipper: process crashed (exit %d), restarting in 5s... (%d/%d)", exitCode, consecutiveCrashes, maxConsecutiveCrashes)
 		rdb.XAdd(context.Background(), &redis.XAddArgs{
 			Stream: streamKey,
 			MaxLen: maxStreamLen,
 			Approx: true,
-			Values: map[string]interface{}{"line": fmt.Sprintf("[Server crashed (exit code %d) - restarting automatically...]", exitCode)},
+			Values: map[string]interface{}{"line": fmt.Sprintf("[Server crashed (exit code %d) - restarting automatically (%d/%d)...]", exitCode, consecutiveCrashes, maxConsecutiveCrashes)},
 		})
 		time.Sleep(5 * time.Second)
 	}
