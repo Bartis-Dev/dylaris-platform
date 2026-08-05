@@ -23,6 +23,7 @@ interface NetworkViewProps {
 export default function NetworkView({ server, allServers, onServerSelect, onRefreshServers }: NetworkViewProps) {
   const [selectedId, setSelectedId] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const copyToClipboard = (key: string, text: string) => {
@@ -57,24 +58,33 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
   // the reliable address on the shared network.
   const backendList = isProxy ? linkedChildren : (server.proxyId ? [server] : []);
 
-  const handleLink = async (serverId: number, proxyId: number) => {
+  // fetchAPI does not throw on an HTTP error - it returns {success:false,error}.
+  // So the try/catch these two used to sit in caught nothing, and the result was
+  // discarded: every refusal Core has here (proxy feature disabled, target is not
+  // a proxy, proxy not found, DB write failed) ended with the dropdown clearing
+  // and no word to the user, which reads exactly like it worked.
+  const runLink = async (fn: () => Promise<any>) => {
     setLinkLoading(true);
+    setLinkError(null);
     try {
-      await linkServerToProxy(serverId, proxyId);
-      onRefreshServers?.();
-    } catch { /* ignore */ }
+      const res = await fn();
+      if (res?.success === false) {
+        setLinkError(res.message || res.error || 'The request was refused.');
+      } else {
+        onRefreshServers?.();
+      }
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : 'The request could not be sent.');
+    }
     setLinkLoading(false);
+  };
+
+  const handleLink = async (serverId: number, proxyId: number) => {
+    await runLink(() => linkServerToProxy(serverId, proxyId));
     setSelectedId('');
   };
 
-  const handleUnlink = async (serverId: number) => {
-    setLinkLoading(true);
-    try {
-      await unlinkServerFromProxy(serverId);
-      onRefreshServers?.();
-    } catch { /* ignore */ }
-    setLinkLoading(false);
-  };
+  const handleUnlink = (serverId: number) => runLink(() => unlinkServerFromProxy(serverId));
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -89,6 +99,14 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
             ? 'Manage game servers linked to this proxy. Linked servers appear as sub-containers in the sidebar.'
             : 'Link this server to a proxy to join a network. Linked servers are managed through the proxy.'}
         </p>
+
+        {/* Sticky rather than a toast: the list below still shows the OLD wiring
+            after a refused link, so the reason has to stay on screen next to it. */}
+        {linkError && (
+          <div className="mb-5 rounded-md border border-(--error) bg-(--error-ghost) px-4 py-3 text-sm text-(--error-light)">
+            {linkError}
+          </div>
+        )}
 
         {/* Game Server: linked proxy or link dropdown */}
         {isGameServer && (

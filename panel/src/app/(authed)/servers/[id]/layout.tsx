@@ -58,6 +58,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [moveTargetNodeId, setMoveTargetNodeId] = useState<number>(0);
     const [moveBusy, setMoveBusy] = useState(false);
     const [moveMsg, setMoveMsg] = useState('');
+    const [demoMsg, setDemoMsg] = useState('');
     const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
     const [cancellingMigration, setCancellingMigration] = useState(false);
     // Dedicated transfer dialog for BYON owners (admins use the Resources popup).
@@ -348,11 +349,26 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         setMoveBusy(false);
     };
     // Admin: flag this server as a public read-only demo (or unflag it).
+    //
+    // The result is checked for the same reason handleMoveServer directly above
+    // checks its own: fetchAPI does not throw on an HTTP error, it returns
+    // {success:false}. Discarding it here mattered more than elsewhere - the
+    // toggle renders from selectedServer.isDemo, so a refused UNFLAG snapped the
+    // switch back to "on" with no explanation, and an admin who read that as a UI
+    // glitch would believe the server was no longer publicly viewable while it
+    // still was.
     const handleToggleDemo = async () => {
+        setDemoMsg('');
         try {
-            await setServerDemo(selectedServer.id, !selectedServer.isDemo);
-            refreshServers();
-        } catch { /* ignore */ }
+            const res: any = await setServerDemo(selectedServer.id, !selectedServer.isDemo);
+            if (res && (res.success === false || res.error)) {
+                setDemoMsg(res.error || res.message || 'Could not change the demo flag.');
+            } else {
+                refreshServers();
+            }
+        } catch {
+            setDemoMsg('Could not change the demo flag.');
+        }
     };
 
     const handleSaveResources = async () => {
@@ -1159,6 +1175,9 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                         <span className={`toggle-knob ${selectedServer.isDemo ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                     </button>
                                 </div>
+                                {demoMsg && (
+                                    <p className="mt-2 text-xs text-(--error-light)">{demoMsg}</p>
+                                )}
                             </div>
                             )}
 
