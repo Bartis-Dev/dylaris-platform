@@ -1267,6 +1267,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Set install-start for cooldown
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
 
+		// Hold the reconciler off for the whole reinstall: we are about to stop a
+		// container whose desired_state is still "online" and then delete its JARs.
+		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
+		defer releaseBusy()
+
 		// Stop the container first
 		dm.PowerAction(cmd.Config.UUID, "stop")
 		time.Sleep(3 * time.Second)
@@ -1321,6 +1326,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		log.Printf("Migrating storage for server %s → %s", cmd.Config.UUID, targetPath)
+
+		// Same reason as the reinstall path above, and the stakes are higher: the
+		// server directory is about to MOVE, so a reconciler restart mid-migration
+		// would recreate the container against a path that is being emptied.
+		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
+		defer releaseMigrateBusy()
 
 		// Stop the server first
 		gracefulStop(rdb, cmd.Config.UUID, dm)
@@ -1387,6 +1398,52 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 // gracefulStop sends save-all and stop commands via the Redis stdin queue,
 // waits for the container to exit, and falls back to docker stop if needed.
+// busyStatusTTL is the lifetime of one busy marker. It is refreshed at a third
+// of this, so the marker survives as long as the work does.
+const busyStatusTTL = 30 * time.Second
+
+// holdBusyStatus publishes a reconciler-protected status for this server and
+// keeps refreshing it until the returned release func is called. Callers stop a
+// possibly-RUNNING container and then do long work on its files; without this
+// the reconciler sees a container that is not running while desired_state is
+// still "online", calls it a crash, and starts it again in the middle of that
+// work - against half-installed JARs, or a directory being moved out from under
+// it.
+//
+// The reconciler already has the guard: it skips any server whose status is in
+// protectedStatuses, and "installing" is in that map. Nothing ever wrote it.
+// Core setting the DB row to "installing" does not count - the reconciler reads
+// the REDIS status key, which is the node->core channel (the status watcher
+// consumes and DELETES it), so the DB value never reaches the reconciler.
+//
+// Refreshing matters as much as setting: the key's TTL is 30s and these
+// operations are not. A Paper reinstall measured 10s end to end, which is why
+// the 15s reconcile tick usually missed it, but Forge/NeoForge run their
+// installer in a one-shot container and take minutes.
+// ttl is a parameter only so the tests can drive the refresh loop; every caller
+// passes busyStatusTTL.
+func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) func() {
+	key := fmt.Sprintf("dylaris:server:%s:status", uuid)
+	ctx := context.Background()
+	rdb.Set(ctx, key, status, ttl)
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(ttl / 3)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				rdb.Set(ctx, key, status, ttl)
+			}
+		}
+	}()
+	// The caller writes the real terminal status right after releasing, so the
+	// marker is replaced rather than deleted here.
+	return func() { close(done) }
+}
+
 func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 	ctx := context.Background()
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
