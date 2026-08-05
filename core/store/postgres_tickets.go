@@ -284,22 +284,37 @@ func (s *PostgresStore) ListTickets(f TicketFilter) ([]models.Ticket, error) {
 	return out, nil
 }
 
+// UpdateTicketStatus moves a ticket to status, maintaining closed_at:
+// closing stamps it, resolving leaves it, and reopening clears it so reopen
+// analytics stay accurate.
+//
+// One statement per case rather than a CASE expression, because the CASE
+// version could never run. It read:
+//
+//	SET status = $1, closed_at = CASE WHEN $1 = 'closed' THEN NOW() ELSE closed_at END
+//
+// and Postgres refused it every time:
+//
+//	ERROR: inconsistent types deduced for parameter $1
+//	DETAIL: text versus character varying
+//
+// $1 was used twice - once against the varchar column, once against an untyped
+// literal that makes it text - and the driver declares no type, so the two
+// deductions conflict and the statement never executes. Both branches that
+// reached it are the two a ticket system exists to reach: resolved and closed.
+// Neither was reachable; the handler turned the driver error into a plain
+// "Update failed" 500.
 func (s *PostgresStore) UpdateTicketStatus(id int, status string) error {
-	if status == "closed" || status == "resolved" {
-		_, err := s.db.Exec(
-			`UPDATE tickets SET status = $1, updated_at = NOW(),
-			    closed_at = CASE WHEN $1 = 'closed' THEN NOW() ELSE closed_at END
-			 WHERE id = $2`,
-			status, id,
-		)
-		return err
+	var query string
+	switch status {
+	case "closed":
+		query = `UPDATE tickets SET status = $1, updated_at = NOW(), closed_at = NOW() WHERE id = $2`
+	case "resolved":
+		query = `UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2`
+	default:
+		query = `UPDATE tickets SET status = $1, updated_at = NOW(), closed_at = NULL WHERE id = $2`
 	}
-	// Reopening a closed/resolved ticket clears closed_at so reopen analytics
-	// stay accurate.
-	_, err := s.db.Exec(
-		`UPDATE tickets SET status = $1, updated_at = NOW(), closed_at = NULL WHERE id = $2`,
-		status, id,
-	)
+	_, err := s.db.Exec(query, status, id)
 	return err
 }
 

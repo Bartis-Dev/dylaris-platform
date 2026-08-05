@@ -326,13 +326,27 @@ func (s *PostgresStore) DisableUserTOTP(id string) error {
 // SetUserRole writes the role and keeps is_admin in sync. is_admin is the
 // canonical legacy flag still read by older handlers; keeping it derived from
 // role here means new code can rely on role without invalidating legacy code.
+//
+// is_admin is computed in Go rather than in SQL because the SQL form could
+// never run. It read `is_admin = ($1 = 'admin')`, which uses $1 twice: once
+// assigned to the varchar role column and once compared to an untyped literal
+// that makes it text. The driver declares no type for $1, so Postgres deduces
+// both and refuses the contradiction:
+//
+//	ERROR: inconsistent types deduced for parameter $1
+//	DETAIL: text versus character varying
+//
+// Every call failed, so no user's role could ever be changed. Same defect and
+// same wording as the ticket status update fixed alongside this; those were the
+// only two of the twelve parameter-reusing queries in core where the two uses
+// deduce conflicting types.
 func (s *PostgresStore) SetUserRole(userID string, role string) error {
 	if role != "user" && role != "support" && role != "admin" {
 		return fmt.Errorf("invalid role: %s", role)
 	}
 	_, err := s.db.Exec(
-		`UPDATE users SET role = $1, is_admin = ($1 = 'admin') WHERE id = $2`,
-		role, userID,
+		`UPDATE users SET role = $1, is_admin = $2 WHERE id = $3`,
+		role, role == "admin", userID,
 	)
 	return err
 }
