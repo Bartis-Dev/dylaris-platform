@@ -625,6 +625,9 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	if err := validateCopyPaths(req.SrcPath, req.DstPath, srcPath, dstPath); err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
 
 	stat, err := os.Stat(srcPath)
 	if err != nil {

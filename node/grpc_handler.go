@@ -742,6 +742,9 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 	if err != nil {
 		return errorMsg(reqID, 403, err.Error())
 	}
+	if err := validateCopyPaths(req.SrcPath, req.DstPath, srcPath, dstPath); err != nil {
+		return errorMsg(reqID, 400, err.Error())
+	}
 
 	stat, err := os.Stat(srcPath)
 	if err != nil {
@@ -850,6 +853,36 @@ func isProtectedFile(path string) bool {
 		}
 	}
 	return false
+}
+
+// validateCopyPaths rejects the copy requests that destroy data instead of
+// duplicating it. Both the control-plane RPC and the beam RPC go through it.
+//
+// An empty path resolves to the server root, which is correct for listing and
+// catastrophic for copying: src and dst both become the root, filepath.Walk
+// visits every file, and copyFile opens each one for writing (O_TRUNC) as its
+// own source. One copy request with two empty paths zeroed 185 files here -
+// the whole world, every config, and the three dotfiles isProtectedFile exists
+// to defend. That guard never fired: it only sees the destination string, and
+// filepath.Base("") is ".".
+//
+// rawSrc/rawDst are the request's paths, used only for the empty check; src and
+// dst are the resolved absolute paths.
+func validateCopyPaths(rawSrc, rawDst, src, dst string) error {
+	if strings.TrimSpace(rawSrc) == "" || strings.TrimSpace(rawDst) == "" {
+		return fmt.Errorf("copy needs both a source and a destination path")
+	}
+	src = filepath.Clean(src)
+	dst = filepath.Clean(dst)
+	if src == dst {
+		return fmt.Errorf("cannot copy a path onto itself")
+	}
+	// dst inside src would copy the tree into itself, walking what it writes.
+	if rel, err := filepath.Rel(src, dst); err == nil &&
+		rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("cannot copy a directory into itself")
+	}
+	return nil
 }
 
 func errorMsg(reqID string, code int32, message string) *pb.NodeMessage {

@@ -588,6 +588,13 @@ func copyFile(src, dst string) error {
 }
 
 // copyDir recursively copies src directory into dst.
+//
+// Protected entries are skipped. isProtectedFile guards the destination string
+// a copy request names, which is blind to what a directory copy reaches on its
+// own: a copy rooted anywhere above them walks straight into .active_server,
+// .dylaris.json and .node_config.json and rewrites them. Nothing wants those
+// duplicated into a copy either, so skipping is right for the installer's uses
+// of this helper too.
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -596,6 +603,12 @@ func copyDir(src, dst string) error {
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
+		}
+		if rel != "." && isProtectedFile(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {

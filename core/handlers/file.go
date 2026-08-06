@@ -538,6 +538,20 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Copy was the one file handler with no path check at all, while save,
+	// create, rename and delete all have one. An empty path is legal
+	// everywhere else (it means the server root, which is what a listing
+	// wants) and is destructive here: the node resolves both ends to the root
+	// and copies the tree onto itself, truncating every file it walks.
+	if !validate.IsSafeRelPath(req.OldPath) || !validate.IsSafeRelPath(req.NewPath) {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.OldPath) == "" || strings.TrimSpace(req.NewPath) == "" {
+		sendJSONError(w, "Source and destination path are required", http.StatusBadRequest)
+		return
+	}
+
 	resp, err := h.sendGRPCMsg(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
