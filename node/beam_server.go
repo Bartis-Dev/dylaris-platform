@@ -389,6 +389,23 @@ func isPlatformReservedName(name string) bool {
 	return false
 }
 
+// reservedComponent returns the first path component that is platform-reserved,
+// or "" when none is.
+//
+// The basename alone is not enough. ".dylaris-backups" is reserved, but a write
+// to ".dylaris-backups/<id>.tar.gz" ends in an ordinary archive filename, so a
+// basename check let the beam client delete and overwrite backup archives -
+// exactly the tampering the reserved set exists to prevent. Reads are checked
+// nowhere, which is deliberate: the desktop client downloads backups this way.
+func reservedComponent(rel string) string {
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part != "" && part != "." && isPlatformReservedName(part) {
+			return part
+		}
+	}
+	return ""
+}
+
 // validateBeamPath ensures the path stays within the server's data directory.
 // When op is "write" (upload, save, create, delete, rename, copy-dst), it
 // also refuses any platform-reserved filename. Read ops ("read", "list")
@@ -432,8 +449,14 @@ func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string,
 	if op == "write" && filepath.Clean(cleanPath) == filepath.Clean(serverDir) {
 		return "", fmt.Errorf("access denied: the server directory itself is not a valid target")
 	}
-	if op == "write" && isPlatformReservedName(filepath.Base(cleanPath)) {
-		return "", fmt.Errorf("access denied: %q is platform-managed and cannot be overwritten", filepath.Base(cleanPath))
+	if op == "write" {
+		rel, err := filepath.Rel(serverDir, cleanPath)
+		if err != nil {
+			return "", fmt.Errorf("access denied: %v", err)
+		}
+		if part := reservedComponent(rel); part != "" {
+			return "", fmt.Errorf("access denied: %q is platform-managed and cannot be overwritten", part)
+		}
 	}
 	return cleanPath, nil
 }

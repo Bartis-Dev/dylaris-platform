@@ -140,6 +140,12 @@ func TestValidateBeamPathOp(t *testing.T) {
 		{"active_server write refused", ".active_server", "write", true},
 		{"parent traversal refused", "../escape.txt", "write", true},
 		{"dylaris-prefixed read allowed", "survival/.dylaris-backups", "read", false},
+		// The basename here is an ordinary archive name, so checking only the
+		// basename let the beam client delete and overwrite the backups the
+		// reserved set exists to protect. The read stays allowed on purpose:
+		// that is how the desktop client downloads a backup.
+		{"write inside a reserved directory refused", ".dylaris-backups/20260806-105747.tar.gz", "write", true},
+		{"read inside a reserved directory allowed", ".dylaris-backups/20260806-105747.tar.gz", "read", false},
 		{"missing server uuid refused", "survival/x", "write", true},
 		// An empty path is the file browser's root on the read side and an
 		// os.RemoveAll of the whole server (backups included) on the write
