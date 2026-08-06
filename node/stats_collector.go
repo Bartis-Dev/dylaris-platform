@@ -40,6 +40,18 @@ type DiskUsagePayload struct {
 	Limit      int64            `json:"limit"`
 	SubServers map[string]int64 `json:"subServers"`
 	Warning    string           `json:"warning,omitempty"` // "", "80", "90", "full"
+	// Enforceable reports whether Limit is actually ENFORCED for this server, or
+	// merely recorded. Project quotas need xfs or ext4; on anything else - NFS,
+	// CIFS, a Docker Desktop bind mount from a Windows host - the limit is stored,
+	// shown, and nothing stops a server from sailing past it.
+	//
+	// The node has always known this per storage path and the Infrastructure view
+	// warns an operator about it, but the per-server payload carried no such flag,
+	// so a server owner saw "12 GB of 20 GB" with no way to tell that the 20 was a
+	// wish. Usage itself is measured either way (quota read, or a du scan), which
+	// is why the answer here is "limits are not enforced" and not "no storage
+	// information".
+	Enforceable bool `json:"enforceable"`
 }
 
 const (
@@ -446,7 +458,8 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 // measurement the disk guard has to work with there.
 func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *QuotaSet) *DiskUsagePayload {
 	var usage *DiskUsagePayload
-	if quota != nil && quota.IsAvailableFor(uuid) {
+	enforceable := quota != nil && quota.IsAvailableFor(uuid)
+	if enforceable {
 		usage = quota.GetDiskUsage(uuid)
 	}
 	if usage == nil {
@@ -455,6 +468,11 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	if usage == nil {
 		return nil
 	}
+	// Same question the quota lookup above already answered: can this server's
+	// filesystem hold a limit, or is the number only recorded? A quota read that
+	// failed and fell through to du is not enforceable either, so this is set
+	// from the answer rather than from which branch produced the payload.
+	usage.Enforceable = enforceable
 
 	// Set warning level based on limit utilization
 	if usage.Limit > 0 && usage.Total > 0 {

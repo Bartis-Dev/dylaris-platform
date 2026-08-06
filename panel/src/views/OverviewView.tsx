@@ -362,6 +362,27 @@ export default function OverviewView({ server }: OverviewViewProps) {
               </span>
             </div>
 
+            {/* The measured usage above is real everywhere. The LIMIT is not:
+                project quotas need xfs or ext4, so on NFS, CIFS or a Docker
+                Desktop bind mount from a Windows host it is recorded and never
+                enforced. Without this line the owner reads "12 GB of 20 GB" and
+                has no way to know the 20 is a wish. The operator-facing warning
+                for this already exists in Infrastructure, per storage path;
+                this is the same fact where the person affected by it looks.
+
+                Explicitly === false: a node too old to send the field leaves it
+                undefined, and that must not read as "not enforced". */}
+            {diskUsage.limit > 0 && diskUsage.enforceable === false && (
+              <p className="flex items-start gap-1.5 mb-3 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[11px] text-(--warning-light)">
+                <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                <span>
+                  Usage is measured, but this limit is not enforced: the storage here does not
+                  support disk quotas (they need xfs or ext4). Nothing stops this server from
+                  growing past it.
+                </span>
+              </p>
+            )}
+
             {/* Stacked bar */}
             <div className="w-full h-4 bg-(--base-04) rounded-sm overflow-hidden flex">
               {sorted.map(([name, bytes], i) => {

@@ -608,6 +608,15 @@ export interface DiskUsage {
     limit: number;
     subServers: Record<string, number>;
     warning?: '' | '80' | '90' | 'full';
+    // Whether `limit` is actually ENFORCED, or only recorded. Project quotas
+    // need xfs or ext4; on NFS, CIFS or a Docker Desktop bind mount from a
+    // Windows host the number is stored and nothing holds a server to it.
+    //
+    // Optional on purpose: a node that predates the field sends nothing, and
+    // `undefined` must not be read as "not enforced" or every server would carry
+    // the warning until the whole fleet is updated. Only an explicit false means
+    // the node said so.
+    enforceable?: boolean;
 }
 
 export const getStatsHistory = (id: number, range?: string) =>
