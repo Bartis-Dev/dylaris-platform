@@ -66,13 +66,57 @@ func NewQuotaProvider(basePath string) *QuotaProvider {
 		}
 	}
 
+	// Prove it rather than infer it. The two checks above establish that the
+	// filesystem is a type that CAN carry project quotas and that the tool to set
+	// them is installed - neither says the kernel and this particular mount will
+	// accept one. A Docker Desktop bind mount from a Windows host reports ext4
+	// (the VM's own disk) and has chattr, and every attempt to set a project id
+	// on it fails with "Not supported".
+	//
+	// Before this probe the node concluded "ext4 project quotas available",
+	// happily accepted every limit, and only discovered the truth once per server
+	// in a log line nobody reads. Usage still worked (the du fallback), but the
+	// limit was pure decoration and nothing above ever learned that.
+	if err := qp.probeProjectSupport(); err != nil {
+		log.Printf("quota: %s is present but this mount will not accept a project id (%v) — "+
+			"disk limits cannot be enforced here; usage will be measured with du instead", qp.fsType, err)
+		return qp
+	}
+
 	qp.available = true
-	log.Printf("quota: %s project quotas available", qp.fsType)
+	log.Printf("quota: %s project quotas available and verified", qp.fsType)
 
 	// Reconcile: assign quotas to all existing server directories
 	qp.reconcileExisting()
 
 	return qp
+}
+
+// probeProjectSupport applies a project id to a scratch directory and removes it
+// again, so availability is a demonstrated fact rather than an inference from
+// the filesystem type. Returns nil when quotas really work here.
+func (qp *QuotaProvider) probeProjectSupport() error {
+	dir := filepath.Join(qp.basePath, ".dylaris-quota-probe")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("probe dir: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	pid := projectID("dylaris-quota-probe")
+	switch qp.fsType {
+	case "xfs":
+		cmd := exec.Command("xfs_quota", "-x", "-c",
+			fmt.Sprintf("project -s -p %s %d", dir, pid), qp.mountPoint)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		}
+	case "ext4":
+		cmd := exec.Command("chattr", "+P", "-p", fmt.Sprintf("%d", pid), dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		}
+	}
+	return nil
 }
 
 // IsAvailable returns true if quota-based disk tracking can be used.
