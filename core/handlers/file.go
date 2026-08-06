@@ -475,6 +475,13 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// oldPath went to the node unchecked. The node validates it, but an empty
+	// oldPath resolves to the server directory there, and a rename of that
+	// moves the whole server out from under its UUID.
+	if !validate.IsSafeRelPath(req.OldPath) || strings.TrimSpace(req.OldPath) == "" {
+		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
 	_, newFile := filepath.Split(req.NewPath)
 	cleanFile := sanitizeFilename(newFile)
 
@@ -595,7 +602,11 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !validate.IsSafeRelPath(req.Path) {
+	// IsSafeRelPath accepts "" on purpose: on the read side it means "the
+	// server directory". Here it means RemoveAll on that directory, backups
+	// and all. The node refuses it too; refusing early keeps the request from
+	// ever reaching a node running an older build.
+	if !validate.IsSafeRelPath(req.Path) || strings.TrimSpace(req.Path) == "" {
 		sendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}

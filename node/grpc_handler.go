@@ -835,6 +835,16 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 // without going through this guard.
 func isProtectedFile(path string) bool {
 	clean := filepath.Clean(path)
+	// The server root itself. An empty path is legal on the read side, where
+	// it means "list the server directory", and every destructive handler
+	// resolves it to that same directory: delete would RemoveAll the server
+	// and its backups, rename would move the whole directory out from under
+	// its UUID, copy would walk the tree onto itself. None of those is a file
+	// operation a caller may perform, so the root is protected like the
+	// dotfiles inside it.
+	if clean == "." || clean == string(filepath.Separator) || clean == "/" {
+		return true
+	}
 	name := filepath.Base(clean)
 	if name == ".active_server" || name == ".node_config.json" || name == ".dylaris-backups" || name == ".dylaris.json" {
 		return true
