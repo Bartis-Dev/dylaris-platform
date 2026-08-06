@@ -108,29 +108,34 @@ func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	// requested_by is a UUID column (users.id) - it was scanned into a
+	// sql.NullInt64 here, which fails for every row Record writes, and the
+	// error was swallowed by a `continue`. That silently emptied the list for
+	// every profile an authenticated user recorded, which is all of them.
 	type profile struct {
-		ID            int       `json:"id"`
-		ServerID      int       `json:"serverId"`
-		SubServerName string    `json:"subServerName"`
-		URL           string    `json:"url"`
+		ID            int        `json:"id"`
+		ServerID      int        `json:"serverId"`
+		SubServerName string     `json:"subServerName"`
+		URL           string     `json:"url"`
 		StartedAt     *time.Time `json:"startedAt,omitempty"`
-		CompletedAt   time.Time `json:"completedAt"`
-		RequestedBy   *int      `json:"requestedBy,omitempty"`
+		CompletedAt   time.Time  `json:"completedAt"`
+		RequestedBy   *string    `json:"requestedBy,omitempty"`
 	}
 	out := []profile{}
 	for rows.Next() {
 		var p profile
 		var startedAt sql.NullTime
-		var requestedBy sql.NullInt64
+		var requestedBy sql.NullString
 		if err := rows.Scan(&p.ID, &p.ServerID, &p.SubServerName, &p.URL, &startedAt, &p.CompletedAt, &requestedBy); err != nil {
-			continue
+			sendJSONError(w, "Query failed", http.StatusInternalServerError)
+			return
 		}
 		if startedAt.Valid {
 			v := startedAt.Time
 			p.StartedAt = &v
 		}
 		if requestedBy.Valid {
-			v := int(requestedBy.Int64)
+			v := requestedBy.String
 			p.RequestedBy = &v
 		}
 		out = append(out, p)

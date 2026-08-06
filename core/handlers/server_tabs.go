@@ -102,14 +102,19 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var t serverTabResponse
 		var expires sql.NullTime
+		// Dropping a row on a scan error hides a column/type mismatch as an
+		// empty list instead of an error - that is exactly how the spark
+		// profile list stayed silently empty. Fail loudly instead.
 		if err := rows.Scan(&t.ID, &t.ServerID, &t.Name, &t.Icon, &t.URL, &t.Position, &t.Enabled, &t.OpenInPanel,
-			&t.Mode, &t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareToken, &expires); err == nil {
-			if expires.Valid {
-				et := expires.Time
-				t.ShareExpiresAt = &et
-			}
-			out = append(out, t)
+			&t.Mode, &t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareToken, &expires); err != nil {
+			sendJSONError(w, "Query failed", http.StatusInternalServerError)
+			return
 		}
+		if expires.Valid {
+			et := expires.Time
+			t.ShareExpiresAt = &et
+		}
+		out = append(out, t)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
