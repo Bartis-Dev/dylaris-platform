@@ -117,6 +117,61 @@ jobs:
           file: ./.github/race.Dockerfile
           push: false
 
+  # Postgres integration gate. Every other test in this repo runs against fakes,
+  # which is exactly why a run of SQL defects shipped unnoticed: the statements
+  # were only ever rejected by a real Postgres.
+  #
+  #   ticket status / user role   inconsistent types deduced for parameter $1
+  #   ticket_messages.user_id     NOT NULL with ON DELETE SET NULL -> 23502
+  #   backup_jobs.*_patterns      nil slice into a NOT NULL text[] -> 23502
+  #   spark_profiles.requested_by UUID scanned into an integer target
+  #
+  # Plain postgres, not timescaledb: DBType "postgres" makes ensureSchema create
+  # server_stats as an ordinary table, so no extension is needed here.
+  #
+  # NOT yet listed in any `needs:`. This job has never run on this runner, and
+  # a NEW gate that fails for environment reasons blocks deploys for reasons
+  # nobody chose that day - the same rule the race-tests comment above records.
+  # Once it has been green once, add it to detect-changes and to the build jobs
+  # so it gates like every other test job.
+  db-tests:
+    runs-on: self-hosted
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dylaris
+          POSTGRES_PASSWORD: testpw
+          POSTGRES_DB: dylaris_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: core/go.sum
+
+      # The suite skips itself when DYLARIS_TEST_DB_HOST is unset, so this is
+      # also the switch that turns it on: `go test ./...` stays green on a
+      # machine without a database.
+      - name: go test (Postgres integration)
+        working-directory: core
+        env:
+          DYLARIS_TEST_DB_HOST: localhost
+          DYLARIS_TEST_DB_PORT: '5432'
+          DYLARIS_TEST_DB_USER: dylaris
+          DYLARIS_TEST_DB_PASSWORD: testpw
+          DYLARIS_TEST_DB_NAME: dylaris_test
+        run: go test -count=1 -v -run Integration ./database/
+
   panel-tests:
     runs-on: self-hosted
     steps:
