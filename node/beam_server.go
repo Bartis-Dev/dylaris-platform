@@ -418,9 +418,19 @@ func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string,
 	// Shared traversal guard (trailing-separator containment) — see
 	// resolveWithinDir in grpc_handler.go. Beam layers its write-time
 	// reserved-name check on top.
-	cleanPath, err := resolveWithinDir(s.storageMgr.GetServerDir(serverUUID), reqPath)
+	serverDir := s.storageMgr.GetServerDir(serverUUID)
+	cleanPath, err := resolveWithinDir(serverDir, reqPath)
 	if err != nil {
 		return "", err
+	}
+	// The server directory itself is not a write target. An empty path
+	// resolves to it, which reading needs (that is the file browser's root)
+	// and writing must never get: DeleteFile would RemoveAll the server and
+	// its backups, RenameFile would move it out from under its UUID. The
+	// reserved-name check below cannot see this, because the basename of the
+	// root is the server UUID, which is not a reserved name.
+	if op == "write" && filepath.Clean(cleanPath) == filepath.Clean(serverDir) {
+		return "", fmt.Errorf("access denied: the server directory itself is not a valid target")
 	}
 	if op == "write" && isPlatformReservedName(filepath.Base(cleanPath)) {
 		return "", fmt.Errorf("access denied: %q is platform-managed and cannot be overwritten", filepath.Base(cleanPath))

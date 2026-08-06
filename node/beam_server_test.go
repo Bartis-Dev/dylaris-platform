@@ -141,6 +141,14 @@ func TestValidateBeamPathOp(t *testing.T) {
 		{"parent traversal refused", "../escape.txt", "write", true},
 		{"dylaris-prefixed read allowed", "survival/.dylaris-backups", "read", false},
 		{"missing server uuid refused", "survival/x", "write", true},
+		// An empty path is the file browser's root on the read side and an
+		// os.RemoveAll of the whole server (backups included) on the write
+		// side. The reserved-name check cannot see it: the basename of the
+		// server directory is the server UUID.
+		{"empty path write refused", "", "write", true},
+		{"dot path write refused", ".", "write", true},
+		{"slash path write refused", "/", "write", true},
+		{"empty path read allowed", "", "read", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
