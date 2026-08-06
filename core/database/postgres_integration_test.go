@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -46,7 +47,9 @@ func uniqueName(prefix string) string {
 	return prefix + runTag + "_" + strconv.FormatInt(uniqueSuffix.Add(1), 10)
 }
 
-func integrationDB(t *testing.T) (*sql.DB, *store.PostgresStore) {
+// testDBConfig builds the connection config from the environment, skipping the
+// calling test when no database is configured.
+func testDBConfig(t *testing.T) config.Config {
 	t.Helper()
 	host := os.Getenv("DYLARIS_TEST_DB_HOST")
 	if host == "" {
@@ -58,7 +61,7 @@ func integrationDB(t *testing.T) (*sql.DB, *store.PostgresStore) {
 		}
 		return fallback
 	}
-	cfg := config.Config{
+	return config.Config{
 		DBHost:     host,
 		DBPort:     env("DYLARIS_TEST_DB_PORT", "5432"),
 		DBUser:     env("DYLARIS_TEST_DB_USER", "postgres"),
@@ -69,6 +72,64 @@ func integrationDB(t *testing.T) (*sql.DB, *store.PostgresStore) {
 		// ordinary table, so no extension is needed in the test image.
 		DBType: "postgres",
 	}
+}
+
+// freshSchemaDB creates a scratch database, builds the schema on it EXACTLY
+// once and hands back the handle. Dropped again on cleanup.
+//
+// One boot is what a fresh install is, and it is not the same thing as the
+// shared test database: migrateSchema's ADD COLUMN set runs before the later
+// phases create their tables, so a column whose table does not exist yet is
+// missing after the first boot and present after the second. A test that wants
+// to see that has to start from nothing.
+func freshSchemaDB(t *testing.T) *sql.DB {
+	t.Helper()
+	cfg := testDBConfig(t)
+
+	admin, err := sql.Open("postgres", fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName))
+	if err != nil {
+		t.Fatalf("open admin connection: %v", err)
+	}
+	defer admin.Close()
+
+	name := "fresh_" + runTag
+	if _, err := admin.Exec("CREATE DATABASE " + name); err != nil {
+		t.Fatalf("create scratch database %s: %v", name, err)
+	}
+
+	cfg.DBName = name
+	db, err := InitDB(cfg)
+	if err != nil {
+		t.Fatalf("InitDB on the scratch database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		dropper, err := sql.Open("postgres", fmt.Sprintf(
+			"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+			cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, testDBName()))
+		if err != nil {
+			return
+		}
+		defer dropper.Close()
+		if _, err := dropper.Exec("DROP DATABASE IF EXISTS " + name); err != nil {
+			t.Logf("could not drop the scratch database %s: %v", name, err)
+		}
+	})
+	return db
+}
+
+func testDBName() string {
+	if v := os.Getenv("DYLARIS_TEST_DB_NAME"); v != "" {
+		return v
+	}
+	return "postgres"
+}
+
+func integrationDB(t *testing.T) (*sql.DB, *store.PostgresStore) {
+	t.Helper()
+	cfg := testDBConfig(t)
 	db, err := InitDB(cfg)
 	if err != nil {
 		t.Fatalf("InitDB against the test database: %v", err)
