@@ -723,6 +723,14 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "userId or username required", http.StatusBadRequest)
 		return
 	}
+	// The username branch above proves the user exists; a supplied userId did
+	// not, so a wrong id reached the insert and came back as a foreign-key
+	// violation dressed up as "Failed to add watcher" with a 500. Same answer
+	// for both branches.
+	if u, uerr := h.state.Store.GetUserByID(target); uerr != nil || u == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
 	canReplyFlag := settings.WatchersDefaultCanReply
 	if req.CanReply != nil {
 		canReplyFlag = *req.CanReply
