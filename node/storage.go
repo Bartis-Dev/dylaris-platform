@@ -139,6 +139,19 @@ func (sm *StorageManager) Paths() []string {
 // 2. Fallback: scan all paths for the UUID directory
 // 3. If not found, returns the first path (for new servers, use SelectStoragePath instead)
 func (sm *StorageManager) GetServerPath(serverUUID string) string {
+	// An empty UUID is not a server, and resolving it is dangerous rather than
+	// merely wrong: the Redis miss falls through to the filesystem scan below,
+	// where filepath.Join(p, "") is p itself. Every storage path therefore
+	// "contains" it, so the resolver hands back the storage ROOT - which
+	// GetServerDir returns verbatim, and which the delete command feeds to
+	// os.RemoveAll. That is every server on the node, of every tenant.
+	//
+	// "" is the answer the callers that check already expect (handleMigrateOut
+	// and handleMigrateCleanup both abort on it); it was simply never produced.
+	if strings.TrimSpace(serverUUID) == "" {
+		return ""
+	}
+
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
@@ -176,7 +189,14 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 // GetServerDir returns the full directory path for a server UUID.
 // This is the convenience method: storagePath + "/" + uuid
 func (sm *StorageManager) GetServerDir(serverUUID string) string {
-	return filepath.Join(sm.GetServerPath(serverUUID), serverUUID)
+	base := sm.GetServerPath(serverUUID)
+	if base == "" {
+		// Never Join onto an empty base: that yields a path relative to the
+		// node's working directory, which is not this server's directory and
+		// is not anything a caller may write to or delete.
+		return ""
+	}
+	return filepath.Join(base, serverUUID)
 }
 
 // SetPlacement applies the per-node placement policy Core published. An

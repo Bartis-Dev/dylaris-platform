@@ -1101,6 +1101,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 
 	case "delete":
+		// Mirrors the delete_sub_server guard below. This one deletes a whole
+		// server directory, so an unnamed target is the more dangerous of the
+		// two: see GetServerPath for what an empty UUID used to resolve to.
+		if strings.TrimSpace(cmd.Config.UUID) == "" {
+			log.Printf("delete: server UUID is empty, aborting")
+			return
+		}
 		log.Printf("Deleting Server %s ...", cmd.Config.UUID)
 		dm.PowerAction(cmd.Config.UUID, "delete")
 
@@ -1109,6 +1116,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		if serverPath == "" {
+			log.Printf("delete %s: no server directory resolved, skipping the data removal", cmd.Config.UUID)
+			return
+		}
 		os.RemoveAll(serverPath)
 		storage.RemoveServerPath(cmd.Config.UUID)
 		// The cached disk limit has no TTL and its only other delete fires when
