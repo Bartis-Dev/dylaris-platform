@@ -295,47 +295,63 @@ func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client
 	return &virtualFS{servers: servers, storageMgr: sm, nameToUUID: m, rdb: rdb, username: username}
 }
 
-// resolve converts a virtual path to a real OS path.
-// Returns ("", nil) for root, (realPath, nil) for valid paths, ("", os.ErrNotExist) for invalid.
-func (v *virtualFS) resolve(path string) (string, error) {
+// resolve converts a virtual path to a real OS path, and returns that path
+// relative to the server directory alongside it.
+// Returns ("", "", nil) for root, ("", "", os.ErrNotExist) for invalid paths.
+//
+// Callers guard on the RELATIVE path. isProtectedFile inspects every component
+// precisely so ".dylaris-backups/<archive>.tar.gz" is caught; handing it only
+// filepath.Base leaves "<archive>.tar.gz", an ordinary-looking filename, and
+// every guard here passed exactly that. Listing already hid the directory, so
+// an SFTP client could truncate, delete or move backups it could not see.
+func (v *virtualFS) resolve(path string) (string, string, error) {
 	path = filepath.ToSlash(filepath.Clean("/" + path))
 	if path == "/" {
-		return "", nil // root — virtual
+		return "", "", nil // root — virtual
 	}
 
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
 	serverName := parts[0]
 	uuid, ok := v.nameToUUID[serverName]
 	if !ok {
-		return "", os.ErrNotExist
+		return "", "", os.ErrNotExist
 	}
 
 	base := v.storageMgr.GetServerDir(uuid)
 	if len(parts) == 1 {
-		return base, nil
+		return base, ".", nil
 	}
-	return filepath.Join(base, filepath.FromSlash(parts[1])), nil
+	rel := filepath.FromSlash(parts[1])
+	return filepath.Join(base, rel), rel, nil
+}
+
+// protectedRel reports whether a resolved SFTP path names a platform-managed
+// entry. "." is the server directory itself, which every client stats while
+// navigating, so it is not treated as protected here - the operations that
+// could damage it (write, remove, rename) all fail on a non-empty directory.
+func protectedRel(rel string) bool {
+	return rel != "." && isProtectedFile(rel)
 }
 
 // --- sftp.ReadWriteAt (FileGet + FilePut) ---
 
 func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-	realPath, err := v.resolve(r.Filepath)
+	realPath, rel, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
 		return nil, os.ErrPermission
 	}
-	if isProtectedFile(filepath.Base(realPath)) {
+	if protectedRel(rel) {
 		return nil, os.ErrPermission
 	}
 	return os.Open(realPath)
 }
 
 func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-	realPath, err := v.resolve(r.Filepath)
+	realPath, rel, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
 		return nil, os.ErrPermission
 	}
-	if isProtectedFile(filepath.Base(realPath)) {
+	if protectedRel(rel) {
 		return nil, os.ErrPermission
 	}
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -424,30 +440,38 @@ func (m *meteredSFTPWriter) Close() error {
 func (v *virtualFS) Filecmd(r *sftp.Request) error {
 	switch r.Method {
 	case "Mkdir":
-		realPath, err := v.resolve(r.Filepath)
+		realPath, rel, err := v.resolve(r.Filepath)
 		if err != nil || realPath == "" {
+			return os.ErrPermission
+		}
+		if protectedRel(rel) {
 			return os.ErrPermission
 		}
 		return os.Mkdir(realPath, 0755)
 	case "Remove":
-		realPath, err := v.resolve(r.Filepath)
+		realPath, rel, err := v.resolve(r.Filepath)
 		if err != nil || realPath == "" {
 			return os.ErrPermission
 		}
-		if isProtectedFile(filepath.Base(realPath)) {
+		if protectedRel(rel) {
 			return os.ErrPermission
 		}
 		return os.Remove(realPath)
 	case "Rename":
-		src, err := v.resolve(r.Filepath)
+		src, srcRel, err := v.resolve(r.Filepath)
 		if err != nil || src == "" {
 			return os.ErrPermission
 		}
-		if isProtectedFile(filepath.Base(src)) {
+		if protectedRel(srcRel) {
 			return os.ErrPermission
 		}
-		dst, err := v.resolve(r.Target)
+		// The destination was never checked, so a rename ONTO a protected name
+		// overwrote it - the one hole the gRPC copy handler had always closed.
+		dst, dstRel, err := v.resolve(r.Target)
 		if err != nil || dst == "" {
+			return os.ErrPermission
+		}
+		if protectedRel(dstRel) {
 			return os.ErrPermission
 		}
 		return os.Rename(src, dst)
@@ -475,7 +499,7 @@ func (l listerAt) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	switch r.Method {
 	case "List":
-		realPath, err := v.resolve(r.Filepath)
+		realPath, _, err := v.resolve(r.Filepath)
 		if err != nil {
 			return nil, err
 		}
@@ -511,12 +535,17 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		return listerAt(infos), nil
 
 	case "Stat", "Lstat":
-		realPath, err := v.resolve(r.Filepath)
+		realPath, rel, err := v.resolve(r.Filepath)
 		if err != nil {
 			return nil, err
 		}
 		if realPath == "" {
 			return listerAt([]os.FileInfo{&virtualDirInfo{name: "/"}}), nil
+		}
+		// Not ErrPermission: the listing filter already hides these entries, so
+		// confirming one exists would be the only way to learn it is there.
+		if protectedRel(rel) {
+			return nil, os.ErrNotExist
 		}
 		fi, err := os.Lstat(realPath)
 		if err != nil {
