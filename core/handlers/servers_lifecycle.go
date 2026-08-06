@@ -209,6 +209,22 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resolveJavaImage picks the image a setup or reinstall runs with: the one the
+// request asks for, else the one already stored on the server.
+//
+// Setup used to take the requested image raw. A request without one wrote an
+// empty image to the DB and dispatched it, and Docker accepts that: it builds a
+// container with nothing in it, so the server dies on `exec: "java": executable
+// file not found in $PATH` - by which point the previous sub-server's container
+// is already gone. Reinstall had the fallback, setup did not; both go through
+// here now, and an empty result is a 400 at the caller.
+func resolveJavaImage(requested, stored string) string {
+	if img := strings.TrimSpace(requested); img != "" {
+		return img
+	}
+	return strings.TrimSpace(stored)
+}
+
 // SetupServer (Step 2): User configures the server
 func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -256,6 +272,14 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse before anything is written or the container is touched - see
+	// resolveJavaImage.
+	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
+	if javaImage == "" {
+		sendJSONError(w, "javaImage is required", 400)
+		return
+	}
+
 	// Enforce sub-server limit (skip for first setup / admins)
 	if srv.Status != "pending_setup" {
 		maxSub := 3 // default
@@ -292,7 +316,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
 
 	// Update DB (start_command is display-only; store combined flags in extra_jvm_flags)
-	if err := h.state.Store.UpdateServerSetup(serverID, req.JavaImage, "", subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
+	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
 		sendJSONError(w, "Failed to update server", 500)
 		return
 	}
@@ -367,7 +391,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"uuid":    srv.UUID,
 			"ownerId": srv.OwnerID,
 			"docker": map[string]interface{}{
-				"image":         req.JavaImage,
+				"image":         javaImage,
 				"ram":           srv.Memory,
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
@@ -480,9 +504,10 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Update image if provided
-	javaImage := req.JavaImage
+	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
-		javaImage = srv.GameImage
+		sendJSONError(w, "javaImage is required", 400)
+		return
 	}
 
 	extraFlags := strings.TrimSpace(req.ExtraJvmFlags)

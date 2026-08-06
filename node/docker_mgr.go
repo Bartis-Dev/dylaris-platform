@@ -674,6 +674,14 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 }
 
 func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, netName string) (string, error) {
+	// Docker accepts an empty image and builds a container with nothing in it,
+	// so the failure surfaces much later as `exec: "java": executable file not
+	// found in $PATH` - after the previous container is already gone. Refuse it
+	// here like RunInstallerContainer does, so a bad command cannot brick a
+	// running server.
+	if config.Docker.Image == "" {
+		return "", fmt.Errorf("server image is required")
+	}
 	dm.pullImage(config.Docker.Image)
 
 	// Create directory locally (via StorageManager or legacy path)
