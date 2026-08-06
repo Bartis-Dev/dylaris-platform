@@ -84,7 +84,13 @@ func TestRunRound_PassesWhenEveryParticipantReports(t *testing.T) {
 	// the service listener does in production.
 	done := make(chan error, 1)
 	go func() {
-		for i := 0; i < 300; i++ {
+		// 3000 x 10ms = 30s. This bounds how long the participant waits to be
+		// SCHEDULED and notice the round, which on a runner executing the whole
+		// job matrix at once is not the same as how long the work takes. It only
+		// runs out on the failing path - a passing round ends as soon as the
+		// reports are in - so a generous bound costs nothing and removes a
+		// scheduling race that has now failed CI twice.
+		for i := 0; i < 3000; i++ {
 			id, err := PendingRoundID(ctx, rdb)
 			if err == nil && id != "" {
 				done <- RunParticipant(ctx, rdb, "core-b", id, sharedFactory(root))
@@ -235,7 +241,13 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 
 	done := make(chan error, 1)
 	go func() {
-		for i := 0; i < 300; i++ {
+		// 3000 x 10ms = 30s. This bounds how long the participant waits to be
+		// SCHEDULED and notice the round, which on a runner executing the whole
+		// job matrix at once is not the same as how long the work takes. It only
+		// runs out on the failing path - a passing round ends as soon as the
+		// reports are in - so a generous bound costs nothing and removes a
+		// scheduling race that has now failed CI twice.
+		for i := 0; i < 3000; i++ {
 			id, err := PendingRoundID(ctx, rdb)
 			if err == nil && id != "" {
 				done <- RunParticipant(ctx, rdb, "core-b", id, sharedFactory(root))
@@ -344,7 +356,13 @@ func TestRunRound_OnProgressSkipsUnchangedPolls(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		for i := 0; i < 300; i++ {
+		// 3000 x 10ms = 30s. This bounds how long the participant waits to be
+		// SCHEDULED and notice the round, which on a runner executing the whole
+		// job matrix at once is not the same as how long the work takes. It only
+		// runs out on the failing path - a passing round ends as soon as the
+		// reports are in - so a generous bound costs nothing and removes a
+		// scheduling race that has now failed CI twice.
+		for i := 0; i < 3000; i++ {
 			id, err := PendingRoundID(ctx, rdb)
 			if err == nil && id != "" {
 				done <- RunParticipant(ctx, rdb, "core-b", id, sharedFactory(root))
@@ -416,7 +434,13 @@ func TestRunParticipant_ReportsUnreachableWhenTheProviderWillNotBuild(t *testing
 
 	done := make(chan error, 1)
 	go func() {
-		for i := 0; i < 300; i++ {
+		// 3000 x 10ms = 30s. This bounds how long the participant waits to be
+		// SCHEDULED and notice the round, which on a runner executing the whole
+		// job matrix at once is not the same as how long the work takes. It only
+		// runs out on the failing path - a passing round ends as soon as the
+		// reports are in - so a generous bound costs nothing and removes a
+		// scheduling race that has now failed CI twice.
+		for i := 0; i < 3000; i++ {
 			id, err := PendingRoundID(ctx, rdb)
 			if err == nil && id != "" {
 				done <- RunParticipant(ctx, rdb, "core-b", id, func(cfg Config) (storage.StorageProvider, error) {

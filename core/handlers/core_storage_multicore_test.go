@@ -175,14 +175,27 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 		// probe sees all peers, so this now returns in well under a second
 		// instead of waiting out a full 1s poll. The deadline only bounds how
 		// long a genuinely lost race keeps retrying before failing.
-		reachRoundDeadline: 6 * time.Second,
+		// 30s, not 6s. The round ends the moment every report is in, so a passing
+		// test never waits on this; it only bounds how long a genuinely lost race
+		// keeps retrying. 6s was still short enough for a saturated runner to turn
+		// a healthy round into "core-b: no-response" and fail the gate on code
+		// that was fine - the same lesson settlingRound() in the storagereach
+		// package already records. A deadline a passing test never reaches cannot
+		// cause a false failure.
+		reachRoundDeadline: 30 * time.Second,
 		reachRoundPoll:     50 * time.Millisecond,
 	}}
 
 	done := make(chan error, 1)
 	go func() {
 		ctx := context.Background()
-		for i := 0; i < 300; i++ {
+		// 3000 x 10ms = 30s. This bounds how long the participant waits to be
+		// SCHEDULED and notice the round, which on a runner executing the whole
+		// job matrix at once is not the same as how long the work takes. It only
+		// runs out on the failing path - a passing round ends as soon as the
+		// reports are in - so a generous bound costs nothing and removes a
+		// scheduling race that has now failed CI twice.
+		for i := 0; i < 3000; i++ {
 			id, err := storagereach.PendingRoundID(ctx, rdb)
 			if err == nil && id != "" {
 				done <- storagereach.RunParticipant(ctx, rdb, "core-b", id, factory)

@@ -102,7 +102,13 @@ func TestSwitchConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		ctx := context.Background()
-		for i := 0; i < 300; i++ {
+		// 3000 x 10ms = 30s. This bounds how long the participant waits to be
+		// SCHEDULED and notice the round, which on a runner executing the whole
+		// job matrix at once is not the same as how long the work takes. It only
+		// runs out on the failing path - a passing round ends as soon as the
+		// reports are in - so a generous bound costs nothing and removes a
+		// scheduling race that has now failed CI twice.
+		for i := 0; i < 3000; i++ {
 			id, err := storagereach.PendingRoundID(ctx, rdb)
 			if err == nil && id != "" {
 				done <- storagereach.RunParticipant(ctx, rdb, "core-b", id, factory)
