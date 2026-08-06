@@ -105,6 +105,15 @@ func TestSFTPGuardsSeeTheWholePath(t *testing.T) {
 			t.Errorf("Stat err = %v, want not exist", err)
 		}
 	})
+
+	// Hiding the directory from its parent's listing means nothing if listing
+	// it by name still enumerates every archive inside.
+	t.Run("list of the reserved directory itself", func(t *testing.T) {
+		fs, _ := newProtectedFS(t)
+		if _, err := fs.Filelist(&sftp.Request{Method: "List", Filepath: "myserver/.dylaris-backups"}); err != os.ErrNotExist {
+			t.Errorf("List err = %v, want not exist", err)
+		}
+	})
 }
 
 // The guard must not swallow ordinary work, and clients stat the server

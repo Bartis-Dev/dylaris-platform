@@ -499,9 +499,15 @@ func (l listerAt) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	switch r.Method {
 	case "List":
-		realPath, _, err := v.resolve(r.Filepath)
+		realPath, rel, err := v.resolve(r.Filepath)
 		if err != nil {
 			return nil, err
+		}
+		// The per-entry filter below only hides a protected directory from its
+		// PARENT's listing. Listing it by name still enumerated everything
+		// inside, which for .dylaris-backups is every archive the server has.
+		if protectedRel(rel) {
+			return nil, os.ErrNotExist
 		}
 		if realPath == "" {
 			// Root: list virtual server entries
