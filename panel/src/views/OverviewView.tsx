@@ -362,23 +362,28 @@ export default function OverviewView({ server }: OverviewViewProps) {
               </span>
             </div>
 
-            {/* The measured usage above is real everywhere. The LIMIT is not:
-                project quotas need xfs or ext4, so on NFS, CIFS or a Docker
-                Desktop bind mount from a Windows host it is recorded and never
-                enforced. Without this line the owner reads "12 GB of 20 GB" and
-                has no way to know the 20 is a wish. The operator-facing warning
-                for this already exists in Infrastructure, per storage path;
-                this is the same fact where the person affected by it looks.
+            {/* What differs on a filesystem without project quotas is HOW the
+                limit is held, not whether it is. The disk guard still measures
+                (du instead of a quota read), still stops the server at the
+                limit, and Core still refuses to start it again until usage
+                drops - see node/disk_guard.go. What is missing is the
+                filesystem's own hard stop, so a server can overshoot between two
+                scans, which run every few minutes.
+
+                Saying "not enforced" here would be a plain lie to the owner, and
+                the first version of this note said exactly that. The useful fact
+                is the overshoot: it is why usage can read above the limit and
+                why the server stops a few minutes later rather than instantly.
 
                 Explicitly === false: a node too old to send the field leaves it
-                undefined, and that must not read as "not enforced". */}
+                undefined, and that must not read as a warning. */}
             {diskUsage.limit > 0 && diskUsage.enforceable === false && (
               <p className="flex items-start gap-1.5 mb-3 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[11px] text-(--warning-light)">
                 <AlertTriangle size={11} className="mt-0.5 shrink-0" />
                 <span>
-                  Usage is measured, but this limit is not enforced: the storage here does not
-                  support disk quotas (they need xfs or ext4). Nothing stops this server from
-                  growing past it.
+                  This storage cannot hold the limit itself (disk quotas need xfs or ext4), so
+                  the server is stopped by a periodic check instead. Usage is measured every few
+                  minutes and can briefly go over the limit before that happens.
                 </span>
               </p>
             )}

@@ -40,17 +40,20 @@ type DiskUsagePayload struct {
 	Limit      int64            `json:"limit"`
 	SubServers map[string]int64 `json:"subServers"`
 	Warning    string           `json:"warning,omitempty"` // "", "80", "90", "full"
-	// Enforceable reports whether Limit is actually ENFORCED for this server, or
-	// merely recorded. Project quotas need xfs or ext4; on anything else - NFS,
-	// CIFS, a Docker Desktop bind mount from a Windows host - the limit is stored,
-	// shown, and nothing stops a server from sailing past it.
+	// Enforceable reports whether the FILESYSTEM holds this limit, via project
+	// quotas, or whether the platform has to hold it in software. Quotas need xfs
+	// or ext4; NFS, CIFS and a Docker Desktop bind mount from a Windows host have
+	// none.
 	//
-	// The node has always known this per storage path and the Infrastructure view
-	// warns an operator about it, but the per-server payload carried no such flag,
-	// so a server owner saw "12 GB of 20 GB" with no way to tell that the 20 was a
-	// wish. Usage itself is measured either way (quota read, or a du scan), which
-	// is why the answer here is "limits are not enforced" and not "no storage
-	// information".
+	// False does NOT mean the limit is ignored. disk_guard.go still measures with
+	// du, still stops the server when it reaches the limit, and Core still refuses
+	// to start it again until usage drops. What is lost is the filesystem's own
+	// hard stop, so a server can overshoot between two scans - those run on
+	// diskFallbackInterval, minutes apart, because a du walk is itself expensive.
+	//
+	// That distinction is the whole reason the flag exists: the owner needs to
+	// know why usage can read above the limit and why the stop arrives a few
+	// minutes late, not to be told the number is meaningless.
 	Enforceable bool `json:"enforceable"`
 }
 
