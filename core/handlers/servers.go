@@ -130,6 +130,9 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	perms := LoadEffectivePermissions(h.state, userID)
 	servers = FilterServersByRegion(servers, perms)
 
+	username, _ := r.Context().Value("username").(string)
+	applyResolvedTabPermissions(h.state, servers, userID, username)
+
 	// Demo servers. Mark any server already in the list that is on the demo list
 	// (so its owner/admin sees the demo status in the toggle), and — for the
 	// designated read-only demo account — append the showcase server(s) so the

@@ -405,6 +405,7 @@ type TabPermissions struct {
 	Power    bool `json:"power"`
 	Members  bool `json:"members"`
 	Network  bool `json:"network"`
+	Backups  bool `json:"backups"`
 	Inherit  bool `json:"inherit"`
 }
 
