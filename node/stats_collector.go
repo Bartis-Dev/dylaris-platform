@@ -63,6 +63,11 @@ const (
 	pingInterval          = 15 * time.Second
 	diskInterval          = 10 * time.Second
 	diskFallbackInterval  = 5 * time.Minute
+	// diskFullMarkerTTL outlives several measurement cycles, so the hold survives
+	// a slow scan, but expires on its own if this node dies while holding a
+	// server down - the guard re-evaluates within one cycle when it comes back,
+	// so a stale marker can never strand a server whose space was freed.
+	diskFullMarkerTTL = 1 * time.Hour
 	historyBatchInterval  = 2 * time.Minute
 	pingTimeout           = 3 * time.Second
 	watchCacheDuration    = 2 * time.Second
@@ -183,7 +188,10 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				// over the node's own "installing". That is not just a wrong label:
 				// the message it stands for ("Reconciler will handle restart") is
 				// false while the node is deliberately holding the reconciler off.
-				if !statsWriteProtectedStatuses[currentStatus] && !isNodeBusy(ctx, rdb, uuid) {
+				// isDiskFull for the same reason as isNodeBusy: without it this
+				// writes "restarting" over a server the guard is deliberately
+				// holding down, promising a restart that is not coming.
+				if !statsWriteProtectedStatuses[currentStatus] && !isNodeBusy(ctx, rdb, uuid) && !isDiskFull(ctx, rdb, uuid) {
 					desiredKey := fmt.Sprintf("dylaris:server:%s:desired_state", uuid)
 					desired, _ := rdb.Get(ctx, desiredKey).Result()
 					if desired == "online" {
@@ -406,10 +414,16 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 					rdb.Set(ctx, diskKey, string(data), 10*time.Minute)
 
 					if usage.Warning == "full" {
-						// Check if container is actually running before stopping
-						currentStatus, _ := rdb.Get(ctx, statusKey).Result()
-						if currentStatus == "online" || currentStatus == "" {
+						// The marker, not the status key, decides whether this server is
+						// already being held down. The status key is a mailbox Core drains
+						// every 5s, so reading it here answered "not stopped yet" on nearly
+						// every pass - and the reconciler, reading the same drained key,
+						// started the server again ten seconds after each stop.
+						if !isDiskFull(ctx, rdb, uuid) {
 							log.Printf("Disk quota full for %s — stopping server", uuid)
+							// Set BEFORE the stop: gracefulStop takes seconds and the
+							// reconciler ticks during them.
+							rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL)
 							gracefulStop(rdb, uuid, dm)
 							rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "disk_full", 30*time.Second)
 							// Publish disk_full event so panel reacts immediately
@@ -433,10 +447,13 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 							rdb.Publish(ctx, liveKey, string(evt))
 						}
 
-						// Auto-resolve: if status is disk_full but usage is below 100%, reset to stopped
-						currentStatus, _ := rdb.Get(ctx, statusKey).Result()
-						if currentStatus == "disk_full" {
-							log.Printf("Disk quota resolved for %s — setting status to stopped", uuid)
+						// Auto-resolve: usage is back under the limit, so release the hold.
+						// Keyed on the marker for the same reason the trip is: the status
+						// key this used to read is drained by Core, so the branch almost
+						// never fired and a freed-up server could stay held.
+						if isDiskFull(ctx, rdb, uuid) {
+							log.Printf("Disk quota resolved for %s — releasing the hold, setting status to stopped", uuid)
+							rdb.Del(ctx, diskFullKey(uuid))
 							rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
 							evt, _ := json.Marshal(map[string]interface{}{
 								"type":    "disk_warning",

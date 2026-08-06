@@ -51,6 +51,30 @@ func nodeBusyKey(uuid string) string {
 	return fmt.Sprintf("dylaris:server:%s:node_busy", uuid)
 }
 
+// diskFullKey marks a server this node has STOPPED for exceeding its disk
+// limit. See isDiskFull.
+func diskFullKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:disk_full", uuid)
+}
+
+// isDiskFull reports whether the disk guard is holding this server down.
+//
+// Needed for the same reason as isNodeBusy: the guard's own signal was the
+// status key, and Core's status watcher drains that key every 5 seconds. So the
+// reconciler saw a stopped container, no protected status, desired_state still
+// "online" - and started it straight back up. Observed live, ten seconds apart:
+//
+//	08:53:55 Disk quota full for <uuid> — stopping server
+//	08:54:00 container stopped gracefully
+//	08:54:10 reconciler: restarting crashed container mc_<uuid> (attempt 1/3)
+//
+// The limit was therefore enforced for about ten seconds every five minutes, and
+// the two halves of the node fought each other indefinitely.
+func isDiskFull(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	n, err := rdb.Exists(ctx, diskFullKey(uuid)).Result()
+	return err == nil && n == 1
+}
+
 // isNodeBusy reports whether this node is mid-operation on the server.
 //
 // This exists because protectedStatuses below CANNOT carry that information.
@@ -246,6 +270,11 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 			// ... and for an operation this node is running right now, which the
 			// status key cannot tell us (see isNodeBusy).
 			if isNodeBusy(ctx, rdb, c.UUID) {
+				continue
+			}
+			// ... and for a server the disk guard deliberately stopped. Restarting
+			// it would put a server that is over its limit straight back over it.
+			if isDiskFull(ctx, rdb, c.UUID) {
 				continue
 			}
 
