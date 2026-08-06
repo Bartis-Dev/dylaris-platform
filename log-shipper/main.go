@@ -19,19 +19,26 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// recordCrash folds one process exit into the consecutive-crash count and says
-// whether the supervisor should stop restarting.
+// crashStreak counts crashes inside a rolling window (see crashWindow).
+type crashStreak struct {
+	count int
+	first time.Time // when the current streak began
+}
+
+// record folds one process exit into the streak and reports whether the
+// supervisor should stop restarting.
 //
-// A process that ran for a while and then died is a crash to recover from; one
-// that dies immediately, again and again, is a server that cannot start. Only
-// the second kind counts, so a server that runs for hours and then crashes
-// always gets its restart, however many times it has crashed before.
-func recordCrash(prev int, ranFor time.Duration) (count int, giveUp bool) {
-	if ranFor >= crashAliveThreshold {
-		prev = 0
+// A crash that arrives more than a window after the streak began is a separate
+// incident and starts a new streak, so a server that crashes a few times over a
+// day while running normally in between is never given up on. Three inside one
+// window is a loop.
+func (c *crashStreak) record(now time.Time) (count int, giveUp bool) {
+	if c.count == 0 || now.Sub(c.first) > crashWindow {
+		c.count, c.first = 1, now
+	} else {
+		c.count++
 	}
-	count = prev + 1
-	return count, count >= maxConsecutiveCrashes
+	return c.count, c.count >= maxCrashesInWindow
 }
 
 const (
@@ -62,10 +69,28 @@ const (
 	// on repeated failure writes the reconcile_failed key Core surfaces. A
 	// container that is Up means a server that is running again.
 	//
-	// Thresholds mirror node/reconciler.go deliberately (maxCrashRetries 5,
-	// aliveThreshold 60s), so an operator reading either file sees one policy.
-	maxConsecutiveCrashes = 5
-	crashAliveThreshold   = 60 * time.Second
+	// Three crashes inside one window is enough to conclude the server cannot
+	// run; a fourth start would only repeat the same failure.
+	//
+	// The window is what keeps that from punishing a server that merely crashes
+	// occasionally. Counting CONSECUTIVE crashes and resetting after a run of
+	// some minimum length looks equivalent and is not: with a 60s reset, a server
+	// that survives 61 seconds every time resets forever and is restarted
+	// forever. Anchoring the streak to wall-clock instead means three crashes an
+	// hour apart are three separate incidents, and three inside a quarter of an
+	// hour are a loop.
+	//
+	// 15 minutes is chosen against start time. A normal server is up in well
+	// under a minute and even a large modpack in a few, so three failures inside
+	// fifteen minutes cannot be three healthy lifetimes. Erring long is the safe
+	// direction: the cost of a too-long window is that a genuinely broken server
+	// flaps a while longer, which is now visible in the panel, while a too-short
+	// one takes a working server away from its owner.
+	//
+	// Mirrored in node/reconciler.go so an operator reading either file sees one
+	// policy.
+	maxCrashesInWindow = 3
+	crashWindow        = 15 * time.Minute
 )
 
 // gcLineRegex matches the GC summary lines emitted by both Java 9+
@@ -384,7 +409,7 @@ func main() {
 	// Restart loop: re-launches Java on crash, exits on manual stop, and gives
 	// up once the process has proven it cannot stay alive (see
 	// maxConsecutiveCrashes).
-	consecutiveCrashes := 0
+	var streak crashStreak
 	for {
 		javaCmd := exec.Command(os.Args[1], os.Args[2:]...)
 		javaCmd.Env = append(os.Environ(), "TERM=xterm-256color")
@@ -407,7 +432,6 @@ func main() {
 			log.Fatalf("log-shipper: failed to start process %q: %v", os.Args[1], err)
 		}
 		log.Printf("log-shipper: started PID %d: %s", javaCmd.Process.Pid, strings.Join(os.Args[1:], " "))
-		startedAt := time.Now()
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -453,14 +477,14 @@ func main() {
 			os.Exit(0)
 		}
 
-		var giveUp bool
-		consecutiveCrashes, giveUp = recordCrash(consecutiveCrashes, time.Since(startedAt))
+		crashes, giveUp := streak.record(time.Now())
 
 		if giveUp {
-			msg := fmt.Sprintf("[Server failed to start %d times in a row (last exit code %d) - giving up. "+
+			msg := fmt.Sprintf("[Server crashed %d times within %s (last exit code %d) - giving up. "+
 				"The container is stopping so this shows as a failure instead of appearing online. "+
-				"Check the log above for the reason.]", consecutiveCrashes, exitCode)
-			log.Printf("log-shipper: %d consecutive fast crashes, exiting with code %d so the container does not stay Up on a dead server", consecutiveCrashes, exitCode)
+				"Check the log above for the reason, then start the server again once it is fixed.]",
+				crashes, crashWindow, exitCode)
+			log.Printf("log-shipper: %d crashes within %s, exiting with code %d so the container does not stay Up on a dead server", crashes, crashWindow, exitCode)
 			rdb.XAdd(context.Background(), &redis.XAddArgs{
 				Stream: streamKey,
 				MaxLen: maxStreamLen,
@@ -473,12 +497,12 @@ func main() {
 		}
 
 		// Crash recovery: restart after delay
-		log.Printf("log-shipper: process crashed (exit %d), restarting in 5s... (%d/%d)", exitCode, consecutiveCrashes, maxConsecutiveCrashes)
+		log.Printf("log-shipper: process crashed (exit %d), restarting in 5s... (%d/%d within %s)", exitCode, crashes, maxCrashesInWindow, crashWindow)
 		rdb.XAdd(context.Background(), &redis.XAddArgs{
 			Stream: streamKey,
 			MaxLen: maxStreamLen,
 			Approx: true,
-			Values: map[string]interface{}{"line": fmt.Sprintf("[Server crashed (exit code %d) - restarting automatically (%d/%d)...]", exitCode, consecutiveCrashes, maxConsecutiveCrashes)},
+			Values: map[string]interface{}{"line": fmt.Sprintf("[Server crashed (exit code %d) - restarting automatically (%d/%d)...]", exitCode, crashes, maxCrashesInWindow)},
 		})
 		time.Sleep(5 * time.Second)
 	}

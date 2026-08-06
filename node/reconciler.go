@@ -15,23 +15,34 @@ import (
 
 const (
 	reconcileInterval = 15 * time.Second
-	maxCrashRetries   = 5
-	aliveThreshold    = 60 * time.Second // container must run this long to reset crash count
+
+	// Crash policy, mirrored from log-shipper/main.go so both halves of the same
+	// escalation read the same. Three restarts inside one window, then stop.
+	//
+	// The window replaces an aliveThreshold that reset the count after any run
+	// longer than 60s. That looked equivalent and was not: a container surviving
+	// 61 seconds each time reset forever and was restarted forever. Anchoring the
+	// streak to wall clock instead means three crashes an hour apart are three
+	// separate incidents, while three inside a quarter of an hour are a loop.
+	maxCrashRetries = 3
+	crashWindow     = 15 * time.Minute
 )
 
-// backoff durations indexed by crash count (0-based)
+// backoff durations indexed by crash count (0-based). One entry per allowed
+// retry: with maxCrashRetries at 3 the whole escalation is over in about a
+// minute and a half of backoff, and the last two entries of the old five-entry
+// list were unreachable.
 var backoffDurations = []time.Duration{
 	0,
 	30 * time.Second,
 	60 * time.Second,
-	120 * time.Second,
-	120 * time.Second,
 }
 
 type reconcileInfo struct {
 	crashCount    int
 	lastRestart   time.Time
 	lastSeenAlive time.Time
+	streakStart   time.Time // when the current crash streak began; see crashWindow
 }
 
 // nodeBusyKey marks a server this node is deliberately holding down while it
@@ -216,14 +227,13 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 			}
 
 			if c.State == "running" {
-				// Container is running as desired — update alive tracking
-				info, exists := tracker[c.UUID]
-				if exists {
-					if time.Since(info.lastRestart) > aliveThreshold {
-						// Container has been alive long enough — reset crash counter
-						info.crashCount = 0
-						info.lastSeenAlive = time.Now()
-					}
+				// Container is running as desired. The streak is NOT cleared here
+				// on a duration: a container that survives a minute each time and
+				// dies again is looping, and clearing on "it ran for a while" is
+				// exactly what let that loop run forever. It clears when the streak
+				// itself ages out of the window, below.
+				if info, exists := tracker[c.UUID]; exists {
+					info.lastSeenAlive = time.Now()
 				}
 				continue
 			}
@@ -246,11 +256,22 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 				tracker[c.UUID] = info
 			}
 
+			// Age the streak out: a crash more than a window after this streak
+			// began is a separate incident, so a server that dies once in a while
+			// is always restarted however often it has died before.
+			if info.crashCount > 0 && time.Since(info.streakStart) > crashWindow {
+				info.crashCount = 0
+			}
+			if info.crashCount == 0 {
+				info.streakStart = time.Now()
+			}
+
 			// Check if max retries exceeded
 			if info.crashCount >= maxCrashRetries {
-				// Set failed key so core can surface it
+				// Set failed key so core can surface it (status_watcher's
+				// consumeReconcileFailures lands it on the server row).
 				failedKey := fmt.Sprintf("dylaris:server:%s:reconcile_failed", c.UUID)
-				rdb.Set(ctx, failedKey, fmt.Sprintf("Container crashed %d times, auto-restart disabled", info.crashCount), 0)
+				rdb.Set(ctx, failedKey, fmt.Sprintf("Container crashed %d times within %s, auto-restart disabled", info.crashCount, crashWindow), 0)
 				continue
 			}
 

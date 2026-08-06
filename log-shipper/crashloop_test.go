@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestRecordCrash_GivesUpOnAServerThatCannotStart pins the policy that makes a
+// TestCrashStreak_GivesUpOnAServerThatCannotStart pins the policy that makes a
 // running container mean a running server.
 //
 // This supervisor is PID 1 of the server container. While it keeps restarting a
@@ -14,44 +14,73 @@ import (
 // NOT running, so does the stats collector, so the panel says "online". Measured
 // on a server whose jar was missing - eight minutes of a JVM exiting every five
 // seconds, reported as online the whole time, and it would not have stopped.
-func TestRecordCrash_GivesUpOnAServerThatCannotStart(t *testing.T) {
-	count := 0
-	for i := 1; i < maxConsecutiveCrashes; i++ {
-		var giveUp bool
-		count, giveUp = recordCrash(count, 200*time.Millisecond)
-		if giveUp {
-			t.Fatalf("gave up after %d fast crashes, want %d", i, maxConsecutiveCrashes)
+func TestCrashStreak_GivesUpOnAServerThatCannotStart(t *testing.T) {
+	var s crashStreak
+	now := time.Now()
+
+	for i := 1; i < maxCrashesInWindow; i++ {
+		if _, giveUp := s.record(now.Add(time.Duration(i) * 5 * time.Second)); giveUp {
+			t.Fatalf("gave up after %d crashes, want %d", i, maxCrashesInWindow)
 		}
 	}
-	count, giveUp := recordCrash(count, 200*time.Millisecond)
+	count, giveUp := s.record(now.Add(maxCrashesInWindow * 5 * time.Second))
 	if !giveUp {
-		t.Fatalf("count %d did not trigger give-up at the %d limit", count, maxConsecutiveCrashes)
+		t.Fatalf("count %d did not trigger give-up at the %d limit", count, maxCrashesInWindow)
 	}
 }
 
-// TestRecordCrash_AServerThatRanIsAlwaysRestarted: the limit is for a server
-// that cannot start, not for one that crashes. A process that stayed up past the
-// threshold resets the count, so a server running for hours and then dying gets
-// its restart no matter how many times it has crashed in its life.
-func TestRecordCrash_AServerThatRanIsAlwaysRestarted(t *testing.T) {
-	count := maxConsecutiveCrashes - 1 // one away from giving up
-	count, giveUp := recordCrash(count, crashAliveThreshold+time.Second)
-	if giveUp {
-		t.Fatal("gave up on a process that had been alive past the threshold")
-	}
-	if count != 1 {
-		t.Errorf("count = %d after a long-lived run, want 1 (the streak resets)", count)
+// TestCrashStreak_SpreadOutCrashesNeverGiveUp is the case the window exists for:
+// a server that crashes now and then over a day, running normally in between,
+// must keep being restarted. Each crash lands outside the previous streak's
+// window, so each is its own incident.
+func TestCrashStreak_SpreadOutCrashesNeverGiveUp(t *testing.T) {
+	var s crashStreak
+	now := time.Now()
+
+	for i := range 10 {
+		at := now.Add(time.Duration(i) * time.Hour)
+		count, giveUp := s.record(at)
+		if giveUp {
+			t.Fatalf("crash %d (an hour after the last) triggered give-up", i+1)
+		}
+		if count != 1 {
+			t.Errorf("crash %d has streak count %d, want 1 - each is a separate incident", i+1, count)
+		}
 	}
 }
 
-// TestRecordCrash_ThresholdIsInclusive: a run of exactly the threshold counts as
-// alive. Nothing turns on the boundary, but leaving it unstated invites the next
-// reader to change it by accident.
-func TestRecordCrash_ThresholdIsInclusive(t *testing.T) {
-	if count, _ := recordCrash(3, crashAliveThreshold); count != 1 {
-		t.Errorf("a run of exactly crashAliveThreshold gave count %d, want 1", count)
+// TestCrashStreak_ASurvivorInsideTheWindowStillCounts is the trap the previous
+// version fell into. It counted CONSECUTIVE crashes and reset the streak after
+// any run longer than 60s, which meant a server surviving 61 seconds each time
+// reset forever and was restarted forever. Anchoring to wall clock instead: runs
+// of a few minutes are still three crashes in a quarter of an hour, and that is
+// a loop.
+func TestCrashStreak_ASurvivorInsideTheWindowStillCounts(t *testing.T) {
+	var s crashStreak
+	now := time.Now()
+
+	s.record(now)
+	s.record(now.Add(4 * time.Minute))
+	count, giveUp := s.record(now.Add(8 * time.Minute))
+	if !giveUp {
+		t.Fatalf("three crashes in 8 minutes did not give up (count %d)", count)
 	}
-	if count, _ := recordCrash(3, crashAliveThreshold-time.Nanosecond); count != 4 {
-		t.Errorf("a run just under the threshold gave count %d, want 4 (streak continues)", count)
+}
+
+// TestCrashStreak_TheWindowIsMeasuredFromTheStreakStart: the window bounds the
+// whole streak, not the gap between neighbours, so a slow drift cannot walk past
+// the limit one small step at a time.
+func TestCrashStreak_TheWindowIsMeasuredFromTheStreakStart(t *testing.T) {
+	var s crashStreak
+	now := time.Now()
+
+	s.record(now)
+	// Just inside the window: still the same streak.
+	if count, _ := s.record(now.Add(crashWindow - time.Second)); count != 2 {
+		t.Errorf("count = %d for a crash inside the window, want 2", count)
+	}
+	// Just outside it, measured from the streak START: a new incident.
+	if count, giveUp := s.record(now.Add(crashWindow + time.Second)); count != 1 || giveUp {
+		t.Errorf("count = %d giveUp = %v past the window, want a fresh streak", count, giveUp)
 	}
 }
