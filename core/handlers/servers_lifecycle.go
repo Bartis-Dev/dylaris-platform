@@ -432,6 +432,13 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL)
 	}
 
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventSetup, actorID, "", map[string]interface{}{
+		"sub_server": subName,
+		"installer":  req.Installer.Type,
+		"version":    req.Installer.McVersion,
+	})
+
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -583,6 +590,13 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		go h.snapshotModpackContents(serverID, subName, installerType, nil, req.Installer.URL)
 	}
 
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventReinstall, actorID, "", map[string]interface{}{
+		"sub_server": subName,
+		"installer":  installerType,
+		"version":    mcVersion,
+	})
+
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -646,6 +660,12 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 			h.state.Queue.SendCommand(context.Background(), node.Token, "switch_server", switchPayload, nil)
 		}
 	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventSubServerSwitched, actorID, "", map[string]interface{}{
+		"from": srv.ActiveSubServer,
+		"to":   subName,
+	})
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
@@ -1398,11 +1418,18 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	// the just-deleted sub-server, so Docker auto-creates an empty
 	// bind dir and the user's deleted slot resurrects empty. Setting
 	// desired_state="stopped" tells the reconciler to leave it alone.
-	if srv.ActiveSubServer == subServerName {
+	wasActive := srv.ActiveSubServer == subServerName
+	if wasActive {
 		h.state.Store.UpdateServerStatus(serverID, "pending_setup")
 		h.state.Store.UpdateServerActiveSubServer(serverID, "")
 		h.state.Store.UpdateServerDesiredState(serverID, "stopped")
 	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventSubServerDeleted, actorID, "", map[string]interface{}{
+		"sub_server": subServerName,
+		"was_active": wasActive,
+	})
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 

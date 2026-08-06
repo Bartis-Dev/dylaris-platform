@@ -24,7 +24,11 @@ const (
 	ServerAuditEventReinstall              = "reinstall"
 	ServerAuditEventSubServerDeleted       = "subserver_deleted"
 	ServerAuditEventSubServerSwitched      = "subserver_switched"
-	ServerAuditEventDeleted                = "deleted"
+	// Deliberately has no producer: server_audit_events.server_id is
+	// ON DELETE CASCADE, so a row written while the server is being deleted is
+	// removed by the same statement. Recording a server deletion needs a log
+	// that outlives the server, not this one.
+	ServerAuditEventDeleted = "deleted"
 	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
 	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
 )
