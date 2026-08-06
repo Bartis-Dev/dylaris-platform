@@ -87,6 +87,12 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			modrinth_game_versions     TEXT         NOT NULL DEFAULT '',
 			modrinth_latest_version_id VARCHAR(64)  NOT NULL DEFAULT '',
 			modrinth_last_checked      TIMESTAMPTZ,
+			-- Also listed in migrateSchema's ADD COLUMN set for databases created
+			-- before it existed. It has to be HERE as well: that set runs before
+			-- this table is created, so on a fresh install the ALTER failed and
+			-- the column only appeared on the second boot - with every INSERT and
+			-- UPDATE on modversions answering 42703 until then.
+			modrinth_download_url      TEXT         NOT NULL DEFAULT '',
 			created_at                 TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 			updated_at                 TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 		)`,

@@ -213,9 +213,20 @@ func migrateSchema(db *sql.DB) error {
 		// removal then targeted the wrong directory. '' = pre-column row.
 		{"server_mods", "target_dir", "VARCHAR(16) NOT NULL DEFAULT ''"},
 	}
+	// The error was discarded here, which is how modversions.modrinth_download_url
+	// stayed missing on every fresh install without a word in the log: this loop
+	// runs before the modpack tables are created, so its ALTER hit a table that
+	// did not exist yet, and the column only appeared on the next boot. Nothing
+	// in this set is allowed to fail - ADD COLUMN IF NOT EXISTS is a no-op when
+	// the column is already there - so anything that does is a real ordering
+	// mistake and has to be visible.
 	for _, c := range cols {
 		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", c.table, c.col, c.def)
-		db.Exec(query)
+		if _, err := db.Exec(query); err != nil {
+			log.Printf("db: [warn] could not add %s.%s: %v - the column will be missing until the next boot; "+
+				"if the table is created later in ensureSchema, declare the column in its CREATE TABLE too",
+				c.table, c.col, err)
+		}
 	}
 
 	// Unique constraints (idempotent)
