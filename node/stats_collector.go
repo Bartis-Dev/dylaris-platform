@@ -216,6 +216,30 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		}
 	}
 
+	// Release sweep for servers the disk guard is HOLDING DOWN. It has to live
+	// out here, not in collectForContainer, because that only runs for RUNNING
+	// containers - and a held server is stopped by definition. Without this the
+	// hold can never lift: the guard stops the server, Core refuses to start it
+	// while its status is disk_full, and the only code that would clear the
+	// marker needs the container to be running.
+	//
+	// Before the marker existed the reconciler restarted the server ten seconds
+	// after every stop, and that bug was accidentally providing this recovery
+	// path. Fixing the hold without adding this would strand a server whose
+	// owner has already freed the space.
+	go func() {
+		t := time.NewTicker(diskFallbackInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				releaseResolvedDiskHolds(ctx, rdb, quota)
+			}
+		}
+	}()
+
 	scan()
 	for {
 		select {
@@ -549,4 +573,53 @@ func dirSize(path string) int64 {
 		return nil
 	})
 	return size
+}
+
+// releaseResolvedDiskHolds lifts the disk guard's hold on any server this node
+// hosts whose usage is back under its limit.
+//
+// Separate from the per-container measurement on purpose: that one is started
+// per RUNNING container, and a server the guard is holding is stopped. The two
+// writes mirror the trip - drop the marker so the reconciler may start the
+// server again, and report "stopped" so Core stops refusing a manual start.
+func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *QuotaSet) {
+	if rdb == nil || globalStorageMgr == nil {
+		return
+	}
+	var cursor uint64
+	for {
+		keys, next, err := rdb.Scan(ctx, cursor, "dylaris:server:*:disk_full", 100).Result()
+		if err != nil {
+			return
+		}
+		for _, key := range keys {
+			parts := strings.Split(key, ":")
+			if len(parts) != 4 {
+				continue
+			}
+			uuid := parts[2]
+			// Only this node's servers: the key is global, the measurement is not.
+			dir := globalStorageMgr.GetServerDir(uuid)
+			if dir == "" {
+				continue
+			}
+			if _, statErr := os.Stat(dir); statErr != nil {
+				continue
+			}
+			usage := getDiskUsage(ctx, rdb, uuid, quota)
+			if usage == nil || usage.Limit <= 0 {
+				continue
+			}
+			if usage.Total >= usage.Limit {
+				continue // still over: keep holding
+			}
+			log.Printf("Disk quota resolved for %s while stopped — releasing the hold", uuid)
+			rdb.Del(ctx, diskFullKey(uuid))
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+		}
+		cursor = next
+		if cursor == 0 {
+			return
+		}
+	}
 }
