@@ -150,6 +150,11 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			revoked     BOOLEAN      NOT NULL DEFAULT FALSE
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS share_links_token_uniq ON share_links (token)`,
+		// For databases created before the column was declared above. It lives
+		// HERE rather than in migrateSchema's ADD COLUMN set because that set
+		// runs before this phase: there the ALTER hits a table that does not
+		// exist yet, which is how it silently never applied on a fresh install.
+		`ALTER TABLE modversions ADD COLUMN IF NOT EXISTS modrinth_download_url TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

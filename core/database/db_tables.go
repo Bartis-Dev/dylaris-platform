@@ -201,17 +201,14 @@ func migrateSchema(db *sql.DB) error {
 		// Per-node encrypted secret. Holds AES-256-GCM ciphertext once provisioned;
 		// empty string = no secret yet.
 		{"nodes", "node_secret_enc", "TEXT NOT NULL DEFAULT ''"},
-		// Exact cdn.modrinth.com download URL for a Modrinth-linked artifact.
-		// Kept separate from url_override (reserved for the Solder mirror zip URL)
-		// so the mrpack render can emit a clean files[] reference; empty => the
-		// content is embedded under overrides/ instead.
-		{"modversions", "modrinth_download_url", "TEXT NOT NULL DEFAULT ''"},
 		{"nodes", "display_name", "TEXT"},
-		// Which directory a Modrinth install actually put the jar in
-		// ("mods"/"plugins"). Remembered rather than re-derived at uninstall,
-		// because the server's installer_type can change in between and the
-		// removal then targeted the wrong directory. '' = pre-column row.
-		{"server_mods", "target_dir", "VARCHAR(16) NOT NULL DEFAULT ''"},
+		// NOTE: modversions.modrinth_download_url and server_mods.target_dir are
+		// deliberately NOT in this set. Their tables are created by later phases,
+		// so the ALTER here hits a table that does not exist yet - which is how
+		// modrinth_download_url ended up missing on every fresh install. Both are
+		// declared in their CREATE TABLE and re-applied for older databases in
+		// applyUnifiedModpackSchema and applyPhase10Schema respectively, where
+		// the table is guaranteed to exist.
 	}
 	// The error was discarded here, which is how modversions.modrinth_download_url
 	// stayed missing on every fresh install without a word in the log: this loop

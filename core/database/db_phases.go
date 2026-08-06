@@ -109,6 +109,12 @@ func applyPhase10Schema(db *sql.DB) error {
 		ON server_mods(server_id, sub_server_name)`); err != nil {
 		return fmt.Errorf("phase 10: create server_mods index: %w", err)
 	}
+	// For databases created before target_dir was declared above. It belongs
+	// here rather than in migrateSchema's ADD COLUMN set: that set runs before
+	// this phase, so there the ALTER hits a table that does not exist yet.
+	if _, err := db.Exec(`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS target_dir VARCHAR(16) NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("phase 10: add server_mods.target_dir: %w", err)
+	}
 	return nil
 }
 
