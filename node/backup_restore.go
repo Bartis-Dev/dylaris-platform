@@ -195,6 +195,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "swap stage: "+err.Error())
 		return
 	}
+	if cmd.SubServer == "" {
+		if err := carryArchivesAcrossSwap(backupDir, targetDir); err != nil {
+			log.Printf("Restore %d: [warn] could not carry %s across the swap: %v", cmd.RunID, backupDirName, err)
+		}
+	}
 	go os.RemoveAll(backupDir)
 
 	// Bring the container back up. For sub-server restores we also flip
@@ -209,6 +214,30 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 
 	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
+}
+
+// carryArchivesAcrossSwap moves the live archive directory from the stashed
+// old server root into the freshly restored one.
+//
+// A whole-server restore replaces the server ROOT, and the archives live
+// inside it - so without this the atomic swap hands every OTHER backup to the
+// background delete that follows. Restoring one backup must never destroy the
+// rest, which is the difference between one bad restore and no way back at all.
+//
+// Anything the archive itself carried under that name is dropped first: only
+// archives written before the backup side stopped nesting them contain a copy,
+// and it is stale by definition. Sub-server restores never call this - their
+// target is one level below the archives.
+func carryArchivesAcrossSwap(stashedRoot, restoredRoot string) error {
+	live := filepath.Join(stashedRoot, backupDirName)
+	if _, err := os.Stat(live); err != nil {
+		return nil // nothing to carry
+	}
+	target := filepath.Join(restoredRoot, backupDirName)
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
+	return os.Rename(live, target)
 }
 
 // downloadBackup returns an io.ReadCloser streaming the archive from

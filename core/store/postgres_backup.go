@@ -202,7 +202,7 @@ func (s *PostgresStore) CreateBackupJob(j *models.BackupJob) (int, error) {
 		`INSERT INTO backup_jobs (server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, next_run_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		j.ServerID, nullableString(j.SubServer), j.Name, j.Schedule,
-		pq.Array(j.IncludePatterns), pq.Array(j.ExcludePatterns),
+		textArray(j.IncludePatterns), textArray(j.ExcludePatterns),
 		j.RetentionCount, nullableInt(j.StorageID), j.Enabled, nullableTime(j.NextRunAt),
 	).Scan(&id)
 	return id, err
@@ -213,7 +213,7 @@ func (s *PostgresStore) UpdateBackupJob(j *models.BackupJob) error {
 		`UPDATE backup_jobs SET sub_server = $1, name = $2, schedule = $3, include_patterns = $4,
 		 exclude_patterns = $5, retention_count = $6, storage_id = $7, enabled = $8, next_run_at = $9 WHERE id = $10`,
 		nullableString(j.SubServer), j.Name, j.Schedule,
-		pq.Array(j.IncludePatterns), pq.Array(j.ExcludePatterns),
+		textArray(j.IncludePatterns), textArray(j.ExcludePatterns),
 		j.RetentionCount, nullableInt(j.StorageID), j.Enabled, nullableTime(j.NextRunAt), j.ID,
 	)
 	return err
@@ -485,4 +485,18 @@ func nullableTime(t *time.Time) interface{} {
 		return nil
 	}
 	return *t
+}
+
+// textArray is pq.Array for a NOT NULL text[] column. A nil slice goes to the
+// driver as NULL, and naming the column in the INSERT means its DEFAULT '{}'
+// never applies - so the row is rejected with a not-null violation (23502).
+//
+// includePatterns and excludePatterns are optional in the API and nil whenever
+// a request omits them, which made `POST /api/servers/{id}/backup-jobs`
+// without a pattern list answer a bare 500.
+func textArray(v []string) interface{} {
+	if v == nil {
+		return pq.Array([]string{})
+	}
+	return pq.Array(v)
 }

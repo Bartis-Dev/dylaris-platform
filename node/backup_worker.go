@@ -60,6 +60,19 @@ type s3Cfg struct {
 	ForcePathStyle  bool   `json:"forcePathStyle"`
 }
 
+// isBackupStoreEntry reports whether a walk-relative path is the archive store
+// or something inside it. Such an entry never belongs in an archive.
+//
+// A whole-server job (sub_server NULL, which Core's validSubServer accepts as
+// "the whole container") walks the server ROOT, and .dylaris-backups sits
+// inside it: without this, every run archives every earlier run, so backup N
+// carries backups 1..N-1 on top of the world. Worse, the node-local upload
+// target is a file inside the very tree being walked, so a run can stream its
+// own half-written archive into itself.
+func isBackupStoreEntry(rel string) bool {
+	return rel == backupDirName || strings.HasPrefix(rel, backupDirName+"/")
+}
+
 // RunBackup builds the archive and streams it directly to storage via an
 // io.Pipe — no buffering in RAM. The tar+gzip writer runs in a goroutine
 // that pushes bytes into the pipe; the storage uploader reads from the
@@ -128,6 +141,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 			rel, _ := filepath.Rel(rootDir, path)
 			rel = filepath.ToSlash(rel)
 			if rel == "." {
+				return nil
+			}
+			if isBackupStoreEntry(rel) {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if matchAny(rel, cmd.ExcludePatterns) {
