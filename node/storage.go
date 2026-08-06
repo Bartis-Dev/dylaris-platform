@@ -405,7 +405,12 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 
 	log.Printf("storage: migrating %s: %s → %s (%s)", serverUUID, currentPath, targetPath, formatBytes(uint64(srcSize)))
 
-	if err := copyDir(srcDir, dstDir); err != nil {
+	// copyTree, not copyDir: this is a move, so the destination has to be the
+	// whole server including the entries copyDir withholds from a user-facing
+	// duplicate. With backups present copyDir loses enough bytes to fail the
+	// 90% check below; without them it passes and the source is deleted, taking
+	// .active_server and .node_config.json with it.
+	if err := copyTree(srcDir, dstDir); err != nil {
 		os.RemoveAll(dstDir)
 		return fmt.Errorf("copy failed: %v", err)
 	}

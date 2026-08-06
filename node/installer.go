@@ -587,7 +587,7 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// copyDir recursively copies src directory into dst.
+// copyDir recursively copies src directory into dst, DUPLICATING it for a user.
 //
 // Protected entries are skipped. isProtectedFile guards the destination string
 // a copy request names, which is blind to what a directory copy reaches on its
@@ -600,6 +600,21 @@ func copyFile(src, dst string) error {
 // died on "gzip open: EOF". Nothing wants any of these duplicated into a copy
 // either, so skipping is right for the installer's uses of this helper too.
 func copyDir(src, dst string) error {
+	return copyWalk(src, dst, true)
+}
+
+// copyTree copies src into dst VERBATIM, protected entries included.
+//
+// Only a whole-directory MOVE may use this. Relocating a server to another
+// storage path is not a duplication: the destination becomes the server, so it
+// needs .active_server (which sub-server runs), .node_config.json (what the
+// container is recreated from) and .dylaris-backups (the archives) or the
+// server arrives crippled at the new path and the source is deleted anyway.
+func copyTree(src, dst string) error {
+	return copyWalk(src, dst, false)
+}
+
+func copyWalk(src, dst string, skipProtected bool) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -608,7 +623,7 @@ func copyDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		if rel != "." && isProtectedFile(rel) {
+		if skipProtected && rel != "." && isProtectedFile(rel) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
