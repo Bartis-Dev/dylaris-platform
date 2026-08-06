@@ -56,15 +56,25 @@ func createTicketTables(db *sql.DB) error {
 
 		// Messages on a ticket. is_internal hides the message from the
 		// ticket creator + watchers — only visible to support+admin.
+		//
+		// user_id is nullable ON PURPOSE: the FK is ON DELETE SET NULL so a
+		// message survives its author's account deletion with the author link
+		// dropped (the read query already LEFT JOINs and COALESCEs the name).
+		// It was NOT NULL, which contradicts the SET NULL: deleting a user
+		// raised a not-null violation instead, so anyone who had ever written
+		// a ticket message could never be deleted, and the failure surfaced as
+		// a plain 500 because the handler only maps foreign-key violations.
 		`CREATE TABLE IF NOT EXISTS ticket_messages (
 			id          SERIAL PRIMARY KEY,
 			ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-			user_id     UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+			user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
 			body        TEXT NOT NULL,
 			is_internal BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, created_at ASC)`,
+		// Existing databases were created with the NOT NULL above. Idempotent.
+		`ALTER TABLE ticket_messages ALTER COLUMN user_id DROP NOT NULL`,
 
 		// Watchers / CC. can_reply distinguishes "read-only" from
 		// "co-resolves with me" — admin sets the policy default.

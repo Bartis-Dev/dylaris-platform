@@ -373,9 +373,17 @@ func (s *PostgresStore) ListTicketMessages(ticketID int, includeInternal bool) (
 	var out []models.TicketMessage
 	for rows.Next() {
 		var m models.TicketMessage
-		if err := rows.Scan(&m.ID, &m.TicketID, &m.UserID, &m.Username, &m.UserRole, &m.Body, &m.IsInternal, &m.CreatedAt); err != nil {
-			continue
+		// user_id is NULL once the author's account is deleted (the FK is
+		// ON DELETE SET NULL, which is why the join above is a LEFT JOIN and
+		// the name is COALESCEd). Scanning it into a plain string would fail,
+		// and the old `continue` would have dropped the message from the
+		// thread without a word - the same silent-skip that hid the spark
+		// profile list being empty.
+		var userID sql.NullString
+		if err := rows.Scan(&m.ID, &m.TicketID, &userID, &m.Username, &m.UserRole, &m.Body, &m.IsInternal, &m.CreatedAt); err != nil {
+			return nil, err
 		}
+		m.UserID = userID.String
 		out = append(out, m)
 	}
 	return out, nil
