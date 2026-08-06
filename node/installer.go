@@ -592,9 +592,13 @@ func copyFile(src, dst string) error {
 // Protected entries are skipped. isProtectedFile guards the destination string
 // a copy request names, which is blind to what a directory copy reaches on its
 // own: a copy rooted anywhere above them walks straight into .active_server,
-// .dylaris.json and .node_config.json and rewrites them. Nothing wants those
-// duplicated into a copy either, so skipping is right for the installer's uses
-// of this helper too.
+// .dylaris.json, .node_config.json and .dylaris-backups and rewrites them.
+//
+// That last one decides whether a mistake is recoverable. The backup archives
+// live inside the server directory, so the self-copy that zeroed the test
+// server's world zeroed both of its backups in the same walk, and the restore
+// died on "gzip open: EOF". Nothing wants any of these duplicated into a copy
+// either, so skipping is right for the installer's uses of this helper too.
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

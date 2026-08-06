@@ -862,9 +862,10 @@ func isProtectedFile(path string) bool {
 // catastrophic for copying: src and dst both become the root, filepath.Walk
 // visits every file, and copyFile opens each one for writing (O_TRUNC) as its
 // own source. One copy request with two empty paths zeroed 185 files here -
-// the whole world, every config, and the three dotfiles isProtectedFile exists
-// to defend. That guard never fired: it only sees the destination string, and
-// filepath.Base("") is ".".
+// the whole world, every config, the three dotfiles isProtectedFile exists to
+// defend, and both backup archives, which live under the same root. The
+// restore then died on "gzip open: EOF". That guard never fired: it only sees
+// the destination string, and filepath.Base("") is ".".
 //
 // rawSrc/rawDst are the request's paths, used only for the empty check; src and
 // dst are the resolved absolute paths.
