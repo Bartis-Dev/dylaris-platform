@@ -1,8 +1,5 @@
 name: Build Service (Reusable)
 
-# TEMPORARY (2026-08-06): runs on GitHub-hosted `ubuntu-latest` while the
-# self-hosted runner is down. Revert that commit to go back to `self-hosted`.
-
 on:
   workflow_call:
     inputs:
@@ -32,7 +29,7 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write

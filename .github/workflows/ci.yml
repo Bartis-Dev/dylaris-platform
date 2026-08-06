@@ -1,12 +1,5 @@
 name: CI
 
-# TEMPORARY (2026-08-06): every job runs on GitHub-hosted `ubuntu-latest`
-# because the self-hosted runner keeps crashing - it disappeared mid-run and
-# left four pushes queued with nothing to pick them up. Revert this commit to
-# go back to `self-hosted`. Comments further down still describe that runner;
-# the DOCKER_CONFIG isolation and the race-tests-in-a-docker-build workaround
-# are both harmless on a hosted runner and are kept so the revert stays clean.
-
 # One workflow, one run per push. Order of operations:
 #   1. Run the FULL test suite first (every Go module + the panel).
 #   2. Only if everything is green, run change detection.
@@ -34,7 +27,7 @@ jobs:
   # 1. Tests - always run first, for every module.
   # ----------------------------------------------
   go-tests:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
@@ -108,7 +101,7 @@ jobs:
   #
   # See .github/race.Dockerfile for what a green run here does and does not prove.
   race-tests:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
@@ -125,7 +118,7 @@ jobs:
           push: false
 
   panel-tests:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
@@ -157,7 +150,7 @@ jobs:
   detect-changes:
     needs: [go-tests, race-tests, panel-tests]
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       core: ${{ steps.filter.outputs.core }}
       node: ${{ steps.filter.outputs.node }}
@@ -189,7 +182,7 @@ jobs:
   build-core:
     needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
@@ -269,7 +262,7 @@ jobs:
   build-log-shipper:
     needs: [go-tests, race-tests, panel-tests, detect-changes]
     if: needs.detect-changes.outputs.log-shipper == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
