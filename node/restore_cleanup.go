@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -24,6 +25,15 @@ const pendingDeleteTTL = 10 * time.Minute
 // restoreCleanupInterval is how often we walk the storage paths looking
 // for stale .pre-restore-* directories.
 const restoreCleanupInterval = time.Hour
+
+// preRestoreStash matches the names RunRestore gives a stash:
+// "<target>.pre-restore-<YYYYMMDD-HHMMSS>". The sub-server name comes first,
+// so this cannot be a prefix check the way ".pending-delete-" is - but a bare
+// strings.Contains was too loose in the other direction. The substring is
+// reserved nowhere on the way in, so a directory called
+// "notes.pre-restore-old" is something a user may legitimately create, and
+// this walk would have deleted it 24 hours later without a word.
+var preRestoreStash = regexp.MustCompile(`\.pre-restore-\d{8}-\d{6}$`)
 
 // StartRestoreCleanup runs a background goroutine that periodically deletes
 // .pre-restore-<timestamp> directories left behind by RunRestore once they
@@ -67,8 +77,16 @@ func runRestoreCleanup(sm *StorageManager) {
 				return nil
 			}
 			base := filepath.Base(path)
-			isRestore := strings.Contains(base, ".pre-restore-")
-			isPending := strings.HasPrefix(base, ".pending-delete-")
+			// Both stashes are created at depth 1 (a whole-server restore, next
+			// to the server dir) or depth 2 (a sub-server restore or a
+			// delete_sub_server tombstone). Anything matching deeper than that
+			// is not ours: the walk still VISITS depth 3, and a user can put a
+			// directory there through the file browser, SFTP or a zip upload.
+			// Neither name is reserved on the way in - only ".pending-delete-"
+			// is, and only against the file API, not zip extraction.
+			shallow := depthBelow(root, path) <= 2
+			isRestore := shallow && preRestoreStash.MatchString(base)
+			isPending := shallow && strings.HasPrefix(base, ".pending-delete-")
 			if !isRestore && !isPending {
 				// Avoid descending into world-data unnecessarily; we only
 				// care about top two levels (server / sub-server).
