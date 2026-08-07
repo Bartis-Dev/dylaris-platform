@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
+	"dylaris-core/store"
 
 	pbNode "dylaris-proto/node"
 	"dylaris-pkg/validate"
@@ -112,6 +114,10 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.state.Store.CreateBackupStorage(&req)
 	if err != nil {
+		if errors.Is(err, store.ErrNameTaken) {
+			sendJSONError(w, "A backup storage with that name already exists", 409)
+			return
+		}
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
@@ -142,7 +148,14 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		req = mergeBackupStorageSecret(req, existing)
 	}
 	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
-		sendJSONError(w, err.Error(), 500)
+		switch {
+		case errors.Is(err, store.ErrNameTaken):
+			sendJSONError(w, "A backup storage with that name already exists", 409)
+		case errors.Is(err, sql.ErrNoRows):
+			sendJSONError(w, "Backup storage not found", 404)
+		default:
+			sendJSONError(w, err.Error(), 500)
+		}
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

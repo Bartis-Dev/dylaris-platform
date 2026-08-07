@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -127,6 +128,9 @@ func (s *PostgresStore) CreateStorageConnection(c *models.StorageConnection) (in
 		`INSERT INTO storage_connections (name, provider, config, access_key, secret_enc) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`,
 		c.Name, c.Provider, cfg, c.AccessKey, enc,
 	).Scan(&id)
+	if isUniqueViolation(err) {
+		return 0, ErrNameTaken
+	}
 	return id, err
 }
 
@@ -139,11 +143,20 @@ func (s *PostgresStore) UpdateStorageConnection(c *models.StorageConnection) err
 	if len(cfg) == 0 {
 		cfg = []byte("{}")
 	}
-	_, err := s.db.Exec(
+	res, err := s.db.Exec(
 		`UPDATE storage_connections SET name = $1, provider = $2, config = $3::jsonb, access_key = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
 		c.Name, c.Provider, cfg, c.AccessKey, c.ID,
 	)
-	return err
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrNameTaken
+		}
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SetStorageConnectionSecret rotates just the secret for one connection,

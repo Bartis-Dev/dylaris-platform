@@ -87,6 +87,13 @@ func (s *PostgresStore) hydrateBackupStorageForBuild(bs *models.BackupStorage, s
 	bs.SecretSet = secret != ""
 }
 
+// CreateBackupStorage inserts a storage. When isDefault, it clears the previous
+// default in the SAME transaction as the insert: the clear and the row that is
+// supposed to replace it have to stand or fall together, or a rejected insert
+// (a duplicate name is the reachable one) leaves the platform with no default
+// at all - and GetDefaultBackupStorage then silently falls back to the
+// lowest-id storage, so scheduled backups start writing somewhere else while
+// the request that caused it reported failure. Same shape as CreatePlan.
 func (s *PostgresStore) CreateBackupStorage(bs *models.BackupStorage) (int, error) {
 	cleanCfg, secret := splitBackupStorageSecret(bs.Provider, bs.Config)
 	cfg := []byte(cleanCfg)
@@ -99,17 +106,35 @@ func (s *PostgresStore) CreateBackupStorage(bs *models.BackupStorage) (int, erro
 	if err != nil {
 		return 0, err
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 	if bs.IsDefault {
-		s.db.Exec(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE`)
+		if _, err = tx.Exec(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE`); err != nil {
+			return 0, err
+		}
 	}
 	var id int
-	err = s.db.QueryRow(
+	err = tx.QueryRow(
 		`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`,
 		bs.Name, bs.Provider, cfg, enc, bs.IsDefault,
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		if isUniqueViolation(err) {
+			return 0, ErrNameTaken
+		}
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
+// UpdateBackupStorage updates a storage in place, honoring the single-default
+// invariant. Transactional for the same reason as CreateBackupStorage: a rename
+// onto an existing name must not survive as a cleared default. Returns
+// sql.ErrNoRows when the id does not exist, so the handler can answer 404
+// instead of reporting a write that never happened.
 func (s *PostgresStore) UpdateBackupStorage(bs *models.BackupStorage) error {
 	cleanCfg, secret := splitBackupStorageSecret(bs.Provider, bs.Config)
 	cfg := []byte(cleanCfg)
@@ -120,14 +145,30 @@ func (s *PostgresStore) UpdateBackupStorage(bs *models.BackupStorage) error {
 	if err != nil {
 		return err
 	}
-	if bs.IsDefault {
-		s.db.Exec(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND id != $1`, bs.ID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	_, err = s.db.Exec(
+	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+	if bs.IsDefault {
+		if _, err = tx.Exec(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND id != $1`, bs.ID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.Exec(
 		`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5 WHERE id = $6`,
 		bs.Name, bs.Provider, cfg, enc, bs.IsDefault, bs.ID,
 	)
-	return err
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrNameTaken
+		}
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }
 
 func (s *PostgresStore) DeleteBackupStorage(id int) error {

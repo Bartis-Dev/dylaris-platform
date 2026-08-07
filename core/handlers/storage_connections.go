@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 
 	"dylaris-core/models"
 	"dylaris-core/storage"
+	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
 )
@@ -110,6 +113,10 @@ func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *h
 	}
 	id, err := h.state.Store.CreateStorageConnection(&conn)
 	if err != nil {
+		if errors.Is(err, store.ErrNameTaken) {
+			sendJSONError(w, "A storage connection with that name already exists", 409)
+			return
+		}
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
@@ -147,7 +154,14 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 		AccessKey: req.AccessKey,
 	}
 	if err := h.state.Store.UpdateStorageConnection(&conn); err != nil {
-		sendJSONError(w, err.Error(), 500)
+		switch {
+		case errors.Is(err, store.ErrNameTaken):
+			sendJSONError(w, "A storage connection with that name already exists", 409)
+		case errors.Is(err, sql.ErrNoRows):
+			sendJSONError(w, "Storage connection not found", 404)
+		default:
+			sendJSONError(w, err.Error(), 500)
+		}
 		return
 	}
 	if req.SecretAccessKey != "" {
