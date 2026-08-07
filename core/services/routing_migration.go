@@ -308,6 +308,12 @@ func (m *RoutingMigrationService) writeStatus(ctx context.Context, s MigrationSt
 
 func (m *RoutingMigrationService) updateProgress(ctx context.Context, done, failed, total int) {
 	s := m.readStatus(ctx)
+	// runBatches is the only caller, so by construction this IS a running
+	// migration. Do not inherit Running from the read: readStatus answers with
+	// a zero value when the key is missing, and Redis here is in-memory by
+	// design, so a restart mid-run would otherwise have this write back
+	// "finished" over a migration still in progress - unblocking a second one.
+	s.Running = true
 	s.Done = done
 	s.Failed = failed
 	s.Total = total

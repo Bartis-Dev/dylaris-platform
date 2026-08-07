@@ -74,6 +74,28 @@ func TestUpdateProgress_KeepsTheRunningStatusShortLived(t *testing.T) {
 	}
 }
 
+// readStatus answers with a zero value when the key is missing, and Redis here
+// runs in-memory by design (--save "" --appendonly no), so a restart mid-run
+// leaves updateProgress reading nothing. Inheriting Running from that read
+// wrote "finished" over a migration that was still going, which unblocks Run
+// and lets a second migration start on top of the first.
+func TestUpdateProgress_DoesNotReportFinishedWhenTheStatusWentMissing(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	m := &RoutingMigrationService{redis: rdb}
+	ctx := context.Background()
+
+	// No writeStatus first: the key simply is not there.
+	m.updateProgress(ctx, 7, 1, 40)
+
+	got := m.readStatus(ctx)
+	if !got.Running {
+		t.Fatal("progress update reported the migration finished while runBatches was still running")
+	}
+	if got.Done != 7 || got.Failed != 1 || got.Total != 40 {
+		t.Errorf("counters = %+v, want done=7 failed=1 total=40", got)
+	}
+}
+
 // The margin that makes the short TTL safe. The longest a live run can go
 // without writing the status is the last server of one batch settling, then the
 // pause, then the first server of the next batch settling. A TTL below that
