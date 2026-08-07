@@ -129,12 +129,32 @@ jobs:
   # Plain postgres, not timescaledb: DBType "postgres" makes ensureSchema create
   # server_stats as an ordinary table, so no extension is needed here.
   #
-  # NOT yet listed in any `needs:`. This job has never run on this runner, and
-  # a NEW gate that fails for environment reasons blocks deploys for reasons
-  # nobody chose that day - the same rule the race-tests comment above records.
-  # Once it has been green once, add it to detect-changes and to the build jobs
-  # so it gates like every other test job.
+  # MANUAL ONLY for now, and never in any `needs:`. Two runs on this runner
+  # established why, and it is an environment problem rather than a test one:
+  #
+  #   The service container starts and reports healthy ("Initialize containers:
+  #   success", `docker port` shows 5432/tcp -> 0.0.0.0:5432), and the job still
+  #   cannot reach it: "dial tcp 127.0.0.1:5432: connect: connection refused",
+  #   with 127.0.0.1 as well as localhost.
+  #
+  #   The reason is the one race.Dockerfile already records - THIS RUNNER IS
+  #   ITSELF CONTAINERIZED. `-p` publishes on the host daemon, which is outside
+  #   the runner's network namespace, so a published port is not reachable from
+  #   the job at all.
+  #
+  # The fix is the same indirection race-tests uses: start Postgres on a
+  # user-defined network with the docker CLI, then run the tests inside a
+  # container attached to that network, addressing it by name - never through a
+  # published port. Until that harness exists this job would be red on every
+  # push while proving nothing, and it burns eight minutes of runner time doing
+  # it (InitDB retries the ping for two minutes per test).
+  #
+  # The tests themselves are sound and are run locally against a real Postgres;
+  # the recipe is in the doc comment of core/database/postgres_integration_test.go.
+  # They already found a real defect that way: modversions.modrinth_download_url
+  # missing on every fresh install.
   db-tests:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     services:
       postgres:
