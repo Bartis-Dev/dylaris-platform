@@ -125,76 +125,62 @@ jobs:
   #   ticket_messages.user_id     NOT NULL with ON DELETE SET NULL -> 23502
   #   backup_jobs.*_patterns      nil slice into a NOT NULL text[] -> 23502
   #   spark_profiles.requested_by UUID scanned into an integer target
+  #   modversions.modrinth_download_url  missing on every fresh install
   #
-  # Plain postgres, not timescaledb: DBType "postgres" makes ensureSchema create
-  # server_stats as an ordinary table, so no extension is needed here.
+  # NOT a `services:` block, and not for want of trying: two runs proved one
+  # does start a healthy Postgres here and that the job still cannot reach it,
+  # over localhost and 127.0.0.1 alike. THIS RUNNER IS ITSELF CONTAINERIZED
+  # (race.Dockerfile records the same fact), so `-p` publishes on the host
+  # daemon, outside the runner's network namespace. Two containers on one
+  # user-defined network reach each other by NAME instead, which needs neither.
   #
-  # MANUAL ONLY for now, and never in any `needs:`. Two runs on this runner
-  # established why, and it is an environment problem rather than a test one:
+  # See .github/db.Dockerfile for why the tests are baked into an image rather
+  # than mounted, and why they run as `docker run` rather than as a build step.
   #
-  #   The service container starts and reports healthy ("Initialize containers:
-  #   success", `docker port` shows 5432/tcp -> 0.0.0.0:5432), and the job still
-  #   cannot reach it: "dial tcp 127.0.0.1:5432: connect: connection refused",
-  #   with 127.0.0.1 as well as localhost.
-  #
-  #   The reason is the one race.Dockerfile already records - THIS RUNNER IS
-  #   ITSELF CONTAINERIZED. `-p` publishes on the host daemon, which is outside
-  #   the runner's network namespace, so a published port is not reachable from
-  #   the job at all.
-  #
-  # The fix is the same indirection race-tests uses: start Postgres on a
-  # user-defined network with the docker CLI, then run the tests inside a
-  # container attached to that network, addressing it by name - never through a
-  # published port. Until that harness exists this job would be red on every
-  # push while proving nothing, and it burns eight minutes of runner time doing
-  # it (InitDB retries the ping for two minutes per test).
-  #
-  # The tests themselves are sound and are run locally against a real Postgres;
-  # the recipe is in the doc comment of core/database/postgres_integration_test.go.
-  # They already found a real defect that way: modversions.modrinth_download_url
-  # missing on every fresh install.
+  # Still out of every `needs:` list until it has been green once - a new gate
+  # that fails for environment reasons blocks deploys for reasons nobody chose
+  # that day, which is the rule the race-tests comment above records.
   db-tests:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: dylaris
-          POSTGRES_PASSWORD: testpw
-          POSTGRES_DB: dylaris_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.1'
-          cache-dependency-path: core/go.sum
+      - name: go test against a real Postgres
+        run: |
+          set -eu
+          NET="dyl-dbtest-${{ github.run_id }}"
+          PG="dyl-pg-${{ github.run_id }}"
+          IMG="dyl-dbtest:${{ github.run_id }}"
 
-      # The suite skips itself when DYLARIS_TEST_DB_HOST is unset, so this is
-      # also the switch that turns it on: `go test ./...` stays green on a
-      # machine without a database.
-      - name: go test (Postgres integration)
-        working-directory: core
-        env:
-          # 127.0.0.1, not localhost: the runner resolves localhost to ::1 first
-          # and the service container publishes on IPv4 only, so every connection
-          # was refused - InitDB then retried for two minutes per test before the
-          # job finally failed.
-          DYLARIS_TEST_DB_HOST: 127.0.0.1
-          DYLARIS_TEST_DB_PORT: '5432'
-          DYLARIS_TEST_DB_USER: dylaris
-          DYLARIS_TEST_DB_PASSWORD: testpw
-          DYLARIS_TEST_DB_NAME: dylaris_test
-        run: go test -count=1 -v -run Integration ./database/
+          cleanup() {
+            docker rm -f "$PG" >/dev/null 2>&1 || true
+            docker network rm "$NET" >/dev/null 2>&1 || true
+            docker image rm -f "$IMG" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker network create "$NET"
+          docker run -d --name "$PG" --network "$NET"             -e POSTGRES_USER=dylaris -e POSTGRES_PASSWORD=testpw -e POSTGRES_DB=dylaris_test             --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20             postgres:16-alpine
+
+          # Wait on the container's own healthcheck. Bounded at ~90s: the image
+          # is small and already local, so anything slower is a real failure and
+          # should say so quickly rather than let InitDB retry for minutes.
+          for _ in $(seq 1 45); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$PG")" = healthy ] && break
+            sleep 2
+          done
+          if [ "$(docker inspect -f '{{.State.Health.Status}}' "$PG")" != healthy ]; then
+            echo "::error::postgres never became healthy"
+            docker logs "$PG" | tail -30
+            exit 1
+          fi
+
+          docker build -f .github/db.Dockerfile -t "$IMG" .
+
+          # DYLARIS_TEST_DB_HOST is also the switch that turns the suite on: it
+          # skips itself when unset, so `go test ./...` stays green anywhere
+          # without a database.
+          docker run --rm --network "$NET"             -e DYLARIS_TEST_DB_HOST="$PG"             -e DYLARIS_TEST_DB_PORT=5432             -e DYLARIS_TEST_DB_USER=dylaris             -e DYLARIS_TEST_DB_PASSWORD=testpw             -e DYLARIS_TEST_DB_NAME=dylaris_test             "$IMG"
 
   panel-tests:
     runs-on: self-hosted
