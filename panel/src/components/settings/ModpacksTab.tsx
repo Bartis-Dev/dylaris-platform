@@ -27,6 +27,8 @@ const DEFAULTS: ModpackSettings = {
     updateCheckIntervalHours: 24,
     shareLinksEnabled: false,
     connectionId: 0,
+    corePublicUrl: '',
+    solderMirrorUrl: '',
 };
 
 export default function ModpacksTab() {
@@ -314,6 +316,44 @@ export default function ModpacksTab() {
                     </div>
                         )}
                     </div>
+                )}
+            </div>
+
+            {/* Solder mirror base — the public URL launchers download from */}
+            <div className="card p-5 space-y-3">
+                <div>
+                    <div className="font-medium text-sm text-(--base-09)">Solder mirror</div>
+                    <div className="text-xs text-(--base-06) mt-0.5 max-w-2xl">
+                        The public base a Technic/Solder launcher downloads pack artifacts from.
+                        Required: without it the public pack list answers 500 and the mirror host
+                        stays off the allowlist for installing a modpack onto a server.
+                    </div>
+                </div>
+                {settings.provider === 's3' ? (
+                    <Field
+                        label="Mirror URL"
+                        value={settings.solderMirrorUrl}
+                        onChange={v => setSettings(s => ({ ...s, solderMirrorUrl: v }))}
+                        placeholder="https://cdn.example.com/modpacks"
+                    />
+                ) : (
+                    <Field
+                        label="Core public URL"
+                        value={settings.corePublicUrl}
+                        onChange={v => setSettings(s => ({ ...s, corePublicUrl: v }))}
+                        placeholder="https://panel.example.com"
+                    />
+                )}
+                {((settings.provider === 's3' ? settings.solderMirrorUrl : settings.corePublicUrl).trim() === '') && (
+                    <div className="text-xs text-(--warning) italic">
+                        Not set — Solder clients cannot download from this platform yet.
+                    </div>
+                )}
+                {settings.provider !== 's3' && (
+                    <p className="text-xs text-(--base-06)">
+                        Core serves the mirror itself at <span className="font-mono">{'{url}'}/solder/mirror/</span>,
+                        so this is the origin players reach Core on, not an internal address.
+                    </p>
                 )}
             </div>
 

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -30,6 +32,15 @@ type modpackSettings struct {
 	S3SecretKey              string   `json:"s3SecretKey,omitempty"` // write-only
 	UpdateCheckIntervalHours int      `json:"updateCheckIntervalHours"`
 	ShareLinksEnabled        bool     `json:"shareLinksEnabled"`
+	// The public base a Solder client is told to fetch artifacts from.
+	// CorePublicURL is Core's own public origin and serves the local mirror at
+	// {CorePublicURL}/solder/mirror/; SolderMirrorURL is the public bucket base
+	// used instead when the provider is s3. solderMirrorBase picks between them
+	// by provider, and isSnapshotFetchHostAllowed derives its SSRF allowlist
+	// from the same value - so an unset one is not cosmetic: it 500s the public
+	// Solder pack list and leaves the mirror host off the allowlist.
+	CorePublicURL   string `json:"corePublicUrl"`
+	SolderMirrorURL string `json:"solderMirrorUrl"`
 	// ConnectionID references a saved storage connection. When non-zero, modpack
 	// storage is built from that connection (buildModpackStorageProvider) and the
 	// inline s3 fields are ignored. 0 = use the inline config.
@@ -70,6 +81,8 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.UpdateCheckIntervalHours = interval
 	out.ShareLinksEnabled = get("modpack_share_links_enabled") == "true"
 	out.ConnectionID, _ = strconv.Atoi(get(keyModpackStorageConnectionID)) // "" or bad -> 0 = none
+	out.CorePublicURL = get("core_public_url")
+	out.SolderMirrorURL = get("solder_mirror_url")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": out,
@@ -93,6 +106,34 @@ func validModpackProvider(p string) bool {
 		return true
 	}
 	return false
+}
+
+// validatePublicBaseURL accepts an empty value (the feature stays unconfigured
+// and says so) or an absolute http/https URL with a host and no credentials.
+//
+// Stricter than validateS3Endpoint, which only has to survive being handed to
+// the AWS SDK. This value is published to third-party launchers as the base
+// they download from, AND it is the host isSnapshotFetchHostAllowed compares
+// against, so a relative or scheme-less string would both hand clients a URL
+// they cannot resolve and widen an SSRF allowlist by accident.
+func validatePublicBaseURL(subject, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %w", subject, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%s must start with http:// or https://", subject)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s must include a host, e.g. https://panel.example.com", subject)
+	}
+	if u.User != nil {
+		return fmt.Errorf("%s must not contain credentials", subject)
+	}
+	return nil
 }
 
 // Set PUT /api/admin/settings/modpacks
@@ -120,6 +161,18 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// this on req.Provider == "s3" would leave a save with provider "local" as
 	// an open path for the same credential.
 	if err := validateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Both are validated whatever the provider is, for the same reason the S3
+	// endpoint above is: the writes below persist them either way.
+	req.CorePublicURL = strings.TrimSpace(req.CorePublicURL)
+	req.SolderMirrorURL = strings.TrimSpace(req.SolderMirrorURL)
+	if err := validatePublicBaseURL("core public URL", req.CorePublicURL); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validatePublicBaseURL("solder mirror URL", req.SolderMirrorURL); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -156,6 +209,8 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
 		{"modpack_share_links_enabled", boolStr(req.ShareLinksEnabled)},
 		{keyModpackStorageConnectionID, storageConnIDSetting(req.ConnectionID)},
+		{"core_public_url", req.CorePublicURL},
+		{"solder_mirror_url", req.SolderMirrorURL},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {

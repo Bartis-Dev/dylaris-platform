@@ -15,6 +15,12 @@ export interface ModpackSettings {
     s3SecretKey?: string;
     updateCheckIntervalHours: number;
     shareLinksEnabled: boolean;
+    // Public base a Solder client downloads artifacts from. corePublicUrl is
+    // used for local/core-storage (Core serves /solder/mirror/ itself),
+    // solderMirrorUrl for s3. Whichever applies must be set or the public
+    // Solder pack list answers 500.
+    corePublicUrl: string;
+    solderMirrorUrl: string;
     // References a saved storage connection. When set (> 0), modpack storage is
     // built from that connection and the inline s3 fields are ignored.
     connectionId?: number;
