@@ -541,7 +541,11 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 	}
 
 	// Publish to Redis so nodes pick up the new values via loadModesFromRedis
-	// without needing a redeploy. Best-effort — nodes also re-read every 30s.
+	// without needing a redeploy. Best-effort, but NOT because "nodes re-read
+	// every 30s" - that re-read only overwrites on a non-empty get, so it can
+	// never recover a key Redis has lost. What covers a failure here, and a
+	// wiped Redis, is services.NodeModePublisher re-asserting these from the
+	// database on its own ticker.
 	if h.state.Redis != nil {
 		ctx := r.Context()
 		h.state.Redis.Set(ctx, "dylaris:placement:port_mode", req.PortMode, 0)

@@ -415,21 +415,10 @@ func main() {
 	rebalanceWorker.SetLeader(coreLeader)
 	rebalanceWorker.Start(bgCtx)
 
-	// Publish routing modes to Redis on startup so Nodes pick them up immediately.
-	// Always write (even defaults) so stale Redis values from a previous install don't persist.
-	{
-		mode, _ := pgStore.GetSetting("routing_mode")
-		if mode == "" {
-			mode = "ip_port"
-		}
-		redisClient.Set(context.Background(), "dylaris:routing_mode", mode, 0)
-
-		fileMode, _ := pgStore.GetSetting("file_access_mode")
-		if fileMode == "" {
-			fileMode = "sftp"
-		}
-		redisClient.Set(context.Background(), "dylaris:file_access_mode", fileMode, 0)
-	}
+	// Publish the node-facing settings to Redis now, and keep re-publishing
+	// them: Redis has no persistence, and a node restarting into a wiped Redis
+	// silently falls back to its compiled defaults (see NodeModePublisher).
+	services.NewNodeModePublisher(pgStore, redisClient).Start(bgCtx)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(appState, cfg.JWTSecret)
