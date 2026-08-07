@@ -924,7 +924,12 @@ func (s *StorageMigrationService) startHeartbeat() func() {
 			case <-done:
 				return
 			case <-t.C:
-				s.redis.Expire(context.Background(), storageMigrationLockKey, storageMigrationLockTTL)
+				if id := s.jobID(); id != "" {
+					held, err := refreshOrReclaimJobLock(context.Background(), s.redis, storageMigrationLockKey, id, storageMigrationLockTTL)
+					if err == nil && !held {
+						log.Printf("storage migration %s: the migration lock is held by another job - a second job is running against the same data set", id)
+					}
+				}
 				s.update(func(j *StorageMigrationJob) {}) // touch UpdatedAt + re-persist
 			}
 		}

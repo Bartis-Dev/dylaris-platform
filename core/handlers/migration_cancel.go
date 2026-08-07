@@ -12,7 +12,14 @@ import (
 )
 
 // migrationCancelFlagTTL bounds the cancel flag so a stale request can never
-// outlive the migration it targets (matches the orchestrator's 10m lock TTL).
+// linger into a future move. It is only a backstop: the orchestrator deletes
+// the flag when the migration ends, so the TTL matters solely when it never
+// gets there (the Core died mid-run).
+//
+// It deliberately does NOT track how long a migration takes - a pre-cutover
+// transfer runs up to migrationR2PhaseTimeout, far past this - because every
+// pre-cutover wait re-reads the flag on each poll tick. A cancel is therefore
+// observed within one poll interval of being set, long before this expires.
 const migrationCancelFlagTTL = 10 * time.Minute
 
 // isCancellableMigrationPhase reports whether an orchestration phase is still

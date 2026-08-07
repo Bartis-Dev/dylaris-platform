@@ -316,7 +316,12 @@ func (s *DBMigrationService) startHeartbeat() func() {
 			case <-done:
 				return
 			case <-t.C:
-				s.redis.Expire(context.Background(), dbMigrationLockKey, dbMigrationLockTTL)
+				if id := s.jobID(); id != "" {
+					held, err := refreshOrReclaimJobLock(context.Background(), s.redis, dbMigrationLockKey, id, dbMigrationLockTTL)
+					if err == nil && !held {
+						log.Printf("db migration %s: the migration lock is held by another job - a second migration is running against the same target", id)
+					}
+				}
 				s.update(func(j *DBMigrationJob) {}) // touch UpdatedAt + re-persist
 			}
 		}
