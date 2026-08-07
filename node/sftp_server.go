@@ -448,7 +448,13 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 			return os.ErrPermission
 		}
 		return os.Mkdir(realPath, 0755)
-	case "Remove":
+	// pkg/sftp reports RMDIR as its own method, and it was not handled at all:
+	// it fell through to the "unsupported operation" default, so a client could
+	// create a directory over SFTP and then never delete it. os.Remove is the
+	// right call for both - it deletes a file, deletes an EMPTY directory, and
+	// refuses a non-empty one, which is exactly the RMDIR contract. The guards
+	// are the same either way, so the two share a branch rather than drift.
+	case "Remove", "Rmdir":
 		realPath, rel, err := v.resolve(r.Filepath)
 		if err != nil || realPath == "" {
 			return os.ErrPermission

@@ -174,6 +174,33 @@ func TestSFTPRootListsTheServers(t *testing.T) {
 	}
 }
 
+// RMDIR is its own pkg/sftp method and was never handled, so it fell through
+// to the "unsupported operation" default: a client could create a directory
+// over SFTP and then had no way to remove it.
+func TestSFTPRmdir(t *testing.T) {
+	fs, _ := newProtectedFS(t)
+
+	if err := fs.Filecmd(&sftp.Request{Method: "Mkdir", Filepath: "myserver/survival/tmpdir"}); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := fs.Filecmd(&sftp.Request{Method: "Rmdir", Filepath: "myserver/survival/tmpdir"}); err != nil {
+		t.Fatalf("rmdir of an empty directory: %v, want nil", err)
+	}
+
+	// The RMDIR contract: a non-empty directory must be refused, not emptied.
+	if err := fs.Filecmd(&sftp.Request{Method: "Rmdir", Filepath: "myserver/survival"}); err == nil {
+		t.Error("rmdir of a non-empty directory succeeded, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(fs.storageMgr.GetServerDir("srv-uuid"), "survival", "server.properties")); err != nil {
+		t.Errorf("a refused rmdir removed contents anyway: %v", err)
+	}
+
+	// And it carries the same guard as Remove.
+	if err := fs.Filecmd(&sftp.Request{Method: "Rmdir", Filepath: "myserver/.dylaris-backups"}); err != os.ErrPermission {
+		t.Errorf("rmdir of the backup store err = %v, want permission denied", err)
+	}
+}
+
 // Serving the root must not have reopened the hole the protected check exists
 // for: listing the reserved directory BY NAME still has to be refused.
 func TestSFTPRootFixDidNotUnhideTheBackupStore(t *testing.T) {
