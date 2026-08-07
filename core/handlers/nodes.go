@@ -6,6 +6,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/store"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -261,6 +262,13 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	node, nodeErr := h.state.Store.GetNodeByID(id)
 
 	if err := h.state.Store.DeleteNode(id); err != nil {
+		// Not a fault, the current state of the data: say what to do about it.
+		// Collapsing it into a 500 left an admin with a button that does nothing
+		// and no hint that the servers have to go first.
+		if errors.Is(err, store.ErrNodeHasServers) {
+			sendJSONError(w, "This node still has servers on it. Move or delete them first, or use force-delete to remove the node and its servers together.", 409)
+			return
+		}
 		sendJSONError(w, "Delete failed", 500)
 		return
 	}

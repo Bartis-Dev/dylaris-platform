@@ -518,8 +518,22 @@ func (s *PostgresStore) CreateNode(n *models.Node) error {
 	return s.db.QueryRow(query, n.Name, n.Address, n.Token, n.Status, n.IsLocal, n.Tags, n.LinkEnabled, n.LinkInstances, n.LinkSecret, n.Region).Scan(&n.ID)
 }
 
+// ErrNodeHasServers means servers still point at this node. servers.node_id is
+// REFERENCES nodes(id) with no ON DELETE clause, so Postgres refuses - the safe
+// outcome, the alternative being servers pointing at a node that is gone. Same
+// treatment as ErrUserOwnsServers: without it the handler answered a bare 500
+// and the operator had a delete button that silently did nothing. ForceDeleteNode
+// is the deliberate path through this, and it removes the servers first.
+var ErrNodeHasServers = errors.New("node still has servers")
+
 func (s *PostgresStore) DeleteNode(id int) error {
 	_, err := s.db.Exec("DELETE FROM nodes WHERE id = $1", id)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" && pqErr.Constraint == "servers_node_id_fkey" {
+			return ErrNodeHasServers
+		}
+	}
 	return err
 }
 

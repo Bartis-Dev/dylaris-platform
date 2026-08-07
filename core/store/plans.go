@@ -2,8 +2,18 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"time"
+
+	"github.com/lib/pq"
 )
+
+// ErrPlanInUse means users are still assigned to this plan. users.plan_id is
+// REFERENCES plans(id) with no ON DELETE clause, so Postgres refuses rather than
+// leaving accounts pointing at a plan that no longer exists. Typed for the same
+// reason as ErrUserOwnsServers and ErrNodeHasServers: a bare 500 tells an
+// operator nothing about what to do next.
+var ErrPlanInUse = errors.New("plan is still assigned to users")
 
 // Plan is an admin-defined BYON tier. 0 means unlimited for every limit. Traffic
 // limits are monthly and WARN-only (edge + relay tracked separately, combined is
@@ -116,6 +126,12 @@ func (s *PostgresStore) UpdatePlan(p Plan) error {
 // back to the default plan once the row is gone (GetPlan errors -> default).
 func (s *PostgresStore) DeletePlan(id int) error {
 	_, err := s.db.Exec(`DELETE FROM plans WHERE id = $1`, id)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" && pqErr.Constraint == "users_plan_id_fkey" {
+			return ErrPlanInUse
+		}
+	}
 	return err
 }
 

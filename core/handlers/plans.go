@@ -3,6 +3,7 @@ package handlers
 import (
 	"dylaris-core/store"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -97,6 +98,12 @@ func (h *PlansHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.state.Store.DeletePlan(id); err != nil {
+		// Same reasoning as the node and user delete paths: a refusal that
+		// reflects the data, not a fault, gets a 409 that names the remedy.
+		if errors.Is(err, store.ErrPlanInUse) {
+			sendJSONError(w, "Users are still on this plan. Move them to another plan first.", http.StatusConflict)
+			return
+		}
 		sendJSONError(w, "Failed to delete plan", http.StatusInternalServerError)
 		return
 	}
