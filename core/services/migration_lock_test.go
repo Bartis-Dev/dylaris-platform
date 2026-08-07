@@ -185,6 +185,37 @@ func TestHoldMigrationLock_GivesUpOnALockThatNeverClears(t *testing.T) {
 	}
 }
 
+// Losing leadership while waiting out a lock is not this migration failing.
+// Migrate distinguishes the two on the error, so the wait must surface the
+// cancellation rather than flattening it into errMigrationLockHeld: the request
+// has to stay pending for the next leader, not be reported failed.
+func TestHoldMigrationLock_SurfacesCancellationSeparatelyFromContention(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	o := &MigrationOrchestrator{redis: rdb}
+
+	if err := rdb.Set(context.Background(), migrationLockKeyFor("srv-handover"), "other-core", 0).Err(); err != nil {
+		t.Fatalf("seed the lock: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	release, err := o.holdMigrationLock(ctx, "srv-handover", "admin",
+		time.Second, 10*time.Second, 10*time.Millisecond)
+	if release != nil {
+		t.Error("a release func was returned for a lock that was never acquired")
+	}
+	if errors.Is(err, errMigrationLockHeld) {
+		t.Fatal("a cancellation was reported as lock contention, which Migrate would record as a failed migration")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
 // The invariant that makes the wait worth anything. If the budget were shorter
 // than the TTL, a stale lock would still be outlived by the wait only sometimes,
 // which is the dropped-request bug with extra steps.

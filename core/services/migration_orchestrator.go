@@ -345,6 +345,16 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		log.Printf("migration %s: still locked after %s, another Core is migrating it - skipping", srv.UUID, migrationLockWait)
 		return
 	}
+	if isContextError(err) {
+		// Leadership handover or shutdown while waiting out the lock. This is
+		// NOT a failure of this migration: the handler's ACK runs on the same
+		// cancelled context and fails too, so the request stays pending and the
+		// next leader re-runs it. Returning through the branch below would
+		// depend on writeStatus quietly no-opping for the same reason - true
+		// today, and not something to leave resting on.
+		log.Printf("migration %s: stopped while waiting for the lock (%v) - left pending for the next leader", srv.UUID, err)
+		return
+	}
 	if err != nil {
 		log.Printf("migration %s: lock error: %v", srv.UUID, err)
 		writeStatus("failed", "lock error")
