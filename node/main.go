@@ -877,6 +877,16 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
+	// Whether a container gets a published host port depends on the routing
+	// mode, and Core queues the redeploy IMMEDIATELY after publishing a mode
+	// switch to Redis — far sooner than the 30s refresh ticker. Acting on the
+	// previous mode leaves servers either unreachable (host binding skipped
+	// after a switch back to ip_port) or still exposing the node IP the
+	// gateway exists to hide. Re-read here so a command always sees the mode
+	// Core published before queueing it; the modes stay node-derived, so
+	// applyExternalOverride still forces BYON nodes to gateway.
+	loadModesFromRedis(ctx, rdb)
+
 	// Apply node-level default cpuset if not set by core
 	if cmd.Config.Docker.CpusetCpus == "" && defaultCpusetCpus != "" {
 		cmd.Config.Docker.CpusetCpus = defaultCpusetCpus
