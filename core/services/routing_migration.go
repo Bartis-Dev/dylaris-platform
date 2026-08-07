@@ -20,10 +20,38 @@ const (
 	// two Cores from kicking off the same migration simultaneously. The
 	// existing in-process sync.Mutex only covered single-instance Core —
 	// multi-instance would otherwise race past the local mutex and both
-	// dispatch the batch. TTL is generous: a migration of 10k servers
-	// could realistically run for ~1h with the 15s inter-batch sleep.
+	// dispatch the batch.
+	//
+	// The TTL is a backstop, not a bound on the run: batches are 4 servers wide
+	// and each server is given up to routingRedeploySettleTimeout, so a large
+	// fleet runs far past two hours (10k servers is 2500 batches, i.e. hours,
+	// not the "~1h" an earlier version of this comment claimed). A migration
+	// that outlives its lock is caught by the Running status instead, which is
+	// kept fresh for exactly as long as the run lasts.
 	routingMigrationLockKey = "dylaris:routing_migration:lock"
 	routingMigrationLockTTL = 2 * time.Hour
+
+	// routingMigrationStatusTTL keeps the FINAL result around for the panel to
+	// display after the run ends.
+	routingMigrationStatusTTL = 24 * time.Hour
+	// routingMigrationRunningTTL bounds how long a Running:true status may
+	// outlive the process that wrote it. updateProgress rewrites the status
+	// after every server, so a live migration keeps it fresh; a Core that is
+	// killed mid-run (the deferred cleanup only covers a panic, not SIGKILL or
+	// an OOM) leaves it to expire instead of reporting a migration that no
+	// longer exists. That mattered because Run refuses to start while the flag
+	// is set, so a crash used to block every routing-mode switch for a day.
+	//
+	// It has to clear the longest silence between two updates: the last server
+	// of a batch can take routingRedeploySettleTimeout, then routingBatchPause
+	// passes, then the first server of the next batch can take that long again.
+	routingMigrationRunningTTL = 5 * time.Minute
+
+	// routingRedeploySettleTimeout is how long one server is polled for a
+	// settled status before it is killed. routingBatchPause is the gap between
+	// batches. Named so the TTL above can be asserted against them.
+	routingRedeploySettleTimeout = 60 * time.Second
+	routingBatchPause            = 15 * time.Second
 )
 
 type MigrationStatus struct {
@@ -69,9 +97,11 @@ func (m *RoutingMigrationService) Run(ctx context.Context, newMode string) (int,
 
 	existing := m.readStatus(ctx)
 	if existing.Running {
-		// Local status says running — release the lock we just took (we
-		// can't be running ourselves, must be a stale flag from a crash).
-		// Actually: clear it and move on.
+		// Taking the lock means no live run holds it — but a run that outlived
+		// the lock's TTL is still going, and the status is the only thing that
+		// knows. It expires with the process that writes it
+		// (routingMigrationRunningTTL), so a flag that is still here is a live
+		// migration, not a leftover from a crash. Give the lock back.
 		_ = m.releaseLock(ctx)
 		return 0, fmt.Errorf("migration already in progress")
 	}
@@ -178,7 +208,7 @@ func (m *RoutingMigrationService) runBatches(ctx context.Context, servers []mode
 			select {
 			case <-ctx.Done():
 				goto done
-			case <-time.After(15 * time.Second):
+			case <-time.After(routingBatchPause):
 			}
 		}
 	}
@@ -227,8 +257,8 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 		return err
 	}
 
-	// Poll up to 60s for the container to settle
-	deadline := time.Now().Add(60 * time.Second)
+	// Poll for the container to settle
+	deadline := time.Now().Add(routingRedeploySettleTimeout)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -267,7 +297,13 @@ func (m *RoutingMigrationService) readStatus(ctx context.Context) MigrationStatu
 
 func (m *RoutingMigrationService) writeStatus(ctx context.Context, s MigrationStatus) {
 	data, _ := json.Marshal(s)
-	m.redis.Set(ctx, routingMigrationKey, data, 24*time.Hour)
+	// A running status is a liveness claim and expires with the process that
+	// makes it; a finished one is a result and is kept for the panel.
+	ttl := routingMigrationStatusTTL
+	if s.Running {
+		ttl = routingMigrationRunningTTL
+	}
+	m.redis.Set(ctx, routingMigrationKey, data, ttl)
 }
 
 func (m *RoutingMigrationService) updateProgress(ctx context.Context, done, failed, total int) {
