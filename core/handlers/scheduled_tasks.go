@@ -98,6 +98,15 @@ func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	// Without this the INSERT is what rejects an unknown server, via the
+	// server_id foreign key, and the caller gets a 500 "Failed to create task"
+	// for what is plainly a 404. Update and Delete already resolve the task
+	// first, so Create was the only entry point left without the check; the
+	// sibling handlers (tabs, backup jobs, members) all answer 404 here.
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
 	var req scheduledTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
