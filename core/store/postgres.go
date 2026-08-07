@@ -245,9 +245,14 @@ func (s *PostgresStore) UpdateUserPassword(id string, hashedPassword string) err
 // delete those servers first.
 var ErrUserOwnsServers = errors.New("user still owns servers")
 
-// ErrUserStillReferenced is the same shape for the other NO ACTION reference:
-// server_invites.invited_by. A user who has invited members to a server cannot be
-// deleted while those invites exist, even when they own nothing themselves.
+// ErrUserStillReferenced is the catch-all for any OTHER foreign key that
+// refuses the delete. server_invites.invited_by used to be one - it was NOT NULL
+// with no ON DELETE clause, so an admin who had granted access on a server they
+// did not own became undeletable, with no way to act on the 409. It is nullable
+// and ON DELETE SET NULL now (applyInviteAttributionNullable), leaving
+// servers.owner_id as the only reference that deliberately blocks. This stays as
+// the fallback so a future constraint added without an ON DELETE clause still
+// surfaces as a 409 rather than a bare 500.
 var ErrUserStillReferenced = errors.New("user is still referenced by other records")
 
 func (s *PostgresStore) DeleteUser(id string) error {
@@ -1024,12 +1029,15 @@ func (s *PostgresStore) UpdateInvitePermissions(serverID int, userID string, per
 func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerInvite, error) {
 	var inv models.ServerInvite
 	var permsJSON []byte
+	// LEFT JOIN on the inviter: invited_by is nulled when that account is
+	// deleted, and an inner join would drop the row - hiding a member from the
+	// list while their access carried on working.
 	query := `
 		SELECT si.id, si.server_id, si.user_id, u.username, COALESCE(u.email, ''),
-			si.permissions, si.invited_by, inv_u.username, si.created_at
+			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at
 		FROM server_invites si
 		JOIN users u ON si.user_id = u.id
-		JOIN users inv_u ON si.invited_by = inv_u.id
+		LEFT JOIN users inv_u ON si.invited_by = inv_u.id
 		WHERE si.server_id = $1 AND si.user_id = $2
 	`
 	err := s.db.QueryRow(query, serverID, userID).Scan(
@@ -1043,12 +1051,14 @@ func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerIn
 }
 
 func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite, error) {
+	// Same LEFT JOIN as GetInvite: a deleted inviter must not remove a live
+	// member from the list.
 	query := `
 		SELECT si.id, si.server_id, si.user_id, u.username, COALESCE(u.email, ''),
-			si.permissions, si.invited_by, inv_u.username, si.created_at
+			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at
 		FROM server_invites si
 		JOIN users u ON si.user_id = u.id
-		JOIN users inv_u ON si.invited_by = inv_u.id
+		LEFT JOIN users inv_u ON si.invited_by = inv_u.id
 		WHERE si.server_id = $1
 		ORDER BY si.created_at ASC
 	`

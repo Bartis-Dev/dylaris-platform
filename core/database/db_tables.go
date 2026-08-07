@@ -99,7 +99,9 @@ func createServerInvitesTable(db *sql.DB) error {
 		server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
 		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		permissions JSONB DEFAULT '{}',
-		invited_by UUID NOT NULL REFERENCES users(id),
+		-- Nullable + SET NULL so a grant outlives the account that issued it;
+		-- see applyInviteAttributionNullable for why CASCADE would be wrong.
+		invited_by UUID REFERENCES users(id) ON DELETE SET NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(server_id, user_id)
 	)`
