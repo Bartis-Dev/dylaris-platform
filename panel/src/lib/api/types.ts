@@ -634,11 +634,6 @@ export const saveServerSettings = (data: ServerLimitSettings) => fetchAPI('/sett
 // --- FEATURE SETTINGS ---
 export interface FeatureSettings {
     proxyEnabled: boolean;
-    // Master switch for the Gateway routing feature (edges, links, routes).
-    // When false the Edges + Routes sub-tabs in Infrastructure are hidden and
-    // route creation is blocked. Lives here instead of as a module because
-    // the standalone Gateway nav was retired.
-    gatewayEnabled: boolean;
 }
 export const getFeatureSettings = () => fetchAPI('/settings/features');
 export const saveFeatureSettings = (data: FeatureSettings) => fetchAPI('/settings/features', { method: 'POST', body: JSON.stringify(data) });
@@ -884,6 +879,13 @@ export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing
 // Routing Mode
 export type RoutingMode = 'ip_port' | 'both' | 'gateway';
 export type FileAccessMode = 'sftp' | 'both' | 'beam';
+
+// isGatewayRouting MUST stay byte-equivalent to Core's AppState.gatewayEnabled
+// (core/handlers/gateway_gate.go), which is what gates every gateway write.
+// Any UI that shows or hides gateway surfaces has to ask this, not a separate
+// flag, or the panel and Core disagree about whether the gateway is on.
+export const isGatewayRouting = (mode: RoutingMode): boolean =>
+    mode === 'gateway' || mode === 'both';
 export const getRoutingMode = () => fetchAPI('/settings/routing-mode');
 export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessMode }) =>
     fetchAPI('/settings/routing-mode', { method: 'POST', body: JSON.stringify(data) });

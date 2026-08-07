@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import {
     getProfile, getModules, getServers, getFeatureSettings, getRoutingMode, getBeamSettings,
-    AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings,
+    AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings, isGatewayRouting,
 } from '@/lib/api';
 import { listRegions, Region } from '@/lib/api/regions';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
@@ -68,7 +68,6 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const [modules, setModules] = useState<AppModule[]>([]);
     const [servers, setServers] = useState<Server[]>([]);
     const [proxiesEnabled, setProxiesEnabled] = useState(true);
-    const [gatewayFeatureEnabled, setGatewayFeatureEnabled] = useState(true);
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>('sftp');
     const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
@@ -131,7 +130,6 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         ]);
         if (features.success && features.settings) {
             setProxiesEnabled(features.settings.proxyEnabled);
-            setGatewayFeatureEnabled(features.settings.gatewayEnabled ?? true);
         }
         if (routing.success) {
             setRoutingMode(routing.mode || 'ip_port');
@@ -183,10 +181,13 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         };
     }, [ready, refreshServers, refreshRegions, refreshModules, refreshSettings, refreshFeatureFlags]);
 
-    // Gateway is no longer a standalone module — its on/off lives in the
-    // Features tab as a dedicated `gatewayEnabled` flag (separate from the
-    // MC-proxy `proxyEnabled` flag).
-    const gatewayEnabled = gatewayFeatureEnabled;
+    // The routing mode is the single source of truth for "is the gateway
+    // routing traffic": Core gates every gateway write on exactly this
+    // (handlers.gatewayEnabled reads routing_mode), so the panel must derive
+    // it the same way. Deriving it from a separate feature flag let the two
+    // sides disagree in both directions — a visible routes UI whose writes
+    // 503, or a live gateway with its whole UI hidden.
+    const gatewayEnabled = isGatewayRouting(routingMode);
     const libraryEnabled = modules.some(m => m.name === 'Library' && m.isEnabled);
 
     const value: AppData = {

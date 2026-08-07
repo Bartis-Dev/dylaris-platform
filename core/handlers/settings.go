@@ -147,9 +147,12 @@ func (h *SettingsHandler) GetUserLimits(w http.ResponseWriter, r *http.Request) 
 
 // --- Feature Settings ---
 
+// FeatureSettings carries only the MC-proxy toggle. There is deliberately no
+// gateway flag here: the gateway is on exactly when routing_mode is gateway or
+// both (see AppState.gatewayEnabled), which is what every gateway gate checks.
+// A second stored flag could only ever disagree with it.
 type FeatureSettings struct {
-	ProxyEnabled   bool `json:"proxyEnabled"`
-	GatewayEnabled bool `json:"gatewayEnabled"`
+	ProxyEnabled bool `json:"proxyEnabled"`
 }
 
 // GetFeatureSettings GET /api/settings/features
@@ -173,16 +176,8 @@ func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Req
 	if req.ProxyEnabled {
 		proxyVal = "true"
 	}
-	gatewayVal := "false"
-	if req.GatewayEnabled {
-		gatewayVal = "true"
-	}
 
 	if err := h.state.Store.SetSetting("feature_proxy_enabled", proxyVal); err != nil {
-		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
-		return
-	}
-	if err := h.state.Store.SetSetting("feature_gateway_enabled", gatewayVal); err != nil {
 		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
@@ -195,10 +190,8 @@ func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Req
 // LoadFeatureSettings reads feature flags from the database. Available to all authenticated users.
 func (h *SettingsHandler) LoadFeatureSettings() FeatureSettings {
 	proxyVal, _ := h.state.Store.GetSetting("feature_proxy_enabled")
-	gatewayVal, _ := h.state.Store.GetSetting("feature_gateway_enabled")
 	return FeatureSettings{
-		ProxyEnabled:   proxyVal != "false",  // default true
-		GatewayEnabled: gatewayVal == "true", // default false
+		ProxyEnabled: proxyVal != "false", // default true
 	}
 }
 
@@ -1093,7 +1086,10 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Publish to Redis so Nodes pick it up within 30s
+	// Publish to Redis so Nodes pick it up within 30s. This MUST stay ahead of
+	// the migration below: the node re-reads these keys when it pulls a command,
+	// so publishing first is what makes the redeploy use the NEW mode. Queueing
+	// before the write would redeploy every server on the old mode.
 	ctx := r.Context()
 	h.state.Redis.Set(ctx, "dylaris:routing_mode", req.Mode, 0)
 	h.state.Redis.Set(ctx, "dylaris:file_access_mode", req.FileMode, 0)

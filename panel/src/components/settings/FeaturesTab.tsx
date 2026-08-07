@@ -18,13 +18,13 @@ export default function FeaturesTab() {
     const { routingMode, coreInfo } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
-    // Seeded with the SERVER's defaults, not optimistic ones: Core reads
-    // gateway as `val == "true"` (default off) and proxy as `val != "false"`
-    // (default on). These are only ever visible if the load below fails - the
-    // normal path renders a skeleton until the fetch resolves - but a settings
-    // screen that shows "on" for a subsystem that is off is worse than one that
-    // errs the other way. Same reasoning as storageConfigured's `null` below.
-    const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true, gatewayEnabled: false });
+    // Seeded with the SERVER's default, not an optimistic one: Core reads proxy
+    // as `val != "false"` (default on). This is only ever visible if the load
+    // below fails - the normal path renders a skeleton until the fetch
+    // resolves - but a settings screen that shows "on" for a subsystem that is
+    // off is worse than one that errs the other way. Same reasoning as
+    // storageConfigured's `null` below.
+    const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -191,28 +191,9 @@ export default function FeaturesTab() {
                 </div>
             </div>
 
-            <div className="card p-5">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Globe size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">Gateway</div>
-                            <div className="text-xs text-(--base-06)">Edge-based routing (Edges, Links, custom domains). Disabling hides the Edges and Routes sub-tabs in Infrastructure and blocks new route creation.</div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={settings.gatewayEnabled}
-                        onClick={() => setSettings(prev => ({ ...prev, gatewayEnabled: !prev.gatewayEnabled }))}
-                        className={`toggle-track ${settings.gatewayEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                    >
-                        <span className={`toggle-knob ${settings.gatewayEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-            </div>
+            {/* No Gateway toggle here: the gateway is on exactly when Game
+                Traffic routes through it, so the routing-mode selector in the
+                Gateway sub-tab is its only switch. */}
 
             {/* Platform-wide subsystem toggles. Save on click — each flip
                 immediately blocks/restores the whole API surface so an
