@@ -1,0 +1,60 @@
+package handlers
+
+import "testing"
+
+// TestValidateInstallerRequest mirrors node/installer.go's InstallServer
+// switch. Each "required" case below is a value that reached an upstream API
+// as an empty string and failed there - observed live for paper, where the
+// node reported "PaperMC API returned HTTP 400 for version " and the fresh
+// server crash-looped to "offline" after Core had already answered 200.
+func TestValidateInstallerRequest(t *testing.T) {
+	cases := []struct {
+		name                            string
+		typ, version, loader, url, path string
+		ok                              bool
+	}{
+		{name: "unknown type", typ: "ftp"},
+		{name: "empty type", typ: ""},
+
+		{name: "paper needs a version", typ: "paper"},
+		{name: "paper with a version", typ: "paper", version: "1.21.4", ok: true},
+		{name: "paper with a blank version", typ: "paper", version: "   "},
+		{name: "vanilla needs a version", typ: "vanilla"},
+		{name: "vanilla with a version", typ: "vanilla", version: "1.21.4", ok: true},
+
+		// Both resolve the loader themselves when it is blank, so only the
+		// version is required.
+		{name: "fabric needs a version", typ: "fabric"},
+		{name: "fabric without a loader is fine", typ: "fabric", version: "1.21.4", ok: true},
+		{name: "forge needs a version", typ: "forge"},
+		{name: "forge without a build is fine", typ: "forge", version: "1.21.4", ok: true},
+
+		// NeoForge is passed Loader as its version; Version is unused.
+		{name: "neoforge needs a loader", typ: "neoforge", version: "1.21.4"},
+		{name: "neoforge with a loader", typ: "neoforge", loader: "21.4.10-beta", ok: true},
+
+		{name: "import needs a url", typ: "import"},
+		{name: "import with a url", typ: "import", url: "https://example.com/s.zip", ok: true},
+
+		{name: "library needs a path or url", typ: "library"},
+		{name: "library with a path", typ: "library", path: "servers/paper.jar", ok: true},
+		{name: "library with a fallback url", typ: "library", url: "https://example.com/p.jar", ok: true},
+
+		// These carry no field this function can check; their own paths do.
+		{name: "upload", typ: "upload", ok: true},
+		{name: "upload-zip", typ: "upload-zip", ok: true},
+		{name: "modpack", typ: "modpack", ok: true},
+		{name: "pack is rewritten by SetupServer", typ: "pack", ok: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := validateInstallerRequest(c.typ, c.version, c.loader, c.url, c.path)
+			if c.ok && msg != "" {
+				t.Fatalf("validateInstallerRequest(%q,...) = %q, want accepted", c.typ, msg)
+			}
+			if !c.ok && msg == "" {
+				t.Fatalf("validateInstallerRequest(%q,...) accepted it, want a rejection message", c.typ)
+			}
+		})
+	}
+}

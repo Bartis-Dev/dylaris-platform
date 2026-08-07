@@ -226,6 +226,57 @@ func resolveJavaImage(requested, stored string) string {
 }
 
 // SetupServer (Step 2): User configures the server
+// validateInstallerRequest rejects a setup the node cannot possibly complete.
+// Returns "" when the request is acceptable.
+//
+// Every requirement below mirrors node/installer.go's InstallServer switch,
+// which is where these values are actually consumed: installPaper and
+// installVanilla take Version straight to the PaperMC / Mojang APIs,
+// installFabric and installForge use it as the mcVersion in their meta lookup
+// (both resolve the LOADER when it is blank, so only Version is required),
+// installNeoForge is passed Loader as its version, and installFromLibrary
+// needs a local path or a fallback URL. "import" is checked node-side too;
+// answering 400 here is strictly better than queueing it.
+//
+// Without this the node was the first and only thing to notice, long after the
+// caller was told 200 "Server setup queued". Observed end to end on the
+// testbed with type "paper" and no version: install failed, the reconciler
+// restarted the container three times, and a brand-new server came to rest at
+// "offline" with nothing installed.
+//
+// "pack" is deliberately accepted with no field requirement: SetupServer
+// resolves and authorizes it below and rewrites Installer in place, so its
+// own error paths already answer properly.
+func validateInstallerRequest(typ, version, loader, url, path string) string {
+	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true}
+	known := map[string]bool{
+		"paper": true, "vanilla": true, "fabric": true, "forge": true,
+		"neoforge": true, "library": true, "import": true, "upload": true,
+		"upload-zip": true, "modpack": true, "pack": true,
+	}
+	if !known[typ] {
+		return "Unsupported installer type"
+	}
+	if needsVersion[typ] && strings.TrimSpace(version) == "" {
+		return "installer.version is required for " + typ
+	}
+	switch typ {
+	case "neoforge":
+		if strings.TrimSpace(loader) == "" {
+			return "installer.loader is required for neoforge"
+		}
+	case "import":
+		if strings.TrimSpace(url) == "" {
+			return "installer.url is required for import"
+		}
+	case "library":
+		if strings.TrimSpace(path) == "" && strings.TrimSpace(url) == "" {
+			return "installer.path or installer.url is required for library"
+		}
+	}
+	return ""
+}
+
 func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -277,6 +328,16 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
 		sendJSONError(w, "javaImage is required", 400)
+		return
+	}
+	// Same "refuse before anything is written" reason, for the installer. The
+	// node is the only thing that ever checked these, and by then the request
+	// has already been answered 200 and queued.
+	if msg := validateInstallerRequest(
+		req.Installer.Type, req.Installer.Version,
+		req.Installer.Loader, req.Installer.URL, req.Installer.Path,
+	); msg != "" {
+		sendJSONError(w, msg, 400)
 		return
 	}
 
