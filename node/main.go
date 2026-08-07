@@ -1376,6 +1376,24 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 
+		// The container still binds the OLD path, and it will keep doing so: a
+		// restart preserves HostConfig.Binds verbatim (see resolveExistingConfig)
+		// precisely so a storage-path resolution drift cannot point a live server
+		// at the wrong directory. A migration is the one case where the path is
+		// MEANT to move, so the stale container has to go - the next start
+		// recreates it from .node_config.json at the new path, which is what
+		// migrate_in already relies on.
+		//
+		// Without this the move looks like a success and then the server crash
+		// loops: its /data is the directory we just emptied.
+		//
+		// ContainerRemove rather than PowerAction("delete") because that also
+		// releases the host port, and the server keeps its port across a move.
+		mcName := "mc_" + cmd.Config.UUID
+		if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+			log.Printf("migrate_storage %s: ContainerRemove: %v (probably gone already - the next start recreates it)", cmd.Config.UUID, rmErr)
+		}
+
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
 
