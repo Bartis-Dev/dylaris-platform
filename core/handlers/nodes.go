@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"bytes"
+	"database/sql"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	"dylaris-pkg/validate"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -1119,8 +1121,20 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Duplicate check ---
+	//
+	// "No such server" is the ONLY state a genuine orphan can be in - that is
+	// what makes it an orphan - and GetServerByUUID reports it as
+	// sql.ErrNoRows. Treating every error as a database fault therefore turned
+	// the one path this endpoint exists to serve into a 500, and adopting an
+	// orphan back into the panel could never succeed. The 409 below was
+	// reachable, which is why the check looked like it worked.
+	//
+	// A real fault must still be a fault, not a silent "does not exist": that
+	// would let an adopt proceed against a database that could not answer, on
+	// a UUID that might well already have a row. Same distinction
+	// AuthMiddleware makes between a deleted account and an unreachable store.
 	existing, err := h.state.Store.GetServerByUUID(req.UUID)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		sendJSONError(w, "database error checking existing server", 500)
 		return
 	}
