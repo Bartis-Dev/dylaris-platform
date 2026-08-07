@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dylaris-core/storage"
 )
 
 // maxLibraryUploadBytes bounds one library upload. Matches the file manager's
@@ -192,6 +194,13 @@ func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// The provider refuses this too, but that surfaces as a 500 - and a client
+	// that omits the field is sending a bad request, not hitting a server
+	// fault. ToggleLibraryPathHandler has always rejected the same value.
+	if strings.TrimSpace(req.Path) == "" {
+		sendJSONError(w, "Cannot delete the library root", http.StatusBadRequest)
+		return
+	}
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
 	if err != nil {
@@ -199,6 +208,10 @@ func (h *LibraryHandler) DeleteLibraryHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := prov.DeletePath(r.Context(), req.Path); err != nil {
+		if errors.Is(err, storage.ErrDeleteRoot) {
+			sendJSONError(w, "Cannot delete the library root", http.StatusBadRequest)
+			return
+		}
 		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

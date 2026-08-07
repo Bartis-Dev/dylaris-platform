@@ -3,9 +3,11 @@ package storage
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,6 +47,26 @@ type StorageProvider interface {
 	// Callers must treat an error as "cannot redirect" and fall through to
 	// streaming, never conflate it with "no URL available".
 	DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+}
+
+// ErrDeleteRoot is returned by DeletePath when the path addresses the scoped
+// store's own root instead of something inside it.
+var ErrDeleteRoot = errors.New("storage: refusing to delete the storage root")
+
+// addressesRoot reports whether reqPath resolves to the scoped store's root.
+//
+// Both backends resolve an empty path to the root by construction:
+// filepath.Join(base, "") is base, and S3Provider.key("") is the bare prefix.
+// The READ side treats that as "the whole tree", which is legitimate and is
+// exactly why no path validator ever rejected it - but on DeletePath the same
+// value means os.RemoveAll(base) / delete every object under the prefix. One
+// empty JSON field wiped an entire core-storage library, reported as success.
+//
+// Cleaning against a leading "/" collapses "", ".", "/", "./" and any path
+// that walks back out ("a/..") to the single root form, so the check does not
+// depend on which of those a caller happens to send.
+func addressesRoot(reqPath string) bool {
+	return path.Clean("/"+strings.TrimSpace(reqPath)) == "/"
 }
 
 // Opt keys accepted by NewProvider for the "s3" backend.
@@ -141,11 +163,14 @@ func (p *LocalProvider) GetFile(ctx context.Context, path string) (io.ReadCloser
 	return os.Open(safePath)
 }
 
-func (p *LocalProvider) DeletePath(ctx context.Context, path string) error {
+func (p *LocalProvider) DeletePath(ctx context.Context, reqPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	safePath, err := p.validatePath(path)
+	if addressesRoot(reqPath) {
+		return ErrDeleteRoot
+	}
+	safePath, err := p.validatePath(reqPath)
 	if err != nil {
 		return err
 	}

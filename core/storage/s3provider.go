@@ -142,15 +142,18 @@ func isS3NotFound(err error) bool {
 	return false
 }
 
-func (p *S3Provider) DeletePath(ctx context.Context, path string) error {
+func (p *S3Provider) DeletePath(ctx context.Context, reqPath string) error {
+	if addressesRoot(reqPath) {
+		return ErrDeleteRoot
+	}
 	// Delete the object at the key AND every object under it (dir semantics),
 	// never a sibling whose name merely starts with the same string.
-	objs, err := p.pathObjects(ctx, path)
+	objs, err := p.pathObjects(ctx, reqPath)
 	if err != nil {
 		return err
 	}
 	if len(objs) == 0 {
-		return p.os.Delete(ctx, p.key(path))
+		return p.os.Delete(ctx, p.key(reqPath))
 	}
 	for _, o := range objs {
 		if err := p.os.Delete(ctx, o.Key); err != nil {
