@@ -268,6 +268,9 @@ func main() {
 
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
 	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
+	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
+	// it while the containers keep their ports. Rebuild it from them.
+	dockerMgr.portMgr.AdoptExistingBindings(dockerMgr.ExistingHostPortBindings())
 
 	// Load routing modes from Redis, refresh every 30s
 	// Defaults before the first poll; setModes so nothing reads them unguarded.

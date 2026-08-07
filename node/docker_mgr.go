@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -1060,6 +1061,41 @@ func (dm *DockerManager) ListAllMCContainers() ([]MCContainerInfo, error) {
 		}
 	}
 	return result, nil
+}
+
+// ExistingHostPortBindings maps serverUUID -> published host port for every mc_
+// container on this host, running or not. A stopped container still owns its
+// port: it gets it back the moment the reconciler starts it again.
+//
+// Read from HostConfig rather than the container list's Ports field, because
+// the latter is empty for anything not currently running.
+func (dm *DockerManager) ExistingHostPortBindings() map[string]int {
+	out := map[string]int{}
+	containers, err := dm.ListAllMCContainers()
+	if err != nil {
+		log.Printf("ExistingHostPortBindings: cannot list containers: %v", err)
+		return out
+	}
+	for _, c := range containers {
+		info, err := dm.cli.ContainerInspect(dm.ctx, c.ContainerName)
+		if err != nil || info.HostConfig == nil {
+			continue
+		}
+		for _, bindings := range info.HostConfig.PortBindings {
+			for _, b := range bindings {
+				port, err := strconv.Atoi(b.HostPort)
+				if err != nil || port <= 0 {
+					continue
+				}
+				out[c.UUID] = port
+				break
+			}
+			if _, ok := out[c.UUID]; ok {
+				break
+			}
+		}
+	}
+	return out
 }
 
 // CountLinkContainers returns the number of running Link containers on this host.

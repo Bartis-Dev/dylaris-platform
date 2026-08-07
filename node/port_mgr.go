@@ -48,6 +48,42 @@ func NewPortManager(rdb *redis.Client, nodeID string, rangeStart, rangeEnd int, 
 	return pm
 }
 
+// AdoptExistingBindings rebuilds the ledger from the host's own containers,
+// which are its only durable record.
+//
+// Redis is in-memory ONLY by design (the compose Valkey runs with --save "" and
+// --appendonly no), so a Valkey restart - a plain host reboot is enough - erases
+// every port allocation while the containers holding those ports survive.
+// loadFromRedis then reports 0 allocations and the whole range looks free, so
+// the next server is handed a port a live container already binds: Docker
+// refuses it ("Bind for 0.0.0.0:25600 failed: port is already allocated"), the
+// reconciler starts the container anyway WITHOUT a published port, and Core
+// still reports the server online. Reproduced end to end on the testbed.
+//
+// bindings maps serverUUID -> published host port, taken from the containers.
+func (pm *PortManager) AdoptExistingBindings(bindings map[string]int) {
+	adopted := 0
+	for uuid, port := range bindings {
+		if port <= 0 {
+			continue
+		}
+		if pm.GetPort(uuid) == port {
+			continue // ledger already agrees
+		}
+		if err := pm.SetPort(uuid, port); err != nil {
+			// Two containers configured for the same host port. Only one of
+			// them can actually hold it, so this is corruption to report, not
+			// to silently paper over.
+			log.Printf("PortManager: cannot adopt port %d for %s: %v", port, uuid, err)
+			continue
+		}
+		adopted++
+	}
+	if adopted > 0 {
+		log.Printf("PortManager: adopted %d port binding(s) from existing containers", adopted)
+	}
+}
+
 // loadFromRedis reads existing port assignments from Redis into the in-RAM index.
 func (pm *PortManager) loadFromRedis() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
