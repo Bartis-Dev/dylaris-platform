@@ -503,12 +503,13 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		if err != nil {
 			return nil, err
 		}
-		// The per-entry filter below only hides a protected directory from its
-		// PARENT's listing. Listing it by name still enumerated everything
-		// inside, which for .dylaris-backups is every archive the server has.
-		if protectedRel(rel) {
-			return nil, os.ErrNotExist
-		}
+		// The virtual root is resolved BEFORE the protected check, and must be:
+		// resolve returns rel "" for it, filepath.Clean("") is ".", and
+		// isProtectedFile treats "." as the protected server root - so the
+		// listing every SFTP client issues on connect came back ErrNotExist and
+		// the whole session looked empty. Every other caller of protectedRel
+		// already refuses the root on realPath == "" before reaching it; this
+		// branch is the one that must serve it instead.
 		if realPath == "" {
 			// Root: list virtual server entries
 			entries := make([]os.FileInfo, 0, len(v.servers))
@@ -523,6 +524,12 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 				entries = append(entries, fi)
 			}
 			return listerAt(entries), nil
+		}
+		// The per-entry filter below only hides a protected directory from its
+		// PARENT's listing. Listing it by name still enumerated everything
+		// inside, which for .dylaris-backups is every archive the server has.
+		if protectedRel(rel) {
+			return nil, os.ErrNotExist
 		}
 		entries, err := os.ReadDir(realPath)
 		if err != nil {

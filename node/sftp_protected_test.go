@@ -138,3 +138,47 @@ func TestSFTPOrdinaryPathsStillWork(t *testing.T) {
 		t.Errorf("mkdir of an ordinary directory: %v", err)
 	}
 }
+
+// The root is the first thing every SFTP client asks for, and it is the one
+// path the protected check must not see: resolve returns rel "" for it,
+// filepath.Clean("") is ".", and isProtectedFile treats "." as the protected
+// server root. The whole session came back "No such file or directory" while
+// navigating to a known server name still worked - which is why the tests
+// above, all of which start at "myserver", missed it.
+func TestSFTPRootListsTheServers(t *testing.T) {
+	fs, _ := newProtectedFS(t)
+
+	// "/" is deliberately absent: resolve cleans "/"+path, and on Windows
+	// filepath.Clean("//") is a UNC prefix rather than the root, the same quirk
+	// TestSFTPGuardsSeeTheWholePath notes for its request paths. On the Linux
+	// the node actually runs on it lands on "" like the two below, which is
+	// what the live session confirmed.
+	for _, p := range []string{"", "."} {
+		t.Run("path="+p, func(t *testing.T) {
+			lister, err := fs.Filelist(&sftp.Request{Method: "List", Filepath: p})
+			if err != nil {
+				t.Fatalf("listing the root: %v, want the server list", err)
+			}
+			got := make([]os.FileInfo, 4)
+			n, err := lister.ListAt(got, 0)
+			if err != nil && err != io.EOF {
+				t.Fatalf("ListAt: %v", err)
+			}
+			if n != 1 {
+				t.Fatalf("root listed %d entries, want 1 (the server)", n)
+			}
+			if got[0].Name() != "myserver" {
+				t.Errorf("root entry = %q, want %q", got[0].Name(), "myserver")
+			}
+		})
+	}
+}
+
+// Serving the root must not have reopened the hole the protected check exists
+// for: listing the reserved directory BY NAME still has to be refused.
+func TestSFTPRootFixDidNotUnhideTheBackupStore(t *testing.T) {
+	fs, _ := newProtectedFS(t)
+	if _, err := fs.Filelist(&sftp.Request{Method: "List", Filepath: "myserver/.dylaris-backups"}); err != os.ErrNotExist {
+		t.Fatalf("List of the backup store err = %v, want not exist", err)
+	}
+}
