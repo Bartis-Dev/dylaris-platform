@@ -36,19 +36,14 @@ func TestNextMigrationBackoff(t *testing.T) {
 	}
 }
 
-// TestMigrationBackoffCeilingIsBelowTheMigrationLockTTL states the relationship
-// the ceiling was chosen against as an assertion rather than as a comment, so
-// raising one without the other fails here instead of in production.
-func TestMigrationBackoffCeilingIsBelowTheMigrationLockTTL(t *testing.T) {
-	// Reads the package constant deliberately. An earlier version of this test
-	// declared its own `const migrationLockTTL = 10 * time.Minute`, which
-	// shadowed the real one - so lowering the actual lock TTL, the exact drift
-	// the test says it catches, left it green. It could not fail for its stated
-	// reason.
-	if migrationRetryMax >= migrationLockTTL/2 {
-		t.Fatalf("migrationRetryMax = %s, want well under the %s migration lock TTL", migrationRetryMax, migrationLockTTL)
-	}
-}
+// The backoff ceiling used to be asserted against the per-server migration lock
+// TTL, on the premise that the queue should come back "long before an
+// interrupted migration's lock expires". That premise was the bug: coming back
+// while the dead Core's lock is still held is precisely when the recovery
+// delivery bailed and ACKed the request away. The lock is now waited out
+// (holdMigrationLock), so the two constants are independent and there is no
+// relationship left to pin here. The guarantee moved to
+// TestMigrationLockWaitOutlastsTheLockTTL in migration_lock_test.go.
 
 // TestIsContextError separates the two reasons the queue consumer returns. It
 // always returns an error, so treating every return as a failure would back off

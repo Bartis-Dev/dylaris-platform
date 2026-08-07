@@ -30,9 +30,10 @@ import (
 // v1 limitations (acceptable, noted deliberately):
 //   - Migrations are processed SEQUENTIALLY, one at a time. Safe and simple;
 //     throughput is not a concern for an admin-triggered / rebalance flow.
-//   - If the leader dies mid-migration the per-server lock (10m TTL) eventually
-//     expires and the server may be left in "migrating". A future retry/worker
-//     re-evaluates. We never delete source data before cutover, so no data loss.
+//   - If the leader dies mid-migration the queue redelivers the request to the
+//     next leader, which waits out the dead leader's per-server lock and re-runs
+//     the move (holdMigrationLock). We never delete source data before cutover,
+//     so no data loss.
 type MigrationOrchestrator struct {
 	store         store.Store
 	redis         *redis.Client
@@ -84,16 +85,27 @@ type orchestrationStatus struct {
 }
 
 const (
-	migrationLockTTL           = 10 * time.Minute
-	orchestrationStatusTTL     = time.Hour
-	migrationStopTimeout       = 90 * time.Second
-	migrationStageTimeout      = 5 * time.Minute  // archiving GBs on the source
-	migrationTransferTimeout   = 30 * time.Minute // multi-GB transfer to target
+	// migrationLockTTL is how long the per-server migration lock survives
+	// WITHOUT a refresh - that is, how long a crashed Core's lock lingers. It is
+	// NOT a bound on how long a migration may run: holdMigrationLock refreshes
+	// it at a third of this for as long as the work lasts. It has to be short,
+	// because a stale lock is waited out synchronously (migrationLockWait).
+	migrationLockTTL = 60 * time.Second
+	// migrationLockWait is how long one delivery waits for a held lock before
+	// giving up. It MUST exceed migrationLockTTL so a dead Core's leftover lock
+	// is always outlived; a lock still held after this belongs to a migration
+	// that is genuinely alive elsewhere.
+	migrationLockWait        = 90 * time.Second
+	migrationLockPoll        = 1 * time.Second
+	orchestrationStatusTTL   = time.Hour
+	migrationStopTimeout     = 90 * time.Second
+	migrationStageTimeout    = 5 * time.Minute  // archiving GBs on the source
+	migrationTransferTimeout = 30 * time.Minute // multi-GB transfer to target
 	// migrationR2PhaseTimeout bounds each leg (upload, then download) of the
 	// cross-LAN BYON R2 fallback. Longer than the LAN/overlay transfer because a
 	// BYON home uplink is slow; still capped so one stuck transfer can't block the
 	// serialized migration queue indefinitely. Within the BYON presign TTL (6h).
-	migrationR2PhaseTimeout = 1 * time.Hour
+	migrationR2PhaseTimeout    = 1 * time.Hour
 	migrationStartTimeout      = 90 * time.Second // best-effort online confirm
 	migrationPollInterval      = 2 * time.Second
 	migrationTokenTTL          = 15 * time.Minute
@@ -146,10 +158,13 @@ func (o *MigrationOrchestrator) EnqueueMigration(ctx context.Context, serverID, 
 //
 // Durability: a request is ACKed only after Migrate returns, so a leader crash
 // mid-migration leaves the request pending; the next leader recovers it (same
-// fixed consumer name) and re-runs Migrate. The per-server lock makes the
-// re-run safe — a stale lock from the dead leader makes the retry bail until the
-// lock TTL expires, after which it proceeds. Source data is never deleted before
+// fixed consumer name) and re-runs Migrate. Source data is never deleted before
 // cutover, so there is no data-loss window.
+//
+// That recovery runs straight into the dead leader's leftover per-server lock,
+// and this handler ACKs whatever Migrate does — so Migrate must not treat a held
+// lock as a reason to return. holdMigrationLock waits it out instead; see the
+// "TOO LONG" half of its comment.
 func (o *MigrationOrchestrator) consume(ctx context.Context) {
 	consumer := queue.NewConsumer(o.redis, migrationStreamKey, migrationGroup, migrationConsumer)
 	consumer.Concurrency = 1 // migrations are serialized
@@ -223,9 +238,12 @@ func (o *MigrationOrchestrator) consume(ctx context.Context) {
 	}
 }
 
-// Migration consumer retry bounds. The ceiling is well under the per-server
-// migration lock TTL (10m), so a Redis outage that outlasts the backoff still
-// leaves the queue picked up long before an interrupted migration's lock expires.
+// Migration consumer retry bounds. These are no longer tied to the per-server
+// lock TTL: recovering an interrupted migration used to depend on the queue
+// resuming AFTER the stale lock had expired, which is a race the backoff cannot
+// win and, lost, dropped the request. holdMigrationLock waits the lock out
+// instead, so the recovery is correct whenever the queue comes back. What is
+// left here is only how fast a consumer retries a Redis it cannot reach.
 const (
 	migrationRetryInitial = 1 * time.Second
 	migrationRetryMax     = 30 * time.Second
@@ -319,18 +337,20 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	}
 
 	// --- (b) Acquire per-server lock ---
-	lockKey := fmt.Sprintf("dylaris:server:%s:migration", srv.UUID)
-	acquired, err := o.redis.SetNX(ctx, lockKey, req.RequestedBy, migrationLockTTL).Result()
+	releaseLock, err := o.holdMigrationLock(ctx, srv.UUID, req.RequestedBy,
+		migrationLockTTL, migrationLockWait, migrationLockPoll)
+	if errors.Is(err, errMigrationLockHeld) {
+		// Still held after the full wait, so it is not a dead Core's leftover:
+		// another Core owns this migration and will finish it.
+		log.Printf("migration %s: still locked after %s, another Core is migrating it - skipping", srv.UUID, migrationLockWait)
+		return
+	}
 	if err != nil {
-		log.Printf("migration %s: lock SETNX error: %v", srv.UUID, err)
+		log.Printf("migration %s: lock error: %v", srv.UUID, err)
 		writeStatus("failed", "lock error")
 		return
 	}
-	if !acquired {
-		log.Printf("migration %s: already migrating (lock held), skipping", srv.UUID)
-		return
-	}
-	defer o.redis.Del(context.Background(), lockKey)
+	defer releaseLock()
 	// Always clear any admin cancel flag when the migration ends, so a too-late
 	// cancel (arrived post-cutover and ignored) never lingers into a future move.
 	defer o.redis.Del(context.Background(), migrationCancelKey(srv.UUID))
@@ -523,6 +543,88 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// running (StatusWatcher will flip it to "online") or "stopped" otherwise.
 	writeStatus("done", "")
 	log.Printf("migration %s: done (node %d -> %d, reason=%s)", srv.UUID, sourceNode.ID, targetNode.ID, req.Reason)
+}
+
+// errMigrationLockHeld means another Core holds this server's migration lock and
+// kept holding it for the whole wait, so the work is genuinely alive elsewhere.
+// Distinct from a lock ERROR, which is this Core failing to talk to Redis.
+var errMigrationLockHeld = errors.New("migration lock held by another core")
+
+// holdMigrationLock takes the per-server migration lock and keeps it alive for
+// as long as the migration runs. Returns a release func, or an error.
+//
+// Four places read this key as "this server is migrating right now": the cancel
+// endpoint ("in progress iff the lock is held"), the migration-status endpoint's
+// cancellable flag, the rebalance worker's skip check, and this function. A
+// one-shot SETNX with a fixed TTL cannot make that true, and got it wrong in
+// both directions:
+//
+//   - TOO SHORT. The orchestrator's own budgets below allow 90s stop + 5m
+//     staging + 30m transfer on the LAN path, and an hour per leg on the BYON R2
+//     path. The lock lapsed under a migration that was still running, after
+//     which Cancel answered "No migration is in progress" with a 409 and the
+//     panel hid the button - for exactly the long migrations someone would want
+//     to cancel - and the rebalance worker stopped skipping the server. So the
+//     lock is refreshed while the work lasts.
+//
+//   - TOO LONG. A Core that dies mid-migration leaves the lock behind for the
+//     rest of its TTL, and the queue redelivers the request as soon as the
+//     process is back (Consumer.Run recovers its own pending entries before
+//     taking new work) - well inside that window. Bailing there was not a pause
+//     but a drop: the handler returns nil, so the entry is ACKed and
+//     dedup-marked and nothing ever retries it, leaving the server stopped with
+//     desired_state=stopped so the node reconciler will not bring it back. So a
+//     held lock is waited out, and only a lock that survives the whole wait is
+//     treated as somebody else's live work.
+//
+// ttl, wait and poll are parameters only so the tests can drive the loop; the
+// single caller passes the migrationLock* constants.
+func (o *MigrationOrchestrator) holdMigrationLock(ctx context.Context, uuid, requestedBy string, ttl, wait, poll time.Duration) (func(), error) {
+	lockKey := fmt.Sprintf("dylaris:server:%s:migration", uuid)
+	deadline := time.Now().Add(wait)
+	for {
+		acquired, err := o.redis.SetNX(ctx, lockKey, requestedBy, ttl).Result()
+		if err != nil {
+			return nil, fmt.Errorf("migration lock SETNX: %w", err)
+		}
+		if acquired {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			return nil, errMigrationLockHeld
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(ttl / 3)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				// SET, not EXPIRE: if the key did lapse - a Redis outage longer
+				// than the TTL - EXPIRE on a missing key is a no-op and the lock
+				// would stay gone for the rest of the migration.
+				o.redis.Set(context.Background(), lockKey, requestedBy, ttl)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		// Wait for the refresher to be gone before deleting, or a tick already
+		// in flight puts the lock straight back after the migration ended.
+		<-stopped
+		o.redis.Del(context.Background(), lockKey)
+	}, nil
 }
 
 // rollbackPreCutover restores the server's DB status to its pre-migration value
