@@ -39,6 +39,20 @@ func NewNodeHandler(state *AppState) *NodeHandler {
 	return &NodeHandler{state: state}
 }
 
+// nodeExists reports whether the node row is still there. The four orphan
+// endpoints below take a nodeId straight from the path and went on to the
+// gRPC call, so a node id that never existed came back as 502 "node N not
+// connected" - which sends an operator looking for a connectivity fault on a
+// node that was deleted, or never was. A missing row is a 404; "not
+// connected" stays reserved for a node that exists and is offline.
+func (h *NodeHandler) nodeExists(nodeID int) bool {
+	if h.state.Store == nil {
+		return false
+	}
+	_, err := h.state.Store.GetNodeByID(nodeID)
+	return err == nil
+}
+
 func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
@@ -770,6 +784,10 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
+	if !h.nodeExists(nodeID) {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
 
 	// Safety check: ensure it is NOT in the DB
 	srv, _ := h.state.Store.GetServerByUUID(orphanUUID)
@@ -813,6 +831,10 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 
 	if !isSafeOrphanName(orphanUUID) {
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		return
+	}
+	if !h.nodeExists(nodeID) {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -878,6 +900,10 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 
 	if !isSafeOrphanName(orphanUUID) {
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		return
+	}
+	if !h.nodeExists(nodeID) {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -991,6 +1017,10 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 
 	if !isSafeOrphanName(orphanUUID) {
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		return
+	}
+	if !h.nodeExists(nodeID) {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
