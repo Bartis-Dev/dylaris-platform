@@ -1387,12 +1387,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/register", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.Register))).Methods("POST")
 	// Public one-click read-only demo session (rate-limited). 404 when no demo account is set.
 	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.DemoLogin))).Methods("POST")
-	api.HandleFunc("/auth/verify-email", handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.VerifyEmail)).Methods("POST")
-	api.HandleFunc("/auth/resend-verification", handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.ResendVerification)).Methods("POST")
+	api.HandleFunc("/auth/verify-email", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.VerifyEmail))).Methods("POST")
+	// Rate-limited like /auth/forgot-password, the other endpoint that sends
+	// mail on an anonymous request. The handler additionally holds a per-address
+	// cooldown, because a per-IP limit does not protect a mailbox from a caller
+	// who changes address.
+	api.HandleFunc("/auth/resend-verification", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.ResendVerification))).Methods("POST")
 
 	// --- Password reset - all public, all enumeration-safe ---
 	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ForgotPassword))).Methods("POST")
-	api.HandleFunc("/auth/validate-reset-token", handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ValidateResetToken)).Methods("POST")
+	api.HandleFunc("/auth/validate-reset-token", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ValidateResetToken))).Methods("POST")
 	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ResetPassword))).Methods("POST")
 
 	// --- Security questions ---

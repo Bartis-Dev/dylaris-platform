@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"dylaris-core/mailer"
 	"dylaris-core/models"
@@ -301,6 +302,22 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// The per-IP limiter on this route bounds one CALLER; it does not bound one
+	// MAILBOX, which is what an attacker rotating source addresses aims at. And
+	// every send below replaces the verification token, so an unthrottled loop
+	// does not just fill the inbox and bill the mail provider - it invalidates
+	// the link the user is trying to click, for as long as it runs.
+	//
+	// email_verification_sent_at has been written on every token issue and
+	// loaded onto the user since the column was added. Nothing had ever read it.
+	if !verificationResendAllowed(user.EmailVerificationSentAt, time.Now(), resendVerificationCooldown) {
+		// Same silent success as the other no-op branches: answering
+		// differently here would turn this endpoint into an oracle for which
+		// addresses are registered and still unverified.
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+
 	token, err := randomToken(32)
 	if err != nil {
 		sendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
@@ -314,6 +331,24 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		log.Printf("resend-verification: send to %s failed: %v", user.Email, err)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// resendVerificationCooldown is the minimum gap between two verification
+// emails to ONE address. It matches the per-IP limiter's window, so a caller
+// who is inside the route limit is still inside this one.
+const resendVerificationCooldown = 60 * time.Second
+
+// verificationResendAllowed reports whether another verification email may go
+// out, given when the last one did. A nil lastSentAt means none was ever sent.
+//
+// A lastSentAt in the future (clock skew, or a row written by a host running
+// ahead) yields a negative difference and so refuses - erring towards not
+// sending, which is the safe direction for a mail the user can request again.
+func verificationResendAllowed(lastSentAt *time.Time, now time.Time, cooldown time.Duration) bool {
+	if lastSentAt == nil {
+		return true
+	}
+	return now.Sub(*lastSentAt) >= cooldown
 }
 
 // randomToken returns a hex-encoded cryptographically random token.
