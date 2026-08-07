@@ -16,6 +16,17 @@ func TestValidateInstallerRequest(t *testing.T) {
 		{name: "unknown type", typ: "ftp"},
 		{name: "empty type", typ: ""},
 
+		// Core ADVERTISES these three via /api/versions/software (their version
+		// listing shares the PaperMC provider) but they are not an install
+		// source and the node's switch has no case for them, so
+		// validate.IsInstallerType excludes them and this must too.
+		{name: "velocity is not an install source", typ: "velocity", version: "3.4.0"},
+		{name: "waterfall is not an install source", typ: "waterfall", version: "1.20"},
+		{name: "bungeecord is not an install source", typ: "bungeecord", version: "1.21"},
+		// Node-side only; nothing in Core ever produces it, and the canonical
+		// allowlist leaves it out.
+		{name: "import is not accepted", typ: "import", url: "https://example.com/s.zip"},
+
 		{name: "paper needs a version", typ: "paper"},
 		{name: "paper with a version", typ: "paper", version: "1.21.4", ok: true},
 		{name: "paper with a blank version", typ: "paper", version: "   "},
@@ -32,9 +43,6 @@ func TestValidateInstallerRequest(t *testing.T) {
 		// NeoForge is passed Loader as its version; Version is unused.
 		{name: "neoforge needs a loader", typ: "neoforge", version: "1.21.4"},
 		{name: "neoforge with a loader", typ: "neoforge", loader: "21.4.10-beta", ok: true},
-
-		{name: "import needs a url", typ: "import"},
-		{name: "import with a url", typ: "import", url: "https://example.com/s.zip", ok: true},
 
 		{name: "library needs a path or url", typ: "library"},
 		{name: "library with a path", typ: "library", path: "servers/paper.jar", ok: true},

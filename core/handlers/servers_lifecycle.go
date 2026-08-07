@@ -286,8 +286,14 @@ func (h *ServerHandler) cleanupDeletedServerKeys(ctx context.Context, uuid strin
 // installFabric and installForge use it as the mcVersion in their meta lookup
 // (both resolve the LOADER when it is blank, so only Version is required),
 // installNeoForge is passed Loader as its version, and installFromLibrary
-// needs a local path or a fallback URL. "import" is checked node-side too;
-// answering 400 here is strictly better than queueing it.
+// needs a local path or a fallback URL.
+//
+// The type allowlist is validate.IsInstallerType, which already existed and
+// had no caller at all. Reusing it rather than restating the set here is the
+// point: it is also what excludes velocity/waterfall/bungeecord, which Core
+// ADVERTISES via /api/versions/software (their version listing shares the
+// PaperMC provider) but which are not an install source and have no case in
+// the node's switch.
 //
 // Without this the node was the first and only thing to notice, long after the
 // caller was told 200 "Server setup queued". Observed end to end on the
@@ -299,15 +305,10 @@ func (h *ServerHandler) cleanupDeletedServerKeys(ctx context.Context, uuid strin
 // resolves and authorizes it below and rewrites Installer in place, so its
 // own error paths already answer properly.
 func validateInstallerRequest(typ, version, loader, url, path string) string {
-	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true}
-	known := map[string]bool{
-		"paper": true, "vanilla": true, "fabric": true, "forge": true,
-		"neoforge": true, "library": true, "import": true, "upload": true,
-		"upload-zip": true, "modpack": true, "pack": true,
-	}
-	if !known[typ] {
+	if !validate.IsInstallerType(typ) {
 		return "Unsupported installer type"
 	}
+	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true}
 	if needsVersion[typ] && strings.TrimSpace(version) == "" {
 		return "installer.version is required for " + typ
 	}
@@ -315,10 +316,6 @@ func validateInstallerRequest(typ, version, loader, url, path string) string {
 	case "neoforge":
 		if strings.TrimSpace(loader) == "" {
 			return "installer.loader is required for neoforge"
-		}
-	case "import":
-		if strings.TrimSpace(url) == "" {
-			return "installer.url is required for import"
 		}
 	case "library":
 		if strings.TrimSpace(path) == "" && strings.TrimSpace(url) == "" {
