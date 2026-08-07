@@ -165,7 +165,11 @@ jobs:
       - name: go test (Postgres integration)
         working-directory: core
         env:
-          DYLARIS_TEST_DB_HOST: localhost
+          # 127.0.0.1, not localhost: the runner resolves localhost to ::1 first
+          # and the service container publishes on IPv4 only, so every connection
+          # was refused - InitDB then retried for two minutes per test before the
+          # job finally failed.
+          DYLARIS_TEST_DB_HOST: 127.0.0.1
           DYLARIS_TEST_DB_PORT: '5432'
           DYLARIS_TEST_DB_USER: dylaris
           DYLARIS_TEST_DB_PASSWORD: testpw

@@ -31,7 +31,7 @@ import (
 //
 //	docker run -d --name dyl-pgtest -e POSTGRES_PASSWORD=testpw \
 //	  -e POSTGRES_USER=dylaris -e POSTGRES_DB=dylaris_test -p 55432:5432 postgres:16-alpine
-//	DYLARIS_TEST_DB_HOST=localhost DYLARIS_TEST_DB_PORT=55432 \
+//	DYLARIS_TEST_DB_HOST=127.0.0.1 DYLARIS_TEST_DB_PORT=55432 \
 //	  DYLARIS_TEST_DB_USER=dylaris DYLARIS_TEST_DB_PASSWORD=testpw \
 //	  DYLARIS_TEST_DB_NAME=dylaris_test go test ./database/ -run Integration -v
 var uniqueSuffix atomic.Int64
