@@ -52,4 +52,18 @@ func (s *inflightSet) leave(id string) {
 var (
 	restoresInFlight = newInflightSet()
 	backupsInFlight  = newInflightSet()
+
+	// The same hazard for the destructive per-server commands, keyed
+	// "<action>:<uuid>" since they carry no run id. The consumer runs 8
+	// commands in parallel, so a redelivery really does land NEXT TO the
+	// original rather than after it. Observed on the testbed with two setups
+	// of one server: both installers wrote the same directory in the same
+	// second, then both recreated the container - one won, the other logged
+	// "Failed to start server pod ... name is already in use" while the winner
+	// logged "deployed and running".
+	//
+	// Two concurrent runs of one of these on one server is always wrong, so
+	// dropping the duplicate is right. A later, deliberate re-run is untouched:
+	// the guard only spans the work itself.
+	commandsInFlight = newInflightSet()
 )

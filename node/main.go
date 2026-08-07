@@ -935,6 +935,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "setup":
 		// Step 2: install software into a named sub-server directory, then start.
+		if !commandsInFlight.enter("setup:" + cmd.Config.UUID) {
+			log.Printf("setup: a setup of %s is already running on this node, ignoring the duplicate", cmd.Config.UUID)
+			return
+		}
+		defer commandsInFlight.leave("setup:" + cmd.Config.UUID)
 		subName := cmd.Config.ActiveSubServer
 		if subName == "" {
 			subName = "server"
@@ -1312,6 +1317,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Set install-start for cooldown
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", cmd.Config.UUID), "1", 30*time.Second)
 
+		if !commandsInFlight.enter("reinstall:" + cmd.Config.UUID) {
+			log.Printf("reinstall: a reinstall of %s is already running on this node, ignoring the duplicate", cmd.Config.UUID)
+			return
+		}
+		defer commandsInFlight.leave("reinstall:" + cmd.Config.UUID)
 		// Hold the reconciler off for the whole reinstall: we are about to stop a
 		// container whose desired_state is still "online" and then delete its JARs.
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
@@ -1377,6 +1387,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Same reason as the reinstall path above, and the stakes are higher: the
 		// server directory is about to MOVE, so a reconciler restart mid-migration
 		// would recreate the container against a path that is being emptied.
+		if !commandsInFlight.enter("migrate_storage:" + cmd.Config.UUID) {
+			log.Printf("migrate_storage: a migration of %s is already running on this node, ignoring the duplicate", cmd.Config.UUID)
+			return
+		}
+		defer commandsInFlight.leave("migrate_storage:" + cmd.Config.UUID)
 		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseMigrateBusy()
 
