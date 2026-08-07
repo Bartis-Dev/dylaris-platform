@@ -1449,6 +1449,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		log.Printf("backup_restore: starting run=%d server=%s sub=%s", rcmd.RunID, rcmd.ServerUUID, rcmd.SubServer)
+		// Same interlock as setup/reinstall/migrate_storage, and for the same
+		// reason: the restore stops a container whose desired_state is still
+		// "online" and then renames its whole directory away. Without this the
+		// reconciler starts the server back up mid-restore, against the very
+		// directory the swap is about to replace. Caught live on the testbed
+		// with a 646MB archive - the window there is only ~2s and the
+		// reconciler still hit it; on remote storage it is minutes wide.
+		releaseRestoreBusy := holdBusyStatus(rdb, rcmd.ServerUUID, "restarting", busyStatusTTL)
+		defer releaseRestoreBusy()
 		RunRestore(ctx, rdb, storage, dm, rcmd)
 
 	case "install_mod":
