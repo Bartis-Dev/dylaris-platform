@@ -348,6 +348,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         }).finally(() => setLoading(false));
     }, []);
 
+    // The migration poll only stops itself once the run reports finished, so
+    // leaving this tab mid-migration otherwise left it running: a request every
+    // 3s and a setState into an unmounted component, for as long as the
+    // migration lasts. The interval eight lines below already does this.
+    useEffect(() => () => {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    }, []);
+
     const startPolling = () => {
         if (pollRef.current) return;
         pollRef.current = setInterval(async () => {
