@@ -414,7 +414,7 @@ export interface BackupConfig {
 
 export const getBackupConfig = (): Promise<{ success: boolean; settings?: BackupConfig }> =>
     fetchAPI('/settings/backup');
-export const saveBackupConfig = (cfg: BackupConfig): Promise<{ success: boolean }> =>
+export const saveBackupConfig = (cfg: BackupConfig): Promise<{ success: boolean; message?: string }> =>
     fetchAPI('/settings/backup', { method: 'POST', body: JSON.stringify(cfg) });
 
 // Per-server backup-folder usage (bytes on disk, archive count). Used by
@@ -458,11 +458,14 @@ export interface BackupRun {
 
 export const listBackupStorages = (): Promise<{ success: boolean; storages?: BackupStorage[] }> =>
     fetchAPI('/backup-storages');
-export const createBackupStorage = (s: Partial<BackupStorage>): Promise<{ success: boolean; id?: number }> =>
+// message carries the server's reason on a rejected write (409 for a duplicate
+// name, 404 for a storage that no longer exists). Declared so the UI can show
+// it instead of a bare "Save failed."
+export const createBackupStorage = (s: Partial<BackupStorage>): Promise<{ success: boolean; id?: number; message?: string }> =>
     fetchAPI('/backup-storages', { method: 'POST', body: JSON.stringify(s) });
-export const updateBackupStorage = (id: number, s: Partial<BackupStorage>): Promise<{ success: boolean }> =>
+export const updateBackupStorage = (id: number, s: Partial<BackupStorage>): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/backup-storages/${id}`, { method: 'PATCH', body: JSON.stringify(s) });
-export const deleteBackupStorage = (id: number): Promise<{ success: boolean }> =>
+export const deleteBackupStorage = (id: number): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/backup-storages/${id}`, { method: 'DELETE' });
 export const testBackupStorage = (id: number): Promise<{ success: boolean; message?: string; warning?: string }> =>
     fetchAPI(`/backup-storages/${id}/test`, { method: 'POST' });
@@ -508,11 +511,12 @@ export interface StorageConnectionInput {
 
 export const listStorageConnections = (): Promise<{ success: boolean; connections?: StorageConnection[] }> =>
     fetchAPI('/storage-connections');
-export const createStorageConnection = (c: StorageConnectionInput): Promise<{ success: boolean; id?: number }> =>
+// message: see createBackupStorage - same 409/404 reasons apply here.
+export const createStorageConnection = (c: StorageConnectionInput): Promise<{ success: boolean; id?: number; message?: string }> =>
     fetchAPI('/storage-connections', { method: 'POST', body: JSON.stringify(c) });
-export const updateStorageConnection = (id: number, c: StorageConnectionInput): Promise<{ success: boolean }> =>
+export const updateStorageConnection = (id: number, c: StorageConnectionInput): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/storage-connections/${id}`, { method: 'PATCH', body: JSON.stringify(c) });
-export const deleteStorageConnection = (id: number): Promise<{ success: boolean }> =>
+export const deleteStorageConnection = (id: number): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/storage-connections/${id}`, { method: 'DELETE' });
 export const testStorageConnection = (id: number): Promise<{ success: boolean; ok?: boolean; message?: string }> =>
     fetchAPI(`/storage-connections/${id}/test`, { method: 'POST' });

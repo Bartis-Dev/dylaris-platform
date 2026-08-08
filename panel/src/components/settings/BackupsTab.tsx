@@ -262,7 +262,10 @@ export default function BackupsTab() {
             setEditing(null);
             reload();
         } else {
-            showToast('Save failed.', false);
+            // Show what the server said: a duplicate name and a storage that no
+            // longer exists are both actionable and both look identical behind a
+            // bare "Save failed."
+            showToast(res.message || 'Save failed.', false);
         }
     };
 
@@ -270,6 +273,7 @@ export default function BackupsTab() {
         if (!(await confirmDialog({ title: 'Delete storage', message: 'Delete this storage? Existing backups in this storage become inaccessible.' }))) return;
         const res = await deleteBackupStorage(id);
         if (res.success) reload();
+        else showToast(res.message || 'Delete failed.', false);
     };
 
     const handleTest = async (id: number) => {
@@ -299,7 +303,7 @@ export default function BackupsTab() {
             setSavedConfig(config);
             showToast('Storage mode saved.');
         } else {
-            showToast('Save failed.', false);
+            showToast(res.message || 'Save failed.', false);
         }
     };
 

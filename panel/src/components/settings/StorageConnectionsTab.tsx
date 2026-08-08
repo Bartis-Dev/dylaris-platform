@@ -88,7 +88,10 @@ export default function StorageConnectionsTab() {
             setEditing(null);
             reload();
         } else {
-            showToast('Save failed.', false);
+            // Show what the server said: a duplicate name and a connection that
+            // no longer exists are both actionable and both look identical
+            // behind a bare "Save failed."
+            showToast(res.message || 'Save failed.', false);
         }
     };
 
@@ -96,7 +99,7 @@ export default function StorageConnectionsTab() {
         if (!(await confirmDialog({ title: 'Delete storage connection', message: 'Delete this storage connection? Features that reference it will fall back to their inline configuration.' }))) return;
         const res = await deleteStorageConnection(id);
         if (res.success) reload();
-        else showToast('Delete failed.', false);
+        else showToast(res.message || 'Delete failed.', false);
     };
 
     const handleTest = async (id: number) => {
