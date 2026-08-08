@@ -143,11 +143,13 @@ export default function TicketDetailPage() {
         if (!user) return;
         const res = await setTicketAssignment(ticketId, { assignedUserId: user.id, assignedTeam: ticket?.assignedTeam || '' });
         if (res.success) reload();
+        else setError(res.message || 'Assignment failed.');
     };
 
     const handleUnassign = async () => {
         const res = await setTicketAssignment(ticketId, { assignedUserId: null, assignedTeam: ticket?.assignedTeam || '' });
         if (res.success) reload();
+        else setError(res.message || 'Assignment failed.');
     };
 
     const handleAddWatcher = async (e: React.FormEvent) => {
@@ -188,6 +190,8 @@ export default function TicketDetailPage() {
         const res = await deleteTicketAttachment(ticketId, attachmentId);
         if (res.success) {
             setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+        } else {
+            setError(res.message || 'Deleting the attachment failed.');
         }
     };
 
