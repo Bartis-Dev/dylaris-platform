@@ -446,6 +446,15 @@ func (s *PostgresStore) IsTicketWatcher(ticketID int, userID string) (bool, erro
 
 // ── Audit ────────────────────────────────────────────────────────────
 
+func (s *PostgresStore) PurgeTicketAuditOlderThan(cutoff time.Time) (int, error) {
+	res, err := s.db.Exec(`DELETE FROM ticket_audit_events WHERE created_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func (s *PostgresStore) InsertTicketAudit(ev *models.TicketAuditEvent) error {
 	var metaJSON []byte
 	if ev.Metadata != nil {

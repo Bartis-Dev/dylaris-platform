@@ -172,7 +172,8 @@ function AuthPolicySection() {
         <section className="card p-5 border border-(--base-03) space-y-6 relative">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><Mail size={14} /> Authentication policy</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
+                {/* Always in force - these switches have no off state of their own. */}
+                <StatusBadge active />
             </header>
 
             <div className="space-y-4">
@@ -319,10 +320,19 @@ function SMTPSection() {
     const [testing, setTesting] = useState(false);
     const [testTo, setTestTo] = useState('');
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // What the mailer would actually use right now, so the header badge reports
+    // the stored profile rather than the form being typed into. mailer.LoadConfig
+    // has no env fallback and refuses on an empty host or from-address, so those
+    // two are exactly the line between "sends mail" and "every mail fails".
+    const [sending, setSending] = useState(false);
+    const smtpUsable = (c: SMTPConfig | null) => !!c && !!c.host.trim() && !!c.fromEmail.trim();
 
     useEffect(() => {
         getSMTPConfig().then(res => {
-            if (res.success) setCfg(res.config);
+            if (res.success) {
+                setCfg(res.config);
+                setSending(smtpUsable(res.config));
+            }
             setLoading(false);
         });
     }, []);
@@ -339,6 +349,7 @@ function SMTPSection() {
         setSaving(false);
         if (res.success) {
             if (res.config) setCfg(res.config);
+            setSending(smtpUsable(res.config ?? cfg));
             flash('Saved.');
         } else {
             flash(res.message || 'Save failed.', false);
@@ -373,7 +384,7 @@ function SMTPSection() {
         <section className="card p-5 border border-(--base-03) space-y-4 relative">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><Send size={14} /> SMTP — Outgoing Email</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
+                <StatusBadge active={sending} inactiveLabel="Not configured" />
             </header>
             <p className="text-xs text-(--base-06)">
                 The default SMTP profile is used for verification, password reset and ticket notifications. Per-purpose
@@ -461,6 +472,27 @@ function ToggleRow({ label, description, value, onChange }: { label: string; des
     );
 }
 
+// Every card header used to carry the literal string "Active" in a green pill.
+// On the cards that are always in force that is true; on three of them it was
+// not. It sat green next to an auto-delete job whose master toggle was off (the
+// card's own copy says "when off, the daily job is a no-op"), next to an SMTP
+// profile with no host, where every verification mail fails, and next to a
+// retention horizon that no sweep would ever apply.
+//
+// `active` must be the state IN FORCE, not the half-edited form: a badge that
+// turns green while you type has only moved the lie earlier.
+function StatusBadge({ active, activeLabel = 'Active', inactiveLabel = 'Off' }: { active: boolean; activeLabel?: string; inactiveLabel?: string }) {
+    return (
+        <span
+            className={`text-[9px] font-mono uppercase tracking-[0.08em] px-1.5 py-0.5 rounded-sm ${
+                active ? 'text-(--success-light) bg-(--success-ghost)' : 'text-(--base-06) bg-(--base-03)'
+            }`}
+        >
+            {active ? activeLabel : inactiveLabel}
+        </span>
+    );
+}
+
 // ── Auto-delete inactive users section ────────────────────────────────
 // Mirrors the auth-policy save pattern: one card, loads/saves the whole
 // AuthPolicy DTO. Lives outside AuthPolicySection because it has a
@@ -471,10 +503,16 @@ function AutoDeleteSection() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // The stored master toggle, not the checkbox: flipping it off and walking
+    // away without saving leaves the daily job running.
+    const [running, setRunning] = useState(false);
 
     useEffect(() => {
         getAuthPolicy().then(res => {
-            if (res.success) setPolicy(res.policy);
+            if (res.success) {
+                setPolicy(res.policy);
+                setRunning(!!res.policy?.inactiveDeleteEnabled);
+            }
             setLoading(false);
         });
     }, []);
@@ -491,6 +529,7 @@ function AutoDeleteSection() {
         setSaving(false);
         if (res.success) {
             if (res.policy) setPolicy(res.policy);
+            setRunning(!!(res.policy ?? policy).inactiveDeleteEnabled);
             flash('Saved.');
         } else {
             flash(res.message || 'Save failed.', false);
@@ -517,7 +556,7 @@ function AutoDeleteSection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><Trash2 size={14} /> Auto-delete inactive users</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
+                <StatusBadge active={running} />
             </header>
             <p className="text-xs text-(--base-06)">
                 Daily job that warns dormant accounts by email and then removes them. Admins are never affected. Users with server history get an additional grace window. Signing in at any point cancels the scheduled deletion automatically.
@@ -612,10 +651,16 @@ function AuditPolicySection() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // The horizon the sweep is actually applying. 0 means it deletes nothing,
+    // which is also what an install that never saved this card gets.
+    const [inForceDays, setInForceDays] = useState(0);
 
     useEffect(() => {
         getAuditPolicy().then(res => {
-            if (res.success) setPolicy(res.policy);
+            if (res.success) {
+                setPolicy(res.policy);
+                setInForceDays(res.policy?.serverRetentionDays ?? 0);
+            }
             setLoading(false);
         });
     }, []);
@@ -632,6 +677,7 @@ function AuditPolicySection() {
         setSaving(false);
         if (res.success) {
             if (res.policy) setPolicy(res.policy);
+            setInForceDays((res.policy ?? policy).serverRetentionDays);
             flash('Saved.');
         } else {
             flash(res.message || 'Save failed.', false);
@@ -655,10 +701,11 @@ function AuditPolicySection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><FileText size={14} /> Server audit retention</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
+                <StatusBadge active={inForceDays > 0} inactiveLabel="Keeping forever" />
             </header>
             <p className="text-xs text-(--base-06)">
                 How long server-audit events are kept before the daily sweep deletes them. Set to 0 to keep them forever.
+                That is the starting point: the sweep only applies a horizon you saved here, and 365 is a good one.
                 Per-server audit is auto-enabled on first member invite; admins can force it on from each server&apos;s Audit tab.
             </p>
             <div className="flex items-center gap-3">
@@ -772,7 +819,8 @@ function SecurityQuestionsPoolSection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
-                <span className="text-[9px] font-mono uppercase tracking-[0.08em] text-(--success-light) bg-(--success-ghost) px-1.5 py-0.5 rounded-sm">Active</span>
+                {/* Always in force - the pool is whatever it contains. */}
+                <StatusBadge active />
             </header>
             <p className="text-xs text-(--base-06)">
                 The list of questions users can choose from. Removing a question doesn&apos;t affect users who already picked it — their chosen wording is stored inline.

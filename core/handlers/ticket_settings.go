@@ -11,7 +11,10 @@ import (
 //   - cross_team_visibility ON  → no team setup needed before the first ticket
 //   - watchers_default_can_reply OFF → CC starts read-only by convention
 //   - allow_users_to_add_watchers ON → users self-serve CC additions
-//   - audit_retention_days 180 → six months, generous enough for most ops
+//   - audit_retention_days 0   → keep forever until an operator picks a horizon.
+//     TicketAuditRetentionService only sweeps a horizon that was actually saved,
+//     so anything else here would be a number the card displays and nothing
+//     enforces. 180 is the recommended value and the card says so.
 type TicketSettings struct {
 	CrossTeamVisibility      bool `json:"crossTeamVisibility"`
 	WatchersDefaultCanReply  bool `json:"watchersDefaultCanReply"`
@@ -39,7 +42,7 @@ var defaultTicketSettings = TicketSettings{
 	CrossTeamVisibility:        true,
 	WatchersDefaultCanReply:    false,
 	AllowUsersToAddWatchers:    true,
-	AuditRetentionDays:         180,
+	AuditRetentionDays:         0,
 	MaxFileSizeMB:              10,
 	MaxTicketSizeMB:            50,
 	MaxUserSizeMB:              500,

@@ -10,7 +10,7 @@ const defaultSettings: TicketSettings = {
     crossTeamVisibility: true,
     watchersDefaultCanReply: false,
     allowUsersToAddWatchers: true,
-    auditRetentionDays: 180,
+    auditRetentionDays: 0, // matches the server default: no horizon until one is saved
     maxFileSizeMb: 10,
     maxTicketSizeMb: 50,
     maxUserSizeMb: 500,
@@ -105,7 +105,10 @@ export default function TicketSettingsTab() {
                         className="input-field w-24"
                     />
                     <span className="text-sm text-(--base-07)">days</span>
-                    <p className="text-xs text-(--base-06) leading-tight">0 = unlimited. Range 0–3650.</p>
+                    <p className="text-xs text-(--base-06) leading-tight">
+                        0 = keep forever. Range 0-3650. A positive value arms a daily sweep that deletes
+                        ticket audit history past that age; 180 is a reasonable horizon.
+                    </p>
                 </div>
 
                 {/* Attachment quotas. 0 = unlimited per axis. */}

@@ -368,10 +368,16 @@ func main() {
 	ticketAutoClose.Start(bgCtx)
 
 	// Server-audit retention sweep — daily, leader-gated. No-op
-	// when audit.server_retention_days is 0 (keep forever).
+	// when audit.server_retention_days is 0 (keep forever) or unset.
 	serverAuditRetention := services.NewServerAuditRetentionService(pgStore)
 	serverAuditRetention.SetLeader(coreLeader)
 	serverAuditRetention.Start(bgCtx)
+
+	// Ticket-audit retention sweep — the same thing for tickets.audit_retention_days,
+	// which was settable and stored but had no consumer at all.
+	ticketAuditRetention := services.NewTicketAuditRetentionService(pgStore)
+	ticketAuditRetention.SetLeader(coreLeader)
+	ticketAuditRetention.Start(bgCtx)
 
 	// Modpack auto-update checker — hourly, leader-gated. Pauses when the
 	// modpacks feature is off; per-row staleness governed by the admin cadence

@@ -4,14 +4,17 @@ import (
 	"context"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
-	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 )
 
 // ServerAuditRetentionService runs a daily sweep that deletes server_audit_events
 // older than the configured retention. Honors the audit.server_retention_days
-// setting; a value of 0 means "keep forever" and skips the sweep.
+// setting; 0, unset and unparseable all mean "keep forever" and skip the sweep.
+// Because it deletes, it only ever applies a horizon an operator actually saved,
+// never the value the settings card happens to prefill.
 //
 // Leader-gated like all other periodic services so multi-Core doesn't fan out
 // the DELETE.
@@ -49,10 +52,13 @@ func (s *ServerAuditRetentionService) runOnce(_ context.Context) {
 		return
 	}
 	daysStr, _ := s.store.GetSetting("audit.server_retention_days")
-	var days int
-	fmt.Sscanf(daysStr, "%d", &days)
+	// Atoi, not Sscanf("%d"): Sscanf stops at the first non-digit and reports
+	// success, so "30d" would parse as 30 and this sweep would delete on a
+	// setting it could not actually read.
+	days, _ := strconv.Atoi(strings.TrimSpace(daysStr))
 	if days <= 0 {
-		// 0 = unlimited retention; nothing to do.
+		// 0 = unlimited retention, and so is unset or unparseable: this sweep
+		// only ever applies a horizon that was really saved.
 		return
 	}
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)

@@ -70,6 +70,21 @@ func TestServerAuditRetention_NegativeDays_SkipsSweep(t *testing.T) {
 	}
 }
 
+// "30d" used to parse as 30 through Sscanf("%d") and arm the DELETE on a value
+// the sweep could not really read.
+func TestServerAuditRetention_GarbageDays_SkipsSweep(t *testing.T) {
+	for _, v := range []string{"", "forever", "30d", "1e3"} {
+		fs := &auditRetentionFakeStore{settings: map[string]string{"audit.server_retention_days": v}}
+		svc := NewServerAuditRetentionService(fs)
+
+		svc.runOnce(context.Background())
+
+		if fs.purgeCalled {
+			t.Fatalf("value %q: expected no purge for an unusable retention setting", v)
+		}
+	}
+}
+
 func TestServerAuditRetention_NotLeader_SkipsSweep(t *testing.T) {
 	fs := &auditRetentionFakeStore{settings: map[string]string{"audit.server_retention_days": "30"}}
 	svc := NewServerAuditRetentionService(fs)

@@ -413,6 +413,9 @@ type Store interface {
 	// Audit
 	InsertTicketAudit(ev *models.TicketAuditEvent) error
 	ListTicketAudit(ticketID int) ([]models.TicketAuditEvent, error)
+	// PurgeTicketAuditOlderThan backs the retention sweep, mirroring
+	// PurgeServerAuditOlderThan.
+	PurgeTicketAuditOlderThan(cutoff time.Time) (int, error)
 
 	// Sidebar: servers attached to active tickets assigned to a support user.
 	ListServersViaActiveTickets(supportUserID string) ([]models.Server, error)

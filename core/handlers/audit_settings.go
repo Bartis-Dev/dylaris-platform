@@ -13,8 +13,15 @@ type AuditPolicy struct {
 	ServerRetentionDays int `json:"serverRetentionDays"`
 }
 
+// The default is 0 (keep forever) because that is what an unconfigured install
+// actually does: ServerAuditRetentionService skips the sweep until a horizon has
+// been saved, deliberately, since it deletes. The default used to read 365, so
+// the Audit card showed "365 days" next to a hardcoded "Active" badge and the
+// words "before the daily sweep deletes them" while no sweep would ever run -
+// the panel has to display the policy in force, not a suggestion. 365 is still
+// the recommended value and the card says so.
 var defaultAuditPolicy = AuditPolicy{
-	ServerRetentionDays: 365,
+	ServerRetentionDays: 0,
 }
 
 func LoadAuditPolicy(state *AppState) AuditPolicy {
