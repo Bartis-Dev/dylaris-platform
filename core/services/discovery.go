@@ -306,7 +306,17 @@ func (s *DiscoveryService) scanNodes() {
 	}
 
 	// 4. Offline Check
-	dbNodes, _ := s.store.ListNodes()
+	//
+	// A fleet that could not be read is not an empty fleet. Skipping the sweep
+	// is already the safe outcome (nothing gets marked offline on a bad read),
+	// but it was indistinguishable from a healthy round in which every node
+	// answered - so an operator watching nodes flip had no way to tell the two
+	// apart. Say which one happened.
+	dbNodes, err := s.store.ListNodes()
+	if err != nil {
+		log.Printf("Discovery: offline check skipped, could not list nodes: %v", err)
+		return
+	}
 	for _, dbNode := range dbNodes {
 		if _, isActive := activeNodeTokens[dbNode.Token]; !isActive {
 			if dbNode.Status == "online" {

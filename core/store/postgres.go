@@ -493,6 +493,12 @@ func (s *PostgresStore) GetNodeByName(name string) (*models.Node, error) {
 	return scanNode(s.db.QueryRow(query, name).Scan)
 }
 
+// ListNodes returns the whole fleet. Like ListServersByNode this drives
+// decisions rather than a display: the discovery sweep marks every node it does
+// not find here offline, and the rebalance worker picks both its source and its
+// target from it. A node silently dropped by a failed scan is a node the
+// platform stops reasoning about while it is still running servers, so a short
+// read is an error here too.
 func (s *PostgresStore) ListNodes() ([]models.Node, error) {
 	query := `SELECT ` + nodeSelectCols + ` FROM nodes ORDER BY id ASC`
 	rows, err := s.db.Query(query)
@@ -505,9 +511,12 @@ func (s *PostgresStore) ListNodes() ([]models.Node, error) {
 	for rows.Next() {
 		n, err := scanNode(rows.Scan)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		nodes = append(nodes, *n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return nodes, nil
 }
@@ -604,6 +613,23 @@ func (s *PostgresStore) ServerDiskLimitsByNode(nodeID int) (map[string]int64, er
 	return out, rows.Err()
 }
 
+// ListServersByNode returns every server assigned to a node.
+//
+// This list is NOT a display list: three callers read an omission as a positive
+// statement that the server does not exist, and act on it destructively.
+//
+//   - services/acl_reconciler.go and the node handshake (main.go
+//     ServerUUIDsByNode) turn it into the node's Redis ACL. BuildNodeACLRules
+//     starts with "resetkeys", so a server missing from this slice is not
+//     merely skipped - its ~dylaris:server:<uuid>:* grant is REVOKED, and the
+//     node running it loses console, status, stats and commands for it.
+//   - handlers/nodes.go's disk analysis builds dbByUUID from it and classifies
+//     every on-disk directory with no matching entry as ORPHANED, which the
+//     panel offers to delete. A live server dropped here is presented to the
+//     operator as garbage, one click from losing its data.
+//
+// So a short read must be an error, never a short slice: both a scan failure
+// and an iteration cut short mid-stream return here instead of continuing.
 func (s *PostgresStore) ListServersByNode(nodeID int) ([]models.Server, error) {
 	query := `SELECT s.id, s.uuid, s.name, s.status FROM servers s WHERE s.node_id = $1 ORDER BY s.id ASC`
 	rows, err := s.db.Query(query, nodeID)
@@ -615,9 +641,12 @@ func (s *PostgresStore) ListServersByNode(nodeID int) ([]models.Server, error) {
 	for rows.Next() {
 		var srv models.Server
 		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.Status); err != nil {
-			continue
+			return nil, err
 		}
 		servers = append(servers, srv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return servers, nil
 }
