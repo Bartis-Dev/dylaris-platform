@@ -25,10 +25,18 @@ export default function MaintenanceTab() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // A failed load used to leave defaultState on screen looking exactly like a
+    // stored config - maintenance OFF at banner_only - with Save enabled. This
+    // is the one screen where writing that back is destructive: the DB migration
+    // deliberately holds block_all for its whole run, and saving the default
+    // would lift it and let users write to a database being copied. Same
+    // mechanism DNSTab documents, and the same gate ConfigEditorModal uses.
+    const [loadFailed, setLoadFailed] = useState(false);
 
     useEffect(() => {
         getMaintenance().then(res => {
             if (res.success && res.state) setState(res.state);
+            else setLoadFailed(true);
             setLoading(false);
         });
     }, []);
@@ -152,12 +160,20 @@ export default function MaintenanceTab() {
                     </div>
                 </div>
 
+                {loadFailed && (
+                    <div className="alert alert-error text-xs" role="alert">
+                        The current maintenance settings could not be loaded, so the values above are
+                        defaults rather than what is stored. Saving is disabled until a reload succeeds -
+                        writing these back could lift a maintenance mode that is holding right now.
+                    </div>
+                )}
+
                 <div className="flex justify-end pt-1">
                     <button
                         type="button"
                         onClick={handleSave}
-                        disabled={saving}
-                        className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
+                        disabled={saving || loadFailed}
+                        className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         {saving && <Loader2 size={14} className="animate-spin" />}
                         Save maintenance settings

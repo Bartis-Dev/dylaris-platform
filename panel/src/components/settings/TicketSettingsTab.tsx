@@ -24,10 +24,16 @@ export default function TicketSettingsTab() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // Without this a failed load renders defaultSettings as though it were the
+    // stored config and Save writes those defaults over the real ones. See
+    // DNSTab for the same reasoning; the tabs that snapshot into a ref get this
+    // for free because a null snapshot keeps `dirty` false.
+    const [loadFailed, setLoadFailed] = useState(false);
 
     useEffect(() => {
         getTicketSettings().then(res => {
             if (res.success && res.settings) setS(res.settings);
+            else setLoadFailed(true);
             setLoading(false);
         });
     }, []);
@@ -164,12 +170,19 @@ export default function TicketSettingsTab() {
                     </Link>
                 </div>
 
+                {loadFailed && (
+                    <div className="alert alert-error text-xs" role="alert">
+                        The current ticket settings could not be loaded, so the values above are defaults
+                        rather than what is stored. Saving is disabled until a reload succeeds.
+                    </div>
+                )}
+
                 <div className="flex justify-end pt-1">
                     <button
                         type="button"
                         onClick={handleSave}
-                        disabled={saving}
-                        className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
+                        disabled={saving || loadFailed}
+                        className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         {saving && <Loader2 size={14} className="animate-spin" />}
                         Save ticket settings

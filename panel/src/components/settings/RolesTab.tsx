@@ -511,6 +511,14 @@ function AssignRoleModal({
     const [grantCaps, setGrantCaps] = useState<string[]>([]);
     const [denyCaps, setDenyCaps] = useState<string[]>([]);
     const [saving, setSaving] = useState(false);
+    // The GET exists only to pre-fill this editor, and the PUT is an
+    // unconditional full replace of all three fields. So a failed pre-fill used
+    // to render "role: None, no grants, no denies" - indistinguishable from a
+    // user who genuinely has none - with Save enabled and no error anywhere.
+    // One click then wrote that: the role and grants are LOST, and dropping the
+    // deny overrides silently GRANTS back everything they were removing. A read
+    // that failed must not be able to change anyone's privileges.
+    const [loadFailed, setLoadFailed] = useState(false);
 
     useEffect(() => {
         getUserPanelRole(user.id).then(res => {
@@ -518,6 +526,9 @@ function AssignRoleModal({
                 setPanelRoleId(res.panelRoleId ?? null);
                 setGrantCaps(res.grantCaps ?? []);
                 setDenyCaps(res.denyCaps ?? []);
+                setLoadFailed(false);
+            } else {
+                setLoadFailed(true);
             }
             setLoading(false);
         });
@@ -550,6 +561,14 @@ function AssignRoleModal({
                     <div className="modal-body">
                         <SkeletonCard height="h-24" />
                     </div>
+                ) : loadFailed ? (
+                    <div className="modal-body">
+                        <div className="alert alert-error text-xs" role="alert">
+                            This user&apos;s current panel role and capability overrides could not be loaded.
+                            The editor stays closed rather than showing an empty assignment, because saving
+                            it would clear whatever they actually have. Close this and try again.
+                        </div>
+                    </div>
                 ) : (
                     <div className="modal-body overflow-y-auto flex-1 space-y-5">
                         <div className="flex flex-col gap-[5px]">
@@ -580,7 +599,7 @@ function AssignRoleModal({
                 )}
                 <div className="modal-footer">
                     <button type="button" onClick={onClose} className="btn btn-secondary" disabled={saving}>Cancel</button>
-                    <button type="button" onClick={handleSave} className="btn btn-primary disabled:opacity-40" disabled={saving || loading}>
+                    <button type="button" onClick={handleSave} className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed" disabled={saving || loading || loadFailed}>
                         {saving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
