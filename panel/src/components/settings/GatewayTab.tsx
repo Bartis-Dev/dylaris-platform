@@ -374,7 +374,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         if (res.success) {
             setOrigRoutingMode(routingMode);
             setOrigFileMode(fileMode);
-            showToast(`Routing mode saved.${res.serversQueued > 0 ? ` Redeploying ${res.serversQueued} servers...` : ''}`);
+            // The mode saves even when the fleet migration cannot start, and
+            // "Routing mode saved." alone is indistinguishable from a platform
+            // that had no servers to migrate - while every server is in fact
+            // still on the old routing.
+            if (res.migrationError) showToast(res.migrationError, false);
+            else showToast(`Routing mode saved.${res.serversQueued > 0 ? ` Redeploying ${res.serversQueued} servers...` : ''}`);
             if (res.serversQueued > 0) {
                 setMigration({ running: true, total: res.serversQueued, done: 0, failed: 0 });
                 startPolling();

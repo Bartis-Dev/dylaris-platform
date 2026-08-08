@@ -1113,17 +1113,29 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 
 	// Kick off migration
 	queued := 0
+	migrationError := ""
 	if h.state.RoutingMigration != nil {
 		n, err := h.state.RoutingMigration.Run(ctx, req.Mode)
-		if err == nil {
-			queued = n
+		queued = n
+		if err != nil {
+			// The mode itself is already persisted, so the request did not
+			// fail - but the fleet has NOT been migrated, and the panel's
+			// "Routing mode saved." with no server count is indistinguishable
+			// from a platform that simply had nothing to migrate. Say so.
+			// The detail stays in the log; the client gets a fixed sentence.
+			log.Printf("routing-mode: the migration to %q could not be started: %v", req.Mode, err)
+			migrationError = "The routing mode was saved, but the server migration could not be started. The servers are still on the old routing - check the Core log and retry."
 		}
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"success":       true,
 		"serversQueued": queued,
-	})
+	}
+	if migrationError != "" {
+		resp["migrationError"] = migrationError
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 // --- Warp Spoke Firewall Settings ---
