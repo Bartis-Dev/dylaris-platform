@@ -29,6 +29,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
     const [routeError, setRouteError] = useState('');
     const [routeCreating, setRouteCreating] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<GatewayRoute | null>(null);
+    const [deleteError, setDeleteError] = useState('');
     const [deleting, setDeleting] = useState(false);
     const [availability, setAvailability] = useState<AvailabilityState>({ status: 'idle' });
 
@@ -116,12 +117,28 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
         if (!deleteTarget) return;
         const target = deleteTarget.domain;
         setDeleting(true);
+        setDeleteError('');
         try {
-            await deleteServerRoute(serverId, target);
+            // fetchAPI does not throw on 4xx/5xx - it RESOLVES with
+            // {success:false}. So this try/catch only ever caught a dead network,
+            // and every refusal Core has here fell straight through to the filter
+            // below: the route vanished from the list, the dialog closed, and the
+            // route was still routing traffic. The user is told an entry is gone
+            // that is not. Read the answer instead, and only then drop the row.
+            const res = await deleteServerRoute(serverId, target);
+            if (res?.success === false) {
+                setDeleteError(res.message || res.error || 'The route could not be deleted.');
+                setDeleting(false);
+                return;
+            }
             const next = routes.filter(r => r.domain !== target);
             setRoutes(next);
             onRoutesChanged?.(next);
-        } catch { /* surface via toast later */ }
+        } catch {
+            setDeleteError('The request could not be sent.');
+            setDeleting(false);
+            return;
+        }
         setDeleting(false);
         setDeleteTarget(null);
     };
@@ -247,9 +264,12 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                                     Delete route <span className="text-(--base-09) font-medium">{deleteTarget.domain}</span>?
                                     This will immediately stop routing traffic through this entry.
                                 </p>
+                                {deleteError && (
+                                    <div className="alert alert-error text-xs mt-3" role="alert">{deleteError}</div>
+                                )}
                             </div>
                             <div className="modal-footer">
-                                <button onClick={() => setDeleteTarget(null)} disabled={deleting} className="btn btn-secondary">Cancel</button>
+                                <button onClick={() => { setDeleteTarget(null); setDeleteError(''); }} disabled={deleting} className="btn btn-secondary">Cancel</button>
                                 <button onClick={handleConfirmDelete} disabled={deleting} className="btn btn-danger">
                                     {deleting ? 'Deleting…' : 'Delete'}
                                 </button>

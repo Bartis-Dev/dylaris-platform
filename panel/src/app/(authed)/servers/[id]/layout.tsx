@@ -61,6 +61,8 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const [moveBusy, setMoveBusy] = useState(false);
     const [moveMsg, setMoveMsg] = useState('');
     const [demoMsg, setDemoMsg] = useState('');
+    const [resourcesMsg, setResourcesMsg] = useState('');
+    const [nameMsg, setNameMsg] = useState('');
     const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
     const [cancellingMigration, setCancellingMigration] = useState(false);
     // Dedicated transfer dialog for BYON owners (admins use the Resources popup).
@@ -256,7 +258,16 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const handleSaveName = async () => {
         const trimmed = editedName.replace(/\s{2,}/g, ' ').trim();
         if (!trimmed || !/^[a-zA-Z0-9\-+ ]{1,50}$/.test(trimmed)) { setIsEditingName(false); return; }
-        await updateServerName(selectedServer.id, trimmed);
+        setNameMsg('');
+        // A refused rename (name already taken, no permission) used to close the
+        // editor and let refreshServers put the old name back, which reads as the
+        // panel losing the edit rather than the server declining it.
+        const res = await updateServerName(selectedServer.id, trimmed);
+        if (res?.success === false) {
+            setNameMsg(res.message || res.error || 'The name could not be changed.');
+            setIsEditingName(false);
+            return;
+        }
         setIsEditingName(false);
         refreshServers();
     };
@@ -401,13 +412,29 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
 
     const handleSaveResources = async () => {
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
-        await updateServerResources(
+        setResourcesMsg('');
+        // Both answers used to be discarded and the dialog closed regardless, so
+        // a refusal (host port already taken, a cpuset the node cannot honour,
+        // over the plan's limits) looked exactly like a save: the popup shut and
+        // the old numbers quietly came back with refreshServers.
+        const res = await updateServerResources(
             selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0,
             ports, undefined, { mode: editCpuMode, cpuset: editCpusetCpus },
         );
+        if (res?.success === false) {
+            setResourcesMsg(res.message || res.error || 'The resource change was refused.');
+            return;
+        }
         // Auto-move is a separate field — flip only when it actually changed.
         if (editAutoMove !== !!(selectedServer as any).autoMove) {
-            await setServerAutoMove(selectedServer.id, editAutoMove);
+            const moveRes = await setServerAutoMove(selectedServer.id, editAutoMove);
+            if (moveRes?.success === false) {
+                // The resources DID save, so say precisely that rather than
+                // implying the whole dialog failed.
+                setResourcesMsg(moveRes.message || moveRes.error || 'Resources saved, but auto-move could not be changed.');
+                refreshServers();
+                return;
+            }
         }
         setShowEditResourcesPopup(false);
         refreshServers();
@@ -631,11 +658,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             <div className="flex items-center gap-2 bg-(--base-03)/40 border border-(--base-04) rounded-md px-3 py-1">
                                 <h1 className="text-xl font-bold font-display text-(--base-09) tracking-wide">{selectedServer.name}</h1>
                                 {!isDemoView && (
-                                    <button onClick={handleStartEditName} className="text-(--base-06) hover:text-(--base-09) transition-colors">
+                                    <button onClick={() => { setNameMsg(''); handleStartEditName(); }} className="text-(--base-06) hover:text-(--base-09) transition-colors">
                                         <Pencil size={16} />
                                     </button>
                                 )}
                             </div>
+                        )}
+                        {nameMsg && (
+                            <span className="text-xs text-(--error-light)" role="alert">{nameMsg}</span>
                         )}
                         {isDemoView && (
                             <span className="mono-label bg-(--accent-ghost) border border-(--accent-border) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1">
@@ -1386,8 +1416,13 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                                 </div>
                             )}
                         </div>
+                        {resourcesMsg && (
+                            <div className="px-5 pb-1">
+                                <div className="alert alert-error text-xs" role="alert">{resourcesMsg}</div>
+                            </div>
+                        )}
                         <div className="modal-footer">
-                            <button onClick={() => setShowEditResourcesPopup(false)} className="btn btn-secondary">Cancel</button>
+                            <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
                             <button onClick={handleSaveResources} className="btn btn-primary">Save & Restart</button>
                         </div>
                     </div>

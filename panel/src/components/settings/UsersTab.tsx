@@ -189,7 +189,16 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleDeleteUser = async (id: string) => {
         if (!(await confirmDialog({ title: 'Delete user', message: "Do you really want to delete this user?" }))) return;
-        await deleteUser(id);
+        // Core refuses this for real reasons (the last admin, a user still
+        // holding servers). Discarding the answer reloaded the list with the
+        // user still in it and no word about why, which reads as a bug in the
+        // list rather than a refusal. Same handling as handleUpdateRegions above.
+        const res = await deleteUser(id);
+        if (!res.success) {
+            showToast(res.message || res.error || 'Could not delete the user.', false);
+            return;
+        }
+        showToast('User deleted');
         loadUsers();
     };
 

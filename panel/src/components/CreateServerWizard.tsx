@@ -238,10 +238,21 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             // non-default mode, apply it with a follow-up PATCH using the new
             // server id from the create response (server_id).
             if (cpuMode !== 'shared' && result.server_id) {
-                await updateServerResources(
+                const pinRes = await updateServerResources(
                     Number(result.server_id), ram, cpuLimit, diskLimit > 0 ? diskLimit * 1024 : 0,
                     undefined, undefined, { mode: cpuMode, cpuset },
                 );
+                // The server exists either way, so this is not a create failure -
+                // but silently dropping it left the user with a server pinned
+                // "shared" after they had explicitly chosen otherwise.
+                if (pinRes?.success === false) {
+                    setFormError(
+                        (pinRes.message || pinRes.error || 'CPU pinning could not be applied.') +
+                        ' The server was created; set the pinning from its Resources dialog.',
+                    );
+                    setLoading(false);
+                    return;
+                }
             }
             onClose();
         } else {

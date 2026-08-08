@@ -285,7 +285,16 @@ export default function ServerBackupsView() {
     };
     const handleDeleteRun = async (runId: number) => {
         if (!(await confirmDialog({ title: 'Delete backup', message: 'Delete this backup? The archive will be removed from storage.' }))) return;
-        await deleteBackupRun(runId);
+        // The trigger handler right above toasts both outcomes; this one dropped
+        // the answer, so a delete Core refused (storage unreachable, so the
+        // archive is still billed for and still there) looked identical to one
+        // that worked.
+        const res = await deleteBackupRun(runId);
+        if (!res.success) {
+            showToast('Failed to delete the backup.', false);
+            return;
+        }
+        showToast('Backup deleted.');
         reload();
     };
 

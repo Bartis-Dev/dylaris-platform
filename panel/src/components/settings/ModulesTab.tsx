@@ -162,21 +162,33 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         const reordered = arrayMove(sortedModules, oldIndex, newIndex);
 
         // Optimistic update
+        const previous = sortedModules;
         setSortedModules(reordered);
 
         // Compute new position: slot between neighbours (spaced by 10)
         const newPos = (newIndex + 1) * 10;
-        await updateModulePosition(Number(active.id), newPos);
+        const writes = [await updateModulePosition(Number(active.id), newPos)];
 
         // Persist all positions after reorder to keep them clean
         for (let i = 0; i < reordered.length; i++) {
             const m = reordered[i];
             const targetPos = (i + 1) * 10;
             if (m.position !== targetPos) {
-                await updateModulePosition(m.id, targetPos);
+                writes.push(await updateModulePosition(m.id, targetPos));
             }
         }
 
+        // Every one of those results used to be discarded. A refused write left
+        // the new order on screen and the old order in the database, so the drag
+        // silently undid itself on the next load - and a partial failure left the
+        // two disagreeing about only some rows. Put the list back instead.
+        const failed = writes.find(r => r && r.success === false);
+        if (failed) {
+            setSortedModules(previous);
+            setActionError(failed.message || failed.error || 'Could not save the new order.');
+            return;
+        }
+        setActionError('');
         onModulesChange();
     };
 
@@ -191,7 +203,18 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
 
     const handleDeleteModule = async (id: number) => {
         if (!(await confirmDialog({ title: 'Delete module', message: "Do you really want to delete this module?" }))) return;
-        await deleteModule(id);
+        // handleCreateModule and handleToggleModule both read res.success; this
+        // one threw it away, so a refused delete just re-rendered the module
+        // still sitting there with nothing said. setActionError, not setError:
+        // the `error` alert only renders inside the create modal, so a card-level
+        // failure written there would never be seen. handleRoleChange already
+        // makes that distinction.
+        const res = await deleteModule(id);
+        if (!res.success) {
+            setActionError(res.message || res.error || 'Could not delete the module.');
+            return;
+        }
+        setActionError('');
         onModulesChange();
     };
 

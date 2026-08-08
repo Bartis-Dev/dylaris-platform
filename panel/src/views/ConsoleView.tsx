@@ -71,6 +71,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   const [lines, setLines] = useState<string[]>([]);
   const [liveStats, setLiveStats] = useState<ServerStats | null>(null);
   const [command, setCommand] = useState('');
+  const [sendError, setSendError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
@@ -168,8 +169,21 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     sendingRef.current = true;
     setCommand('');
     setSuggestions([]);
+    setSendError('');
     try {
-      await sendConsoleCommand(server.id, trimmed);
+      // The input is cleared optimistically, which is right for a console, but
+      // the answer was then discarded: a refused command (server not running, no
+      // console.write) left an empty prompt and no echo in the stream, which is
+      // exactly what a command that WAS accepted looks like. Put it back so it
+      // can be re-sent, and say why.
+      const res = await sendConsoleCommand(server.id, trimmed);
+      if (res?.success === false) {
+        setSendError(res.message || res.error || 'The command was not accepted.');
+        setCommand(trimmed);
+      }
+    } catch {
+      setSendError('The command could not be sent.');
+      setCommand(trimmed);
     } finally {
       sendingRef.current = false;
       inputRef.current?.focus();
@@ -275,6 +289,9 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           </div>
         ) : (
           <div className="border-t border-(--base-03) flex items-center bg-(--base-02)">
+            {sendError && (
+              <span className="px-3 py-2.5 text-xs text-(--error-light) font-mono shrink-0" role="alert">{sendError}</span>
+            )}
             <span className="px-3 py-2.5 text-(--accent-light) font-mono font-medium select-none">&gt;</span>
             <input
               ref={inputRef}

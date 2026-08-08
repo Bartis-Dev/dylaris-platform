@@ -150,7 +150,15 @@ export default function ServerConfigProfilingPage() {
     };
 
     const handleStop = async () => {
-        await sendConsoleCommand(serverId, 'spark profiler --stop');
+        // handleStart and handleDelete both read res.success. This one did not,
+        // and then claimed success in a toast regardless - so a command that
+        // never reached the server told the user to wait for a URL that was
+        // never going to arrive, with the run left showing as active.
+        const res = await sendConsoleCommand(serverId, 'spark profiler --stop');
+        if (res?.success === false) {
+            showToast(res.message || 'Could not send the stop command', false);
+            return;
+        }
         // Keep `active` until the URL arrives; the watcher will close it.
         showToast('Stop requested — waiting for spark to finalise URL.', true);
     };
