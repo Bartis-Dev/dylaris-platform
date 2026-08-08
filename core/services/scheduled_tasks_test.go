@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ type schedTaskFakeStore struct {
 
 	servers map[int]models.Server
 	nodes   map[int]models.Node
+
+	billing    map[string]*store.UserBilling
+	billingErr error
 
 	desiredCalls []schedDesiredCall
 	statusCalls  []schedStatusCall
@@ -65,6 +69,19 @@ func (f *schedTaskFakeStore) GetNodeByID(id int) (*models.Node, error) {
 		return &n, nil
 	}
 	return nil, errors.New("node not found")
+}
+
+// GetUserBilling backs the suspension gate on a restart task. An absent entry
+// mirrors the real store, which answers "active" for a user with no billing row
+// at all - so only an explicit entry or billingErr changes the outcome.
+func (f *schedTaskFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	if f.billingErr != nil {
+		return nil, f.billingErr
+	}
+	if b, ok := f.billing[userID]; ok {
+		return b, nil
+	}
+	return &store.UserBilling{UserID: userID, Status: "active"}, nil
 }
 
 func (f *schedTaskFakeStore) UpdateServerDesiredState(id int, state string) error {
@@ -421,5 +438,113 @@ func TestRunDue_SayOnly_DoesNotPublishServersChanged(t *testing.T) {
 		t.Fatalf("unexpected extra event published: %+v", ev)
 	case <-time.After(200 * time.Millisecond):
 		// expected: no second event
+	}
+}
+
+// --- suspension parity with the HTTP power gate ---
+//
+// handlers/servers_lifecycle.go refuses start/restart while the owner's billing
+// is suspended. This executor took no such check, so a tenant's own nightly
+// "restart" task handed their server back after the billing lifecycle had
+// stopped it, until the next hourly enforcement pass stopped it again.
+
+func TestRunDue_RestartTask_SuspendedOwner_IsSkipped(t *testing.T) {
+	fs := &schedTaskFakeStore{
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1"}},
+		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+		billing: map[string]*store.UserBilling{"owner-1": {UserID: "owner-1", Status: "suspended"}},
+		due: []models.ScheduledTask{
+			{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"},
+		},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+
+	svc.runDue(context.Background())
+
+	// The DB write is the part that actually defeats the suspension: the node
+	// reconciler reads desired_state, so flipping it back to online restarts the
+	// server even if the queued command were lost.
+	if len(fs.desiredCalls) != 0 {
+		t.Errorf("desiredCalls = %+v, want none for a suspended owner", fs.desiredCalls)
+	}
+	if len(fs.statusCalls) != 0 {
+		t.Errorf("statusCalls = %+v, want none for a suspended owner", fs.statusCalls)
+	}
+	msgs, err := svc.redis.XRange(context.Background(), "dylaris:node:node-tok-5:cmds", "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("queued %d command(s) for a suspended owner, want 0", len(msgs))
+	}
+
+	// Recorded as an error, not silently dropped: the tenant sees why on the
+	// task's last run, and next_run still advances so it resumes on its own once
+	// payment is settled.
+	if len(fs.runRecords) != 1 {
+		t.Fatalf("runRecords = %+v, want 1 entry", fs.runRecords)
+	}
+	if fs.runRecords[0].status != "error" {
+		t.Errorf("status = %q, want error", fs.runRecords[0].status)
+	}
+	if !strings.Contains(fs.runRecords[0].errMsg, "suspended") {
+		t.Errorf("errMsg = %q, want it to mention the suspension", fs.runRecords[0].errMsg)
+	}
+	if fs.runRecords[0].nextRun == nil {
+		t.Error("nextRun = nil, want the schedule to keep advancing through a suspension")
+	}
+	if len(fs.enabledCalls) != 0 {
+		t.Errorf("enabledCalls = %+v, want the task left enabled", fs.enabledCalls)
+	}
+}
+
+// Fails CLOSED, unlike the HTTP gate: the real store answers "active" for a user
+// with no billing row, so an error is a genuine database failure and skipping
+// one firing costs a deferred restart the next tick retries.
+func TestRunDue_RestartTask_BillingUnreadable_IsSkipped(t *testing.T) {
+	fs := &schedTaskFakeStore{
+		servers:    map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1"}},
+		nodes:      map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+		billingErr: errors.New("db down"),
+		due: []models.ScheduledTask{
+			{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"},
+		},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+
+	svc.runDue(context.Background())
+
+	if len(fs.desiredCalls) != 0 {
+		t.Errorf("desiredCalls = %+v, want none when the billing status cannot be read", fs.desiredCalls)
+	}
+	if len(fs.runRecords) != 1 || fs.runRecords[0].status != "error" {
+		t.Fatalf("runRecords = %+v, want a single error record", fs.runRecords)
+	}
+}
+
+// Scope pin: the console "send command" handler has no suspension gate, so the
+// say task must not grow one either. The executor mirrors the HTTP contract
+// exactly - no stricter, no looser.
+func TestRunDue_SayTask_SuspendedOwner_StillRuns(t *testing.T) {
+	fs := &schedTaskFakeStore{
+		servers: map[int]models.Server{2: {ID: 2, UUID: "srv-2", OwnerID: "owner-1"}},
+		billing: map[string]*store.UserBilling{"owner-1": {UserID: "owner-1", Status: "suspended"}},
+		due: []models.ScheduledTask{
+			{ID: 501, ServerID: 2, TaskType: "say", ScheduleCron: "@hourly", Payload: "hi"},
+		},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+
+	svc.runDue(context.Background())
+
+	got, err := svc.redis.LRange(context.Background(), "dylaris:server:srv-2:input", 0, -1).Result()
+	if err != nil {
+		t.Fatalf("LRange: %v", err)
+	}
+	if len(got) != 1 || got[0] != "say hi" {
+		t.Errorf("stdin queue = %v, want [\"say hi\"]", got)
 	}
 }

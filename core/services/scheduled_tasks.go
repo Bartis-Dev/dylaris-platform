@@ -143,6 +143,35 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 
 	switch t.TaskType {
 	case "restart":
+		// Same gate the HTTP power action applies (handlers/servers_lifecycle.go:
+		// "a suspended tenant keeps read access but cannot start/restart their
+		// servers until payment is settled"). This executor took no such check,
+		// so the tenant's own schedule bypassed it: enforceSuspensions stops
+		// their servers, then the next firing of a nightly restart task wrote
+		// desired_state=online and queued the restart, handing the server back
+		// until the hourly enforcement pass stopped it again. That gate is also
+		// what makes the deliberate admin override safe there - it relies on the
+		// hourly pass being the only thing that undoes a start.
+		//
+		// Deliberately fails CLOSED where the HTTP gate fails open: GetUserBilling
+		// answers "active" for a user with no billing row, so an error here is a
+		// real database failure, and skipping one firing costs a deferred restart
+		// that the next tick retries. In the handler the same choice would put a
+		// 403 in a paying customer's face.
+		//
+		// srv.Status is checked for parity with that handler; see its comment for
+		// why the value has no producer today.
+		if srv.Status == "suspended" {
+			return fmt.Errorf("server is suspended; restart skipped")
+		}
+		b, berr := s.store.GetUserBilling(srv.OwnerID)
+		if berr != nil {
+			return fmt.Errorf("owner billing status unavailable, restart skipped: %w", berr)
+		}
+		if b.Status == "suspended" {
+			return fmt.Errorf("owner account is suspended for non-payment; restart skipped")
+		}
+
 		node, err := s.store.GetNodeByID(srv.NodeID)
 		if err != nil {
 			return fmt.Errorf("node for server %d not found: %w", t.ServerID, err)
