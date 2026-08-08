@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -105,8 +106,8 @@ func CopyAllTables(ctx context.Context, src, dst *sql.DB, progress func(table st
 		}
 	}
 
-	// Best-effort: realign sequences so post-switch inserts do not collide. Most
-	// PKs are UUIDs now, so this is usually a no-op; failures are non-fatal.
+	// Realign sequences so post-switch inserts do not collide. Non-fatal, but it
+	// logs every path it abandons - see resetSequences.
 	resetSequences(ctx, dst)
 
 	return results, nil
@@ -386,8 +387,15 @@ func buildValuePlaceholders(rowCount, colCount int) string {
 }
 
 // resetSequences realigns owned sequences to MAX(col) so post-migration inserts
-// do not collide. Entirely best-effort: any error is swallowed (UUID PKs make
-// this irrelevant for most tables).
+// do not collide.
+//
+// Non-fatal, but NOT silent. The previous note here claimed UUID PKs made this
+// irrelevant for most tables; that is not what the schema looks like - the live
+// database has ~50 owned sequences, and servers, nodes, modules, api_keys,
+// panel_roles, backup_storages and the backup job/run/restore tables all still
+// carry integer ids. A sequence left at 1 against a populated table makes the
+// FIRST insert after the cutover fail on a duplicate key, which is the worst
+// possible moment to find out. Every abandoned path therefore logs.
 func resetSequences(ctx context.Context, dst *sql.DB) {
 	const q = `
 		SELECT s.relname AS seq, t.relname AS tbl, a.attname AS col
@@ -398,6 +406,7 @@ func resetSequences(ctx context.Context, dst *sql.DB) {
 		WHERE s.relkind = 'S'`
 	rows, err := dst.QueryContext(ctx, q)
 	if err != nil {
+		log.Printf("db migration: listing sequences failed (%v) - none were reset, inserts after the cutover may collide", err)
 		return
 	}
 	defer rows.Close()
@@ -406,9 +415,19 @@ func resetSequences(ctx context.Context, dst *sql.DB) {
 	for rows.Next() {
 		var r seqRef
 		if err := rows.Scan(&r.seq, &r.tbl, &r.col); err != nil {
+			log.Printf("db migration: reading sequences: %v - some sequences may keep their default and collide on the next insert", err)
 			return
 		}
 		refs = append(refs, r)
+	}
+	// A sequence left unreset starts at 1 against a table that already holds
+	// rows, so the first insert after the migration fails on a duplicate key.
+	// Both exits above and here abandon the remaining sequences by design (the
+	// ones already collected are still worth setting), but they must not do it
+	// silently - this is the last step of a migration the operator is about to
+	// trust.
+	if err := rows.Err(); err != nil {
+		log.Printf("db migration: the sequence listing ended early (%v) - sequences after the %d already read were not reset and may collide on the next insert", err, len(refs))
 	}
 	for _, r := range refs {
 		stmt := fmt.Sprintf(

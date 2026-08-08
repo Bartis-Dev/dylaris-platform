@@ -282,6 +282,12 @@ func (s *PostgresStore) ListDueBackupJobs(now time.Time) ([]models.BackupJob, er
 		}
 		out = append(out, *j)
 	}
+	// The scheduler runs exactly the jobs in this list and says nothing about
+	// the ones it never saw, so a short read means backups that quietly do not
+	// happen while the schedule still looks healthy in the panel.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -424,6 +430,12 @@ func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun,
 			continue
 		}
 		toPrune = append(toPrune, *r)
+	}
+	// Under-pruning is the harmless direction, but the caller also deletes the
+	// archives behind these rows, so it should hear about a short read rather
+	// than treat a partial list as the complete answer.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	for _, r := range toPrune {
 		s.db.Exec(`DELETE FROM backup_runs WHERE id = $1`, r.ID)

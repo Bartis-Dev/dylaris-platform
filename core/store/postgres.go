@@ -957,6 +957,15 @@ func (s *PostgresStore) GetAllActiveServers() ([]models.Server, error) {
 		srv.NodeAddress = nodeToken
 		servers = append(servers, srv)
 	}
+	// The routing migration takes this list as the whole fleet: it reports
+	// len(servers) as its Total and migrates exactly these. An iteration cut
+	// short by a connection blip would otherwise return the rows read so far
+	// with a nil error, so the migration would convert part of the fleet,
+	// report success, and leave the rest on the old routing - unreachable, with
+	// nothing anywhere saying so.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return servers, nil
 }
 
@@ -1492,6 +1501,10 @@ func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
 		}
 		result = append(result, a)
 	}
+	// An access list that silently loses entries denies a user their own server.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -1594,6 +1607,10 @@ func (s *PostgresStore) GetUserRegionIDs(userID string) ([]string, error) {
 		if err := rows.Scan(&rid); err == nil {
 			out = append(out, rid)
 		}
+	}
+	// A short read here silently narrows a user's region access.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -1893,6 +1910,11 @@ func (s *PostgresStore) ListInactiveCandidates(idleSince time.Time) ([]InactiveC
 		}
 		out = append(out, c)
 	}
+	// The retention job acts on this list; a short read silently spares some
+	// accounts and warns the wrong set of users.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -1926,6 +1948,10 @@ func (s *PostgresStore) ListUsersDueForDeletion(now time.Time) ([]string, error)
 		if err := rows.Scan(&id); err == nil {
 			ids = append(ids, id)
 		}
+	}
+	// Same reason as ListInactiveCandidates: this drives deletions.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return ids, nil
 }

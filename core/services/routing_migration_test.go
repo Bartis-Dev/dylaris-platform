@@ -2,7 +2,12 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
+
+	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 // None of the targeted methods below (writeStatus/readStatus/GetStatus/
@@ -86,4 +91,41 @@ func TestRoutingMigrationService_ReleaseLock(t *testing.T) {
 			t.Errorf("releaseLock with nil redis = %v, want nil (no panic)", err)
 		}
 	})
+}
+
+// failingServerStore fails exactly the fleet load. Everything else is
+// unreachable in this test.
+type failingServerStore struct {
+	store.Store
+}
+
+func (failingServerStore) GetAllActiveServers() ([]models.Server, error) {
+	return nil, errors.New("connection reset while streaming rows")
+}
+
+// Run must propagate a failed fleet load, and it must give the lock back so a
+// retry is possible. This is what makes the routing-mode handler's
+// migrationError branch reachable: before GetAllActiveServers checked
+// rows.Err(), a cut stream produced an EMPTY list and a nil error instead, so
+// Run returned (0, nil) - "nothing to migrate" - and the handler answered
+// success while every server stayed on the old routing.
+func TestRoutingMigrationRunPropagatesAFailedFleetLoad(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	m := &RoutingMigrationService{redis: rdb, store: failingServerStore{}}
+
+	n, err := m.Run(context.Background(), "gateway")
+	if err == nil {
+		t.Fatalf("Run = (%d, nil); a fleet that could not be loaded must not read as nothing to migrate", n)
+	}
+	if n != 0 {
+		t.Errorf("queued = %d, want 0", n)
+	}
+	// A held lock would block every retry until the TTL expired.
+	free, err := rdb.SetNX(context.Background(), routingMigrationLockKey, "1", time.Minute).Result()
+	if err != nil {
+		t.Fatalf("SetNX: %v", err)
+	}
+	if !free {
+		t.Error("the migration lock was not released after the failed load; every retry would be refused until its TTL expired")
+	}
 }

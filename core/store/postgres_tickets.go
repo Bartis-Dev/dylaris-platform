@@ -838,6 +838,10 @@ func (s *PostgresStore) ListResolvedTicketsOlderThan(cutoff time.Time) ([]int, e
 			ids = append(ids, id)
 		}
 	}
+	// The retention sweep deletes exactly these tickets.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
 }
 
@@ -914,6 +918,13 @@ func (s *PostgresStore) DumpTicketTable(table string) ([]map[string]interface{},
 			row[c] = vals[i]
 		}
 		out = append(out, row)
+	}
+	// This feeds both the ticket backup and the cross-database migration. A
+	// short read there writes an archive that is missing rows and reports
+	// success - the one place a partial answer must never pass for a complete
+	// one, because the gap only surfaces at restore time.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -1111,6 +1122,11 @@ func (s *PostgresStore) ListAttachmentStorageKeysByTicket(ticketID int) ([]strin
 		}
 		seen[k] = true
 		out = append(out, k)
+	}
+	// Ticket deletion removes the blobs behind these keys; a key missed here is
+	// an object that outlives its ticket and is never referenced again.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
