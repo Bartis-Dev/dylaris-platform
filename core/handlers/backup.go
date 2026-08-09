@@ -730,6 +730,13 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		return 0, fmt.Errorf("backup quota reached (%d / %d GB used) — delete old backups or raise the limit",
 			used/(1024*1024*1024), quota/(1024*1024*1024))
 	}
+	// Per-server node-local cap. Separate budget from the R2 one above: that
+	// counts a tenant's object-storage bytes, this counts the .dylaris-backups/
+	// folder on the MC host, and only one of the two modes is ever active.
+	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv); exceeded {
+		return 0, fmt.Errorf("backup quota reached (%.1f / %.1f GB used on this server) — delete old backups or raise the per-server limit in Settings → Backups",
+			float64(used)/(1024*1024*1024), float64(quota)/(1024*1024*1024))
+	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		return 0, fmt.Errorf("node not found: %w", err)

@@ -961,9 +961,12 @@ type BackupConfig struct {
 	ShareQuotaWithServer bool `json:"shareQuotaWithServer"`
 }
 
+// Sourced from services, not literals, because the enforcement side has to
+// resolve the same values on an install that never saved this form - otherwise
+// the panel draws a bar against one number and Core refuses against another.
 var defaultBackupConfig = BackupConfig{
-	Mode:                 "shared",
-	QuotaPerServerGB:     10,
+	Mode:                 services.DefaultBackupMode,
+	QuotaPerServerGB:     services.DefaultBackupQuotaPerServer,
 	ShareQuotaWithServer: false,
 }
 

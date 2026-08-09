@@ -401,6 +401,18 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		}
 		return nil
 	}
+	// Per-server node-local cap - the same gate startBackupRun takes. Cron is
+	// the path that actually fills a disk: nobody is watching it, and it runs
+	// again every interval forever.
+	if exceeded, used, quota := NodeLocalBackupQuotaExceeded(b.store, b.registry, srv); exceeded {
+		log.Printf("backup-scheduler: job %d skipped — per-server backup quota reached (%.1f/%.1f GB)",
+			job.ID, float64(used)/(1<<30), float64(quota)/(1<<30))
+		next := computeNextRun(job.Schedule, time.Now())
+		if next != nil {
+			b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
+		}
+		return nil
+	}
 
 	storageKey := fmt.Sprintf("backups/%s/job-%d/%s.tar.gz", srv.UUID, job.ID, time.Now().UTC().Format("20060102-150405"))
 	runID, err := b.store.CreateBackupRun(&models.BackupRun{
