@@ -13,6 +13,7 @@ import {
     type ScheduledTask, type ScheduledTaskType, type ScheduledTaskInput,
 } from '@/lib/api/scheduledTasks';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
+import { useBusy } from '@/lib/useBusy';
 
 // Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
@@ -73,6 +74,7 @@ export default function ServerConfigScheduledPage() {
     const server = servers.find(s => s.id === serverId);
 
     const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+    const [deletingTask, runDelete] = useBusy();
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<EditingTask | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ScheduledTask | null>(null);
@@ -331,7 +333,7 @@ export default function ServerConfigScheduledPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingTask} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

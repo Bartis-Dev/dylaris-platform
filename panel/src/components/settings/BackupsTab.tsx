@@ -13,6 +13,7 @@ import {
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { useBusy } from '@/lib/useBusy';
 
 interface LocalConfig {
     basePath: string;
@@ -205,6 +206,7 @@ function NodeLocalQuotaPanel({
 
 export default function BackupsTab() {
     const [storages, setStorages] = useState<BackupStorage[]>([]);
+    const [savingStorage, runSave] = useBusy();
     const [config, setConfig] = useState<BackupConfig | null>(null);
     const [savedConfig, setSavedConfig] = useState<BackupConfig | null>(null);
     const [loading, setLoading] = useState(true);
@@ -511,7 +513,7 @@ export default function BackupsTab() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setEditing(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleSave} className="btn btn-primary">
+                            <button onClick={() => runSave(handleSave)} disabled={savingStorage} className="btn btn-primary disabled:opacity-40">
                                 <Save size={13} /> Save
                             </button>
                         </div>

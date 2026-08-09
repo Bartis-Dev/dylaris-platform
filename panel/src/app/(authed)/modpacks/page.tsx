@@ -13,6 +13,7 @@ import { SkeletonCard } from '@/components/Skeleton';
 import ImportSolderDialog from '@/components/modpacks/ImportSolderDialog';
 import { DownloadCloud } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { useBusy } from '@/lib/useBusy';
 
 // top-level packs list. Per-user authored packs on the unified pack API.
 // The builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -23,6 +24,8 @@ export default function PacksListPage() {
     const modpacksDisabled = !featureFlags.modpacks;
     const [packs, setPacks] = useState<Pack[]>([]);
     const [loading, setLoading] = useState(true);
+    const [creatingPack, runCreate] = useBusy();
+    const [deletingPack, runDelete] = useBusy();
     const [creating, setCreating] = useState<{
         internalName: string; solderDisplayName: string; slug: string; summary: string;
     } | null>(null);
@@ -237,7 +240,7 @@ export default function PacksListPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setCreating(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleCreate} className="btn btn-primary">Create</button>
+                            <button onClick={() => runCreate(handleCreate)} disabled={creatingPack} className="btn btn-primary disabled:opacity-40">Create</button>
                         </div>
                     </div>
                 </div>
@@ -262,7 +265,7 @@ export default function PacksListPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingPack} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

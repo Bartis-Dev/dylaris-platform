@@ -17,6 +17,7 @@ import { getUsers, type User } from '@/lib/api';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { MODE_LABELS, MODE_HELP } from '@/lib/access/accessMode';
+import { useBusy } from '@/lib/useBusy';
 
 // Panel-admin Settings tab (F6): (A) the global permissions_mode 3-state
 // switch, (B) panel-role CRUD, (C) assigning a panel role + grant/deny
@@ -34,6 +35,7 @@ type Toast = { msg: string; ok: boolean } | null;
 
 export default function RolesTab() {
     const [mode, setMode] = useState<PermissionsMode>('off');
+    const [deletingPanelRole, runDeleteRole] = useBusy();
     const [modeSaving, setModeSaving] = useState(false);
 
     const [catalog, setCatalog] = useState<CatalogScope[]>([]);
@@ -274,7 +276,7 @@ export default function RolesTab() {
                         </div>
                         <div className="modal-footer">
                             <button type="button" onClick={() => setDeletingRole(null)} className="btn btn-secondary">Cancel</button>
-                            <button type="button" onClick={handleDeleteRole} className="btn btn-danger">Delete</button>
+                            <button type="button" onClick={() => runDeleteRole(handleDeleteRole)} disabled={deletingPanelRole} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

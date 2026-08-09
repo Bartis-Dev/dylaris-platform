@@ -24,6 +24,7 @@ import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
+import { useBusy } from '@/lib/useBusy';
 
 export default function ServerLayout({ children }: { children: React.ReactNode }) {
     const params = useParams();
@@ -35,6 +36,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
     const selectedServer = servers.find(s => s.id === serverId);
 
     const [isEditingName, setIsEditingName] = useState(false);
+    const [savingResources, runSaveResources] = useBusy();
     const [editedName, setEditedName] = useState('');
 
     const [showDeletePopup, setShowDeletePopup] = useState(false);
@@ -1423,7 +1425,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         )}
                         <div className="modal-footer">
                             <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleSaveResources} className="btn btn-primary">Save & Restart</button>
+                            <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">Save & Restart</button>
                         </div>
                     </div>
                 </div>

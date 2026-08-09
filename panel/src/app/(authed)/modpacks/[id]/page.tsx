@@ -21,6 +21,7 @@ import {
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
+import { useBusy } from '@/lib/useBusy';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
@@ -44,6 +45,8 @@ export default function PackDetailPage() {
     const [pack, setPack] = useState<Pack | null>(null);
     const [builds, setBuilds] = useState<PackBuild[]>([]);
     const [loading, setLoading] = useState(true);
+    const [creatingBuild, runCreate] = useBusy();
+    const [deletingBuild, runDelete] = useBusy();
     const [creating, setCreating] = useState<{
         versionString: string; minecraft: string; loader: string; loaderVersion: string;
     } | null>(null);
@@ -499,7 +502,7 @@ export default function PackDetailPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setCreating(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleCreate} className="btn btn-primary">Create</button>
+                            <button onClick={() => runCreate(handleCreate)} disabled={creatingBuild} className="btn btn-primary disabled:opacity-40">Create</button>
                         </div>
                     </div>
                 </div>
@@ -523,7 +526,7 @@ export default function PackDetailPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingBuild} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

@@ -16,6 +16,7 @@ import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import { useAppData } from '@/lib/AppDataContext';
+import { useBusy } from '@/lib/useBusy';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -318,6 +319,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     const [origRoutingMode, setOrigRoutingMode] = useState<RoutingMode>('ip_port');
     const [origFileMode, setOrigFileMode] = useState<FileAccessMode>('sftp');
     const [confirmModal, setConfirmModal] = useState(false);
+    const [applyingRouting, runSaveRouting] = useBusy();
     const [savingRouting, setSavingRouting] = useState(false);
     const [migration, setMigration] = useState<{ running: boolean; total: number; done: number; failed: number } | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -843,7 +845,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             <p className="text-(--base-06) text-xs pt-1">Servers are redeployed in batches of 4 with 15s between batches. Each container has a 60s timeout before a force-kill is issued.</p>
                         </div>
                         <div className="flex gap-3 pt-2">
-                            <button onClick={handleSaveRouting} className="btn btn-primary flex-1">Confirm & Apply</button>
+                            <button onClick={() => runSaveRouting(handleSaveRouting)} disabled={applyingRouting} className="btn btn-primary flex-1 disabled:opacity-40">Confirm & Apply</button>
                             <button onClick={() => setConfirmModal(false)} className="btn px-5 py-2 text-sm flex-1">Cancel</button>
                         </div>
                     </div>

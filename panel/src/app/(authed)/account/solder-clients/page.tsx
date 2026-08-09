@@ -11,6 +11,7 @@ import {
     type SolderClient,
 } from '@/lib/api/solderAccess';
 import { SkeletonList } from '@/components/Skeleton';
+import { useBusy } from '@/lib/useBusy';
 
 // Per-user Solder client management. A client is a Technic Launcher
 // identity — its UUID (?cid=) whitelists private packs for that launcher.
@@ -24,6 +25,8 @@ export default function SolderClientsPage() {
     const [name, setName] = useState('');
     const [deleting, setDeleting] = useState<SolderClient | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const [creatingClient, runCreate] = useBusy();
+    const [deletingClient, runDelete] = useBusy();
 
     const showToast = useCallback((msg: string, ok = true) => {
         setToast({ msg, ok });
@@ -168,7 +171,7 @@ export default function SolderClientsPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setCreating(false)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleCreate} className="btn btn-primary">Create client</button>
+                            <button onClick={() => runCreate(handleCreate)} disabled={creatingClient} className="btn btn-primary disabled:opacity-40">Create client</button>
                         </div>
                     </div>
                 </div>
@@ -192,7 +195,7 @@ export default function SolderClientsPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeleting(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingClient} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

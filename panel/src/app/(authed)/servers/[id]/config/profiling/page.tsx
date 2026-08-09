@@ -12,6 +12,7 @@ import { sendConsoleCommand } from '@/lib/api';
 import { listInstalledMods } from '@/lib/api/modrinth';
 import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE, type SparkProfile } from '@/lib/api/spark';
 import { createEventSource } from '@/lib/sse';
+import { useBusy } from '@/lib/useBusy';
 
 // Spark profiler integration. UX:
 //   * "Not installed" → prompts user to add `spark` from the Content tab
@@ -41,6 +42,7 @@ export default function ServerConfigProfilingPage() {
     const server = servers.find(s => s.id === serverId);
 
     const [sparkInstalled, setSparkInstalled] = useState<boolean | null>(null);
+    const [stoppingProfiler, runStop] = useBusy();
     const [profiles, setProfiles] = useState<SparkProfile[]>([]);
     const [active, setActive] = useState<ActiveProfile | null>(null);
     const [duration, setDuration] = useState(60);
@@ -254,7 +256,7 @@ export default function ServerConfigProfilingPage() {
                                 </div>
                             </div>
                         </div>
-                        <button onClick={handleStop} className="btn btn-secondary btn-sm">
+                        <button onClick={() => runStop(handleStop)} disabled={stoppingProfiler} className="btn btn-secondary btn-sm disabled:opacity-40">
                             <Square size={12} />
                             Stop
                         </button>

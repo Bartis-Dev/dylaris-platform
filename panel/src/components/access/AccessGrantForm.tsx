@@ -9,6 +9,7 @@ import { assignGrant, type Grant } from '@/lib/api/grants';
 import type { ServerRole } from '@/lib/api/serverRoles';
 import { fullAccessCaps, isProxyScope } from '@/lib/access/accessMode';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
+import { useBusy } from '@/lib/useBusy';
 
 // Invite/edit form for a per-friend delegation grant, shared by both
 // permissions_mode variants: 'simple' (Full-only, one preset, no picking)
@@ -38,6 +39,7 @@ interface AccessGrantFormProps {
 // showing the previous target's values.
 export default function AccessGrantForm({ mode, ownedServers, catalog, roles, presets, editing, showToast, onSaved, onCancel }: AccessGrantFormProps) {
     const [username, setUsername] = useState(editing?.username ?? '');
+    const [submittingGrant, runSubmit] = useBusy();
     const [serverId, setServerId] = useState(editing?.serverId != null ? String(editing.serverId) : '');
     const [serverRoleId, setServerRoleId] = useState(editing?.serverRoleId != null ? String(editing.serverRoleId) : '');
     const [grantCaps, setGrantCaps] = useState<string[]>(editing?.grantCaps ?? []);
@@ -188,7 +190,7 @@ export default function AccessGrantForm({ mode, ownedServers, catalog, roles, pr
                 )}
 
                 <div className="flex items-center gap-2">
-                    <button onClick={handleSubmit} className="btn btn-primary btn-sm">
+                    <button onClick={() => runSubmit(handleSubmit)} disabled={submittingGrant} className="btn btn-primary btn-sm disabled:opacity-40">
                         {editing ? <Check size={12} /> : <Plus size={12} />}
                         {editing ? 'Save' : 'Add grant'}
                     </button>

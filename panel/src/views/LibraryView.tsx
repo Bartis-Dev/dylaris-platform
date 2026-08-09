@@ -5,6 +5,7 @@ import { getLibraryFiles, deleteLibraryPath, createLibraryDir, uploadLibraryFile
 import { useAppData } from '@/lib/AppDataContext';
 import { FolderPlus, Upload, ArrowUp, FolderOpen, Folder, Archive, Trash2, Eye, EyeOff } from 'lucide-react';
 import { SkeletonTable } from '@/components/Skeleton';
+import { useBusy } from '@/lib/useBusy';
 
 interface FileEntry {
     name: string;
@@ -27,6 +28,8 @@ export default function LibraryView() {
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [currentPath, setCurrentPath] = useState('');
     const [loading, setLoading] = useState(false);
+    const [creatingDir, runCreateDir] = useBusy();
+    const [deletingEntry, runDelete] = useBusy();
     const [error, setError] = useState('');
     const [toast, setToast] = useState<string | null>(null);
 
@@ -265,7 +268,7 @@ export default function LibraryView() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setShowCreateDir(false)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleCreateDir} className="btn btn-primary">Create</button>
+                            <button onClick={() => runCreateDir(handleCreateDir)} disabled={creatingDir} className="btn btn-primary disabled:opacity-40">Create</button>
                         </div>
                     </div>
                 </div>
@@ -285,7 +288,7 @@ export default function LibraryView() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeleteTarget(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingEntry} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

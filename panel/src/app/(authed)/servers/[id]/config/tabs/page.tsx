@@ -16,6 +16,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { shareLinkUrl } from '@/lib/tabProxy';
 import { DynamicIcon } from '@/lib/icons';
 import { SkeletonList } from '@/components/Skeleton';
+import { useBusy } from '@/lib/useBusy';
 
 // Custom Tabs management. A tab is either "direct" (a browser-reachable URL,
 // iframe or popout) or "proxied" (Core reverse-proxies the server container
@@ -39,6 +40,8 @@ export default function ServerConfigTabsPage() {
 
     const [tabs, setTabs] = useState<ServerTab[]>([]);
     const [loading, setLoading] = useState(true);
+    const [savingTab, runSave] = useBusy();
+    const [deletingTab, runDelete] = useBusy();
     const [editing, setEditing] = useState<EditingTab | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ServerTab | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -424,7 +427,7 @@ export default function ServerConfigTabsPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setEditing(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleSave} className="btn btn-primary">
+                            <button onClick={() => runSave(handleSave)} disabled={savingTab} className="btn btn-primary disabled:opacity-40">
                                 {editing.isNew ? 'Create' : 'Save'}
                             </button>
                         </div>
@@ -449,7 +452,7 @@ export default function ServerConfigTabsPage() {
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingTab} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>

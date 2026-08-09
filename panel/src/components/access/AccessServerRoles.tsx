@@ -9,6 +9,7 @@ import {
 } from '@/lib/api/serverRoles';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonList } from '@/components/Skeleton';
+import { useBusy } from '@/lib/useBusy';
 
 // Advanced-mode owner UI: custom per-server capability bundles. Bundles
 // SERVER + OWNER scope capabilities only (matches the backend
@@ -29,6 +30,8 @@ interface AccessServerRolesProps {
 
 export default function AccessServerRoles({ catalog, roles, loading, onRolesChanged, showToast }: AccessServerRolesProps) {
     const [editing, setEditing] = useState<ServerRole | null>(null);
+    const [savingRole, runSave] = useBusy();
+    const [deletingRole, runDelete] = useBusy();
     const [showEditor, setShowEditor] = useState(false);
     const [name, setName] = useState('');
     const [caps, setCaps] = useState<string[]>([]);
@@ -157,7 +160,7 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setShowEditor(false)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleSave} className="btn btn-primary">{editing ? 'Save' : 'Create role'}</button>
+                            <button onClick={() => runSave(handleSave)} disabled={savingRole} className="btn btn-primary disabled:opacity-40">{editing ? 'Save' : 'Create role'}</button>
                         </div>
                     </div>
                 </div>
@@ -179,7 +182,7 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setDeleting(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleDelete} className="btn btn-danger">Delete</button>
+                            <button onClick={() => runDelete(handleDelete)} disabled={deletingRole} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
                     </div>
                 </div>
