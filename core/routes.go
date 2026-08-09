@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"dylaris-core/handlers"
 	"dylaris-core/services"
@@ -1463,41 +1462,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-restores", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListRestores))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.BackupUsage))).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteRun)).Methods("DELETE")
-	api.HandleFunc("/tools/beam", func(w http.ResponseWriter, r *http.Request) {
-		// The Beam desktop app is now served by gateway/beam-relay's
-		// /download/{os}-{arch} endpoint - see plan. Core redirects to it
-		// using either the admin-configured beam.download_url setting or,
-		// as a convenience, derives it from beam.relay_address by swapping
-		// in the relay's HTTPS download port (default 25552).
-		downloadBase, _ := appState.Store.GetSetting("beam.download_url")
-		if downloadBase == "" {
-			relayAddr, _ := appState.Store.GetSetting("beam.relay_address")
-			if relayAddr != "" {
-				// strip any existing port; relay download is :25552 by convention
-				host := relayAddr
-				if i := strings.LastIndex(host, ":"); i > 0 {
-					host = host[:i]
-				}
-				downloadBase = "https://" + host + ":25552"
-			}
-		}
-		if downloadBase == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "Beam download URL not configured. Set beam.download_url or beam.relay_address in Settings → Gateway → Beam.",
-			})
-			return
-		}
-
-		platform := r.URL.Query().Get("platform")
-		if platform == "" {
-			platform = detectBeamPlatform(r.UserAgent())
-		}
-		target := strings.TrimSuffix(downloadBase, "/") + "/download/" + platform
-		http.Redirect(w, r, target, http.StatusFound)
-	}).Methods("GET")
+	api.HandleFunc("/tools/beam", beamToolsRedirect).Methods("GET")
 
 	return r, &routeExtras{
 		settingsHandler: settingsHandler,

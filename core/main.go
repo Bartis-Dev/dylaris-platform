@@ -56,6 +56,37 @@ func detectBeamPlatform(ua string) string {
 	}
 }
 
+// beamToolsRedirect serves GET /api/tools/beam, the public, session-less
+// "download Beam" link. Its only job is to pick the platform off the
+// User-Agent and hand off to the real download.
+//
+// It used to assemble a redirect to the beam-relay's /download/{platform}
+// itself, and every step of that was wrong by the time it was found: the
+// setting it preferred, beam.download_url, has no writer anywhere in the tree
+// (the Beam settings tab writes beam.download_link, which this route ignored);
+// the relay's binaries.go was deleted when the app was decoupled from it, so
+// /download no longer exists there; the 302 handed the browser the relay's
+// host, which GetBeamDownload deliberately stopped doing because that is
+// usually an overlay address; the caller's platform reached the Location
+// header unvalidated; and none of it touched the signed release manifest,
+// which made this the one route that served an unverified executable. Its 503
+// even told the operator to set the key that nothing can set.
+//
+// Redirecting into GetBeamDownload leaves one implementation owning manifest
+// verification, upstream TLS and platform validation, and the binary is
+// streamed through Core instead of fetched from a host the browser gets to
+// see. A platform we cannot serve now yields that handler's 400/503 rather
+// than a redirect to a relay endpoint that no longer answers.
+func beamToolsRedirect(w http.ResponseWriter, r *http.Request) {
+	platform := r.URL.Query().Get("platform")
+	if platform == "" {
+		// Without this, GetBeamDownload would answer the bare link with its
+		// platform index (JSON), not a download.
+		platform = detectBeamPlatform(r.UserAgent())
+	}
+	http.Redirect(w, r, "/api/beam/download?platform="+url.QueryEscape(platform), http.StatusFound)
+}
+
 // aclHandshakeStore adapts the Core store to redisacl.HandshakeStore. Primitive
 // types only, keeping the redisacl package free of store/models imports.
 type aclHandshakeStore struct {
