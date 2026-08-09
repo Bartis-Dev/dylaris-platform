@@ -273,7 +273,11 @@ export default function PackDetailPage() {
                 {pack.solderDisplayName && (
                     <Badge variant="neutral">solder: {pack.solderDisplayName}</Badge>
                 )}
-                <Badge variant="neutral">visibility: {pack.modrinthVisibility}</Badge>
+                {/* Named for its axis: this is the Modrinth publish visibility,
+                    not the Solder one. Unqualified it read as a contradiction
+                    next to the whitelist card, which says "this pack is public"
+                    off pack.private - a different flag entirely. */}
+                <Badge variant="neutral">modrinth visibility: {pack.modrinthVisibility}</Badge>
                 {pack.modrinthProjectId ? (
                     <a
                         href={`https://modrinth.com/modpack/${pack.internalSlug}`}
@@ -359,12 +363,28 @@ export default function PackDetailPage() {
                     <h2 className="text-sm font-medium text-(--base-09)">Solder Access (private packs)</h2>
                 </div>
 
-                {!pack.private && (
+                {!pack.private ? (
                     <div className="card p-3 mb-3 text-xs text-(--base-06) flex items-start gap-2">
                         <CircleAlert size={14} className="text-(--base-05) shrink-0 mt-0.5" />
                         <span>
                             This pack is public; the whitelist is only enforced for private packs.
-                            Set the pack to private via <button onClick={openConfigModal} className="underline hover:text-(--base-09) cursor-pointer">Edit</button> to restrict launcher access.
+                            Set the pack to private via <button onClick={openConfigModal} className="underline hover:text-(--base-09) cursor-pointer">Edit</button> to hide it from launchers that are not on the list.
+                        </span>
+                    </div>
+                ) : (
+                    // Said out loud because the old copy promised "restrict
+                    // launcher access", and the limit was measured: a private
+                    // pack answers 404 on the Solder API, while its mod zips
+                    // came back 200 with no credential. The Technic protocol
+                    // downloads mods anonymously, so an artifact URL is a
+                    // capability - the whitelist gates discovery, not download.
+                    <div className="card p-3 mb-3 text-xs text-(--base-06) flex items-start gap-2">
+                        <CircleAlert size={14} className="text-(--base-05) shrink-0 mt-0.5" />
+                        <span>
+                            Only whitelisted clients can find this pack through the launcher API.
+                            Downloads themselves carry no credential (the Technic protocol has no
+                            way to authenticate them), so anyone who already has a mod URL from this
+                            pack can keep fetching it. Treat the pack as unlisted, not secret.
                         </span>
                     </div>
                 )}
