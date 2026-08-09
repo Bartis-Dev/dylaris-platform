@@ -10,6 +10,7 @@ import {
     type WarpRegionView,
 } from '@/lib/api/types';
 import { API_URL } from '@/lib/api/core';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 const enrollUrl = API_URL.replace(/\/api\/?$/, '');
 
@@ -67,6 +68,17 @@ export default function WarpTab() {
     };
 
     const delRegion = async (region: string) => {
+        // warp_leaders.region is REFERENCES warp_regions(region) ON DELETE
+        // CASCADE, so this one click takes every leader endpoint in the region
+        // with it - which the button's own title already claimed and nothing
+        // stopped. There is no undo and the endpoints are not recoverable from
+        // the panel; they have to be typed back in. Every comparable delete in
+        // the settings area asks first (~19 confirmDialog call sites); these two
+        // were missed.
+        if (!(await confirmDialog({
+            title: 'Delete region',
+            message: `Delete region "${region}"? Every leader endpoint in it is deleted with it and cannot be restored from here.`,
+        }))) return;
         const res = await deleteWarpRegion(region);
         if (res.success) { showToast('Region deleted.'); load(); }
         else showToast(res.message || res.error || 'Delete failed.', false);
@@ -79,6 +91,10 @@ export default function WarpTab() {
     };
 
     const delLeader = async (leaderId: string) => {
+        if (!(await confirmDialog({
+            title: 'Delete leader',
+            message: `Delete leader "${leaderId}"? Its endpoint is removed from the region and has to be re-entered by hand.`,
+        }))) return;
         const res = await deleteWarpLeader(leaderId);
         if (res.success) { showToast('Leader deleted.'); load(); }
         else showToast(res.message || res.error || 'Delete failed.', false);

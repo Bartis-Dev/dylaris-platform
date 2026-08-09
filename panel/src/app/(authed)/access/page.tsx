@@ -12,6 +12,7 @@ import { listGrants, revokeGrant, type Grant } from '@/lib/api/grants';
 import { listServerRoles, type ServerRole } from '@/lib/api/serverRoles';
 import { SkeletonList } from '@/components/Skeleton';
 import AccessServerRoles from '@/components/access/AccessServerRoles';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import AccessGrantForm from '@/components/access/AccessGrantForm';
 import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode, isProxyScope } from '@/lib/access/accessMode';
 
@@ -88,6 +89,14 @@ export default function AccessPage() {
     }, [refreshGrants, refreshServerRoles]);
 
     const handleRevoke = async (g: Grant) => {
+        // One-click trash sitting next to Edit in the same row. Revoking drops
+        // the grant and the capabilities configured on it, so re-granting starts
+        // from a preset again - a misclick is not a free mistake.
+        if (!(await confirmDialog({
+            title: 'Revoke access',
+            message: `Revoke ${g.username}'s access to this server? The grant and the capabilities set on it are removed.`,
+            confirmLabel: 'Revoke',
+        }))) return;
         const res = await revokeGrant(g.username, g.serverId);
         if (res.success) {
             showToast('Grant revoked.', true);
