@@ -995,8 +995,10 @@ type dylarisMetadata struct {
 
 // inspectOrphanOnNode sends an inspect_orphan gRPC request to nodeID for orphanUUID
 // and returns the parsed response. Returns nil, error on gRPC failure or missing orphan.
-func (h *NodeHandler) inspectOrphanOnNode(nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
-	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+// Package-level (not a NodeHandler method) so the server-lifecycle switch path can
+// reuse it to refresh a server's loader metadata from the node's .dylaris.json.
+func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
+	resp, err := state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: orphanUUID,
 		Payload:    &pb.NodeMessage_InspectOrphanReq{InspectOrphanReq: &pb.InspectOrphanReq{}},
@@ -1016,6 +1018,41 @@ func (h *NodeHandler) inspectOrphanOnNode(nodeID int, orphanUUID string) (*pb.In
 		return nil, fmt.Errorf("orphan folder not found or inspect failed")
 	}
 	return orphanInfo, nil
+}
+
+// subServerLoaderFromInspect extracts one sub-server's loader/version/build from
+// a node's inspect_orphan response. It prefers the richer .dylaris.json metadata
+// (which carries minecraft_version and build) and falls back to the directory
+// scan, which reports the type only. ok reports whether the sub-server was found
+// at all, so callers can leave existing values untouched instead of wiping them
+// when the node cannot describe the sub-server.
+//
+// Shared by orphan adoption (first fill) and the sub-server switch (refresh), so
+// both derive installer_type/minecraft_version/build_number the same way and
+// cannot drift apart.
+func subServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (instType, mcVer, build string, ok bool) {
+	if resp == nil || subName == "" {
+		return "", "", "", false
+	}
+	if resp.HasMetadata && resp.MetadataJson != "" {
+		var meta dylarisMetadata
+		if err := json.Unmarshal([]byte(resp.MetadataJson), &meta); err == nil {
+			for _, ss := range meta.SubServers {
+				if ss.Name == subName {
+					return ss.Type, ss.MinecraftVersion, ss.Build, true
+				}
+			}
+		}
+	}
+	// Fall back to the directory scan when metadata is absent or omits this
+	// sub-server. SubServerInfo carries no minecraft_version/build, so those
+	// stay empty.
+	for _, ss := range resp.SubServers {
+		if ss.Name == subName {
+			return ss.Type, "", "", true
+		}
+	}
+	return "", "", "", false
 }
 
 // InspectOrphan returns metadata about an orphaned folder without assigning it.
@@ -1039,7 +1076,7 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orphanInfo, err := h.inspectOrphanOnNode(nodeID, orphanUUID)
+	orphanInfo, err := inspectOrphanOnNode(h.state, nodeID, orphanUUID)
 	if err != nil {
 		sendJSONError(w, err.Error(), 502)
 		return
@@ -1187,7 +1224,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Inspect the orphan on the node ---
-	orphanInfo, err := h.inspectOrphanOnNode(req.NodeID, req.UUID)
+	orphanInfo, err := inspectOrphanOnNode(h.state, req.NodeID, req.UUID)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
@@ -1209,34 +1246,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "The node reported an invalid active sub-server name for this server", 400)
 		return
 	}
-	installerType := ""
-	minecraftVersion := ""
-	buildNumber := ""
-
-	if orphanInfo.HasMetadata && orphanInfo.MetadataJson != "" {
-		var meta dylarisMetadata
-		if err := json.Unmarshal([]byte(orphanInfo.MetadataJson), &meta); err == nil {
-			for _, ss := range meta.SubServers {
-				if ss.Name == activeSubServer {
-					installerType = ss.Type
-					minecraftVersion = ss.MinecraftVersion
-					buildNumber = ss.Build
-					break
-				}
-			}
-		}
-	}
-	// Fall back to SubServers list from the proto response if metadata was absent
-	// or if the active sub-server wasn't found in metadata.
-	if installerType == "" {
-		for _, ss := range orphanInfo.SubServers {
-			if ss.Name == activeSubServer {
-				installerType = ss.Type
-				// SubServerInfo carries no minecraft_version; leave it empty.
-				break
-			}
-		}
-	}
+	installerType, minecraftVersion, buildNumber, _ := subServerLoaderFromInspect(orphanInfo, activeSubServer)
 
 	// --- Create the servers DB row ---
 	srv := &models.Server{

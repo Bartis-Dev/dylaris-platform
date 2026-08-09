@@ -770,6 +770,27 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Bring the server row's loader metadata in step with the sub-server we just
+	// switched to. installer_type/minecraft_version drive the Content tab's mod
+	// browser, the mods-vs-plugins install target, and version highlighting.
+	// Setup writes them, but a plain switch used to move only active_sub_server,
+	// so after switching between sub-servers of different loaders the row kept
+	// pointing at whichever was set up last - installing a plugin onto a
+	// switched-to Paper server then wrote into mods/ (or a mod into plugins/) and
+	// silently never loaded. The node's .dylaris.json is authoritative per
+	// sub-server; refresh from it best-effort. A missing sub-server or an
+	// unreachable node leaves the existing values rather than wiping them (the
+	// switch itself already needs the node, so a node outage stops it upstream).
+	if h.state.GRPCRegistry != nil {
+		if resp, ierr := inspectOrphanOnNode(h.state, srv.NodeID, srv.UUID); ierr != nil {
+			log.Printf("SwitchSubServer: loader-metadata refresh for %s/%s skipped: %v", srv.UUID, subName, ierr)
+		} else if it, mv, build, ok := subServerLoaderFromInspect(resp, subName); ok {
+			if err := h.state.Store.UpdateServerLoaderMetadata(serverID, it, mv, build); err != nil {
+				log.Printf("SwitchSubServer: persist loader metadata for server %d failed: %v", serverID, err)
+			}
+		}
+	}
+
 	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventSubServerSwitched, actorID, "", map[string]interface{}{
 		"from": srv.ActiveSubServer,
