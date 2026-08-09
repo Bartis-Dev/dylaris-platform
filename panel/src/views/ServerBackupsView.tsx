@@ -279,7 +279,11 @@ export default function ServerBackupsView() {
         setBusyJob(id);
         const res = await triggerBackupJob(id);
         if (res.success) showToast('Run started.');
-        else showToast('Failed to start run.', false);
+        // Core's reason, not a generic string: the refusals here are ones the
+        // operator can act on and cannot guess. Measured with the per-server
+        // backup quota - the run was correctly refused and the button looked
+        // like it had simply done nothing.
+        else showToast(res.message || 'Failed to start run.', false);
         setBusyJob(null);
         reload();
     };

@@ -48,6 +48,11 @@ func validSubServer(w http.ResponseWriter, sub *string) bool {
 	return true
 }
 
+// errBackupQuotaReached marks the two quota refusals in startBackupRun so the
+// HTTP layer can answer 409 instead of 500. Sentinel rather than a string
+// match on the message, since both messages embed live figures.
+var errBackupQuotaReached = errors.New("backup quota reached")
+
 type BackupHandler struct {
 	state *AppState
 }
@@ -311,6 +316,13 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 	}
 	runID, err := h.startBackupRun(r.Context(), job)
 	if err != nil {
+		// A quota refusal is the system working, not failing. Answering 500 put
+		// a policy decision in the same bucket as a broken queue, which is what
+		// an operator's alerting and any API client both key off.
+		if errors.Is(err, errBackupQuotaReached) {
+			sendJSONError(w, err.Error(), http.StatusConflict)
+			return
+		}
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
@@ -727,15 +739,15 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// R2 backup quota: refuse a new backup once the tenant is at/over quota
 	// (0/unset = unlimited, so solo/hoster is unaffected).
 	if exceeded, used, quota := services.R2QuotaExceeded(h.state.Store, srv.OwnerID); exceeded {
-		return 0, fmt.Errorf("backup quota reached (%d / %d GB used) — delete old backups or raise the limit",
-			used/(1024*1024*1024), quota/(1024*1024*1024))
+		return 0, fmt.Errorf("%w (%d / %d GB used) — delete old backups or raise the limit",
+			errBackupQuotaReached, used/(1024*1024*1024), quota/(1024*1024*1024))
 	}
 	// Per-server node-local cap. Separate budget from the R2 one above: that
 	// counts a tenant's object-storage bytes, this counts the .dylaris-backups/
 	// folder on the MC host, and only one of the two modes is ever active.
 	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv); exceeded {
-		return 0, fmt.Errorf("backup quota reached (%.1f / %.1f GB used on this server) — delete old backups or raise the per-server limit in Settings → Backups",
-			float64(used)/(1024*1024*1024), float64(quota)/(1024*1024*1024))
+		return 0, fmt.Errorf("%w (%.1f / %.1f GB used on this server) — delete old backups or raise the per-server limit in Settings → Backups",
+			errBackupQuotaReached, float64(used)/(1024*1024*1024), float64(quota)/(1024*1024*1024))
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {

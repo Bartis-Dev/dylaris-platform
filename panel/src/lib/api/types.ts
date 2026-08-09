@@ -529,7 +529,11 @@ export const updateBackupJob = (jobId: number, j: Partial<BackupJob>): Promise<{
     fetchAPI(`/backup-jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify(j) });
 export const deleteBackupJob = (jobId: number): Promise<{ success: boolean }> =>
     fetchAPI(`/backup-jobs/${jobId}`, { method: 'DELETE' });
-export const triggerBackupJob = (jobId: number): Promise<{ success: boolean; runId?: number }> =>
+// message is declared because Core sends one on every refusal here (quota
+// reached, no storage configured, node unreachable) and a type without it
+// makes the reason unreachable at the call site - which is how "Run Now"
+// ended up silently doing nothing.
+export const triggerBackupJob = (jobId: number): Promise<{ success: boolean; runId?: number; message?: string }> =>
     fetchAPI(`/backup-jobs/${jobId}/trigger`, { method: 'POST' });
 export const listBackupRuns = (jobId: number): Promise<{ success: boolean; runs?: BackupRun[] }> =>
     fetchAPI(`/backup-jobs/${jobId}/runs`);
