@@ -44,9 +44,28 @@ export interface SetupAdminResponse {
     token?: string;
 }
 
+// The authed layout awaits getSetupStatus before it renders anything, so this
+// one request decides whether the panel appears at all. fetch has NO default
+// timeout, and a host that accepts the connection and then never answers does
+// not reject - it just leaves the promise pending. The catch below was written
+// for "hard transport failure" and never saw that case, so an unreachable API
+// left the entire panel sitting in its skeleton shell: no error, no retry,
+// nothing in the console, indistinguishable from a slow page.
+//
+// Reproduced on the testbed: the panel is served at localhost:25510 and calls
+// localhost:25500, Chromium resolves that to ::1, and only the IPv4 path is
+// actually wired - so every call hangs. That is an environment quirk, but the
+// dead page it produced is not: any unreachable API does the same.
+//
+// A hang is a transport failure with extra steps, so time it out and let it
+// land in the catch that already knows what to do.
+const SETUP_STATUS_TIMEOUT_MS = 8000;
+
 export async function getSetupStatus(): Promise<SetupStatus> {
     try {
-        const res = await fetch(`${API_URL}/setup/status`);
+        const res = await fetch(`${API_URL}/setup/status`, {
+            signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS),
+        });
         return (await handleResponse(res)) as any;
     } catch (err) {
         // On hard transport failure, fall back to "complete" so a flaky
