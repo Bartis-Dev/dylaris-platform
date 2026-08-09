@@ -1,4 +1,4 @@
-import { API_URL, getAuthHeader, handleResponse, handleError } from './core';
+import { API_URL, GATE_TIMEOUT_MS, getAuthHeader, handleResponse, handleError } from './core';
 
 export const login = async (username: string, password: string, totpCode?: string) => {
   try {
@@ -129,17 +129,26 @@ export const verifyTOTPWithToken = async (setupToken: string, secret: string, co
   return handleResponse(res);
 };
 
+// Resolves to the user, or null when the session is genuinely not valid.
+// REJECTS when the API could not be reached at all - and the difference
+// matters: the only caller treats null as "log the user out".
+//
+// This used to catch everything and return null, so a Core that was down for a
+// few seconds looked exactly like an expired token. Reproduced on the testbed:
+// stopping Core and reloading the panel wiped BOTH localStorage tokens and
+// dropped the user on /login, with a token that was still perfectly valid. A
+// deploy logged out every open tab.
+//
+// The timeout is what makes the rejection reachable at all: a host that
+// accepts the connection and never answers neither resolves nor rejects.
 export const getProfile = async () => {
-  try {
-    const res = await fetch(`${API_URL}/auth/profile`, {
-      method: 'GET',
-      headers: getAuthHeader(),
-    });
-    const data = await handleResponse(res);
-    return data.success ? data.user : null;
-  } catch (err) {
-    return null;
-  }
+  const res = await fetch(`${API_URL}/auth/profile`, {
+    method: 'GET',
+    headers: getAuthHeader(),
+    signal: AbortSignal.timeout(GATE_TIMEOUT_MS),
+  });
+  const data = await handleResponse(res);
+  return data.success ? data.user : null;
 };
 
 export const updateProfile = async (data: any) => {

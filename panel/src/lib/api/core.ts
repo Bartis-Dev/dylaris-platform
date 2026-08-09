@@ -35,6 +35,16 @@ function resolveApiUrl(): string {
 
 export const API_URL = resolveApiUrl();
 
+// fetch has NO default timeout. A host that accepts the connection and then
+// never answers leaves the promise pending forever - not rejected, not
+// resolved - so a catch written for "hard transport failure" never runs.
+//
+// This is deliberately NOT applied inside fetchAPI: 134 call sites go through
+// it, including createServer and the S3 connection test, where a long wait is
+// legitimate. It is for the small reads that gate whether the panel renders at
+// all, where a pending promise means a permanently dead page.
+export const GATE_TIMEOUT_MS = 10000;
+
 // Returns a plain object so callers can spread it into header objects:
 //   { ...getAuthHeader(), 'Content-Type': 'application/json' }
 // A Headers instance does not iterate as own properties — spreading it

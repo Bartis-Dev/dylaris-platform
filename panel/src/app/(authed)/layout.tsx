@@ -18,11 +18,11 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe, ShieldCheck } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe, ShieldCheck, CloudOff } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, featureFlags, gatewayEnabled, servers } = useAppData();
+    const { user, ready, apiUnreachable, retryBoot, featureFlags, gatewayEnabled, servers } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -52,6 +52,26 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             setPopupError(result.message || 'An error occurred.');
         }
     };
+
+    // The API never answered the boot call. This is NOT "still loading" and it
+    // is NOT an expired session - the token is untouched and probably fine. It
+    // used to be indistinguishable from both: the session was thrown away and
+    // the user landed on a login form that could not work either.
+    if (apiUnreachable) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-(--base-00) px-6">
+                <div className="max-w-md text-center">
+                    <CloudOff size={32} className="mx-auto mb-4 text-(--base-06)" aria-hidden="true" />
+                    <h1 className="text-lg font-medium text-(--base-09) mb-2">Can&apos;t reach the API</h1>
+                    <p className="text-sm text-(--base-07) mb-6">
+                        Your session is still valid. The panel could not reach the Dylaris
+                        API, which usually means it is restarting or the network dropped.
+                    </p>
+                    <button onClick={retryBoot} className="btn btn-primary">Try again</button>
+                </div>
+            </div>
+        );
+    }
 
     if (!ready || !user) {
         return (

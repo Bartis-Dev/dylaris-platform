@@ -6,7 +6,7 @@ import {
     AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings, isGatewayRouting,
 } from '@/lib/api';
 import { listRegions, Region } from '@/lib/api/regions';
-import { API_URL, getAuthHeader } from '@/lib/api/core';
+import { API_URL, GATE_TIMEOUT_MS, getAuthHeader } from '@/lib/api/core';
 import { systemEvents } from '@/lib/systemEvents';
 import { getSystemFeatures, FeatureFlags } from '@/lib/api/featureFlags';
 
@@ -29,6 +29,11 @@ interface AppData {
     fileAccessMode: FileAccessMode;
     beamSettings: BeamSettings | null;
     ready: boolean;
+    // The API did not answer the boot profile call at all. Distinct from
+    // `!ready`, which only means the boot data is still arriving, and from
+    // an expired session, which ends on the login page.
+    apiUnreachable: boolean;
+    retryBoot: () => void;
     refreshUser: () => Promise<void>;
     refreshModules: () => Promise<void>;
     refreshServers: () => Promise<void>;
@@ -78,9 +83,18 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // module on first paint before /system/features comes back.
     const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false });
     const [ready, setReady] = useState(false);
+    const [apiUnreachable, setApiUnreachable] = useState(false);
+    const [bootAttempt, setBootAttempt] = useState(0);
 
     const refreshUser = useCallback(async () => {
-        const profile = await getProfile();
+        let profile;
+        try {
+            profile = await getProfile();
+        } catch {
+            // Unreachable, not unauthenticated. Keep the session and the last
+            // known user; a refresh is not the place to end someone's session.
+            return;
+        }
         if (profile) setUser(profile);
         else onUnauthenticated();
     }, [onUnauthenticated]);
@@ -138,17 +152,42 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         if (beam.success && beam.settings) setBeamSettings(beam.settings);
     }, []);
 
-    // Initial load
+    // Initial load. `ready` gates the ENTIRE authed app - until it flips, the
+    // layout renders a bare "Loading..." - so everything awaited here has to be
+    // bounded and every failure has to end somewhere real.
     useEffect(() => {
         const init = async () => {
-            const profile = await getProfile();
+            let profile;
+            try {
+                profile = await getProfile();
+            } catch {
+                // The API could not be reached. Do NOT call onUnauthenticated:
+                // it clears both tokens, and reproduced on the testbed that
+                // meant a Core restart logged out every open tab holding a
+                // perfectly valid token. Say so instead and offer a retry.
+                setApiUnreachable(true);
+                return;
+            }
             if (!profile) { onUnauthenticated(); return; }
             setUser(profile);
-            await Promise.all([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo(), refreshFeatureFlags()]);
+            // allSettled, not all: refreshSettings awaits three calls without a
+            // catch of its own, so one rejection used to reject init itself and
+            // setReady(true) was never reached - the app sat in "Loading..."
+            // forever over a single failed slice. Each refresher already leaves
+            // its own slice untouched on failure.
+            //
+            // The deadline is for the other half of that: a slice that hangs
+            // rather than fails is neither settled nor rejected, and fetch has
+            // no default timeout. Rendering with one stale slice beats not
+            // rendering at all; the SSE subscriptions refresh them anyway.
+            await Promise.race([
+                Promise.allSettled([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo(), refreshFeatureFlags()]),
+                new Promise(resolve => setTimeout(resolve, GATE_TIMEOUT_MS)),
+            ]);
             setReady(true);
         };
         init();
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [bootAttempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // subscribe to /api/system/events SSE for live config refresh.
     // Replaces the old 5s setInterval(refreshServers) poll: status flips and
@@ -190,10 +229,19 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const gatewayEnabled = isGatewayRouting(routingMode);
     const libraryEnabled = modules.some(m => m.name === 'Library' && m.isEnabled);
 
+    // Retry clears the error first, or a second failure would look like a
+    // button that does nothing.
+    const retryBoot = useCallback(() => {
+        setApiUnreachable(false);
+        setBootAttempt(n => n + 1);
+    }, []);
+
     const value: AppData = {
         user, modules, servers,
         proxiesEnabled, routingMode, fileAccessMode, beamSettings,
         ready,
+        apiUnreachable,
+        retryBoot,
         refreshUser, refreshModules, refreshServers, refreshSettings,
         gatewayEnabled, libraryEnabled,
         featureFlags, refreshFeatureFlags,
