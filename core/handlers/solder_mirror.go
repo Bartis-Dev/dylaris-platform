@@ -34,8 +34,23 @@ func solderMirrorBase(getSetting func(string) (string, error)) (string, error) {
 
 // SolderMirror streams a stored public artifact (a Solder mod zip, a loader
 // zip, or a rendered pack .mrpack). SECURITY: it serves ONLY keys under
-// solder/, loaders/, or modpacks/ after path.Clean, and rejects any
+// solder/mods/, loaders/, or modpacks/ after path.Clean, and rejects any
 // traversal (..). It must never read an arbitrary storage object.
+//
+// This route is unauthenticated by protocol: a Technic launcher fetches these
+// URLs with no credential, so everything under the allowed prefixes is public
+// to anyone holding the URL. That makes the prefix list the whole boundary,
+// and it has to be the NARROWEST set a launcher actually requests - not every
+// prefix the render path happens to write.
+//
+// It used to allow all of solder/, which also covers solder/manifests/. A
+// build manifest is written there but read only by Core itself (GetBuild does
+// a server-side prov.Get and projects it into the launcher's build shape), so
+// no client ever requests that key. MEASURED on the testbed: a PRIVATE pack
+// answered 404 on /solder/api/modpack/{slug} as designed, while
+// /solder/mirror/solder/manifests/{owner}/{slug}/{version}/build.json returned
+// it in full - the whole mod list of a pack whose launcher API refuses to
+// admit it exists. Keep this list to what a launcher downloads.
 func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 	if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
 		solderJSONError(w, "Modpacks are disabled", http.StatusForbidden)
@@ -43,7 +58,7 @@ func (h *SolderHandler) SolderMirror(w http.ResponseWriter, r *http.Request) {
 	}
 	rest := mux.Vars(r)["rest"]
 	key := path.Clean(rest)
-	if strings.Contains(key, "..") || !(strings.HasPrefix(key, "solder/") || strings.HasPrefix(key, "loaders/") || strings.HasPrefix(key, "modpacks/")) {
+	if strings.Contains(key, "..") || !(strings.HasPrefix(key, "solder/mods/") || strings.HasPrefix(key, "loaders/") || strings.HasPrefix(key, "modpacks/")) {
 		solderJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
