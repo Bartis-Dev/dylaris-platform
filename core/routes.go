@@ -1419,7 +1419,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")
 	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("GET", "POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
-	api.HandleFunc("/beam/download", beamHandler.GetBeamDownload).Methods("GET")
+	// Rate-limited because this is the only session-less route that makes Core
+	// fetch a whole file from an external host and stream it: one anonymous
+	// request costs Core the full binary inbound plus the same again outbound.
+	// Every other public route that costs something is limited (the solder
+	// mirror, /api/share/{token}, the auth and store routes); this one was the
+	// exception. 10/min per IP is far above any human clicking "download Beam"
+	// - the app's own updater fetches from GitHub directly and never comes
+	// through here - and caps what a single source can amplify.
+	beamDownloadLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/beam/download", beamDownloadLimiter.Limit(10, beamHandler.GetBeamDownload)).Methods("GET")
 	// Caller's own Beam update-channel preference (own data, authed-exempt).
 	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.GetMyBeamChannel)).Methods("GET")
 	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.SetMyBeamChannel)).Methods("PUT")
