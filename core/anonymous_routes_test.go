@@ -53,7 +53,12 @@ var anonymousUnlimitedRoutes = map[string]string{
 	"/api/modpack":                "solder: published pack list",
 	"/api/modpack/{slug}":         "solder: pack metadata",
 	"/api/modpack/{slug}/{build}": "solder: build metadata",
-	"/api/verify/{key}":           "solder: API key check",
+
+	// A limiter here would be WRONG, not missing. The key is 256 bits of
+	// crypto/rand, so there is nothing to brute-force, and an IP bucket would
+	// lock out Technic launchers that share one NAT address. /solder/mirror/ is
+	// limited because it serves bytes, not because it checks a secret.
+	"/api/verify/{key}": "solder: API key check",
 }
 
 var handleFuncRe = regexp.MustCompile(`HandleFunc\("([^"]*)"`)
