@@ -26,8 +26,16 @@ type GatewayBandwidthConsumerService struct {
 	leader leader.Election
 
 	mu      sync.Mutex
-	latest  map[string]protocol.GatewayStats // keyed by component ID
-	streams map[string]bool                  // stream keys already being consumed
+	latest  map[string]seenStat // keyed by component ID
+	streams map[string]bool     // stream keys already being consumed
+}
+
+// seenStat pairs a component's latest sample with the Core receive time, so
+// persistOnce can prune a component that stopped publishing without relying
+// on the publisher's own clock (skew-immune).
+type seenStat struct {
+	gs   protocol.GatewayStats
+	seen time.Time
 }
 
 const (
@@ -35,6 +43,7 @@ const (
 	gwbwPersistInterval = 30 * time.Second // downsample cadence
 	gwbwScanInterval    = 30 * time.Second
 	gwbwMirrorTTL       = 90 * time.Second // > persist interval so a stale host still shows briefly
+	gwbwStaleAfter      = 90 * time.Second // a component missing this long is treated as gone
 )
 
 func NewGatewayBandwidthConsumerService(s store.Store, r *redis.Client, coreID string) *GatewayBandwidthConsumerService {
@@ -42,7 +51,7 @@ func NewGatewayBandwidthConsumerService(s store.Store, r *redis.Client, coreID s
 		store:   s,
 		redis:   r,
 		coreID:  coreID,
-		latest:  make(map[string]protocol.GatewayStats),
+		latest:  make(map[string]seenStat),
 		streams: make(map[string]bool),
 	}
 }
@@ -99,17 +108,22 @@ func (s *GatewayBandwidthConsumerService) discoverStreams(ctx context.Context) [
 		for _, id := range edges {
 			keys = append(keys, "dylaris:edge:"+id+":stats")
 		}
+	} else {
+		log.Printf("gateway bandwidth discovery: SMembers sys:edges: %v", err)
 	}
 	if beams, err := s.redis.SMembers(ctx, "sys:beams").Result(); err == nil {
 		for _, id := range beams {
 			keys = append(keys, "dylaris:beam:"+id+":stats")
 		}
+	} else {
+		log.Printf("gateway bandwidth discovery: SMembers sys:beams: %v", err)
 	}
 	// Warp: scan the per-leader alive keys (dylaris:warp:{id}:alive).
 	var cursor uint64
 	for {
 		batch, next, err := s.redis.Scan(ctx, cursor, "dylaris:warp:*:alive", 100).Result()
 		if err != nil {
+			log.Printf("gateway bandwidth discovery: Scan dylaris:warp:*:alive: %v", err)
 			break
 		}
 		for _, ak := range batch {
@@ -126,18 +140,23 @@ func (s *GatewayBandwidthConsumerService) discoverStreams(ctx context.Context) [
 	return keys
 }
 
-// consume reads one stream via a shared consumer group and updates the latest
-// map. It parses with protocol.ParseGatewayStats so an unknown-version record
-// is ignored (acked, not stored).
+// consume reads one stream via a per-Core consumer group and updates the
+// latest map. Each Core instance uses its own group (rather than sharing
+// gwbwGroup) so every Core sees every message and builds the FULL live view,
+// not just the slice XREADGROUP happened to hand it - the persist step is
+// leader-gated, but a non-leader Core must still be ready with a complete map
+// the moment it wins the election. It parses with protocol.ParseGatewayStats
+// so an unknown-version record is ignored (acked, not stored).
 func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey string) {
-	s.redis.XGroupCreateMkStream(ctx, streamKey, gwbwGroup, "0")
+	group := gwbwGroup + "-" + s.coreID
+	s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0")
 	log.Printf("Gateway bandwidth consumer started for %s", streamKey)
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		res, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    gwbwGroup,
+			Group:    group,
 			Consumer: s.coreID,
 			Streams:  []string{streamKey, ">"},
 			Count:    50,
@@ -166,11 +185,11 @@ func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey
 					continue // bad json or unknown version: ack + drop
 				}
 				s.mu.Lock()
-				s.latest[gs.ID] = gs
+				s.latest[gs.ID] = seenStat{gs: gs, seen: time.Now()}
 				s.mu.Unlock()
 			}
 			if len(ackIDs) > 0 {
-				s.redis.XAck(ctx, streamKey, gwbwGroup, ackIDs...)
+				s.redis.XAck(ctx, streamKey, group, ackIDs...)
 			}
 		}
 	}
@@ -196,17 +215,29 @@ func (s *GatewayBandwidthConsumerService) persistLoop(ctx context.Context) {
 }
 
 func (s *GatewayBandwidthConsumerService) persistOnce(ctx context.Context) {
+	now := time.Now()
 	s.mu.Lock()
 	snapshot := make(map[string]protocol.GatewayStats, len(s.latest))
+	var staleIDs []string
 	for k, v := range s.latest {
-		snapshot[k] = v
+		if now.Sub(v.seen) > gwbwStaleAfter {
+			staleIDs = append(staleIDs, k)
+			delete(s.latest, k)
+			continue
+		}
+		snapshot[k] = v.gs
 	}
 	s.mu.Unlock()
+
+	// Drop the mirror of a departed component so the panel stops showing it as
+	// live; its host aggregate self-expires via the mirror TTL once we stop re-Setting it.
+	for _, id := range staleIDs {
+		s.redis.Del(ctx, "dylaris:gwbw:component:"+id)
+	}
 	if len(snapshot) == 0 {
 		return
 	}
 
-	now := time.Now()
 	rows := make([]models.GatewayBandwidthRow, 0, len(snapshot))
 	for _, gs := range snapshot {
 		rows = append(rows, models.GatewayBandwidthRow{
