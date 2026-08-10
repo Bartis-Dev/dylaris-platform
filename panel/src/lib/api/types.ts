@@ -555,7 +555,13 @@ export interface BackupRestore {
 export const listBackupRestores = (serverId: number): Promise<{ success: boolean; restores?: BackupRestore[] }> =>
     fetchAPI(`/servers/${serverId}/backup-restores`);
 export const backupDownloadUrl = (runId: number) => {
-    return `${API_BASE}/backup-runs/${runId}/download`;
+    // Plain anchor navigation cannot send the Authorization header, so carry the
+    // token in the querystring — the same GET-only fallback AuthMiddleware accepts
+    // for downloads (it sets no-referrer/no-store when a ?token= is used). Every
+    // other download link in the panel does this; this one used to omit it and 401'd.
+    const token = (typeof window !== 'undefined'
+        && (localStorage.getItem('authToken') || localStorage.getItem('token'))) || '';
+    return `${API_BASE}/backup-runs/${runId}/download?token=${encodeURIComponent(token)}`;
 };
 
 export interface ProxyEndpoint {

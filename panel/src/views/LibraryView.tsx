@@ -64,7 +64,13 @@ export default function LibraryView() {
         if (isDir) {
             fetchFiles(currentPath ? `${currentPath}/${name}` : name);
         } else {
-            window.open(getLibraryDownloadUrl(currentPath ? `${currentPath}/${name}` : name), '_blank');
+            // window.open is a plain navigation and cannot send the Authorization
+            // header, so carry the token in the querystring the same way downloadFile
+            // does for getDownloadUrl. Without it the endpoint 401s and the tab shows
+            // the JSON error instead of downloading.
+            const token = localStorage.getItem('authToken') || localStorage.getItem('token') || '';
+            const url = getLibraryDownloadUrl(currentPath ? `${currentPath}/${name}` : name);
+            window.open(`${url}&token=${encodeURIComponent(token)}`, '_blank');
         }
     };
 
