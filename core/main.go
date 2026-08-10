@@ -343,6 +343,13 @@ func main() {
 	statsConsumer := services.NewStatsConsumerService(pgStore, redisClient, cfg.CoreID)
 	statsConsumer.Start()
 
+	// Gateway bandwidth consumer — ingests the edge/warp/beam telemetry streams,
+	// aggregates per swarm host, mirrors to Redis for the panel, and persists
+	// downsampled rows into gateway_bandwidth_stats. Leader-gated persistence.
+	gwBandwidth := services.NewGatewayBandwidthConsumerService(pgStore, redisClient, cfg.CoreID)
+	gwBandwidth.SetLeader(coreLeader)
+	gwBandwidth.Start(bgCtx)
+
 	sftpSync := services.NewSFTPSyncService(pgStore, redisClient)
 	sftpSync.Start()
 
