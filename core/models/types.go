@@ -434,6 +434,19 @@ type ServerStatRow struct {
 	MaxPlayers int       `json:"maxPlayers"`
 }
 
+// GatewayBandwidthRow is one downsampled bandwidth sample for a gateway
+// component (edge/warp/beam), stored in gateway_bandwidth_stats.
+type GatewayBandwidthRow struct {
+	Time      time.Time `json:"time"`
+	Component string    `json:"component"`
+	ID        string    `json:"id"`
+	Host      string    `json:"host"`
+	Region    string    `json:"region"`
+	RxBps     uint64    `json:"rxBps"`
+	TxBps     uint64    `json:"txBps"`
+	CapMbit   int       `json:"capMbit"`
+}
+
 type Module struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`

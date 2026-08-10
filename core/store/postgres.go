@@ -1389,6 +1389,33 @@ func (s *PostgresStore) InsertStatsBatch(stats []models.ServerStatRow) error {
 	return tx.Commit()
 }
 
+func (s *PostgresStore) InsertGatewayBandwidthBatch(rows []models.GatewayBandwidthRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO gateway_bandwidth_stats (time, component, id, host, region, rx_bps, tx_bps, cap_mbit)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range rows {
+		// rx_bps/tx_bps are bits/s; BIGINT is signed but throughput never
+		// approaches 2^63, so the int64 cast is safe.
+		if _, err := stmt.Exec(r.Time, r.Component, r.ID, r.Host, r.Region, int64(r.RxBps), int64(r.TxBps), r.CapMbit); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *PostgresStore) GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error) {
 	rows, err := s.db.Query(`SELECT time, server_uuid, cpu, cpu_limit, mem_used, mem_limit, players, max_players
 		FROM server_stats WHERE server_uuid = $1 AND time >= $2 ORDER BY time ASC`, serverUUID, since)
