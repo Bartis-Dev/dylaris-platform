@@ -310,7 +310,7 @@ Still not forwarded, and why:
   `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN` - these belong to the
   **Node**, which is deployed separately (the panel generates its env block), not
   by these two files.
-- **Port variables** (`API_PORT`, `SFTP_PORT`, `BEAM_GRPC_PORT`, `BEAM_LAN_FASTPATH`, `MIGRATION_PORT`, `PORT_RANGE`) and `CORE_GRPC_ADDR`. These are set as literals in the YAML because the matching `ports:` publication lives there too. Changing a port means editing both lines anyway, so edit the file.
+- **Port variables.** `SFTP_PORT`, `BEAM_GRPC_PORT`, `BEAM_LAN_PORT` and `MIGRATION_PORT` are not in the `environment:` blocks; they take their code default and the host publication uses literal numbers in `ports:`. `API_PORT`, `DYLARIS_GRPC_PORT`, `PORT_RANGE` and `CORE_GRPC_ADDR` *are* in the YAML (a literal or `${VAR:-default}`) next to their `ports:` line. Either way a port change means editing the `ports:` line too, so change these in the file, not `.env`.
 
 ### Secrets (Docker / Portainer secrets via `*_FILE`)
 
@@ -372,8 +372,14 @@ secrets:
 | `DNS_API_TOKEN` | *(empty)* | No (owner) | Provider API token. Lives ONLY in Core, never on the edges - an edge is the most exposed host in the fleet and a token that can rewrite the zone does not belong there. `CF_API_TOKEN` is still read as a fallback. **Setting it here makes the panel field read-only**, so a token saved on screen can never silently retire one supplied as a secret. |
 | `DNS_ZONE` | *(empty)* | No (owner) | The zone **name** the edge wildcards live in, e.g. `example.com`. **Replaces `CF_ZONE_ID`**: libdns addresses a zone by name, not by a Cloudflare-assigned id, so the old value cannot be carried over. Required when the updater is on. |
 | `DNS_ZONES` | *(empty)* | No (owner) | Comma-separated multi-zone form, for offering several domains from the same edges. Folded together with `DNS_ZONE`, so a single-zone deployment needs no change. |
+| `STORE_URL` | *(empty)* | No (SaaS) | Hosted dylaris.com storefront base URL. Set together with `STORE_SHARED_KEY` to enable store-linking + demo showcase; both empty gives a clean open-core build with no store surface. |
+| `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
+| `UPDATES_FEED_URL_PLATFORM` | *(public repo feed)* | No (owner) | Raw URL of the append-only JSONL update feed the admin "what's new" bell diffs against the baked baseline. Defaults to the platform public-repo raw feed. Fails open when unset or unreachable. |
+| `UPDATES_FEED_URL_GATEWAY` | *(empty)* | No (owner) | Raw URL of the gateway update feed. Empty until it is cross-pushed into the public platform repo. Fails open. |
+| `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | Overrides the compiled-in URL the panel reads Beam desktop-client update manifests from. Point it at your own mirror if you fork or self-distribute Beam. |
+| `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
 
-All of these can be configured in **Settings -> Infrastructure -> DNS** instead,
+The DNS updater variables above can also be configured in **Settings -> Infrastructure -> DNS**,
 where the token is stored encrypted at rest. The environment wins per field, so a
 token kept in a Docker secret still leaves the zones selectable on screen.
 Enabling the updater from the panel probes the provider against every configured
@@ -396,12 +402,6 @@ name is removed only after it has gone unadvertised for the grace period (defaul
 15 minutes), so a rolling edge restart cannot take a live region out of DNS. The
 two original rails still hold: nothing is deleted when a listing fails, and a
 region whose edges are all offline is left untouched.
-| `STORE_URL` | *(empty)* | No (SaaS) | Hosted dylaris.com storefront base URL. Set together with `STORE_SHARED_KEY` to enable store-linking + demo showcase; both empty gives a clean open-core build with no store surface. |
-| `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
-| `UPDATES_FEED_URL_PLATFORM` | *(public repo feed)* | No (owner) | Raw URL of the append-only JSONL update feed the admin "what's new" bell diffs against the baked baseline. Defaults to the platform public-repo raw feed. Fails open when unset or unreachable. |
-| `UPDATES_FEED_URL_GATEWAY` | *(empty)* | No (owner) | Raw URL of the gateway update feed. Empty until it is cross-pushed into the public platform repo. Fails open. |
-| `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | Overrides the compiled-in URL the panel reads Beam desktop-client update manifests from. Point it at your own mirror if you fork or self-distribute Beam. |
-| `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
 
 ### Node
 
