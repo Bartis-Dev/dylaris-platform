@@ -185,7 +185,7 @@ func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey
 					continue // bad json or unknown version: ack + drop
 				}
 				s.mu.Lock()
-				s.latest[gs.ID] = seenStat{gs: gs, seen: time.Now()}
+				s.latest[gs.Component+":"+gs.ID] = seenStat{gs: gs, seen: time.Now()}
 				s.mu.Unlock()
 			}
 			if len(ackIDs) > 0 {
@@ -245,7 +245,7 @@ func (s *GatewayBandwidthConsumerService) persistOnce(ctx context.Context) {
 			Region: gs.Region, RxBps: gs.RxBps, TxBps: gs.TxBps, CapMbit: gs.CapMbit,
 		})
 		if b, err := json.Marshal(gs); err == nil {
-			s.redis.Set(ctx, "dylaris:gwbw:component:"+gs.ID, b, gwbwMirrorTTL)
+			s.redis.Set(ctx, "dylaris:gwbw:component:"+gs.Component+":"+gs.ID, b, gwbwMirrorTTL)
 		}
 	}
 	for host, agg := range aggregateByHost(snapshot) {
