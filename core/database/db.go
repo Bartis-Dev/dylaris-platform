@@ -88,6 +88,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createServerStatsTable(db, useTimescale); err != nil {
 		return err
 	}
+	if err := createGatewayBandwidthStatsTable(db, useTimescale); err != nil {
+		return err
+	}
 	if err := createGatewayTables(db); err != nil {
 		return err
 	}

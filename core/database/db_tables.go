@@ -351,3 +351,39 @@ func createServerStatsTable(db *sql.DB, useTimescale bool) error {
 
 	return nil
 }
+
+func createGatewayBandwidthStatsTable(db *sql.DB, useTimescale bool) error {
+	query := `CREATE TABLE IF NOT EXISTS gateway_bandwidth_stats (
+		time      TIMESTAMPTZ NOT NULL,
+		component TEXT NOT NULL,
+		id        TEXT NOT NULL,
+		host      TEXT NOT NULL,
+		region    TEXT,
+		rx_bps    BIGINT NOT NULL,
+		tx_bps    BIGINT NOT NULL,
+		cap_mbit  INTEGER NOT NULL
+	)`
+	if _, err := db.Exec(query); err != nil {
+		return err
+	}
+
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_gw_bw_id_time ON gateway_bandwidth_stats (component, id, time DESC)`)
+
+	if !useTimescale {
+		log.Println("DB_TYPE=postgres: gateway_bandwidth_stats is a plain table (retention via hourly sweep)")
+		return nil
+	}
+
+	_, err := db.Exec(`SELECT create_hypertable('gateway_bandwidth_stats', 'time', if_not_exists => TRUE)`)
+	if err != nil {
+		log.Printf("TimescaleDB hypertable not created for gateway_bandwidth_stats (falling back to plain table + hourly sweep): %v", err)
+	} else {
+		log.Println("TimescaleDB hypertable 'gateway_bandwidth_stats' ready")
+		if _, err := db.Exec(`SELECT add_retention_policy('gateway_bandwidth_stats', INTERVAL '24 hours', if_not_exists => TRUE)`); err != nil {
+			log.Printf("TimescaleDB retention policy not set for gateway_bandwidth_stats: %v", err)
+		} else {
+			log.Println("TimescaleDB 24h retention policy active on gateway_bandwidth_stats")
+		}
+	}
+	return nil
+}

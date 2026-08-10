@@ -346,3 +346,18 @@ func TestIntegrationSparkProfileRoundTrip(t *testing.T) {
 		t.Errorf("got %d profiles, want 1", found)
 	}
 }
+
+func TestGatewayBandwidthStatsTable(t *testing.T) {
+	db := freshSchemaDB(t) // full schema on a scratch DB; skips without a test DB
+	if _, err := db.Exec(`INSERT INTO gateway_bandwidth_stats (time, component, id, host, region, rx_bps, tx_bps, cap_mbit)
+		VALUES (NOW(), 'warp', 'eu-1', 'web-eu-1', 'eu-central', 100, 200, 1000)`); err != nil {
+		t.Fatalf("insert into gateway_bandwidth_stats: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM gateway_bandwidth_stats WHERE id='eu-1'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("row count = %d, want 1", n)
+	}
+}

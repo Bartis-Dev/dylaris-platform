@@ -426,6 +426,7 @@ func main() {
 				continue
 			}
 			db.Exec("DELETE FROM server_stats WHERE time < NOW() - INTERVAL '24 hours'")
+			db.Exec("DELETE FROM gateway_bandwidth_stats WHERE time < NOW() - INTERVAL '24 hours'")
 		}
 	}()
 
