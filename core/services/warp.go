@@ -242,9 +242,9 @@ func (s *WarpService) regionEndpoints(ctx context.Context, region string) []stri
 		})
 		leaderIDs = append(leaderIDs, l.LeaderID)
 	}
-	if len(cands) == 0 {
-		return nil
-	}
+	// No early return on an empty region: loadGatewayCapacity short-circuits on an
+	// empty leader list and orderLeadersByFreeCapacity yields a non-nil empty slice,
+	// preserving the pre-F1 [] (not null) contract for EnrollResult.Endpoints.
 	gc := s.loadGatewayCapacity(ctx, leaderIDs)
 	for i := range cands {
 		cands[i].freeBps, cands[i].known = gc.freeBpsForLeader(cands[i].id)

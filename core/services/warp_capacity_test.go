@@ -129,6 +129,18 @@ func TestOrderLeadersByFreeCapacity(t *testing.T) {
 			want: []string{"e1", "e3"},
 		},
 		{
+			// Locks the known-before-unknown gate: a known leader with ZERO free
+			// headroom must still outrank an unknown leader that has a LOWER id.
+			// Without the known gate both freeBps==0 would tie and fall to id order,
+			// which would wrongly place the lower-id unknown first.
+			name: "known zero-headroom ranks ahead of lower-id unknown",
+			cands: []leaderCandidate{
+				{endpoint: "eUnknown", id: "a-unknown", alive: true},
+				{endpoint: "eKnown", id: "z-known", alive: true, freeBps: 0, known: true},
+			},
+			want: []string{"eKnown", "eUnknown"},
+		},
+		{
 			name: "dead leader sorts last even with capacity",
 			cands: []leaderCandidate{
 				{endpoint: "e4", id: "l4", alive: false, freeBps: 999_000_000, known: true},
@@ -215,5 +227,24 @@ func TestRegionEndpoints_NoTelemetry_IDOrder(t *testing.T) {
 	want := []string{"e1", "e2"} // alive-first-then-id, unchanged from pre-F1
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestRegionEndpoints_NoLeaders_ReturnsEmptyNotNil(t *testing.T) {
+	fs := &fakeWarpStore{
+		peers:   map[string]store.WarpPeer{},
+		byKey:   map[int][]store.WarpPeer{},
+		regions: []store.WarpRegion{{Region: "eu", Subnet: "10.0.99.0/24", Enabled: true}},
+		leaders: nil, // region exists but has no leaders
+	}
+	svc, _ := capTestService(t, fs)
+	got := svc.regionEndpoints(context.Background(), "eu")
+	// Pre-F1 returned a non-nil empty slice here; EnrollResult.Endpoints has no
+	// omitempty, so this must stay [] (not null) on the wire.
+	if got == nil {
+		t.Fatal("regionEndpoints for a region with no leaders must return non-nil empty, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
 	}
 }
