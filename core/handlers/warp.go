@@ -103,6 +103,34 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
+// Assignment handles GET /api/warp/assignment?public_key=... - the client's
+// lightweight poll for its current endpoint order (warp API-key auth). It never
+// changes the peer's region; it only reflects the stored home leader.
+func (h *WarpHandler) Assignment(w http.ResponseWriter, r *http.Request) {
+	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
+	if !ok {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	pubkey := strings.TrimSpace(r.URL.Query().Get("public_key"))
+	if pubkey == "" {
+		sendJSONError(w, "public_key required", http.StatusBadRequest)
+		return
+	}
+	res, err := h.svc.Assignment(r.Context(), key, pubkey)
+	if err != nil {
+		if errors.Is(err, services.ErrWarpPeerNotFound) {
+			sendJSONError(w, "Peer not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("warp assignment failed (key=%d): %v", key.ID, err)
+		sendJSONError(w, "Assignment failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
 // MintAPIKey (admin) creates a warp enrollment key and returns the plaintext ONCE.
 func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {

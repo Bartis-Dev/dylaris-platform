@@ -54,8 +54,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/node/connect": true,
 
 	// Warp API-key auth (not a user session): the key IS the credential.
-	"/api/warp/enroll":    true,
-	"/api/warp/link-boot": true,
+	"/api/warp/enroll":     true,
+	"/api/warp/link-boot":  true,
+	"/api/warp/assignment": true,
 
 	// Store service-to-service calls (shared X-Store-Key header, NOT a panel
 	// session): requireStoreKey is the boundary, same category as warp's API key.

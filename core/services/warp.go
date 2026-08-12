@@ -118,6 +118,10 @@ func incIP(ip net.IP) {
 // map it to a client error (400/409) via errors.Is while surfacing the detail.
 var ErrInvalidFixedWGIP = errors.New("invalid fixed WG IP")
 
+// ErrWarpPeerNotFound is returned when an assignment poll names a pubkey that is
+// not enrolled under the authenticated key.
+var ErrWarpPeerNotFound = errors.New("warp peer not found")
+
 // ValidateFixedWGIP checks that an admin-pinned fixed overlay IP is a legitimate peer
 // host inside the region subnet: a valid IPv4 address in `subnet` that is not the
 // network address, not the leader-reserved first host (network+1, e.g. .1), and not
@@ -443,6 +447,21 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 		}
 	}
 	return s.buildResult(ctx, region, wgIP, home)
+}
+
+// Assignment returns the current home-first tunnel config for one enrolled peer,
+// used by the client's lightweight assignment poll. The peer must belong to the
+// authenticated key. Region is never changed here (region-change is a separate
+// mechanism); this only reflects the peer's stored home leader.
+func (s *WarpService) Assignment(ctx context.Context, key store.WarpAPIKey, pubkey string) (EnrollResult, error) {
+	peer, err := s.warp.GetWarpPeerByPubkey(pubkey)
+	if err != nil || peer == nil {
+		return EnrollResult{}, ErrWarpPeerNotFound
+	}
+	if peer.APIKeyID != key.ID {
+		return EnrollResult{}, ErrWarpPeerNotFound
+	}
+	return s.buildResult(ctx, peer.Region, peer.WGIP, peer.AssignedLeader)
 }
 
 // --- Resync ---

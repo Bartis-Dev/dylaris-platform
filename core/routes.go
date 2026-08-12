@@ -886,6 +886,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/storage/manifests/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageMigrationHandler.DeleteManifest))).Methods("DELETE")
 	// Warp enrollment (warp API-key auth, NOT user session)
 	api.HandleFunc("/warp/enroll", warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll)).Methods("POST")
+	api.HandleFunc("/warp/assignment", warpHandler.WarpAPIKeyMiddleware(warpHandler.Assignment)).Methods("GET")
 	// Warp admin registry: regions + leaders (PANEL topology.*; Phase 4 Task 18)
 	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(warpHandler.ListRegions))).Methods("GET")
 	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.UpsertRegion))).Methods("POST")
