@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"sort"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -253,9 +252,11 @@ func (s *WarpService) regionEndpoints(ctx context.Context, region string) []stri
 }
 
 // assignRegion picks the region a new peer enrolls into: the key's preferred
-// region if set + enabled, else the least-loaded enabled region that has a live
-// leader. If no region has a live leader it degrades to the least-loaded enabled
-// region (logged loudly) so enroll still succeeds and resync covers the hub later.
+// region if set + enabled, else the enabled region with the most aggregate free
+// capacity among those with a live leader (peer-count is the tiebreak, and the
+// pre-telemetry fallback). If no region has a live leader it degrades to the
+// least-loaded enabled region (logged loudly) so enroll still succeeds and
+// resync covers the hub later.
 func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (string, error) {
 	regions, err := s.warp.ListWarpRegions()
 	if err != nil {
@@ -285,9 +286,11 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 		return "", err
 	}
 	aliveByRegion := map[string]bool{}
+	aliveLeaderIDsByRegion := map[string][]string{}
 	for _, l := range leaders {
 		if l.Enabled && s.leaderAlive(ctx, l.LeaderID) {
 			aliveByRegion[l.Region] = true
+			aliveLeaderIDsByRegion[l.Region] = append(aliveLeaderIDsByRegion[l.Region], l.LeaderID)
 		}
 	}
 	counts, err := s.warp.CountWarpPeersByRegion()
@@ -295,24 +298,37 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 		return "", err
 	}
 
-	cands := make([]store.WarpRegion, 0, len(enabled))
+	regionsForPlacement := make([]store.WarpRegion, 0, len(enabled))
 	for _, r := range enabled {
 		if aliveByRegion[r.Region] {
-			cands = append(cands, r)
+			regionsForPlacement = append(regionsForPlacement, r)
 		}
 	}
-	if len(cands) == 0 {
+	if len(regionsForPlacement) == 0 {
 		log.Printf("[warp] WARNING: no enabled region has a live leader; assigning to least-loaded enabled region anyway")
-		cands = enabled
+		regionsForPlacement = enabled
 	}
-	sort.Slice(cands, func(i, j int) bool {
-		ci, cj := counts[cands[i].Region], counts[cands[j].Region]
-		if ci != cj {
-			return ci < cj
-		}
-		return cands[i].Region < cands[j].Region
-	})
-	return cands[0].Region, nil
+
+	// One mirror read for every alive leader across the candidate regions, then
+	// rank regions by aggregate free capacity (peer-count is the tiebreak). With
+	// no telemetry this degrades to the historical least-peer-count order.
+	var allAliveIDs []string
+	for _, r := range regionsForPlacement {
+		allAliveIDs = append(allAliveIDs, aliveLeaderIDsByRegion[r.Region]...)
+	}
+	gc := s.loadGatewayCapacity(ctx, allAliveIDs)
+
+	cands := make([]regionCandidate, 0, len(regionsForPlacement))
+	for _, r := range regionsForPlacement {
+		free, known := regionFreeBps(gc, aliveLeaderIDsByRegion[r.Region])
+		cands = append(cands, regionCandidate{
+			region:    r.Region,
+			freeBps:   free,
+			known:     known,
+			peerCount: counts[r.Region],
+		})
+	}
+	return pickFreestRegion(cands), nil
 }
 
 // buildResult assembles the enroll response for a peer already pinned to a region

@@ -148,3 +148,58 @@ func orderLeadersByFreeCapacity(cands []leaderCandidate) []string {
 	}
 	return out
 }
+
+// regionFreeBps sums the free capacity of the DISTINCT hosts backing a region's
+// alive leaders. Co-located leaders share one uplink, so each host is counted
+// once. known is true if at least one of those hosts reported usable telemetry;
+// a region with no telemetry returns (0, false) and the caller falls back to
+// peer-count ordering.
+func regionFreeBps(gc gatewayCapacity, aliveLeaderIDs []string) (int64, bool) {
+	var total int64
+	var known bool
+	seen := map[string]bool{}
+	for _, id := range aliveLeaderIDs {
+		host, ok := gc.leaderHost[id]
+		if !ok || seen[host] {
+			continue
+		}
+		seen[host] = true
+		if free, has := gc.hostFree[host]; has {
+			total += free
+			known = true
+		}
+	}
+	return total, known
+}
+
+// regionCandidate is one enabled region eligible for auto-assignment, with its
+// aggregate free capacity (when known), whether any telemetry backed it, and its
+// current peer count for the tiebreak.
+type regionCandidate struct {
+	region    string
+	freeBps   int64
+	known     bool
+	peerCount int
+}
+
+// pickFreestRegion returns the region with the MOST aggregate free capacity.
+// Regions with known capacity outrank unknown ones; among equal-capacity or
+// all-unknown regions the tiebreak is fewest peers, then region name. With no
+// telemetry this reproduces the historical least-peer-count-then-name order.
+// cands must be non-empty.
+func pickFreestRegion(cands []regionCandidate) string {
+	sort.Slice(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.known != b.known {
+			return a.known
+		}
+		if a.known && a.freeBps != b.freeBps {
+			return a.freeBps > b.freeBps
+		}
+		if a.peerCount != b.peerCount {
+			return a.peerCount < b.peerCount
+		}
+		return a.region < b.region
+	})
+	return cands[0].region
+}
