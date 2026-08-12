@@ -28,6 +28,7 @@ type warpStore interface {
 	ListWarpRegions() ([]store.WarpRegion, error)
 	GetWarpRegion(region string) (*store.WarpRegion, error)
 	ListWarpLeaders() ([]store.WarpLeader, error)
+	SetWarpPeerAssignedLeader(pubkey, leaderID string) error
 }
 
 // ErrNoWarpRegion is returned by Enroll when no enabled region exists to assign.
@@ -217,14 +218,27 @@ func (s *WarpService) pushToRegion(ctx context.Context, region string, cmd map[s
 	}
 }
 
-// regionEndpoints returns the enabled leaders' endpoints for a region, ordered
-// by free capacity (freest first) so the client's endpoints[0] is the leader
-// with the most headroom. Liveness dominates capacity (alive before dead) and,
-// with no telemetry, the order degrades to the historical alive-first-then-ID.
+// regionEndpoints returns the enabled leaders' endpoints for a region, freest
+// first (see orderedRegionLeaderCands). Kept for callers that only need the
+// plain failover list.
 func (s *WarpService) regionEndpoints(ctx context.Context, region string) []string {
+	cands := s.orderedRegionLeaderCands(ctx, region, "")
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.endpoint)
+	}
+	return out
+}
+
+// orderedRegionLeaderCands builds the region's enabled-leader candidates with
+// liveness + F0 free-capacity telemetry, orders them freest-first, then moves the
+// peer's home leader to the front when it is alive (home-first). An empty
+// homeLeaderID yields the plain freest-first order. A non-nil empty slice is
+// returned for an empty region (preserves the [] not null EnrollResult contract).
+func (s *WarpService) orderedRegionLeaderCands(ctx context.Context, region, homeLeaderID string) []leaderCandidate {
 	leaders, err := s.warp.ListWarpLeaders()
 	if err != nil {
-		return nil
+		return []leaderCandidate{}
 	}
 	var (
 		cands     []leaderCandidate
@@ -241,14 +255,16 @@ func (s *WarpService) regionEndpoints(ctx context.Context, region string) []stri
 		})
 		leaderIDs = append(leaderIDs, l.LeaderID)
 	}
-	// No early return on an empty region: loadGatewayCapacity short-circuits on an
-	// empty leader list and orderLeadersByFreeCapacity yields a non-nil empty slice,
-	// preserving the pre-F1 [] (not null) contract for EnrollResult.Endpoints.
 	gc := s.loadGatewayCapacity(ctx, leaderIDs)
 	for i := range cands {
 		cands[i].freeBps, cands[i].known = gc.freeBpsForLeader(cands[i].id)
 	}
-	return orderLeadersByFreeCapacity(cands)
+	sortLeaderCands(cands)
+	moveHomeToFront(cands, homeLeaderID)
+	if cands == nil {
+		return []leaderCandidate{}
+	}
+	return cands
 }
 
 // assignRegion picks the region a new peer enrolls into: the key's preferred
@@ -333,8 +349,10 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 
 // buildResult assembles the enroll response for a peer already pinned to a region
 // (used by both the new-enroll and idempotent paths so they can never disagree on
-// subnet/key/endpoints — the bug the single-leader version had).
-func (s *WarpService) buildResult(ctx context.Context, region, wgIP string) (EnrollResult, error) {
+// subnet/key/endpoints — the bug the single-leader version had). homeLeaderID
+// orders the peer's pinned F3 home leader to the front of Endpoints when it is
+// alive; pass "" for the plain freest-first order.
+func (s *WarpService) buildResult(ctx context.Context, region, wgIP, homeLeaderID string) (EnrollResult, error) {
 	reg, err := s.warp.GetWarpRegion(region)
 	if err != nil {
 		return EnrollResult{}, fmt.Errorf("region %q: %w", region, err)
@@ -343,7 +361,11 @@ func (s *WarpService) buildResult(ctx context.Context, region, wgIP string) (Enr
 	if err != nil {
 		return EnrollResult{}, err
 	}
-	endpoints := s.regionEndpoints(ctx, region)
+	cands := s.orderedRegionLeaderCands(ctx, region, homeLeaderID)
+	endpoints := make([]string, 0, len(cands))
+	for _, c := range cands {
+		endpoints = append(endpoints, c.endpoint)
+	}
 	primary := ""
 	if len(endpoints) > 0 {
 		primary = endpoints[0]
@@ -366,7 +388,7 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 	// Idempotent: same pubkey already enrolled -> rebuild its config from its
 	// stored region, no new push.
 	if existing, err := s.warp.GetWarpPeerByPubkey(pubkey); err == nil && existing != nil {
-		return s.buildResult(ctx, existing.Region, existing.WGIP)
+		return s.buildResult(ctx, existing.Region, existing.WGIP, existing.AssignedLeader)
 	}
 
 	region, err := s.assignRegion(ctx, key)
@@ -409,7 +431,18 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 	}
 	s.pushToRegion(ctx, region, map[string]interface{}{"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"}})
 
-	return s.buildResult(ctx, region, wgIP)
+	// F3: pin a fresh peer's home to the region's freest leader so it does not
+	// drift on later re-enrolls; best-effort (an unpinned peer just falls back to
+	// freest-first, which is the pre-F3 behavior).
+	home := ""
+	if cands := s.orderedRegionLeaderCands(ctx, region, ""); len(cands) > 0 {
+		home = cands[0].id
+		if err := s.warp.SetWarpPeerAssignedLeader(pubkey, home); err != nil {
+			log.Printf("[warp] pin home for %s failed: %v", pubkey, err)
+			home = "" // fall back to freest-first for the response too
+		}
+	}
+	return s.buildResult(ctx, region, wgIP, home)
 }
 
 // --- Resync ---

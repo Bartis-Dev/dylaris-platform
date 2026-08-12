@@ -76,6 +76,16 @@ func (f *fakeWarpStore) GetWarpRegion(region string) (*store.WarpRegion, error) 
 }
 func (f *fakeWarpStore) ListWarpLeaders() ([]store.WarpLeader, error) { return f.leaders, nil }
 
+func (f *fakeWarpStore) SetWarpPeerAssignedLeader(pubkey, leaderID string) error {
+	p, ok := f.peers[pubkey]
+	if !ok {
+		return errNotFound
+	}
+	p.AssignedLeader = leaderID
+	f.peers[pubkey] = p
+	return nil
+}
+
 func (f *fakeWarpStore) deletePeer(pk string) {
 	if p, ok := f.peers[pk]; ok {
 		delete(f.peers, pk)

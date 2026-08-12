@@ -129,6 +129,18 @@ type leaderCandidate struct {
 // tie (both unknown, or equal free) breaks by leader ID. When no leader has
 // telemetry this reproduces the historical alive-first-then-ID order.
 func orderLeadersByFreeCapacity(cands []leaderCandidate) []string {
+	sortLeaderCands(cands)
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.endpoint)
+	}
+	return out
+}
+
+// sortLeaderCands sorts leaders in place by the connect-time placement rule:
+// alive first; among equal liveness, known-capacity (most free first) ahead of
+// unknown; every remaining tie by leader ID.
+func sortLeaderCands(cands []leaderCandidate) {
 	sort.Slice(cands, func(i, j int) bool {
 		a, b := cands[i], cands[j]
 		if a.alive != b.alive {
@@ -142,11 +154,28 @@ func orderLeadersByFreeCapacity(cands []leaderCandidate) []string {
 		}
 		return a.id < b.id
 	})
-	out := make([]string, 0, len(cands))
-	for _, c := range cands {
-		out = append(out, c.endpoint)
+}
+
+// moveHomeToFront stably moves the peer's pinned home leader to the front, but
+// only when that leader is present AND alive - a dead or unknown home falls back
+// to the capacity order so a peer is never pinned to a leader that cannot serve.
+func moveHomeToFront(cands []leaderCandidate, homeLeaderID string) {
+	if homeLeaderID == "" {
+		return
 	}
-	return out
+	idx := -1
+	for i := range cands {
+		if cands[i].id == homeLeaderID && cands[i].alive {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return
+	}
+	home := cands[idx]
+	copy(cands[1:idx+1], cands[0:idx])
+	cands[0] = home
 }
 
 // regionFreeBps sums the free capacity of the DISTINCT hosts backing a region's

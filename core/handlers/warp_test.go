@@ -39,6 +39,15 @@ func (f *warpFakeStore) GetWarpPeerByPubkey(pk string) (*store.WarpPeer, error) 
 	return nil, warpErr("not found")
 }
 func (f *warpFakeStore) DeleteWarpPeerByPubkey(pk string) error { delete(f.peers, pk); return nil }
+func (f *warpFakeStore) SetWarpPeerAssignedLeader(pubkey, leaderID string) error {
+	p, ok := f.peers[pubkey]
+	if !ok {
+		return warpErr("not found")
+	}
+	p.AssignedLeader = leaderID
+	f.peers[pubkey] = p
+	return nil
+}
 
 // Multi-hub: a single seeded region "leader-01" (10.0.99.0/24) with one leader.
 func (f *warpFakeStore) ListWarpRegions() ([]store.WarpRegion, error) {
