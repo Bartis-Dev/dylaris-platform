@@ -107,6 +107,8 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/stats/stream":  "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/history": "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/disk":    "stats.read",
+	"/api/gateway-bandwidth/overview":        "settings.read",
+	"/api/gateway-bandwidth/history":         "settings.read",
 	"/api/servers/{id:[0-9]+}/audit":         "server.audit.read",
 	"/api/servers/{id:[0-9]+}/audit/status":  "server.audit.read",
 	"/api/servers/{id:[0-9]+}/audit/force":   "server.settings.write",
@@ -526,6 +528,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
 	hubRedisAdminHandler := handlers.NewHubRedisAdminHandler(appState)
+	gatewayBandwidthHandler := handlers.NewGatewayBandwidthHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -1280,6 +1283,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(hubRedisAdminHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Provision))).Methods("POST")
 	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Roll))).Methods("POST")
+	api.HandleFunc("/gateway-bandwidth/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetOverview))).Methods("GET")
+	api.HandleFunc("/gateway-bandwidth/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetHistory))).Methods("GET")
 
 	// Placement / Scheduling. /placement/pick + /tags + /regions stay authed-exempt
 	// (Phase 4 Task 13): they are node-picking helper reads/preview any authed user
