@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import RoutesPanel from './infrastructure/RoutesPanel';
+import BandwidthPanel from './infrastructure/BandwidthPanel';
 import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
 import StoragePlacement from '@/components/StoragePlacement';
 import type { StoragePlacement as StoragePlacementConfig } from '@/lib/api';
@@ -99,7 +100,7 @@ interface InfrastructureData {
   totalTunnels: number;
 }
 
-type Tab = 'nodes' | 'edges' | 'routes';
+type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth';
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -709,12 +710,13 @@ export default function InfrastructureView({
     );
   }
 
-  const TABS: { id: Tab; label: string; count: number }[] = [
+  const TABS: { id: Tab; label: string; count?: number }[] = [
     { id: 'nodes', label: 'Nodes', count: nodes.length },
     ...(gatewayDeployed ? [
       { id: 'edges' as Tab, label: 'Edges', count: edges.length },
       { id: 'routes' as Tab, label: 'Routes', count: routeCount },
     ] : []),
+    ...(gatewayEnabled ? [{ id: 'bandwidth' as Tab, label: 'Bandwidth' }] : []),
   ];
 
   return (
@@ -758,11 +760,13 @@ export default function InfrastructureView({
             }`}
           >
             {t.label}
-            <span className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-full ${
-              tab === t.id ? 'bg-white/20 text-white' : 'bg-(--base-03) text-(--base-06)'
-            }`}>
-              {t.count}
-            </span>
+            {typeof t.count === 'number' && (
+              <span className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-full ${
+                tab === t.id ? 'bg-white/20 text-white' : 'bg-(--base-03) text-(--base-06)'
+              }`}>
+                {t.count}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -808,6 +812,9 @@ export default function InfrastructureView({
       {tab === 'routes' && gatewayDeployed && (
         <RoutesPanel onlineEdges={onlineEdgesList} />
       )}
+
+      {/* Tab: Bandwidth */}
+      {tab === 'bandwidth' && <BandwidthPanel />}
 
       {/* Force-Delete Modal */}
       {deleteModal && (
