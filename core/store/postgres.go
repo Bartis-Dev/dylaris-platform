@@ -1435,6 +1435,32 @@ func (s *PostgresStore) GetStatsHistory(serverUUID string, since time.Time) ([]m
 	return result, rows.Err()
 }
 
+func (s *PostgresStore) GetGatewayBandwidthHistory(since time.Time, component, host string) ([]models.GatewayBandwidthRow, error) {
+	rows, err := s.db.Query(`SELECT time, component, id, host, region, rx_bps, tx_bps, cap_mbit
+		FROM gateway_bandwidth_stats
+		WHERE time >= $1 AND component = COALESCE(NULLIF($2, ''), component) AND host = COALESCE(NULLIF($3, ''), host)
+		ORDER BY time ASC`, since, component, host)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []models.GatewayBandwidthRow
+	for rows.Next() {
+		var r models.GatewayBandwidthRow
+		// rx_bps/tx_bps are BIGINT (signed) but hold unsigned bits/s; scan as
+		// int64 then cast back, mirroring the InsertGatewayBandwidthBatch cast.
+		var rx, tx int64
+		if err := rows.Scan(&r.Time, &r.Component, &r.ID, &r.Host, &r.Region, &rx, &tx, &r.CapMbit); err != nil {
+			return nil, err
+		}
+		r.RxBps = uint64(rx)
+		r.TxBps = uint64(tx)
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
 // ==========================================
 // GATEWAY ROUTE LIMITS (still managed by Core, not Hub)
 // ==========================================

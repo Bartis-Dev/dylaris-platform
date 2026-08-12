@@ -313,6 +313,7 @@ type Store interface {
 	InsertStatsBatch(stats []models.ServerStatRow) error
 	GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error)
 	InsertGatewayBandwidthBatch(rows []models.GatewayBandwidthRow) error
+	GetGatewayBandwidthHistory(since time.Time, component, host string) ([]models.GatewayBandwidthRow, error)
 
 	// --- Library Disabled Paths ---
 	ListDisabledLibraryPaths() ([]string, error)
