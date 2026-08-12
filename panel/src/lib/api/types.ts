@@ -1,5 +1,6 @@
 import { API_URL as API_BASE } from './core';
 import { handleUnauthorized } from './session';
+import type { GatewayBandwidthOverview, BandwidthHistoryPoint } from '../bandwidth';
 
 export interface AppModule {
     id: number;
@@ -889,6 +890,19 @@ export const setEdgeMotd = (serverId: number, mode: EdgeMotdMode, customText: st
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');
 export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing-migration');
+
+// Gateway bandwidth dashboard (F2). Types + pure display helpers live in ../bandwidth.
+export const getGatewayBandwidthOverview = (): Promise<GatewayBandwidthOverview> =>
+    fetchAPI('/gateway-bandwidth/overview');
+
+export const getGatewayBandwidthHistory = (
+    range: string,
+    host?: string,
+): Promise<{ points: BandwidthHistoryPoint[] }> => {
+    const q = new URLSearchParams({ range });
+    if (host) q.set('host', host);
+    return fetchAPI(`/gateway-bandwidth/history?${q.toString()}`);
+};
 
 // Routing Mode
 export type RoutingMode = 'ip_port' | 'both' | 'gateway';
