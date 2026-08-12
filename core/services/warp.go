@@ -218,36 +218,38 @@ func (s *WarpService) pushToRegion(ctx context.Context, region string, cmd map[s
 	}
 }
 
-// regionEndpoints returns the enabled leaders' endpoints for a region, alive ones
-// first (so the client tries a healthy hub before a stale one).
+// regionEndpoints returns the enabled leaders' endpoints for a region, ordered
+// by free capacity (freest first) so the client's endpoints[0] is the leader
+// with the most headroom. Liveness dominates capacity (alive before dead) and,
+// with no telemetry, the order degrades to the historical alive-first-then-ID.
 func (s *WarpService) regionEndpoints(ctx context.Context, region string) []string {
 	leaders, err := s.warp.ListWarpLeaders()
 	if err != nil {
 		return nil
 	}
-	type ep struct {
-		endpoint string
-		alive    bool
-		id       string
-	}
-	var eps []ep
+	var (
+		cands     []leaderCandidate
+		leaderIDs []string
+	)
 	for _, l := range leaders {
 		if l.Region != region || !l.Enabled {
 			continue
 		}
-		eps = append(eps, ep{endpoint: l.Endpoint, alive: s.leaderAlive(ctx, l.LeaderID), id: l.LeaderID})
+		cands = append(cands, leaderCandidate{
+			endpoint: l.Endpoint,
+			id:       l.LeaderID,
+			alive:    s.leaderAlive(ctx, l.LeaderID),
+		})
+		leaderIDs = append(leaderIDs, l.LeaderID)
 	}
-	sort.Slice(eps, func(i, j int) bool {
-		if eps[i].alive != eps[j].alive {
-			return eps[i].alive // alive first
-		}
-		return eps[i].id < eps[j].id
-	})
-	out := make([]string, 0, len(eps))
-	for _, e := range eps {
-		out = append(out, e.endpoint)
+	if len(cands) == 0 {
+		return nil
 	}
-	return out
+	gc := s.loadGatewayCapacity(ctx, leaderIDs)
+	for i := range cands {
+		cands[i].freeBps, cands[i].known = gc.freeBpsForLeader(cands[i].id)
+	}
+	return orderLeadersByFreeCapacity(cands)
 }
 
 // assignRegion picks the region a new peer enrolls into: the key's preferred

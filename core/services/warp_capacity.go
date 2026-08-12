@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
 	"dylaris-pkg/protocol"
 )
@@ -110,4 +111,40 @@ func (s *WarpService) loadGatewayCapacity(ctx context.Context, leaderIDs []strin
 		}
 	}
 	return gc
+}
+
+// leaderCandidate is one enabled leader of a region with its resolved liveness
+// and free-capacity telemetry, ready to be ordered for connect-time placement.
+type leaderCandidate struct {
+	endpoint string
+	id       string
+	alive    bool
+	freeBps  int64
+	known    bool
+}
+
+// orderLeadersByFreeCapacity returns the leaders' endpoints ordered for the
+// client: alive leaders first; among equal liveness, leaders with KNOWN capacity
+// (by most free first) rank ahead of unknown-capacity leaders; every remaining
+// tie (both unknown, or equal free) breaks by leader ID. When no leader has
+// telemetry this reproduces the historical alive-first-then-ID order.
+func orderLeadersByFreeCapacity(cands []leaderCandidate) []string {
+	sort.Slice(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.alive != b.alive {
+			return a.alive
+		}
+		if a.known != b.known {
+			return a.known
+		}
+		if a.known && a.freeBps != b.freeBps {
+			return a.freeBps > b.freeBps
+		}
+		return a.id < b.id
+	})
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.endpoint)
+	}
+	return out
 }

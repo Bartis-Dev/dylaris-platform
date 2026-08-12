@@ -8,6 +8,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/store"
 	"dylaris-pkg/protocol"
 )
 
@@ -102,5 +103,117 @@ func TestLoadGatewayCapacity_EmptyInput(t *testing.T) {
 	gc := svc.loadGatewayCapacity(context.Background(), nil)
 	if _, known := gc.freeBpsForLeader("anything"); known {
 		t.Fatal("empty input must yield an all-unknown view")
+	}
+}
+
+func TestOrderLeadersByFreeCapacity(t *testing.T) {
+	cases := []struct {
+		name  string
+		cands []leaderCandidate
+		want  []string
+	}{
+		{
+			name: "freest alive leader first",
+			cands: []leaderCandidate{
+				{endpoint: "e1", id: "l1", alive: true, freeBps: 100_000_000, known: true},
+				{endpoint: "e2", id: "l2", alive: true, freeBps: 900_000_000, known: true},
+			},
+			want: []string{"e2", "e1"},
+		},
+		{
+			name: "known capacity ranks ahead of unknown",
+			cands: []leaderCandidate{
+				{endpoint: "e3", id: "l3", alive: true},
+				{endpoint: "e1", id: "l1", alive: true, freeBps: 100_000_000, known: true},
+			},
+			want: []string{"e1", "e3"},
+		},
+		{
+			name: "dead leader sorts last even with capacity",
+			cands: []leaderCandidate{
+				{endpoint: "e4", id: "l4", alive: false, freeBps: 999_000_000, known: true},
+				{endpoint: "e1", id: "l1", alive: true},
+			},
+			want: []string{"e1", "e4"},
+		},
+		{
+			name: "no telemetry reproduces alive-first-then-id",
+			cands: []leaderCandidate{
+				{endpoint: "e2", id: "l2", alive: true},
+				{endpoint: "e1", id: "l1", alive: true},
+				{endpoint: "e0", id: "l0", alive: false},
+			},
+			want: []string{"e1", "e2", "e0"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := orderLeadersByFreeCapacity(c.cands)
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("got %v, want %v", got, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestRegionEndpoints_OrdersByFreeCapacity(t *testing.T) {
+	fs := &fakeWarpStore{
+		peers: map[string]store.WarpPeer{},
+		byKey: map[int][]store.WarpPeer{},
+		regions: []store.WarpRegion{
+			{Region: "eu", Subnet: "10.0.99.0/24", Enabled: true},
+		},
+		leaders: []store.WarpLeader{
+			{LeaderID: "l1", Region: "eu", Endpoint: "e1", Enabled: true},
+			{LeaderID: "l2", Region: "eu", Endpoint: "e2", Enabled: true},
+			{LeaderID: "l3", Region: "eu", Endpoint: "e3", Enabled: true},
+		},
+	}
+	svc, mr := capTestService(t, fs)
+	setLeaderAlive(t, mr, "l1")
+	setLeaderAlive(t, mr, "l2")
+	setLeaderAlive(t, mr, "l3") // l3 alive but no telemetry -> unknown, sorts last
+	setComponentMirror(t, mr, "l1", "hostA")
+	setComponentMirror(t, mr, "l2", "hostB")
+	setHostMirror(t, mr, "hostA", 1000, 900_000_000) // free 100e6
+	setHostMirror(t, mr, "hostB", 1000, 100_000_000) // free 900e6
+
+	got := svc.regionEndpoints(context.Background(), "eu")
+	want := []string{"e2", "e1", "e3"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestRegionEndpoints_NoTelemetry_IDOrder(t *testing.T) {
+	fs := &fakeWarpStore{
+		peers: map[string]store.WarpPeer{},
+		byKey: map[int][]store.WarpPeer{},
+		regions: []store.WarpRegion{
+			{Region: "eu", Subnet: "10.0.99.0/24", Enabled: true},
+		},
+		leaders: []store.WarpLeader{
+			{LeaderID: "l2", Region: "eu", Endpoint: "e2", Enabled: true},
+			{LeaderID: "l1", Region: "eu", Endpoint: "e1", Enabled: true},
+		},
+	}
+	svc, mr := capTestService(t, fs)
+	setLeaderAlive(t, mr, "l1")
+	setLeaderAlive(t, mr, "l2")
+
+	got := svc.regionEndpoints(context.Background(), "eu")
+	want := []string{"e1", "e2"} // alive-first-then-id, unchanged from pre-F1
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
