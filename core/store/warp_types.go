@@ -20,12 +20,13 @@ type WarpAPIKey struct {
 
 // WarpPeer is one enrolled client: pubkey -> allocated WG IP, pinned to a region.
 type WarpPeer struct {
-	ID        int
-	APIKeyID  int
-	Pubkey    string
-	WGIP      string
-	Region    string
-	CreatedAt time.Time
+	ID             int
+	APIKeyID       int
+	Pubkey         string
+	WGIP           string
+	Region         string
+	AssignedLeader string // F3 rebalancer "home" leaderID; "" = unpinned (falls back to freest-first)
+	CreatedAt      time.Time
 }
 
 // WarpRegion owns one WG identity: a subnet and (implicitly) a key derived from

@@ -82,5 +82,8 @@ func applyWarpSchema(db *sql.DB) error {
 		ON warp_peers(region)`); err != nil {
 		return fmt.Errorf("warp: create warp_peers region index: %w", err)
 	}
+	if _, err := db.Exec(`ALTER TABLE warp_peers ADD COLUMN IF NOT EXISTS assigned_leader TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("warp: add warp_peers.assigned_leader: %w", err)
+	}
 	return nil
 }

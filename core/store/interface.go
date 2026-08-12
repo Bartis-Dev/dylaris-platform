@@ -293,6 +293,7 @@ type Store interface {
 	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)
 	ListAllWarpPeers() ([]WarpPeer, error)
 	ListWarpPeersByRegion(region string) ([]WarpPeer, error)
+	SetWarpPeerAssignedLeader(pubkey, leaderID string) error
 	CountWarpPeersByRegion() (map[string]int, error)
 	DeleteWarpPeerByPubkey(pubkey string) error
 	// Warp regions + leaders (multi-hub: region = identity, leaders = endpoints)

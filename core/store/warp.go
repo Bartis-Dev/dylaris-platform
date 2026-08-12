@@ -162,9 +162,9 @@ func (s *PostgresStore) InsertWarpPeer(p WarpPeer) (int, error) {
 func (s *PostgresStore) GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error) {
 	var p WarpPeer
 	err := s.db.QueryRow(`
-		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at, COALESCE(assigned_leader, '')
 		FROM warp_peers WHERE pubkey = $1`, pubkey).
-		Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.Region, &p.CreatedAt)
+		Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.Region, &p.CreatedAt, &p.AssignedLeader)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func (s *PostgresStore) GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error) {
 
 func (s *PostgresStore) ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error) {
 	rows, err := s.db.Query(`
-		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at, COALESCE(assigned_leader, '')
 		FROM warp_peers WHERE api_key_id = $1 ORDER BY id`, apiKeyID)
 	if err != nil {
 		return nil, err
@@ -184,7 +184,7 @@ func (s *PostgresStore) ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error) {
 
 func (s *PostgresStore) ListAllWarpPeers() ([]WarpPeer, error) {
 	rows, err := s.db.Query(`
-		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at, COALESCE(assigned_leader, '')
 		FROM warp_peers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -197,13 +197,21 @@ func (s *PostgresStore) ListAllWarpPeers() ([]WarpPeer, error) {
 // a leader of that region must hold (used by the per-leader resync push).
 func (s *PostgresStore) ListWarpPeersByRegion(region string) ([]WarpPeer, error) {
 	rows, err := s.db.Query(`
-		SELECT id, api_key_id, pubkey, wg_ip, region, created_at
+		SELECT id, api_key_id, pubkey, wg_ip, region, created_at, COALESCE(assigned_leader, '')
 		FROM warp_peers WHERE region = $1 ORDER BY id`, region)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanWarpPeers(rows)
+}
+
+// SetWarpPeerAssignedLeader pins a peer's F3 "home" leader. An empty leaderID
+// unpins it (reverts to freest-first ordering). Called only by the rebalancer
+// worker (armed mode) and the enroll path.
+func (s *PostgresStore) SetWarpPeerAssignedLeader(pubkey, leaderID string) error {
+	_, err := s.db.Exec(`UPDATE warp_peers SET assigned_leader = $2 WHERE pubkey = $1`, pubkey, leaderID)
+	return err
 }
 
 // CountWarpPeersByRegion returns the peer count per region (region -> count), used
@@ -235,7 +243,7 @@ func scanWarpPeers(rows *sql.Rows) ([]WarpPeer, error) {
 	var out []WarpPeer
 	for rows.Next() {
 		var p WarpPeer
-		if err := rows.Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.Region, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.APIKeyID, &p.Pubkey, &p.WGIP, &p.Region, &p.CreatedAt, &p.AssignedLeader); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
