@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { API_URL } from '@/lib/api';
+import { API_URL, getGatewayBandwidthOverview } from '@/lib/api';
 import { listNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, Notification as InboxNotification } from '@/lib/api/notifications';
 
 // ---------------------------------------------------------------------------
@@ -56,9 +56,31 @@ async function checkBeamRelayMissing(): Promise<Notification | null> {
     }
 }
 
+async function checkGatewayBandwidth(): Promise<Notification | null> {
+    try {
+        const ov = await getGatewayBandwidthOverview();
+        if (!ov?.alerts?.length) return null;
+        const n = ov.alerts.length;
+        return {
+            id: 'gwbw-threshold',
+            severity: 'warning',
+            title: n === 1
+                ? 'A gateway component is over its bandwidth budget'
+                : `${n} gateway components over their bandwidth budget`,
+            message:
+                'Sustained above 80% for the alert window. Open Infrastructure > Bandwidth to see which hosts and components.',
+            href: '/infrastructure',
+            cta: 'Open Infrastructure',
+        };
+    } catch {
+        return null;
+    }
+}
+
 // All registered checks. Run in parallel; null results are dropped.
 const CHECKS: Array<() => Promise<Notification | null>> = [
     checkBeamRelayMissing,
+    checkGatewayBandwidth,
 ];
 
 // ---------------------------------------------------------------------------
