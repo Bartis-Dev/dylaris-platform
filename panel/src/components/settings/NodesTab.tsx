@@ -11,6 +11,8 @@ import {
     getFleetStoragePlacement, setFleetStoragePlacement, type StoragePlacement as StoragePlacementConfig,
 } from '@/lib/api';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
+import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
+import { timeAgo } from '@/lib/time';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -364,19 +366,30 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
         <div className="card p-3 transition-colors hover:border-(--base-05)">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-4 min-w-0">
-                    <div className={`status-dot shrink-0 ${node.status === 'online' ? 'bg-(--success-light) shadow-[0_0_8px_var(--success-light)]' : 'bg-(--error-light)'}`} title={node.status}></div>
+                    {(() => {
+                      const now = Date.now();
+                      const { tier } = nodeConnectivity(node.status, node.lastSeenAt, now);
+                      const dot = dotFor(tier, 'bg-(--success-light) shadow-[0_0_8px_var(--success-light)]');
+                      const title = tier === 'ok' ? node.status : connLabel(tier, node.lastSeenAt, now);
+                      return <div className={`status-dot shrink-0 ${dot}`} title={title}></div>;
+                    })()}
                     <div className="w-10 h-10 bg-(--accent-ghost) text-(--accent-light) rounded-md flex items-center justify-center border border-(--accent-border) shrink-0">
                         <Server size={24} />
                     </div>
-                    <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 min-w-0">
-                        <div className="font-medium text-sm text-(--base-09) whitespace-nowrap truncate">
-                            {node.displayName || node.name || (node.token ? node.token.slice(0, 8) : '')}
+                    <div className="flex flex-col min-w-0">
+                        <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 min-w-0">
+                            <div className="font-medium text-sm text-(--base-09) whitespace-nowrap truncate">
+                                {node.displayName || node.name || (node.token ? node.token.slice(0, 8) : '')}
+                            </div>
+                            <div className="h-4 w-px bg-(--base-04) hidden md:block"></div>
+                            <div className="text-xs font-mono text-(--base-06) flex items-center bg-(--base-01) px-2 py-1 rounded-sm border border-(--base-04) w-fit whitespace-nowrap">
+                                <Globe size={14} className="mr-1.5 opacity-70" />
+                                {node.address}
+                            </div>
                         </div>
-                        <div className="h-4 w-px bg-(--base-04) hidden md:block"></div>
-                        <div className="text-xs font-mono text-(--base-06) flex items-center bg-(--base-01) px-2 py-1 rounded-sm border border-(--base-04) w-fit whitespace-nowrap">
-                            <Globe size={14} className="mr-1.5 opacity-70" />
-                            {node.address}
-                        </div>
+                        {node.status !== 'online' && node.lastSeenAt && (
+                            <p className="text-[10px] text-(--base-05) font-mono mt-1">Last seen {timeAgo(node.lastSeenAt)}</p>
+                        )}
                     </div>
                 </div>
 

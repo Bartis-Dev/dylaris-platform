@@ -17,6 +17,8 @@ import {
   sharedStorageSummary,
   type SharedStorageConflict,
 } from '@/lib/sharedStorage';
+import { timeAgo } from '@/lib/time';
+import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 
 interface StorageInfo {
   path: string;
@@ -102,20 +104,6 @@ interface InfrastructureData {
 
 type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth';
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.max(0, now - then);
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -185,7 +173,11 @@ function NodeCard({
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className={`w-2 h-2 rounded-full shrink-0 ${isOnline ? 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]' : 'bg-(--error)'}`} />
+          {(() => {
+            const { tier } = nodeConnectivity(node.status, node.lastSeenAt, Date.now());
+            const dot = dotFor(tier, 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]');
+            return <div className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />;
+          })()}
           <p className="text-sm font-semibold text-(--base-09) truncate">{displayName}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
