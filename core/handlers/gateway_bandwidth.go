@@ -56,3 +56,11 @@ func (h *GatewayBandwidthHandler) GetHistory(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"points": points})
 }
+
+// GetRebalance handles GET /api/gateway-bandwidth/rebalance - the F3 rebalancer
+// mode + recent decision feed. Admin-gated at the route (settings.read).
+func (h *GatewayBandwidthHandler) GetRebalance(w http.ResponseWriter, r *http.Request) {
+	view := services.LoadRebalanceView(r.Context(), h.state.Redis, h.state.FeatureFlags)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(view)
+}

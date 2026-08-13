@@ -311,6 +311,33 @@ func LoadGatewayBandwidthOverview(ctx context.Context, rdb *redis.Client, st sto
 	return ov
 }
 
+// RebalanceView is the F3 rebalancer status for the panel: the current mode and
+// the most recent decisions (dry-run would-be moves and armed applied moves).
+type RebalanceView struct {
+	Mode      string         `json:"mode"`
+	Decisions []warpDecision `json:"decisions"`
+}
+
+// LoadRebalanceView reads the mode setting + the recent-decisions Redis feed.
+// Best-effort: a Redis error yields an empty decisions list, never an error.
+func LoadRebalanceView(ctx context.Context, rc *redis.Client, f *FeatureFlags) RebalanceView {
+	view := RebalanceView{Mode: f.WarpRebalanceMode(ctx), Decisions: []warpDecision{}}
+	if rc == nil {
+		return view
+	}
+	raws, err := rc.LRange(ctx, warpRebalanceDecisionsKey, 0, warpRebalanceDecisionsMax-1).Result()
+	if err != nil {
+		return view
+	}
+	for _, raw := range raws {
+		var d warpDecision
+		if json.Unmarshal([]byte(raw), &d) == nil {
+			view.Decisions = append(view.Decisions, d)
+		}
+	}
+	return view
+}
+
 // scanKeys returns every key matching the pattern via a cursor SCAN (bounded:
 // the gwbw mirror keys have a 90s TTL and low cardinality). A SCAN error returns
 // what was collected so far.
