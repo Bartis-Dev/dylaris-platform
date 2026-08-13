@@ -323,10 +323,10 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/smtp/test":                   "settings.write",
 
 	// Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight
-	// (PANEL topology.*). /api/warp/enroll, /api/warp/link-boot (warp API-key
-	// auth, not a session) and /api/warp/link-kits/* (tenant self-service,
-	// BYON-gated + owner-filtered in-handler) are deliberately NOT listed here -
-	// they stay EXEMPT-authed (Phase 4 controller decision #2).
+	// (PANEL topology.*). /api/warp/enroll, /api/warp/assignment, /api/warp/link-boot
+	// (warp API-key auth, not a session) and /api/warp/link-kits/* (tenant
+	// self-service, BYON-gated + owner-filtered in-handler) are deliberately NOT
+	// listed here - they stay EXEMPT-authed (Phase 4 controller decision #2).
 	"/api/gateway/links":                    "topology.read",
 	"/api/gateway/edges":                    "topology.read",
 	"/api/gateway/routes":                   "topology.read",

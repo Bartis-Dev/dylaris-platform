@@ -83,6 +83,40 @@ func newTestWarpHandlerWithPeer(t *testing.T, keyID int, pubkey, region, leaderI
 	return NewWarpHandler(state, svc)
 }
 
+// newTestWarpHandlerWithForeignPeer builds a WarpHandler like
+// newTestWarpHandlerWithPeer, except the seeded peer EXISTS but is owned by a
+// different warp API key (foreignKeyID) than the one that authenticates the
+// request (authKeyID). It exercises the ownership guard in
+// (*WarpService).Assignment ("if peer.APIKeyID != key.ID"), which the plain
+// unknown-pubkey case never reaches because GetWarpPeerByPubkey already fails
+// before that check runs.
+func newTestWarpHandlerWithForeignPeer(t *testing.T, authKeyID, foreignKeyID int, pubkey, region, leaderID string) *WarpHandler {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	base := &warpFakeStore{
+		settings: map[string]string{"routing_mode": "gateway"},
+		peers: map[string]store.WarpPeer{
+			pubkey: {ID: 1, APIKeyID: foreignKeyID, Pubkey: pubkey, WGIP: "10.0.99.51", Region: region, AssignedLeader: leaderID},
+		},
+	}
+	fs := &assignmentFakeStore{
+		warpFakeStore: base,
+		region:        store.WarpRegion{Region: region, Subnet: "10.0.99.0/24", Enabled: true},
+		leader:        store.WarpLeader{LeaderID: leaderID, Region: region, Endpoint: "vpn.example.com:51820", Enabled: true},
+		key:           store.WarpAPIKey{ID: authKeyID, Policy: "general", MaxConns: 5, OnNewConn: "block"},
+		hash:          HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", authKeyID)),
+	}
+	svc := services.NewWarpService(fs, rdb, "test-secret")
+	state := &AppState{Store: fs, Redis: rdb}
+	return NewWarpHandler(state, svc)
+}
+
 // Assignment returns 200 + the peer's endpoint order for an authenticated key
 // whose peer exists; 404 when the pubkey is unknown or belongs to another key.
 func TestAssignment_ReturnsHomeFirstForOwnedPeer(t *testing.T) {
@@ -101,7 +135,11 @@ func TestAssignment_ReturnsHomeFirstForOwnedPeer(t *testing.T) {
 	}
 }
 
-func TestAssignment_404ForForeignPeer(t *testing.T) {
+// TestAssignment_404ForUnknownPubkey covers the "no such peer at all" branch:
+// GetWarpPeerByPubkey itself errors because the pubkey was never enrolled.
+// Distinct from TestAssignment_404ForForeignPeer below, where the peer DOES
+// exist but is owned by a different key.
+func TestAssignment_404ForUnknownPubkey(t *testing.T) {
 	h := newTestWarpHandlerWithPeer(t, 3, "PUBKEY", "eu-1", "leader-b")
 	req := httptest.NewRequest(http.MethodGet, "/api/warp/assignment?public_key=OTHER", nil)
 	req.Header.Set("Authorization", "Bearer PLAINTEXT-FOR-KEY-3")
@@ -111,5 +149,22 @@ func TestAssignment_404ForForeignPeer(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+}
+
+// TestAssignment_404ForForeignPeer covers the ownership guard in
+// (*WarpService).Assignment ("if peer.APIKeyID != key.ID") directly: the peer
+// EXISTS (GetWarpPeerByPubkey succeeds) but is enrolled under a different warp
+// API key (7) than the one authenticating the request (3).
+func TestAssignment_404ForForeignPeer(t *testing.T) {
+	h := newTestWarpHandlerWithForeignPeer(t /* authKeyID */, 3 /* foreignKeyID */, 7, "PUBKEY", "eu-1", "leader-b")
+	req := httptest.NewRequest(http.MethodGet, "/api/warp/assignment?public_key=PUBKEY", nil)
+	req.Header.Set("Authorization", "Bearer PLAINTEXT-FOR-KEY-3")
+	rr := httptest.NewRecorder()
+
+	h.WarpAPIKeyMiddleware(h.Assignment)(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body %s)", rr.Code, rr.Body.String())
 	}
 }
