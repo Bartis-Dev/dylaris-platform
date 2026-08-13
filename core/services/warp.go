@@ -177,6 +177,7 @@ type EnrollResult struct {
 	LeaderPublicKey string   `json:"leader_public_key"`
 	LeaderEndpoint  string   `json:"leader_endpoint"`
 	Endpoints       []string `json:"endpoints"`
+	Assigned        bool     `json:"assigned"` // true when the peer has an explicit pinned home leader
 	DNS             string   `json:"dns,omitempty"`
 	Keepalive       int      `json:"keepalive"`
 }
@@ -381,6 +382,7 @@ func (s *WarpService) buildResult(ctx context.Context, region, wgIP, homeLeaderI
 		LeaderPublicKey: pub,
 		LeaderEndpoint:  primary,
 		Endpoints:       endpoints,
+		Assigned:        homeLeaderID != "",
 		Keepalive:       25,
 	}, nil
 }

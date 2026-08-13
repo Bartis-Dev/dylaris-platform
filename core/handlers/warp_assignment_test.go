@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -119,6 +120,8 @@ func newTestWarpHandlerWithForeignPeer(t *testing.T, authKeyID, foreignKeyID int
 
 // Assignment returns 200 + the peer's endpoint order for an authenticated key
 // whose peer exists; 404 when the pubkey is unknown or belongs to another key.
+// The seeded peer has a non-empty AssignedLeader ("leader-b"), so the response
+// must also come back assigned:true (F3 poll-drift fix).
 func TestAssignment_ReturnsHomeFirstForOwnedPeer(t *testing.T) {
 	h := newTestWarpHandlerWithPeer(t /* keyID */, 3, "PUBKEY", "eu-1", "leader-b") // helper: seeds a peer owned by key 3
 	req := httptest.NewRequest(http.MethodGet, "/api/warp/assignment?public_key=PUBKEY", nil)
@@ -132,6 +135,42 @@ func TestAssignment_ReturnsHomeFirstForOwnedPeer(t *testing.T) {
 	}
 	if !contains(rr.Body.String(), `"leader_public_key"`) {
 		t.Fatalf("missing leader_public_key: %s", rr.Body.String())
+	}
+	var got services.EnrollResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, rr.Body.String())
+	}
+	if !got.Assigned {
+		t.Fatalf("Assigned = false, want true for a peer with a non-empty assigned_leader (body %s)", rr.Body.String())
+	}
+}
+
+// TestAssignment_UnassignedForUnpinnedPeer is the F3 poll-drift fix: a peer with
+// an EMPTY AssignedLeader (unpinned - pre-F3 migration default, a failed
+// best-effort pin, etc.) must get assigned:false back, even though it still gets
+// a full endpoint list (freest-first). The gateway client's checkAssignment
+// no-ops on assigned:false so an unpinned peer no longer swaps/drifts on every
+// 30s poll tick in a multi-leader region.
+func TestAssignment_UnassignedForUnpinnedPeer(t *testing.T) {
+	h := newTestWarpHandlerWithPeer(t, 3, "PUBKEY", "eu-1", "") // empty leaderID -> unpinned peer
+	req := httptest.NewRequest(http.MethodGet, "/api/warp/assignment?public_key=PUBKEY", nil)
+	req.Header.Set("Authorization", "Bearer PLAINTEXT-FOR-KEY-3")
+	rr := httptest.NewRecorder()
+
+	h.WarpAPIKeyMiddleware(h.Assignment)(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	}
+	var got services.EnrollResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, rr.Body.String())
+	}
+	if got.Assigned {
+		t.Fatalf("Assigned = true, want false for a peer with an empty assigned_leader (body %s)", rr.Body.String())
+	}
+	if len(got.Endpoints) == 0 {
+		t.Fatalf("Endpoints empty, want the region's endpoint list even when unassigned (body %s)", rr.Body.String())
 	}
 }
 
