@@ -3,13 +3,20 @@
 import { useEffect, useState, useCallback } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { AlertTriangle } from 'lucide-react';
-import { getGatewayBandwidthOverview, getGatewayBandwidthHistory } from '@/lib/api';
+import {
+  getGatewayBandwidthOverview,
+  getGatewayBandwidthHistory,
+  getGatewayRebalance,
+  setWarpRebalanceMode,
+  type RebalanceView,
+} from '@/lib/api';
 import {
   formatBitsPerSec,
   utilTone,
   barWidthPct,
   groupComponentsByHost,
   summarizeAlerts,
+  summarizeDecision,
   type GatewayBandwidthOverview,
   type BandwidthHistoryPoint,
   type UtilTone,
@@ -31,6 +38,19 @@ const toneBar: Record<UtilTone, string> = {
   crit: 'bg-(--error)',
 };
 
+// timeAgo renders a compact relative age for a unix-seconds timestamp (the
+// rebalancer decision feed's `ts`, same unit as BandwidthHistoryPoint.ts).
+function timeAgo(ts: number): string {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function UtilBar({ pct, known }: { pct: number; known: boolean }) {
   if (!known) {
     return <div className="text-[11px] text-(--base-06) font-mono">no cap</div>;
@@ -51,10 +71,18 @@ export default function BandwidthPanel() {
   const [selectedHost, setSelectedHost] = useState<string | null>(null);
   const [range, setRange] = useState('1h');
   const [history, setHistory] = useState<BandwidthHistoryPoint[]>([]);
+  const [rebalance, setRebalance] = useState<RebalanceView | null>(null);
+  const [savingMode, setSavingMode] = useState(false);
+  const [modeError, setModeError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setOverview(await getGatewayBandwidthOverview());
+    } catch {
+      // best-effort; keep the last snapshot
+    }
+    try {
+      setRebalance(await getGatewayRebalance());
     } catch {
       // best-effort; keep the last snapshot
     }
@@ -65,6 +93,23 @@ export default function BandwidthPanel() {
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
   }, [load]);
+
+  const handleModeChange = async (next: 'off' | 'dry-run' | 'armed') => {
+    if (!rebalance || savingMode) return;
+    const prevMode = rebalance.mode;
+    setModeError(null);
+    setSavingMode(true);
+    setRebalance({ ...rebalance, mode: next });
+    try {
+      await setWarpRebalanceMode(next);
+      setRebalance(await getGatewayRebalance());
+    } catch {
+      setRebalance((cur) => (cur ? { ...cur, mode: prevMode } : cur));
+      setModeError('Failed to update rebalancer mode.');
+    } finally {
+      setSavingMode(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedHost) {
@@ -92,10 +137,53 @@ export default function BandwidthPanel() {
   const byHost = groupComponentsByHost(overview.components);
   const bellItems = summarizeAlerts(overview.alerts);
 
+  // Rebalancer mode control + recent decisions. Independent of whether any
+  // gateway component is currently reporting telemetry, so it renders in
+  // both the "no components" empty state and the normal overview below.
+  const rebalancerSection = rebalance && (
+    <div className="card p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <span className="mono-label">Warp rebalancer</span>
+        <select
+          value={rebalance.mode}
+          onChange={(e) => handleModeChange(e.target.value as 'off' | 'dry-run' | 'armed')}
+          disabled={savingMode}
+          className="input-field text-sm w-32"
+        >
+          <option value="off">Off</option>
+          <option value="dry-run">Dry run</option>
+          <option value="armed">Armed</option>
+        </select>
+      </div>
+      {rebalance.mode === 'dry-run' && (
+        <p className="text-xs text-(--base-06)">Computing only, no moves applied.</p>
+      )}
+      {rebalance.mode === 'armed' && (
+        <p className="text-xs text-(--base-06)">Moves are applied automatically to relieve saturated warp leaders.</p>
+      )}
+      {modeError && <p className="text-xs text-(--error-light)">{modeError}</p>}
+      <div className="flex flex-col gap-1.5 border-t border-(--base-03) pt-2">
+        {rebalance.decisions.length === 0 ? (
+          <p className="text-xs text-(--base-06)">No recent rebalancer activity</p>
+        ) : (
+          rebalance.decisions.map((d, i) => (
+            <div key={`${d.ts}-${i}`} className="flex items-center justify-between text-xs gap-3">
+              <span className="text-(--base-08)">{summarizeDecision(d)}</span>
+              <span className="text-(--base-05) font-mono shrink-0">{timeAgo(d.ts)}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
   if (hosts.length === 0 && overview.components.length === 0) {
     return (
-      <div className="card p-8 text-center text-(--base-06) text-sm">
-        No gateway components reporting. Edges, beam and warp leaders publish bandwidth once BANDWIDTH_MBIT is set and traffic flows.
+      <div className="flex flex-col gap-4">
+        {rebalancerSection}
+        <div className="card p-8 text-center text-(--base-06) text-sm">
+          No gateway components reporting. Edges, beam and warp leaders publish bandwidth once BANDWIDTH_MBIT is set and traffic flows.
+        </div>
       </div>
     );
   }
@@ -107,6 +195,8 @@ export default function BandwidthPanel() {
 
   return (
     <div className="flex flex-col gap-4">
+      {rebalancerSection}
+
       {/* Alert banner */}
       {bellItems.length > 0 && (
         <div className="border border-(--warning-border) bg-(--warning-ghost) rounded-lg p-3 flex flex-col gap-2">

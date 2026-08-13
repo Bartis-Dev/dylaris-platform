@@ -904,6 +904,39 @@ export const getGatewayBandwidthHistory = (
     return fetchAPI(`/gateway-bandwidth/history?${q.toString()}`);
 };
 
+// F3 warp rebalancer: mode + recent decision feed, surfaced in the Bandwidth panel.
+export interface WarpMove {
+    pubkey: string;
+    from: string;
+    to: string;
+    txBps: number;
+}
+export interface WarpDecision {
+    ts: number;
+    mode: string;
+    applied: boolean;
+    moves: WarpMove[];
+    note?: string;
+}
+export interface RebalanceView {
+    mode: 'off' | 'dry-run' | 'armed' | string;
+    decisions: WarpDecision[];
+}
+export const getGatewayRebalance = (): Promise<RebalanceView> =>
+    fetchAPI('/gateway-bandwidth/rebalance');
+
+// setWarpRebalanceMode writes the F3 rebalancer mode. There is no generic
+// per-key settings writer in this codebase to reuse here - every /settings/*
+// endpoint POSTs a fixed domain struct (features, gateway, placement,
+// routing-mode, warp-firewall, ...), and Core does not yet expose a writer
+// for warp_rebalance_mode (only GET /gateway-bandwidth/rebalance exists as of
+// core commit 702337f). This POSTs to that same resource, mirroring the
+// GET-reads/POST-writes-same-path convention already used for routing-mode
+// and warp-firewall, so Core only needs one additive handler rather than a
+// new route. Until that handler ships, this call 404s.
+export const setWarpRebalanceMode = (mode: 'off' | 'dry-run' | 'armed'): Promise<void> =>
+    fetchAPI('/gateway-bandwidth/rebalance', { method: 'POST', body: JSON.stringify({ mode }) });
+
 // Routing Mode
 export type RoutingMode = 'ip_port' | 'both' | 'gateway';
 export type FileAccessMode = 'sftp' | 'both' | 'beam';

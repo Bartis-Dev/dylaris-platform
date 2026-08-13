@@ -5,9 +5,11 @@ import {
   barWidthPct,
   groupComponentsByHost,
   summarizeAlerts,
+  summarizeDecision,
   type GatewayComponentView,
   type GatewayAlert,
 } from './bandwidth';
+import type { WarpDecision } from './api/types';
 
 describe('formatBitsPerSec', () => {
   it('renders zero', () => {
@@ -56,5 +58,22 @@ describe('summarizeAlerts', () => {
     expect(items[0].id).toBe('gwbw-host-h1');
     expect(items[0].title).toContain('91%');
     expect(items[1].id).toBe('gwbw-comp-warp-eu-1');
+  });
+});
+
+describe('summarizeDecision', () => {
+  it('describes an applied move', () => {
+    const d: WarpDecision = { ts: 1, mode: 'armed', applied: true, moves: [{ pubkey: 'p1', from: 'L-a', to: 'L-b', txBps: 100 }] };
+    expect(summarizeDecision(d)).toContain('L-a');
+    expect(summarizeDecision(d)).toContain('L-b');
+    expect(summarizeDecision(d)).toContain('1'); // one move
+  });
+  it('labels a dry-run as would-move', () => {
+    const d: WarpDecision = { ts: 1, mode: 'dry-run', applied: false, moves: [{ pubkey: 'p1', from: 'L-a', to: 'L-b', txBps: 100 }] };
+    expect(summarizeDecision(d).toLowerCase()).toContain('would');
+  });
+  it('handles an empty move list', () => {
+    const d: WarpDecision = { ts: 1, mode: 'dry-run', applied: false, moves: [] };
+    expect(summarizeDecision(d).toLowerCase()).toContain('no move');
   });
 });

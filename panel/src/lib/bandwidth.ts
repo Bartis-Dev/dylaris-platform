@@ -2,6 +2,8 @@
 // in bits/second (not bytes), so this module has its own bits/s formatter rather
 // than reusing the bytes/s formatSpeed in InfrastructureView.
 
+import type { WarpDecision } from './api/types';
+
 export interface GatewayComponentView {
   component: string;
   id: string;
@@ -106,4 +108,16 @@ export function summarizeAlerts(alerts: GatewayAlert[]): BandwidthBellItem[] {
           message: `Sustained above ${a.threshold}% of its configured cap on ${a.host}.`,
         },
   );
+}
+
+// summarizeDecision renders one rebalancer decision as a compact line for the
+// panel feed. "would move" for dry-run, "moved" for armed.
+export function summarizeDecision(d: WarpDecision): string {
+  if (!d.moves || d.moves.length === 0) {
+    return d.applied ? 'No moves applied' : 'No moves (dry-run)';
+  }
+  const verb = d.applied ? 'moved' : 'would move';
+  const first = d.moves[0];
+  const extra = d.moves.length > 1 ? ` (+${d.moves.length - 1} more)` : '';
+  return `${verb} ${d.moves.length} peer(s): ${first.from} -> ${first.to}${extra}`;
 }
