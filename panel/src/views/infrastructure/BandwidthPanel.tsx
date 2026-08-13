@@ -101,7 +101,15 @@ export default function BandwidthPanel() {
     setSavingMode(true);
     setRebalance({ ...rebalance, mode: next });
     try {
-      await setWarpRebalanceMode(next);
+      // fetchAPI does not throw on a non-2xx response - it resolves the parsed
+      // body - so success has to be checked explicitly, same as every other
+      // panel writer (GatewayTab.tsx, InfrastructureView.tsx, ...).
+      const res = await setWarpRebalanceMode(next);
+      if (res?.success !== true) {
+        setRebalance((cur) => (cur ? { ...cur, mode: prevMode } : cur));
+        setModeError(res?.message || 'Failed to update rebalancer mode.');
+        return;
+      }
       setRebalance(await getGatewayRebalance());
     } catch {
       setRebalance((cur) => (cur ? { ...cur, mode: prevMode } : cur));

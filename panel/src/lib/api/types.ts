@@ -928,13 +928,15 @@ export const getGatewayRebalance = (): Promise<RebalanceView> =>
 // setWarpRebalanceMode writes the F3 rebalancer mode. There is no generic
 // per-key settings writer in this codebase to reuse here - every /settings/*
 // endpoint POSTs a fixed domain struct (features, gateway, placement,
-// routing-mode, warp-firewall, ...), and Core does not yet expose a writer
-// for warp_rebalance_mode (only GET /gateway-bandwidth/rebalance exists as of
-// core commit 702337f). This POSTs to that same resource, mirroring the
-// GET-reads/POST-writes-same-path convention already used for routing-mode
-// and warp-firewall, so Core only needs one additive handler rather than a
-// new route. Until that handler ships, this call 404s.
-export const setWarpRebalanceMode = (mode: 'off' | 'dry-run' | 'armed'): Promise<void> =>
+// routing-mode, warp-firewall, ...). This POSTs to the same resource the GET
+// reads, mirroring the GET-reads/POST-writes-same-path convention already
+// used for routing-mode and warp-firewall. Core's handler (settings.write)
+// returns `{ success: true, mode }` on success and `{ success: false, message }`
+// on a rejected mode / permission / save failure - callers must check
+// `res.success` themselves, fetchAPI does not throw on a non-2xx response.
+export const setWarpRebalanceMode = (
+    mode: 'off' | 'dry-run' | 'armed',
+): Promise<{ success?: boolean; message?: string; mode?: string }> =>
     fetchAPI('/gateway-bandwidth/rebalance', { method: 'POST', body: JSON.stringify({ mode }) });
 
 // Routing Mode
