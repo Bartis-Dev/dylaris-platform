@@ -346,18 +346,23 @@ func (n *Node) IsExternal() bool {
 }
 
 type Server struct {
-	ID          int     `json:"id"`
-	UUID        string  `json:"uuid"`
-	Name        string  `json:"name"`
-	NodeID      int     `json:"nodeId"`
-	NodeName    string  `json:"node"`
-	NodeAddress string  `json:"nodeAddress"`
-	OwnerID     string  `json:"ownerId"`
-	OwnerName   string  `json:"owner"`
-	GameImage   string  `json:"image"`
-	Port        int     `json:"port"`
-	Memory      int     `json:"memory"`
-	CPULimit    float64 `json:"cpuLimit"`
+	ID          int    `json:"id"`
+	UUID        string `json:"uuid"`
+	Name        string `json:"name"`
+	NodeID      int    `json:"nodeId"`
+	NodeName    string `json:"node"`
+	NodeAddress string `json:"nodeAddress"`
+	// Node reachability, joined from nodes for the honest connectivity display.
+	// NodeStatus is the node's own online/offline - distinct from Status, which is
+	// the server's last node-pushed status and freezes when the node goes away.
+	NodeStatus     string     `json:"nodeStatus"`
+	NodeLastSeenAt *time.Time `json:"nodeLastSeenAt"`
+	OwnerID        string     `json:"ownerId"`
+	OwnerName      string     `json:"owner"`
+	GameImage      string     `json:"image"`
+	Port           int        `json:"port"`
+	Memory         int        `json:"memory"`
+	CPULimit       float64    `json:"cpuLimit"`
 	// CPUPinningMode: 'shared' (default), 'auto' or 'manual'. Cpuset is the
 	// effective core list (e.g. "0-3,8"), empty when shared/unpinned.
 	CPUPinningMode   string `json:"cpuPinningMode"`
