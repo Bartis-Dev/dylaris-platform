@@ -460,6 +460,13 @@ func main() {
 	rebalanceWorker.SetLeader(coreLeader)
 	rebalanceWorker.Start(bgCtx)
 
+	// Warp rebalancer — leader-gated ticker that relieves saturated warp leaders
+	// by pinning individual peers to a freer same-region sibling. No-op unless
+	// warp_rebalance_mode is dry-run/armed AND gateway routing is active.
+	warpRebalancer := services.NewWarpRebalancer(pgStore, redisClient, appState.FeatureFlags)
+	warpRebalancer.SetLeader(coreLeader)
+	warpRebalancer.Start(bgCtx)
+
 	// Publish the node-facing settings to Redis now, and keep re-publishing
 	// them: Redis has no persistence, and a node restarting into a wiped Redis
 	// silently falls back to its compiled defaults (see NodeModePublisher).
