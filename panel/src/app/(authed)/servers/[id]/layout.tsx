@@ -25,12 +25,15 @@ import { Upload } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
 import { useBusy } from '@/lib/useBusy';
+import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
+import { useNow } from '@/lib/useNow';
 
 export default function ServerLayout({ children }: { children: React.ReactNode }) {
     const params = useParams();
     const pathname = usePathname();
     const router = useRouter();
     const { servers, user, refreshServers, gatewayEnabled, routingMode, featureFlags } = useAppData();
+    const now = useNow();
 
     const serverId = Number(params?.id);
     const selectedServer = servers.find(s => s.id === serverId);
@@ -645,7 +648,17 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                 {/* Row 1: Server Name + Actions */}
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center space-x-2">
-                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${getStatusColor(selectedServer.status)}`} title={selectedServer.status} />
+                        {(() => {
+                            const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
+                            const title = tier === 'ok' ? selectedServer.status : connLabel(tier, selectedServer.nodeLastSeenAt, now);
+                            return <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotFor(tier, getStatusColor(selectedServer.status))}`} title={title} />;
+                        })()}
+                        {(() => {
+                            const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
+                            return tier === 'ok' ? null : (
+                                <span className="text-xs text-(--warning)">{connLabel(tier, selectedServer.nodeLastSeenAt, now)}</span>
+                            );
+                        })()}
                         {isEditingName ? (
                             <input
                                 className="text-xl font-bold font-display bg-(--base-03) text-(--base-09) rounded-md px-2 py-0.5 outline-none border border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)]"

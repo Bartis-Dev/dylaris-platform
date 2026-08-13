@@ -8,6 +8,8 @@ import RegionBadge from '@/components/RegionBadge';
 import { ShieldCheck, Search, X, ChevronDown, ChevronRight, PlusCircle, Network } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import GuardedLink from '@/components/GuardedLink';
+import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
+import { useNow } from '@/lib/useNow';
 
 interface SidebarProps {
   onNewServer?: () => void;
@@ -58,6 +60,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   const { servers, user: currentUser, proxiesEnabled, featureFlags } = useAppData();
   const params = useParams();
   const activeServerId = params?.id ? Number(params.id) : null;
+  const now = useNow();
 
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -177,7 +180,11 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             <RegionBadge region={server.region} className="ml-1" />
           </div>
         </div>
-        <div className={`badge-dot ${getStatusDot(server.status)}`} title={server.status}></div>
+        {(() => {
+          const { tier } = nodeConnectivity(server.nodeStatus, server.nodeLastSeenAt, now);
+          const title = tier === 'ok' ? server.status : connLabel(tier, server.nodeLastSeenAt, now);
+          return <div className={`badge-dot ${dotFor(tier, getStatusDot(server.status))}`} title={title}></div>;
+        })()}
       </GuardedLink>
     );
   };
@@ -212,7 +219,12 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             </div>
           </div>
           <span className="text-[10px] font-mono text-(--base-05) mr-1">({group.children.length})</span>
-          <div className={`badge-dot ${getStatusDot(group.proxy.status)}`} title={group.proxy.status}></div>
+          {(() => {
+            const p = group.proxy;
+            const { tier } = nodeConnectivity(p.nodeStatus, p.nodeLastSeenAt, now);
+            const title = tier === 'ok' ? p.status : connLabel(tier, p.nodeLastSeenAt, now);
+            return <div className={`badge-dot ${dotFor(tier, getStatusDot(p.status))}`} title={title}></div>;
+          })()}
           <button
             type="button"
             onClick={(e) => toggleProxyCollapse(group.proxy.id, e)}
