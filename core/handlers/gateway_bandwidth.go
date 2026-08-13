@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -63,4 +64,32 @@ func (h *GatewayBandwidthHandler) GetRebalance(w http.ResponseWriter, r *http.Re
 	view := services.LoadRebalanceView(r.Context(), h.state.Redis, h.state.FeatureFlags)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(view)
+}
+
+// SetRebalanceMode handles POST /api/gateway-bandwidth/rebalance - sets the warp
+// rebalancer mode (off | dry-run | armed). Admin-gated (settings.write). The
+// worker re-reads the setting each tick, so a change takes effect within one
+// evaluation interval.
+func (h *GatewayBandwidthHandler) SetRebalanceMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	switch req.Mode {
+	case "off", "dry-run", "armed":
+	default:
+		sendJSONError(w, "mode must be off, dry-run, or armed", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetSetting("warp_rebalance_mode", req.Mode); err != nil {
+		log.Printf("set warp_rebalance_mode: %v", err)
+		sendJSONError(w, "Failed to save mode", http.StatusInternalServerError)
+		return
+	}
+	h.state.FeatureFlags.Invalidate("warp_rebalance_mode")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "mode": req.Mode})
 }
