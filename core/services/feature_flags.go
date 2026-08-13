@@ -150,6 +150,59 @@ func (f *FeatureFlags) TabProxyMaxShareLinksPerUser(ctx context.Context) int {
 	return 20
 }
 
+// GetString returns the raw string value for key, defaulting to defaultV when the
+// setting is missing or empty. Unlike Get/GetInt it is not cached (callers are
+// low-frequency), so it always reflects the latest write without invalidation.
+func (f *FeatureFlags) GetString(_ context.Context, key, defaultV string) string {
+	v, err := f.store.GetSetting(key)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return defaultV
+	}
+	return strings.TrimSpace(v)
+}
+
+// WarpRebalanceMode reports the F3 rebalancer mode: "off" (default), "dry-run"
+// (compute + log + surface, no moves) or "armed" (apply). Any unrecognized value
+// is treated as "off" so a typo can never silently arm the rebalancer.
+func (f *FeatureFlags) WarpRebalanceMode(ctx context.Context) string {
+	switch f.GetString(ctx, "warp_rebalance_mode", "off") {
+	case "dry-run":
+		return "dry-run"
+	case "armed":
+		return "armed"
+	default:
+		return "off"
+	}
+}
+
+// WarpRebalancePct is the sustained utilisation percent above which a warp
+// leader's host is relieved. Default 80 (aligned with the F2 alert); values
+// outside 50..100 fall back to the default.
+func (f *FeatureFlags) WarpRebalancePct(ctx context.Context) int {
+	if v := f.GetInt(ctx, "warp_rebalance_pct", 80); v >= 50 && v <= 100 {
+		return v
+	}
+	return 80
+}
+
+// WarpRebalanceSustainMin is the window (minutes) a host must stay over the
+// threshold before any move. Default 10; non-positive falls back to the default.
+func (f *FeatureFlags) WarpRebalanceSustainMin(ctx context.Context) int {
+	if v := f.GetInt(ctx, "warp_rebalance_sustain_min", 10); v > 0 {
+		return v
+	}
+	return 10
+}
+
+// WarpRebalanceIntervalMin is the evaluation cadence (minutes). Default 5;
+// non-positive falls back to the default.
+func (f *FeatureFlags) WarpRebalanceIntervalMin(ctx context.Context) int {
+	if v := f.GetInt(ctx, "warp_rebalance_interval_min", 5); v > 0 {
+		return v
+	}
+	return 5
+}
+
 // Invalidate drops the cached entry for a key so the next Get re-reads from
 // the store. Called by settings PUT handlers after a write.
 func (f *FeatureFlags) Invalidate(key string) {
