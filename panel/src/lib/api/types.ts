@@ -55,6 +55,7 @@ export interface Node {
     address: string;
     token: string;
     status: string;
+    lastSeenAt?: string;
     isLocal: boolean;
     tags?: string;
     region?: string;
@@ -153,6 +154,9 @@ export interface Server {
     cpuPinningMode?: 'shared' | 'auto' | 'manual';
     cpuset?: string;
     nodeAddress?: string;
+    // Node reachability for the honest connectivity display (joined from nodes).
+    nodeStatus?: string;
+    nodeLastSeenAt?: string;
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;
     createdAt?: string;
