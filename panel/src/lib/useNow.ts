@@ -1,3 +1,5 @@
+'use client';
+
 import { useEffect, useState } from 'react';
 
 // Returns a `now` epoch-ms that ticks every intervalMs so time-derived UI (the
