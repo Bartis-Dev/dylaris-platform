@@ -163,7 +163,9 @@ func evaluateAlerts(rows []models.GatewayBandwidthRow, thresholdPct int, window 
 		cm[r.Time] = r
 	}
 
-	var alerts []GatewayAlert
+	// Non-nil so the JSON payload is [] not null, keeping the "slices are always
+	// non-nil" contract that the panel relies on to render without a null guard.
+	alerts := []GatewayAlert{}
 	for host, ticks := range hostTicks {
 		samples := make([]utilSample, 0, len(ticks))
 		for tt, a := range ticks {

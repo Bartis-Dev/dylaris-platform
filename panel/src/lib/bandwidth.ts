@@ -94,8 +94,10 @@ export interface BandwidthBellItem {
 }
 
 // summarizeAlerts turns overview alerts into display rows for the dashboard banner.
-export function summarizeAlerts(alerts: GatewayAlert[]): BandwidthBellItem[] {
-  return alerts.map((a) =>
+// Guards null: the overview payload can carry alerts:null (a Go nil slice), and an
+// unguarded .map here crashed the whole Bandwidth tab. Mirrors the bell's ov?.alerts.
+export function summarizeAlerts(alerts: GatewayAlert[] | null | undefined): BandwidthBellItem[] {
+  return (alerts ?? []).map((a) =>
     a.kind === 'host'
       ? {
           id: `gwbw-host-${a.host}`,

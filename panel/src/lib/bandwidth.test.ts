@@ -59,6 +59,13 @@ describe('summarizeAlerts', () => {
     expect(items[0].title).toContain('91%');
     expect(items[1].id).toBe('gwbw-comp-warp-eu-1');
   });
+
+  // Regression: the overview payload can carry alerts:null (Go nil slice). An
+  // unguarded .map crashed the whole Bandwidth tab; summarizeAlerts must tolerate it.
+  it('returns [] for null/undefined without throwing', () => {
+    expect(summarizeAlerts(null)).toEqual([]);
+    expect(summarizeAlerts(undefined)).toEqual([]);
+  });
 });
 
 describe('summarizeDecision', () => {

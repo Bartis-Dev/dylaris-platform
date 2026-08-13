@@ -95,7 +95,11 @@ func TestEvaluateAlerts_EmptyWindow(t *testing.T) {
 		{Time: now.Add(-10 * time.Minute), Component: "warp", ID: "x", Host: "h1", TxBps: 999_000_000, CapMbit: 1000},
 		{Time: now.Add(-11 * time.Minute), Component: "warp", ID: "x", Host: "h1", TxBps: 999_000_000, CapMbit: 1000},
 	}
-	if got := evaluateAlerts(rows, 80, 5*time.Minute, now); len(got) != 0 {
+	got := evaluateAlerts(rows, 80, 5*time.Minute, now)
+	if got == nil {
+		t.Fatal("alerts must be non-nil (serializes to [] not null so the panel can .map without a guard)")
+	}
+	if len(got) != 0 {
 		t.Fatalf("expected no alerts, got %+v", got)
 	}
 }
@@ -186,5 +190,29 @@ func TestLoadGatewayBandwidthOverview_NilRedis(t *testing.T) {
 	}
 	if len(ov.Components) != 0 || len(ov.Hosts) != 0 || len(ov.Alerts) != 0 {
 		t.Fatalf("expected empty overview, got %+v", ov)
+	}
+}
+
+// Regression: a non-nil store that returns an EMPTY history must still yield a
+// non-nil Alerts slice. The NilRedis test above uses st==nil, which skips the
+// evaluateAlerts overwrite, so it never exercised the path where evaluateAlerts
+// returned nil and clobbered the initialized []. That nil serialized to JSON
+// null and crashed the panel's summarizeAlerts(alerts).map.
+func TestLoadGatewayBandwidthOverview_EmptyHistoryNonNilAlerts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	st := store.NewPostgresStore(db)
+	mock.ExpectQuery("SELECT time, component, id, host, region, rx_bps, tx_bps, cap_mbit").
+		WillReturnRows(sqlmock.NewRows([]string{"time", "component", "id", "host", "region", "rx_bps", "tx_bps", "cap_mbit"}))
+
+	ov := LoadGatewayBandwidthOverview(context.Background(), nil, st, time.Unix(1730000600, 0))
+	if ov.Alerts == nil {
+		t.Fatal("Alerts must be non-nil even with an empty history (serializes to [] not null)")
+	}
+	if len(ov.Alerts) != 0 {
+		t.Fatalf("expected no alerts, got %+v", ov.Alerts)
 	}
 }
