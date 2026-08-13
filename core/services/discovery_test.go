@@ -1,8 +1,11 @@
 package services
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeriveLinkToken_Deterministic(t *testing.T) {
@@ -34,6 +37,34 @@ func TestDeriveLinkToken_DifferentInputs(t *testing.T) {
 	}
 	if t1 == t3 {
 		t.Error("different secrets must produce different tokens")
+	}
+}
+
+func TestPublishServersChangedFires(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+
+	sub := rdb.Subscribe(ctx, SystemEventsChannel)
+	defer sub.Close()
+	if _, err := sub.Receive(ctx); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	ch := sub.Channel()
+
+	d := &DiscoveryService{redis: rdb}
+	d.publishServersChanged(ctx)
+
+	select {
+	case msg := <-ch:
+		var ev SystemEvent
+		if err := json.Unmarshal([]byte(msg.Payload), &ev); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if ev.Type != "servers.changed" {
+			t.Fatalf("event type = %q, want servers.changed", ev.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no servers.changed published")
 	}
 }
 

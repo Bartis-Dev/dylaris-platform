@@ -137,6 +137,20 @@ func NewDiscoveryService(s store.Store, r *redis.Client, secret string) *Discove
 	}
 }
 
+// publishServersChanged drops one servers.changed event into the system-events
+// channel so the panel re-fetches the server list (which carries each server's
+// node status). Inlined like the status watcher's copy so DiscoveryService needs
+// no publisher dependency. Best-effort: a publish error is logged, never fatal.
+func (s *DiscoveryService) publishServersChanged(ctx context.Context) {
+	payload, err := json.Marshal(SystemEvent{Type: "servers.changed"})
+	if err != nil {
+		return
+	}
+	if err := s.redis.Publish(ctx, SystemEventsChannel, payload).Err(); err != nil {
+		log.Printf("discovery: publish servers.changed failed: %v", err)
+	}
+}
+
 func (s *DiscoveryService) Start() {
 	log.Println("Discovery Service started (Auto-Discovery active)")
 
@@ -250,6 +264,7 @@ func (s *DiscoveryService) scanNodes() {
 			if node.Status != "online" {
 				log.Printf("Node is back online: %s", node.Name)
 				s.store.SetNodeStatus(node.ID, "online")
+				s.publishServersChanged(ctx)
 			}
 
 			// Name + tags are config fields: only let the heartbeat env drive them
@@ -322,6 +337,7 @@ func (s *DiscoveryService) scanNodes() {
 			if dbNode.Status == "online" {
 				log.Printf("Node went offline: %s", dbNode.Name)
 				s.store.SetNodeStatus(dbNode.ID, "offline")
+				s.publishServersChanged(ctx)
 			}
 		}
 	}
