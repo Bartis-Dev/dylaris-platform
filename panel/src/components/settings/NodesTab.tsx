@@ -370,7 +370,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                       const now = Date.now();
                       const { tier } = nodeConnectivity(node.status, node.lastSeenAt, now);
                       const dot = dotFor(tier, 'bg-(--success-light) shadow-[0_0_8px_var(--success-light)]');
-                      const title = tier === 'ok' ? node.status : connLabel(tier, node.lastSeenAt, now);
+                      const title = tier === 'ok' ? node.status : connLabel(tier, node.lastSeenAt);
                       return <div className={`status-dot shrink-0 ${dot}`} title={title}></div>;
                     })()}
                     <div className="w-10 h-10 bg-(--accent-ghost) text-(--accent-light) rounded-md flex items-center justify-center border border-(--accent-border) shrink-0">

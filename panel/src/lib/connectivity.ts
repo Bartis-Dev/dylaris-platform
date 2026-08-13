@@ -1,3 +1,5 @@
+import { timeAgo } from './time';
+
 export type ConnTier = 'ok' | 'reconnecting' | 'unreachable' | 'down';
 
 // Escalation thresholds (hardcoded; env/settings-configurability is a later
@@ -38,16 +40,15 @@ export function dotFor(tier: ConnTier, okClass: string): string {
 }
 
 // Human label for a non-ok tier. Warp is folded in deliberately: a BYON node's
-// "warp down" and "node process down" are indistinguishable from Core.
+// "warp down" and "node process down" are indistinguishable from Core. Uses the
+// shared timeAgo so the label matches the admin cards' "last seen" formatting.
 export function connLabel(
   tier: ConnTier,
   nodeLastSeenAt: string | null | undefined,
-  now: number,
 ): string {
   if (tier === 'ok') return '';
   if (tier === 'reconnecting') return 'Reconnecting...';
-  const secs = nodeLastSeenAt ? Math.floor((now - Date.parse(nodeLastSeenAt)) / 1000) : null;
-  const seen = secs === null ? '' : ` - last seen ${secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs / 60)}m` : `${Math.floor(secs / 3600)}h`} ago`;
+  const seen = nodeLastSeenAt ? ` - last seen ${timeAgo(nodeLastSeenAt)}` : '';
   if (tier === 'unreachable') return `Node not responding (node or its warp tunnel)${seen}`;
   return `Node offline${seen}`;
 }

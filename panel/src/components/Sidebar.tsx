@@ -182,7 +182,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
         </div>
         {(() => {
           const { tier } = nodeConnectivity(server.nodeStatus, server.nodeLastSeenAt, now);
-          const title = tier === 'ok' ? server.status : connLabel(tier, server.nodeLastSeenAt, now);
+          const title = tier === 'ok' ? server.status : connLabel(tier, server.nodeLastSeenAt);
           return <div className={`badge-dot ${dotFor(tier, getStatusDot(server.status))}`} title={title}></div>;
         })()}
       </GuardedLink>
@@ -222,7 +222,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           {(() => {
             const p = group.proxy;
             const { tier } = nodeConnectivity(p.nodeStatus, p.nodeLastSeenAt, now);
-            const title = tier === 'ok' ? p.status : connLabel(tier, p.nodeLastSeenAt, now);
+            const title = tier === 'ok' ? p.status : connLabel(tier, p.nodeLastSeenAt);
             return <div className={`badge-dot ${dotFor(tier, getStatusDot(p.status))}`} title={title}></div>;
           })()}
           <button

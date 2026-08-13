@@ -650,13 +650,13 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                     <div className="flex items-center space-x-2">
                         {(() => {
                             const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
-                            const title = tier === 'ok' ? selectedServer.status : connLabel(tier, selectedServer.nodeLastSeenAt, now);
+                            const title = tier === 'ok' ? selectedServer.status : connLabel(tier, selectedServer.nodeLastSeenAt);
                             return <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotFor(tier, getStatusColor(selectedServer.status))}`} title={title} />;
                         })()}
                         {(() => {
                             const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
                             return tier === 'ok' ? null : (
-                                <span className="text-xs text-(--warning)">{connLabel(tier, selectedServer.nodeLastSeenAt, now)}</span>
+                                <span className="text-xs text-(--warning)">{connLabel(tier, selectedServer.nodeLastSeenAt)}</span>
                             );
                         })()}
                         {isEditingName ? (

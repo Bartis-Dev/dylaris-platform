@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nodeConnectivity, dotFor } from './connectivity';
+import { nodeConnectivity, dotFor, connLabel } from './connectivity';
 
 const NOW = 1_730_000_000_000;
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
@@ -38,5 +38,17 @@ describe('dotFor', () => {
     expect(dotFor('reconnecting', 'bg-(--success-light)')).toBe('bg-(--warning) animate-pulse');
     expect(dotFor('unreachable', 'bg-(--success-light)')).toBe('bg-(--warning)');
     expect(dotFor('down', 'bg-(--success-light)')).toBe('bg-(--error)');
+  });
+});
+
+describe('connLabel', () => {
+  it('ok -> empty, reconnecting -> Reconnecting...', () => {
+    expect(connLabel('ok', new Date().toISOString())).toBe('');
+    expect(connLabel('reconnecting', new Date().toISOString())).toBe('Reconnecting...');
+  });
+  it('unreachable/down include a shared-timeAgo last-seen and roll to days', () => {
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString();
+    expect(connLabel('down', twoDaysAgo)).toContain('last seen 2d ago');
+    expect(connLabel('unreachable', null)).toBe('Node not responding (node or its warp tunnel)');
   });
 });
