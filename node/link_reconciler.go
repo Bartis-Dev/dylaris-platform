@@ -18,7 +18,7 @@ func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 	var last string // signature of the last-applied spawn; "" = not running
 	reconcile := func() {
 		secret, proof := getLinkCreds()
-		want := getRoutingMode() == "gateway" && secret != "" && proof != "" && linkImage != ""
+		want := linkWanted(getRoutingMode(), secret, proof, linkImage)
 		sig := nodeID + "|" + secret + "|" + proof + "|" + linkImage
 		if want {
 			if sig != last {
@@ -46,4 +46,14 @@ func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 			reconcile()
 		}
 	}
+}
+
+// linkWanted reports whether this node should run its Link sidecar. Link carries
+// gateway-routed traffic, so it is needed whenever routing is "gateway" OR "both"
+// (the mixed mode where some servers still route by ip:port) - i.e. anything but
+// pure "ip_port" - provided Core has delivered the Link creds and a Link image is
+// configured. Gating on "gateway" alone left a domain route created in "both"
+// silently dead: the Link never came up, so its route was never published.
+func linkWanted(mode, secret, proof, image string) bool {
+	return mode != "ip_port" && secret != "" && proof != "" && image != ""
 }
