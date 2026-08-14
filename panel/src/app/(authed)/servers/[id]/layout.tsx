@@ -645,6 +645,14 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         <main className="flex-1 flex flex-col overflow-hidden relative z-10">
             {/* Server Header */}
             <div className="bg-(--base-02) border-b border-(--base-03) px-6 pt-3 shrink-0 z-10">
+                {/* Node-connectivity notice: full-width line above the name so the long
+                    unreachable/down label never crowds the server-name row (M2). */}
+                {(() => {
+                    const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
+                    return tier === 'ok' ? null : (
+                        <div className="text-xs text-(--warning) mb-1.5">{connLabel(tier, selectedServer.nodeLastSeenAt)}</div>
+                    );
+                })()}
                 {/* Row 1: Server Name + Actions */}
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center space-x-2">
@@ -652,12 +660,6 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                             const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
                             const title = tier === 'ok' ? selectedServer.status : connLabel(tier, selectedServer.nodeLastSeenAt);
                             return <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotFor(tier, getStatusColor(selectedServer.status))}`} title={title} />;
-                        })()}
-                        {(() => {
-                            const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
-                            return tier === 'ok' ? null : (
-                                <span className="text-xs text-(--warning)">{connLabel(tier, selectedServer.nodeLastSeenAt)}</span>
-                            );
                         })()}
                         {isEditingName ? (
                             <input
