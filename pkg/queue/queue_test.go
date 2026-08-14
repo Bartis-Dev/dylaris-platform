@@ -319,3 +319,48 @@ func TestSlowHandlerIsNotRunTwiceByRecovery(t *testing.T) {
 // handler that failed on purpose is still retried by the next recovery pass - is
 // already covered by TestRetryThenAckOnRecovery above, which now also exercises
 // beginInflight/endInflight across its two handleOne calls.
+
+// TestRunSelfHealsAfterGroupVanishes is the regression guard for a NOGROUP loop
+// found live. Redis runs with no persistence (save and appendonly both off), so a
+// restart wipes the stream AND its consumer group. Run creates the group once at
+// start; after the wipe every XREADGROUP returned "NOGROUP ..." forever and the
+// node silently stopped receiving Core commands until the process was restarted.
+// Run must recreate the group at "0" so a command enqueued AFTER the restart is
+// still delivered (the "$" startup position would skip it). FlushAll models the
+// restart faithfully: stream + group + done-markers all gone at once.
+func TestRunSelfHealsAfterGroupVanishes(t *testing.T) {
+	rdb := newTestRedis(t)
+	ctx := context.Background()
+	c := NewConsumer(rdb, "q", "g", "c1")
+	c.Block = 50 * time.Millisecond
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup: %v", err)
+	}
+
+	got := make(chan string, 1)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go c.Run(runCtx, func(_ context.Context, data []byte) error { got <- string(data); return nil })
+
+	// Let Run enter its read loop with the group in place.
+	time.Sleep(150 * time.Millisecond)
+
+	// Redis restart with no persistence: the next XREADGROUP hits NOGROUP.
+	if err := rdb.FlushAll(ctx).Err(); err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+	// Core enqueues a command after the restart (XADD recreates the stream, but
+	// no group exists). Only a self-heal that recreates the group at "0" delivers it.
+	if _, err := Publish(ctx, rdb, "q", []byte("post-restart")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	select {
+	case v := <-got:
+		if v != "post-restart" {
+			t.Fatalf("got %q, want post-restart", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("command enqueued after a Redis restart was never delivered: the consumer did not self-heal the vanished group")
+	}
+}

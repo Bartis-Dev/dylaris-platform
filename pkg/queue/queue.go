@@ -147,7 +147,16 @@ func (c *Consumer) EnsureGroup(ctx context.Context) error {
 	// "$" = only new messages for a freshly created group; existing entries are
 	// not replayed to a brand-new group (matches the old fire-and-forward
 	// semantics — only the group's own pending is ever reprocessed).
-	err := c.rdb.XGroupCreateMkStream(ctx, c.stream, c.group, "$").Err()
+	return c.ensureGroupAt(ctx, "$")
+}
+
+// ensureGroupAt creates the group (and stream) at startID if absent. Idempotent
+// (BUSYGROUP is not an error). "$" is the startup position (ignore old history);
+// "0" is the self-heal position after the group vanished, which replays
+// everything still in the stream so messages XADDed while the group was missing
+// are delivered rather than lost.
+func (c *Consumer) ensureGroupAt(ctx context.Context, startID string) error {
+	err := c.rdb.XGroupCreateMkStream(ctx, c.stream, c.group, startID).Err()
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
 		return err
 	}
@@ -223,8 +232,21 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 				c.recoverPending(ctx, handler)
 				continue
 			}
-			// Transient Redis error — back off briefly so we don't hot-loop.
-			log.Printf("queue %s: read error: %v", c.stream, err)
+			// The group vanished mid-run: Redis restarted with no persistence
+			// (streams + groups gone) or the group was deleted. Recreate it at
+			// "0" so commands XADDed while it was missing are still delivered -
+			// otherwise XREADGROUP returns NOGROUP forever and this consumer
+			// silently stops receiving work until the process restarts.
+			if strings.Contains(err.Error(), "NOGROUP") {
+				if e := c.ensureGroupAt(ctx, "0"); e != nil {
+					log.Printf("queue %s: NOGROUP recreate failed: %v", c.stream, e)
+				} else {
+					log.Printf("queue %s: consumer group vanished, recreated at 0", c.stream)
+				}
+			} else {
+				log.Printf("queue %s: read error: %v", c.stream, err)
+			}
+			// Back off briefly so a persistent error doesn't hot-loop.
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

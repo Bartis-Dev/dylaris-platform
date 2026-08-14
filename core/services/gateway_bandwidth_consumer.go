@@ -169,6 +169,9 @@ func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey
 			if ctx.Err() != nil {
 				return
 			}
+			// Self-heal a vanished group (Redis restart, no persistence).
+			// Idempotent: BUSYGROUP when the group still exists.
+			s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0")
 			time.Sleep(5 * time.Second)
 			continue
 		}

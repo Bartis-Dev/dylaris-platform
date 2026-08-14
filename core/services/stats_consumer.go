@@ -115,7 +115,10 @@ func (s *StatsConsumerService) consumeStream(streamKey string) {
 			continue
 		}
 		if err != nil {
-			// Stream may have been deleted; back off and retry
+			// The group may have vanished (Redis restarted with no persistence).
+			// Recreating is idempotent - BUSYGROUP when it still exists - so this
+			// self-heals a NOGROUP loop instead of spinning until the Core restarts.
+			s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0")
 			time.Sleep(5 * time.Second)
 			continue
 		}
