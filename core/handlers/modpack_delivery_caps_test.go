@@ -36,22 +36,27 @@ func TestBuildDeliveryCapabilities(t *testing.T) {
 		canPresign    bool
 		mirror        string
 		reach         *bool
+		privatePacks  int
 		wantPubConfig bool
 		wantPresNote  bool
 		wantPubNote   bool
 	}{
-		{"nothing configured", false, "", nil, false, true, true},
-		{"presign ok, no mirror", true, "", nil, false, false, true},
-		{"valid mirror, reachable", true, "https://cdn.example.com/m", &tr, true, false, false},
-		{"valid mirror, private (403)", true, "https://cdn.example.com/m", &f, true, false, true},
-		{"invalid mirror url", true, "not-a-url", nil, false, false, true},
-		{"valid mirror, reachability unknown", true, "https://cdn.example.com/m", nil, true, false, false},
+		{"nothing configured", false, "", nil, 0, false, true, true},
+		{"presign ok, no mirror", true, "", nil, 0, false, false, true},
+		{"valid mirror, reachable", true, "https://cdn.example.com/m", &tr, 0, true, false, false},
+		{"valid mirror, private (403)", true, "https://cdn.example.com/m", &f, 0, true, false, true},
+		{"invalid mirror url", true, "not-a-url", nil, 0, false, false, true},
+		{"valid mirror, reachability unknown", true, "https://cdn.example.com/m", nil, 0, true, false, false},
+		{"private pack count passed through", true, "https://cdn.example.com/m", &tr, 3, true, false, false},
 	}
 	for _, c := range tt {
 		t.Run(c.name, func(t *testing.T) {
-			caps := buildDeliveryCapabilities(c.canPresign, c.mirror, c.reach)
+			caps := buildDeliveryCapabilities(c.canPresign, c.mirror, c.reach, c.privatePacks)
 			if caps.PublicConfigured != c.wantPubConfig {
 				t.Errorf("publicConfigured = %v, want %v", caps.PublicConfigured, c.wantPubConfig)
+			}
+			if caps.PrivatePackCount != c.privatePacks {
+				t.Errorf("privatePackCount = %d, want %d", caps.PrivatePackCount, c.privatePacks)
 			}
 			if _, ok := caps.Notes["presigned"]; ok != c.wantPresNote {
 				t.Errorf("presigned note present = %v, want %v", ok, c.wantPresNote)

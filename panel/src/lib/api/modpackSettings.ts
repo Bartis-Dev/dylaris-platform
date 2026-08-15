@@ -34,6 +34,9 @@ export interface DeliveryCapabilities {
     canPresign: boolean;
     publicConfigured: boolean;
     publicReachable: boolean | null;
+    // How many Solder-capable packs are private/hidden; public mode would place
+    // their files in a publicly readable bucket, so the panel warns.
+    privatePackCount: number;
     notes: { presigned?: string; public?: string };
 }
 

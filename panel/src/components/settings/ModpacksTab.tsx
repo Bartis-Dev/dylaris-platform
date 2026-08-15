@@ -264,6 +264,16 @@ export default function ModpacksTab() {
                             <span>{deliveryCaps.notes.public}</span>
                         </p>
                     )}
+                    {settings.solderDeliveryMode === 'public' && (deliveryCaps?.privatePackCount ?? 0) > 0 && (
+                        <p className="flex items-start gap-1.5 text-xs text-(--warning) mt-2">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>
+                                {deliveryCaps?.privatePackCount} private/hidden Solder pack{(deliveryCaps?.privatePackCount ?? 0) === 1 ? '' : 's'} exist. In public
+                                mode their files sit in a publicly readable bucket and can be fetched by anyone who derives the URL; the URL is just not advertised.
+                                Use presigned to keep private packs confidential.
+                            </span>
+                        </p>
+                    )}
                 </div>
 
                 {/* Local — mirrored paths */}

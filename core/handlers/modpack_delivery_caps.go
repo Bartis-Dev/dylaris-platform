@@ -15,6 +15,9 @@ type deliveryCapabilities struct {
 	CanPresign       bool              `json:"canPresign"`
 	PublicConfigured bool              `json:"publicConfigured"`
 	PublicReachable  *bool             `json:"publicReachable"`
+	// PrivatePackCount is how many Solder-capable packs are private/hidden; the
+	// panel warns that public delivery would expose their files in the bucket.
+	PrivatePackCount int               `json:"privatePackCount"`
 	Notes            map[string]string `json:"notes"`
 }
 
@@ -31,7 +34,7 @@ func classifyReachable(status int, err error) *bool {
 
 // buildDeliveryCapabilities is the pure assembler (canPresign from a provider
 // probe, mirrorURL from settings, reach from SafeHead) into the panel payload.
-func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool) deliveryCapabilities {
+func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool, privatePackCount int) deliveryCapabilities {
 	mirrorURL = strings.TrimSpace(mirrorURL)
 	publicConfigured := mirrorURL != "" && validatePublicBaseURL("solder mirror URL", mirrorURL) == nil
 	notes := map[string]string{}
@@ -47,6 +50,7 @@ func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool) d
 		CanPresign:       canPresign,
 		PublicConfigured: publicConfigured,
 		PublicReachable:  reach,
+		PrivatePackCount: privatePackCount,
 		Notes:            notes,
 	}
 }
@@ -71,6 +75,7 @@ func (h *ModpackSettingsHandler) DeliveryCapabilities(w http.ResponseWriter, r *
 		reach = classifyReachable(status, err)
 	}
 
-	caps := buildDeliveryCapabilities(canPresign, mirrorURL, reach)
+	privatePacks, _ := h.state.Store.CountPrivateSolderPacks()
+	caps := buildDeliveryCapabilities(canPresign, mirrorURL, reach, privatePacks)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "capabilities": caps})
 }

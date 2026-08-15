@@ -591,6 +591,9 @@ type Store interface {
 	GetPackBuildByVersion(packID int, versionString string) (*models.PackBuild, error)
 	ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error)
 	ListPublicSolderPacks() ([]models.Pack, error)
+	// CountPrivateSolderPacks counts Solder-capable packs (have a solder_slug)
+	// that are private or hidden - used to warn before enabling public delivery.
+	CountPrivateSolderPacks() (int, error)
 	// Access-controlled Solder pack listings (Phase 3c).
 	ListAllSolderPacks(ownerID string) ([]models.Pack, error)
 	ListSolderPacksForClient(clientID int) ([]models.Pack, error)

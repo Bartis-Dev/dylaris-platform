@@ -228,6 +228,16 @@ func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
 	return out, rows.Err()
 }
 
+// CountPrivateSolderPacks returns how many Solder-capable packs (have a
+// solder_slug) are private or hidden. Used to warn the operator that public
+// delivery mode would place these packs' files in a publicly readable bucket.
+func (s *PostgresStore) CountPrivateSolderPacks() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM packs
+		WHERE solder_slug <> '' AND (private = true OR hidden = true)`).Scan(&n)
+	return n, err
+}
+
 // ListAllSolderPacks returns every pack with a Solder slug OWNED BY ownerID,
 // regardless of private/hidden. Used by the public read path ONLY when a
 // valid ?k= is present, scoped to that key's own owner (BC5: a key must

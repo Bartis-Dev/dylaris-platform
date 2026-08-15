@@ -17,7 +17,7 @@ import type { DeliveryCapabilities } from '@/lib/api/modpackSettings';
 // with a source-structure assertion instead of a live render.
 
 const disabled = (over: Partial<DeliveryCapabilities>): DeliveryCapabilities => ({
-    canPresign: true, publicConfigured: true, publicReachable: true, notes: {}, ...over,
+    canPresign: true, publicConfigured: true, publicReachable: true, privatePackCount: 0, notes: {}, ...over,
 });
 
 describe('isDeliveryModeDisabled', () => {
@@ -78,5 +78,10 @@ describe('ModpacksTab wires the delivery radios and hints to the real capability
     it('capabilities are probed on mount alongside the settings load, failing open on error', () => {
         expect(source).toMatch(/getModpackDeliveryCapabilities\(\)/);
         expect(source).toMatch(/\.catch\(\(\) => setDeliveryCaps\(null\)\)/);
+    });
+
+    it('warns that public mode exposes private/hidden packs, only when public is selected and such packs exist', () => {
+        expect(source).toMatch(/settings\.solderDeliveryMode === 'public' && \(deliveryCaps\?\.privatePackCount \?\? 0\) > 0/);
+        expect(source).toMatch(/Use presigned to keep private packs confidential/);
     });
 });
