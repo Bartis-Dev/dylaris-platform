@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -25,12 +26,17 @@ import (
 // the same name. So the property to lock is no longer "the string is the
 // container name" but "the target is a private address or there is no target".
 func TestContainerAddrIsTheOnlyTarget(t *testing.T) {
-	// No such container exists in a unit test, so the only correct outcome is a
-	// refusal. Producing an address here would mean something answered for a name
-	// that cannot be resolved locally.
+	prev := resolveMCContainerIP
+	t.Cleanup(func() { resolveMCContainerIP = prev })
+	// The daemon reports no such container (it is absent/stopped), so the only
+	// correct outcome is a refusal. Producing an address here would mean a
+	// nonexistent container became a target.
+	resolveMCContainerIP = func(uuid string) (net.IP, error) {
+		return nil, errors.New("inspect mc_" + uuid + ": no such container")
+	}
 	got, err := containerAddr("abc-123", 8100)
 	if err == nil {
-		t.Fatalf("containerAddr resolved a nonexistent container to %q; a name nothing local answers for must not become a target", got)
+		t.Fatalf("containerAddr resolved a nonexistent container to %q; an absent container must not become a target", got)
 	}
 	if strings.Contains(got, "127.0.0.1") || strings.Contains(got, "localhost") {
 		t.Fatalf("containerAddr = %q, which points at the node itself rather than the container", got)
@@ -41,10 +47,17 @@ func TestContainerAddrIsTheOnlyTarget(t *testing.T) {
 // can be configured with. The port is tenant-chosen, so no value of it may
 // produce a target outside the container's own private network.
 func TestContainerAddrNeverLeavesTheContainerForAnyPort(t *testing.T) {
+	prev := resolveMCContainerIP
+	t.Cleanup(func() { resolveMCContainerIP = prev })
+	// The daemon returns the container's private IP; the tenant-chosen port must
+	// never move the target off that private address.
+	resolveMCContainerIP = func(uuid string) (net.IP, error) {
+		return net.ParseIP("172.20.0.5"), nil
+	}
 	for _, port := range []int{1, 22, 80, 2375, 6379, 25500, 25565, 25600, 65535} {
 		got, err := containerAddr("srv-uuid", port)
 		if err != nil {
-			continue // refused, which is the correct answer for a name with no container
+			continue // refused, which is also an acceptable answer
 		}
 		host, _, splitErr := net.SplitHostPort(got)
 		if splitErr != nil {

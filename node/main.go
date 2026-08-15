@@ -258,12 +258,21 @@ func main() {
 	// container (Forge / NeoForge).
 	SetDockerManager(dockerMgr)
 
+	// Wire the control-plane (RCON / tab-proxy) address resolver to the Docker
+	// daemon. Daemon-authoritative resolution works from a host-net node and has
+	// no DNS-wildcard SSRF surface; the guard still runs on the result.
+	resolveMCContainerIP = dockerMgr.ResolveMCContainerIP
+
 	// Tenant network isolation: build the per-owner network manager when the
 	// Redis guard allows it. The allocator persists beside .node_secret.
-	if tenantIsolationEnabled {
+	if tenantIsolationEnabled && !dockerMgr.selfHostNet {
 		host, _ := os.Hostname()
 		dockerMgr.tenant = newTenantNetworkManager(dockerMgr.cli, dockerMgr.ctx, loadTenantAllocator(nodeSecretDir), host)
 		log.Printf("tenant-net: manager active (node container %q, state dir %s)", host, nodeSecretDir)
+	} else if tenantIsolationEnabled && dockerMgr.selfHostNet {
+		// A host-net node cannot join a per-tenant bridge network, so isolation is
+		// unavailable here; MC servers stay on the shared local dylaris_net.
+		log.Printf("tenant-net: isolation disabled on this host-net node; MC servers stay on the shared local dylaris_net")
 	}
 
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports

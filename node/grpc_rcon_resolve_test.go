@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -57,30 +58,60 @@ func TestContainerAddressFilter(t *testing.T) {
 	}
 }
 
-// A name that does not resolve at all must report that, not dial anything.
-func TestResolveContainerIPFailsOnAnUnresolvableName(t *testing.T) {
-	_, err := resolveContainerIP("mc_this-name-does-not-exist.invalid", 25575)
-	if err == nil {
-		t.Fatal("expected an error for an unresolvable name")
+// guardPrivateAddr accepts a private address and formats ip:port.
+func TestGuardPrivateAddrAcceptsPrivate(t *testing.T) {
+	addr, err := guardPrivateAddr(net.ParseIP("172.20.0.5"), 25575)
+	if err != nil {
+		t.Fatalf("private IP rejected: %v", err)
 	}
-	if !strings.Contains(err.Error(), "resolve") {
-		t.Errorf("err = %v, want it to name the resolution step", err)
+	if addr != "172.20.0.5:25575" {
+		t.Fatalf("addr = %q, want 172.20.0.5:25575", addr)
 	}
 }
 
-// The refusal message has to tell an operator both things they need: that the
-// container is not on this network, and that something outside answered for it.
-// A bare "no route to host" would send them looking at the wrong layer.
-func TestResolveContainerIPRefusalNamesTheCause(t *testing.T) {
-	// localhost resolves to loopback, which the filter rejects for the same
-	// reason a public address is rejected: it cannot be the MC container.
-	_, err := resolveContainerIP("localhost", 25575)
+// The refusal message has to tell an operator that the value is not on this
+// network, and it must never hand credentials to a public address. A nil address
+// (container not running) is refused too.
+func TestGuardPrivateAddrRefusalNamesTheCause(t *testing.T) {
+	_, err := guardPrivateAddr(net.ParseIP("46.225.53.182"), 25575)
 	if err == nil {
-		t.Skip("localhost did not resolve to a rejected address on this host")
+		t.Fatal("public address must be refused")
 	}
 	for _, want := range []string{"not on this node's network", "refusing to send RCON credentials"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want it to mention %q", err, want)
 		}
+	}
+	if _, err := guardPrivateAddr(nil, 25575); err == nil {
+		t.Error("nil address (container not running) must be refused")
+	}
+}
+
+// resolveMCAddr surfaces the daemon resolver's error (e.g. container absent) and
+// never fabricates a target.
+func TestResolveMCAddrPropagatesResolverError(t *testing.T) {
+	prev := resolveMCContainerIP
+	t.Cleanup(func() { resolveMCContainerIP = prev })
+
+	resolveMCContainerIP = func(uuid string) (net.IP, error) {
+		return nil, errors.New("inspect mc_abc: no such container")
+	}
+	if _, err := resolveMCAddr("abc", 25575); err == nil {
+		t.Fatal("expected the resolver error to propagate")
+	}
+
+	// A private IP from the daemon is accepted end to end.
+	resolveMCContainerIP = func(uuid string) (net.IP, error) {
+		return net.ParseIP("172.20.0.9"), nil
+	}
+	addr, err := resolveMCAddr("abc", 25575)
+	if err != nil || addr != "172.20.0.9:25575" {
+		t.Fatalf("resolveMCAddr = (%q, %v), want 172.20.0.9:25575", addr, err)
+	}
+
+	// An uninitialised resolver refuses rather than dialling anything.
+	resolveMCContainerIP = nil
+	if _, err := resolveMCAddr("abc", 25575); err == nil {
+		t.Fatal("nil resolver must refuse")
 	}
 }

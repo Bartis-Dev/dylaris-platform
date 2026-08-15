@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,6 +33,7 @@ type DockerManager struct {
 	hostPathCache map[string]string     // local storage path -> host path (resolved from container mounts)
 	portMgr       *PortManager          // nil when gateway is enabled (port binding not needed)
 	tenant        *TenantNetworkManager // nil = isolation disabled (redis guard); servers stay on dylaris_net
+	selfHostNet   bool                  // true when this node's own container uses --network host
 }
 
 func NewDockerManager(storageMgr *StorageManager) (*DockerManager, error) {
@@ -65,7 +67,35 @@ func NewDockerManager(storageMgr *StorageManager) (*DockerManager, error) {
 	// Build host path cache for all storage paths
 	dm.buildHostPathCache()
 
+	dm.selfHostNet = dm.detectSelfHostNet()
+	if dm.selfHostNet {
+		log.Printf("node runs with --network host; MC servers use the local dylaris_net and are reached via the Docker daemon, not Docker DNS")
+	}
+
 	return dm, nil
+}
+
+// detectSelfHostNet reports whether this node's own container uses host
+// networking. A host-net node cannot join a bridge/overlay network, which
+// changes how MC servers are networked (D1/D3) and reached (D2) - see the BYON
+// host-net spec. Fails safe to false (behave like a normal node).
+func (dm *DockerManager) detectSelfHostNet() bool {
+	ref := selfContainerRef()
+	if ref == "" {
+		return false
+	}
+	info, err := dm.cli.ContainerInspect(dm.ctx, ref)
+	if err != nil {
+		return false
+	}
+	return parseHostNetFromMode(string(info.HostConfig.NetworkMode))
+}
+
+// parseHostNetFromMode reports whether a Docker NetworkMode string means host
+// networking. Only the literal "host" qualifies; "container:<id>" shares another
+// container's netns and is not host-net for our purposes.
+func parseHostNetFromMode(mode string) bool {
+	return mode == "host"
 }
 
 // buildHostPathCache resolves host paths for all storage paths by inspecting container mounts.
@@ -100,6 +130,53 @@ func (dm *DockerManager) buildHostPathCache() {
 		dm.hostPathCache[p] = hostPath
 		log.Printf("storage: host path %s → %s", p, hostPath)
 	}
+}
+
+// ResolveMCContainerIP returns the private IPv4 of mc_<uuid> straight from the
+// Docker daemon. The daemon is authoritative (no DNS), so this works from a
+// host-net node whose resolver is the host's, and it removes the wildcard-DNS
+// answer the old net.LookupIP path had to defend against. Prefers the
+// dylaris_net / tenant endpoint; errors when the container is absent or has no
+// IP (stopped). The caller still runs the private-IP guard on the result.
+func (dm *DockerManager) ResolveMCContainerIP(uuid string) (net.IP, error) {
+	name := "mc_" + uuid
+	info, err := dm.cli.ContainerInspect(dm.ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", name, err)
+	}
+	if info.NetworkSettings == nil {
+		return nil, fmt.Errorf("%s has no network settings (is it running?)", name)
+	}
+	if ip := pickContainerIP(info.NetworkSettings.Networks); ip != nil {
+		return ip, nil
+	}
+	return nil, fmt.Errorf("%s has no network IP (is it running?)", name)
+}
+
+// pickContainerIP selects the IPv4 to reach a container for a control-plane dial:
+// prefer a dylaris_net / *_dylaris_net / tenant endpoint, else the first endpoint
+// that carries an IP. Returns nil when no endpoint has an IPv4 (stopped). The
+// caller still runs guardPrivateAddr on the result, so a non-private pick is
+// refused, not dialled.
+func pickContainerIP(networks map[string]*network.EndpointSettings) net.IP {
+	for netName, ep := range networks {
+		if ep == nil || ep.IPAddress == "" {
+			continue
+		}
+		if isGlobalNetName(netName) || strings.HasPrefix(netName, "dylaris_tenant_") {
+			if ip := net.ParseIP(ep.IPAddress); ip != nil {
+				return ip
+			}
+		}
+	}
+	for _, ep := range networks {
+		if ep != nil && ep.IPAddress != "" {
+			if ip := net.ParseIP(ep.IPAddress); ip != nil {
+				return ip
+			}
+		}
+	}
+	return nil
 }
 
 // resolveHostServerPath returns the HOST filesystem path for a server's data directory.
@@ -327,18 +404,84 @@ func (dm *DockerManager) StopLinkContainer() {
 // no networks, its log-shipper retrying "Redis not reachable ... network is
 // unreachable" every 32 seconds, never starting Java at all.
 func (dm *DockerManager) ensureGlobalNetwork() (id string, name string, err error) {
-	netName := "dylaris_net"
+	const netName = "dylaris_net"
 	nets, lerr := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
 	if lerr != nil {
 		return "", "", fmt.Errorf("network list error: %v", lerr)
 	}
 	for _, n := range nets {
-		if n.Name == netName || strings.HasSuffix(n.Name, "_"+netName) {
+		if isGlobalNetName(n.Name) {
 			log.Printf("Found overlay network %q (ID: %s)", n.Name, n.ID[:12])
 			return n.ID, n.Name, nil
 		}
 	}
-	return "", "", fmt.Errorf("overlay network %q not found — ensure it exists in the Swarm stack", netName)
+
+	// Not found. Only a host-net node (a standalone BYON node with no Swarm overlay
+	// to supply dylaris_net) may create a LOCAL bridge here. On any other node the
+	// overlay is expected and its absence must stay a loud error: silently making a
+	// local bridge would let MC containers attach to it, pass the len(Networks)!=0
+	// post-check in startMinecraftContainer, and run "Up but unreachable" instead of
+	// failing where the cause is visible.
+	if !dm.selfHostNet {
+		return "", "", fmt.Errorf("overlay network %q not found — ensure it exists in the Swarm stack", netName)
+	}
+
+	var dockerSubnets []*net.IPNet
+	for _, n := range nets {
+		for _, c := range n.IPAM.Config {
+			if _, ipn, perr := net.ParseCIDR(c.Subnet); perr == nil {
+				dockerSubnets = append(dockerSubnets, ipn)
+			}
+		}
+	}
+	route, _ := os.ReadFile("/proc/net/route")
+	used := reservedSubnets(dockerSubnets, string(route), dm.selfHostNet)
+	opts := network.CreateOptions{
+		Driver: "bridge",
+		Labels: map[string]string{"dylaris.role": "global-network"},
+	}
+	if free, ferr := nextFreeSubnet(used, 24); ferr == nil {
+		opts.IPAM = &network.IPAM{Config: []network.IPAMConfig{{Subnet: free.String()}}}
+	} else {
+		log.Printf("local dylaris_net: no subnet avoids all reserved ranges (%v); letting Docker auto-assign", ferr)
+	}
+	res, cErr := dm.cli.NetworkCreate(dm.ctx, netName, opts)
+	if cErr != nil {
+		// A concurrent first-boot create (the 8 command consumers plus the link
+		// reconciler can all reach here) loses to the winner with a duplicate-name
+		// error. Adopt the winner's network rather than fail the command.
+		if id2, name2, found2 := dm.findExistingGlobalNetwork(); found2 {
+			return id2, name2, nil
+		}
+		return "", "", fmt.Errorf("create local network %q: %w", netName, cErr)
+	}
+	subnetLog := "auto"
+	if opts.IPAM != nil {
+		subnetLog = opts.IPAM.Config[0].Subnet
+	}
+	log.Printf("Created local network %q (ID: %s, subnet %s)", netName, res.ID[:12], subnetLog)
+	return res.ID, netName, nil
+}
+
+// isGlobalNetName matches the shared server network by exact name or a compose/
+// stack prefix ("platform_dylaris_net").
+func isGlobalNetName(name string) bool {
+	return name == "dylaris_net" || strings.HasSuffix(name, "_dylaris_net")
+}
+
+// findExistingGlobalNetwork re-lists networks and returns the shared server
+// network if present. Used to adopt a network a concurrent creator just made.
+func (dm *DockerManager) findExistingGlobalNetwork() (id, name string, found bool) {
+	nets, err := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
+	if err != nil {
+		return "", "", false
+	}
+	for _, n := range nets {
+		if isGlobalNetName(n.Name) {
+			return n.ID, n.Name, true
+		}
+	}
+	return "", "", false
 }
 
 // tenantEndpoints builds the NetworkingConfig for a server container. Isolation

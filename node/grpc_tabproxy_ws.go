@@ -88,9 +88,9 @@ func (b *wsBridge) appendInbound(fr *pb.WsFrame) (payload []byte, opcode int, fl
 
 // wsResolveContainer resolves the one legitimate target for a proxied tab. It
 // is a package var for the same reason wsDialContainer below is: the bridge
-// tests substitute the dial, and this step reaches the network too - it does a
-// real DNS lookup and refuses any non-private answer. Left un-substitutable it
-// fails in every environment where mc_<uuid> does not resolve to a container
+// tests substitute the dial, and this step reaches Docker too - it inspects the
+// container via the daemon and refuses any non-private answer. Left
+// un-substitutable it fails in every environment without the mc_<uuid> container
 // (i.e. every test machine and every CI runner), so dialWSBridge would return
 // before the stubbed dialer was ever called and a test waiting on that dial
 // would wait forever.

@@ -9,7 +9,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -58,16 +57,13 @@ var nodeHopByHop = map[string]bool{
 // TenantNetworkManager.connectNode pins the node into each tenant net for
 // exactly this reason ("so mc_<uuid> DNS + RCON/stats work").
 //
-// One name is still not one HOST, which is why this resolves rather than
-// formats. When the container is absent from the network, Docker's embedded
-// resolver forwards the name upstream and a wildcard DNS record answers with a
-// public address - observed live via the RCON path, which composes the same
-// name. That reopens precisely the SSRF pivot the loopback removal closed, and
-// worse: the port is already tenant-chosen (it comes from the tab config), so
-// the tenant picks the port while DNS picks the host, and the node streams the
-// response back to the caller.
+// The address is resolved straight from the Docker daemon (resolveMCAddr ->
+// ResolveMCContainerIP), not Docker DNS, and guarded to a private/link-local IP.
+// This removes the DNS-wildcard SSRF pivot that the previous net.LookupIP path
+// had to defend against (the port is tenant-chosen, so the host must not also be
+// attacker-influencable) and works from a host-net node.
 func containerAddr(serverUUID string, port int) (string, error) {
-	return resolveContainerIP(fmt.Sprintf("mc_%s", serverUUID), port)
+	return resolveMCAddr(serverUUID, port)
 }
 
 // nodeStripHopByHop returns the subset of headers that are safe to forward.

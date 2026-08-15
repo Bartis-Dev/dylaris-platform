@@ -304,11 +304,23 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		return watchCache
 	}
 
-	// Initial ping. Use the admin-configurable global container port (default
-	// 25565) so the ping target stays in sync with the port MC actually
-	// listens on inside the container.
+	// pingOnce resolves mc_<uuid>'s address from the Docker daemon (guarded to a
+	// private IP) and SLP-pings it. Resolving via the daemon rather than dialling
+	// the container NAME is what makes this work on a host-net node (whose resolver
+	// is the host's, not Docker's) and removes the DNS-wildcard target the RCON/
+	// tab-proxy paths already dropped. Uses the admin-configurable global container
+	// port (default 25565) so the target stays in sync with MC's listen port.
+	pingOnce := func() (*SLPResponse, error) {
+		addr, err := resolveMCAddr(uuid, getContainerPort())
+		if err != nil {
+			return nil, err
+		}
+		return PingMinecraftServer(addr, pingTimeout)
+	}
+
+	// Initial ping.
 	go func() {
-		resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, getContainerPort()), pingTimeout)
+		resp, err := pingOnce()
 		if err == nil {
 			pingMu.Lock()
 			lastPing = resp
@@ -423,7 +435,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			collectAndPublish()
 		case <-pingTicker.C:
 			go func() {
-				resp, err := PingMinecraftServer(fmt.Sprintf("%s:%d", containerName, getContainerPort()), pingTimeout)
+				resp, err := pingOnce()
 				if err == nil {
 					pingMu.Lock()
 					lastPing = resp
