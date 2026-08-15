@@ -51,7 +51,8 @@ func (h *PacksHandler) ImportSolderPreview(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "url required", http.StatusBadRequest)
 		return
 	}
-	idx, err := services.FetchSolderIndex(r.Context(), req.URL)
+	base := services.ResolveSolderBase(r.Context(), req.URL)
+	idx, err := services.FetchSolderIndex(r.Context(), base)
 	if err != nil {
 		sendJSONError(w, "Could not read Solder instance: "+err.Error(), http.StatusBadGateway)
 		return
@@ -90,7 +91,8 @@ func (h *PacksHandler) ImportSolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mp, err := services.FetchSolderModpack(r.Context(), req.URL, req.Slug)
+	base := services.ResolveSolderBase(r.Context(), req.URL)
+	mp, err := services.FetchSolderModpack(r.Context(), base, req.Slug)
 	if err != nil {
 		sendJSONError(w, "Could not read modpack: "+err.Error(), http.StatusBadGateway)
 		return
@@ -128,7 +130,7 @@ func (h *PacksHandler) ImportSolder(w http.ResponseWriter, r *http.Request) {
 
 importLoop:
 	for _, bv := range builds {
-		bd, err := services.FetchSolderBuild(r.Context(), req.URL, req.Slug, bv)
+		bd, err := services.FetchSolderBuild(r.Context(), base, req.Slug, bv)
 		if err != nil {
 			report.Skipped = append(report.Skipped, "build "+bv+": "+err.Error())
 			continue

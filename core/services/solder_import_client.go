@@ -44,12 +44,60 @@ type SolderMod struct {
 const (
 	solderMetaMaxBytes = 4 << 20 // 4 MiB cap on any Solder API JSON response
 	solderMetaTimeout  = 30 * time.Second
+	// solderRootProbeTimeout bounds the info-endpoint reachability probe in
+	// ResolveSolderBase; it is a small HEAD-like GET, not the real fetch.
+	solderRootProbeTimeout = 10 * time.Second
 )
 
 // solderAPIBase trims the user-supplied base to its bare API root (no trailing
 // slash) so callers can append "/modpack..." paths uniformly.
 func solderAPIBase(base string) string {
 	return strings.TrimRight(strings.TrimSpace(base), "/")
+}
+
+// solderBaseCandidates returns the ordered API-base candidates to try for a
+// user-supplied Solder URL: the base as given, then the base with "/api"
+// appended. Solder servers (TechnicSolder, solder.py) serve the API under /api,
+// but users routinely paste the bare host; this lets both work. The "/api"
+// variant is skipped when the base already ends in /api (no /api/api).
+func solderBaseCandidates(rawBase string) []string {
+	base := solderAPIBase(rawBase)
+	out := []string{base}
+	if base != "" && !strings.HasSuffix(base, "/api") {
+		out = append(out, base+"/api")
+	}
+	return out
+}
+
+// isSolderInfoBody reports whether body is a Solder info document: a JSON object
+// carrying a non-empty "api" field (e.g. {"api":"TechnicSolder"} or
+// {"api":"solder.py"}). This is the stable marker of a Solder API root, served
+// at {base}/ regardless of how many modpacks the instance has.
+func isSolderInfoBody(body []byte) bool {
+	var info struct {
+		API string `json:"api"`
+	}
+	if json.Unmarshal(body, &info) != nil {
+		return false
+	}
+	return strings.TrimSpace(info.API) != ""
+}
+
+// ResolveSolderBase resolves a user-supplied Solder URL to its working API base
+// by probing the Solder info endpoint ({candidate}/) for each candidate from
+// solderBaseCandidates and returning the first that answers as a Solder root.
+// If none do (unreachable, or not a Solder server), the trimmed base as given is
+// returned unchanged, so the caller surfaces the same error it would have
+// before this resolution existed. The probe uses the SSRF-safe fetcher.
+func ResolveSolderBase(ctx context.Context, rawBase string) string {
+	candidates := solderBaseCandidates(rawBase)
+	for _, c := range candidates {
+		body, err := SafeFetch(ctx, c+"/", solderMetaMaxBytes, solderRootProbeTimeout)
+		if err == nil && isSolderInfoBody(body) {
+			return c
+		}
+	}
+	return candidates[0]
 }
 
 // FetchSolderIndex reads GET {base}/modpack and returns the slug->display-name
