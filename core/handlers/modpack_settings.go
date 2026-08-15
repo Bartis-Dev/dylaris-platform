@@ -35,10 +35,11 @@ type modpackSettings struct {
 	// The public base a Solder client is told to fetch artifacts from.
 	// CorePublicURL is Core's own public origin and serves the local mirror at
 	// {CorePublicURL}/solder/mirror/; SolderMirrorURL is the public bucket base
-	// used instead when the provider is s3. solderMirrorBase picks between them
-	// by provider, and isSnapshotFetchHostAllowed derives its SSRF allowlist
-	// from the same value - so an unset one is not cosmetic: it 500s the public
-	// Solder pack list and leaves the mirror host off the allowlist.
+	// used instead when SolderDeliveryMode is "public". solderMirrorBase picks
+	// between them by delivery mode (not by storage provider), and
+	// isSnapshotFetchHostAllowed derives its SSRF allowlist from the same value
+	// - so an unset one is not cosmetic: it 500s the public Solder pack list and
+	// leaves the mirror host off the allowlist.
 	CorePublicURL   string `json:"corePublicUrl"`
 	SolderMirrorURL string `json:"solderMirrorUrl"`
 	// ConnectionID references a saved storage connection. When non-zero, modpack

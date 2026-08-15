@@ -317,6 +317,7 @@ func TestIsSnapshotFetchHostAllowed(t *testing.T) {
 	t.Run("configured s3 solder-mirror host is allowed", func(t *testing.T) {
 		h := newServerSnapshotHandler(map[string]string{
 			"modpack_storage_provider": "s3",
+			"solder_delivery_mode":     "public",
 			"solder_mirror_url":        "https://cdn.myhoster.example/mirror",
 		})
 		if !h.isSnapshotFetchHostAllowed("https://cdn.myhoster.example/mirror/pack.mrpack") {

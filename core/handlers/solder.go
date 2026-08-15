@@ -309,19 +309,19 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Corrupt build manifest", http.StatusInternalServerError)
 		return
 	}
-	base, err := solderMirrorBase(h.state.Store.GetSetting)
-	if err != nil {
-		solderJSONError(w, "Mirror not configured", http.StatusInternalServerError)
-		return
-	}
-
+	gated := p.Private || p.Hidden
 	mods := make([]solderBuildMod, 0, len(m.Mods)) // never null => []
 	for _, md := range m.Mods {
+		u, uerr := solderModURL(r.Context(), h.state.Store.GetSetting, prov, md.SolderKey, gated)
+		if uerr != nil {
+			solderJSONError(w, "Storage delivery not configured", http.StatusInternalServerError)
+			return
+		}
 		mods = append(mods, solderBuildMod{
 			Name:     md.Name,
 			Version:  md.Version,
 			MD5:      md.MD5,
-			URL:      base + md.SolderKey,
+			URL:      u,
 			Filesize: md.Filesize,
 		})
 	}

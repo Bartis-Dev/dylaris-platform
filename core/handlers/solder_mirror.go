@@ -1,29 +1,99 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path"
 	"strings"
+	"time"
+
+	"dylaris-core/storage/modpack"
 
 	"github.com/gorilla/mux"
 )
 
-// solderMirrorBase resolves the base URL under which Solder mod-zip URLs resolve.
-// For S3 storage the operator sets solder_mirror_url to the public bucket base;
-// for local storage the mirror is served by Core at {core_public_url}/solder/mirror/.
-// The returned base ALWAYS ends with a single trailing slash (the Solder contract).
-func solderMirrorBase(getSetting func(string) (string, error)) (string, error) {
-	provider, _ := getSetting("modpack_storage_provider")
-	if provider == "s3" {
+const (
+	solderDeliveryCore      = "core"
+	solderDeliveryPresigned = "presigned"
+	solderDeliveryPublic    = "public"
+
+	// solderPresignTTL is the lifetime of a presigned Solder mod URL. The build
+	// JSON is re-projected (and re-presigned) on every launcher fetch, so each
+	// install starts with a fresh window; 6h comfortably covers a large pack or
+	// a paused-and-resumed download. Caveat: a launcher that caches the build
+	// JSON and later repairs one mod WITHOUT re-fetching it could hit an expired
+	// URL under presigned delivery; core/public have permanent URLs.
+	solderPresignTTL = 6 * time.Hour
+)
+
+const solderDeliveryModeKey = "solder_delivery_mode"
+
+// solderModURL builds the launcher-facing download URL for one stored Solder
+// object (a mod/loader zip key), honoring solder_delivery_mode. A gated
+// (private/hidden) pack is NEVER served a permanent public URL: under public
+// mode it is downgraded to presigned when the backend can presign, else core.
+func solderModURL(ctx context.Context, getSetting func(string) (string, error), prov modpack.ModpackStorageProvider, key string, packGated bool) (string, error) {
+	mode, _ := getSetting(solderDeliveryModeKey)
+	if mode == "" {
+		mode = solderDeliveryCore
+	}
+	if mode == solderDeliveryPublic && packGated {
+		if prov != nil {
+			if u, err := prov.DownloadURL(ctx, key, solderPresignTTL); err == nil && u != "" {
+				return u, nil
+			}
+		}
+		mode = solderDeliveryCore
+	}
+	switch mode {
+	case solderDeliveryPublic:
 		base, _ := getSetting("solder_mirror_url")
 		base = strings.TrimSpace(base)
 		if base == "" {
-			return "", fmt.Errorf("solder_mirror_url is not set (required for S3 storage)")
+			return "", fmt.Errorf("solder_mirror_url is not set (required for public delivery)")
+		}
+		return strings.TrimRight(base, "/") + "/" + key, nil
+	case solderDeliveryPresigned:
+		if prov == nil {
+			return "", fmt.Errorf("storage provider unavailable for presigned delivery")
+		}
+		u, err := prov.DownloadURL(ctx, key, solderPresignTTL)
+		if err != nil {
+			return "", fmt.Errorf("presign %s: %w", key, err)
+		}
+		if u == "" {
+			return "", fmt.Errorf("storage backend cannot presign (presigned delivery requires S3/R2)")
+		}
+		return u, nil
+	default: // core
+		base, _ := getSetting("core_public_url")
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return "", fmt.Errorf("core_public_url is not set (required for core delivery)")
+		}
+		return strings.TrimRight(base, "/") + "/solder/mirror/" + key, nil
+	}
+}
+
+// solderMirrorBase resolves the base URL under which Solder mod-zip URLs resolve,
+// switching on solder_delivery_mode: public advertises solder_mirror_url; core and
+// presigned both advertise Core's own mirror route (every mods[].url we serve is
+// already absolute, so a launcher never needs to prepend this for a presigned URL).
+// The returned base ALWAYS ends with a single trailing slash (the Solder contract).
+func solderMirrorBase(getSetting func(string) (string, error)) (string, error) {
+	mode, _ := getSetting(solderDeliveryModeKey)
+	if mode == solderDeliveryPublic {
+		base, _ := getSetting("solder_mirror_url")
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return "", fmt.Errorf("solder_mirror_url is not set (required for public delivery)")
 		}
 		return strings.TrimRight(base, "/") + "/", nil
 	}
-	// local / "" — Core serves the mirror route.
+	// core AND presigned advertise the core mirror base for the modpack-list
+	// mirror_url field; every mods[].url we serve is already absolute, so a
+	// launcher never needs to prepend it.
 	base, _ := getSetting("core_public_url")
 	base = strings.TrimSpace(base)
 	if base == "" {
