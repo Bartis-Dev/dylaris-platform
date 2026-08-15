@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -73,14 +74,14 @@ func (dm *DockerManager) buildHostPathCache() {
 		return
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
+	ref := selfContainerRef()
+	if ref == "" {
 		return
 	}
 
-	info, err := dm.cli.ContainerInspect(dm.ctx, hostname)
+	info, err := dm.cli.ContainerInspect(dm.ctx, ref)
 	if err != nil {
-		log.Printf("Cannot inspect own container for host path resolution: %v", err)
+		log.Printf("Cannot inspect own container for host path resolution (ref=%s): %v", ref, err)
 		return
 	}
 
@@ -122,18 +123,69 @@ func (dm *DockerManager) resolveLocalServerPath(serverUUID string) string {
 	return filepath.Join(dm.localDataPath, "servers", serverUUID)
 }
 
+// selfContainerRef returns a reference (container id or hostname) that
+// ContainerInspect can resolve to THIS node's own container. Under `--network
+// host` - which every BYON node uses, and which Docker Desktop imposes -
+// os.Hostname() returns the HOST's name (e.g. "docker-desktop"), not the
+// container id, so inspecting by it fails. The real id still appears in
+// /proc/self/mountinfo, where Docker bind-mounts /etc/hostname, /etc/hosts and
+// /etc/resolv.conf from /var/lib/docker/containers/<id>/. We fall back to
+// os.Hostname() for non-host-net containers (e.g. the cloud Swarm nodes) and
+// return "" outside any container (bare metal), where the caller's local==host
+// fallback is the correct answer.
+func selfContainerRef() string {
+	if f, err := os.Open("/proc/self/mountinfo"); err == nil {
+		defer f.Close()
+		if id := parseContainerIDFromMountinfo(f); id != "" {
+			return id
+		}
+	}
+	host, _ := os.Hostname()
+	return host
+}
+
+// parseContainerIDFromMountinfo extracts the 64-hex container id from the
+// "/containers/<id>/" path Docker bind-mounts for /etc/hostname et al. Returns ""
+// when no such id is present (bare metal, or a runtime without that layout).
+func parseContainerIDFromMountinfo(r io.Reader) string {
+	const marker = "/containers/"
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		_, after, found := strings.Cut(scanner.Text(), marker)
+		if !found {
+			continue
+		}
+		if id, _, ok := strings.Cut(after, "/"); ok && isHex64(id) {
+			return id
+		}
+	}
+	return ""
+}
+
+func isHex64(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveHostDataPath inspects our own container to find the host filesystem path
 // of the dylaris_data volume mount. MC containers spawned via Docker API need the
 // HOST path for bind mounts, not the container-internal path.
 func (dm *DockerManager) resolveHostDataPath() string {
-	hostname, err := os.Hostname()
-	if err != nil {
+	ref := selfContainerRef()
+	if ref == "" {
 		return ""
 	}
 
-	info, err := dm.cli.ContainerInspect(dm.ctx, hostname)
+	info, err := dm.cli.ContainerInspect(dm.ctx, ref)
 	if err != nil {
-		log.Printf("Could not inspect own container (hostname=%s): %v", hostname, err)
+		log.Printf("Could not inspect own container (ref=%s): %v", ref, err)
 		return ""
 	}
 
