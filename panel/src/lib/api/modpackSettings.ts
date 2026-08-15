@@ -24,6 +24,17 @@ export interface ModpackSettings {
     // References a saved storage connection. When set (> 0), modpack storage is
     // built from that connection and the inline s3 fields are ignored.
     connectionId?: number;
+    solderDeliveryMode: 'core' | 'presigned' | 'public';
+}
+
+// Capabilities the backend can actually serve a Solder build through, used to
+// grey out delivery modes the current storage config can't satisfy instead of
+// letting the admin pick one that 500s at download time.
+export interface DeliveryCapabilities {
+    canPresign: boolean;
+    publicConfigured: boolean;
+    publicReachable: boolean | null;
+    notes: { presigned?: string; public?: string };
 }
 
 export interface GetModpackSettingsResponse {
@@ -47,6 +58,13 @@ export async function setModpackSettings(s: ModpackSettings): Promise<{ success:
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(s),
         });
+        return (await handleResponse(res)) as any;
+    } catch (err) { return handleError(err) as any; }
+}
+
+export async function getModpackDeliveryCapabilities(): Promise<{ success: boolean; capabilities?: DeliveryCapabilities; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/settings/modpacks/delivery-capabilities`, { headers: getAuthHeader() });
         return (await handleResponse(res)) as any;
     } catch (err) { return handleError(err) as any; }
 }

@@ -9,11 +9,27 @@
 // shared dirty-bar in settings/layout.tsx surfaces save/discard.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Package, Plus, X, CircleCheck, CircleAlert } from 'lucide-react';
+import { Package, Plus, X, CircleCheck, CircleAlert, AlertTriangle } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
-import { getModpackSettings, setModpackSettings, type ModpackSettings } from '@/lib/api/modpackSettings';
+import {
+    getModpackSettings, setModpackSettings, getModpackDeliveryCapabilities,
+    type ModpackSettings, type DeliveryCapabilities,
+} from '@/lib/api/modpackSettings';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
+
+// Whether a Solder delivery mode is currently unusable given the backend's
+// probed capabilities. `caps === null` (not yet loaded, or the probe failed)
+// fails OPEN — every mode stays enabled rather than greying out on an unknown,
+// same reasoning as FeaturesTab's storageConfigured gate.
+export function isDeliveryModeDisabled(
+    mode: ModpackSettings['solderDeliveryMode'],
+    caps: DeliveryCapabilities | null,
+): boolean {
+    if (mode === 'presigned') return caps?.canPresign === false;
+    if (mode === 'public') return caps?.publicConfigured === false || caps?.publicReachable === false;
+    return false;
+}
 
 const DEFAULTS: ModpackSettings = {
     featureEnabled: true,
@@ -29,6 +45,7 @@ const DEFAULTS: ModpackSettings = {
     connectionId: 0,
     corePublicUrl: '',
     solderMirrorUrl: '',
+    solderDeliveryMode: 'core',
 };
 
 export default function ModpacksTab() {
@@ -38,6 +55,10 @@ export default function ModpacksTab() {
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [connections, setConnections] = useState<StorageConnection[]>([]);
+    // Probed once on mount — which delivery modes the backend can actually
+    // serve right now, so the radios below can grey out one that would just
+    // 500 at Solder-download time. null = not loaded yet / probe failed.
+    const [deliveryCaps, setDeliveryCaps] = useState<DeliveryCapabilities | null>(null);
 
     // Snapshot of last-saved settings for dirty detection. We deliberately
     // stash a copy with s3SecretKey blanked out so toggling the password
@@ -59,6 +80,9 @@ export default function ModpacksTab() {
             }
             setLoading(false);
         });
+        getModpackDeliveryCapabilities()
+            .then(res => setDeliveryCaps(res.capabilities ?? null))
+            .catch(() => setDeliveryCaps(null));
     }, []);
 
     useEffect(() => {
@@ -200,6 +224,46 @@ export default function ModpacksTab() {
                             </label>
                         ))}
                     </div>
+                </div>
+
+                {/* Solder delivery mode — greyed out per-mode from the probed
+                    capabilities above, so picking one the current storage
+                    config can't serve isn't possible in the first place. */}
+                <div>
+                    <div className="font-medium text-sm text-(--base-09) mb-2">Solder delivery</div>
+                    <div className="flex gap-4">
+                        {(['core', 'presigned', 'public'] as const).map(mode => {
+                            const disabled = isDeliveryModeDisabled(mode, deliveryCaps);
+                            return (
+                                <label
+                                    key={mode}
+                                    className={`flex items-center gap-2 text-sm ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="solderDeliveryMode"
+                                        checked={settings.solderDeliveryMode === mode}
+                                        disabled={disabled}
+                                        onChange={() => setSettings(s => ({ ...s, solderDeliveryMode: mode }))}
+                                        className="accent-(--accent)"
+                                    />
+                                    <span className="font-mono uppercase tracking-wide">{mode}</span>
+                                </label>
+                            );
+                        })}
+                    </div>
+                    {deliveryCaps?.canPresign === false && deliveryCaps.notes.presigned && (
+                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>{deliveryCaps.notes.presigned}</span>
+                        </p>
+                    )}
+                    {(deliveryCaps?.publicConfigured === false || deliveryCaps?.publicReachable === false) && deliveryCaps?.notes.public && (
+                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>{deliveryCaps.notes.public}</span>
+                        </p>
+                    )}
                 </div>
 
                 {/* Local — mirrored paths */}
