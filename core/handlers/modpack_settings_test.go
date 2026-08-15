@@ -46,7 +46,7 @@ func TestModpackSettingsHandler_Set_ProviderValidation(t *testing.T) {
 			fs := newCoreStorageHTTPFakeStore()
 			h := newModpackSettingsTestHandler(fs)
 
-			body, _ := json.Marshal(modpackSettings{Provider: c.provider, CorePublicURL: "https://panel.example.com"})
+			body, _ := json.Marshal(modpackSettings{Provider: c.provider})
 			rw := httptest.NewRecorder()
 			h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
@@ -107,7 +107,7 @@ func TestModpackSettingsHandler_Set_RejectsCredentialsInTheS3Endpoint(t *testing
 			fs := newCoreStorageHTTPFakeStore()
 			h := newModpackSettingsTestHandler(fs)
 
-			body, _ := json.Marshal(modpackSettings{Provider: c.provider, S3Endpoint: c.endpoint, CorePublicURL: "https://panel.example.com"})
+			body, _ := json.Marshal(modpackSettings{Provider: c.provider, S3Endpoint: c.endpoint})
 			rw := httptest.NewRecorder()
 			h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
@@ -146,7 +146,7 @@ func TestModpackSettingsHandler_Set_AllowsMovingFromAnyStoredValueToValid(t *tes
 	fs.kv["modpack_storage_provider"] = "some-legacy-value"
 	h := newModpackSettingsTestHandler(fs)
 
-	body, _ := json.Marshal(modpackSettings{Provider: "core-storage", CorePublicURL: "https://panel.example.com"})
+	body, _ := json.Marshal(modpackSettings{Provider: "core-storage"})
 	rw := httptest.NewRecorder()
 	h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
@@ -167,14 +167,13 @@ func TestModpackSettingsHandler_Set_DeliveryModeValidation(t *testing.T) {
 		mirror   string
 		wantCode int
 	}{
-		{"empty defaults to core, ok with core url", "", "s3", "https://panel.example.com", "", http.StatusOK},
-		{"core requires core public url", "core", "s3", "", "", http.StatusBadRequest},
-		{"core ok with core url", "core", "s3", "https://panel.example.com", "", http.StatusOK},
-		{"public requires mirror url", "public", "s3", "https://panel.example.com", "", http.StatusBadRequest},
-		{"public ok with mirror url", "public", "s3", "https://panel.example.com", "https://cdn.example.com/m", http.StatusOK},
-		{"presigned rejected on local", "presigned", "local", "https://panel.example.com", "", http.StatusBadRequest},
-		{"presigned ok on s3", "presigned", "s3", "https://panel.example.com", "", http.StatusOK},
-		{"unknown mode rejected", "ftp", "s3", "https://panel.example.com", "", http.StatusBadRequest},
+		{"empty defaults to core, ok", "", "s3", "", "", http.StatusOK},
+		{"core ok without core url", "core", "s3", "", "", http.StatusOK},
+		{"public requires mirror url", "public", "s3", "", "", http.StatusBadRequest},
+		{"public ok with mirror url", "public", "s3", "", "https://cdn.example.com/m", http.StatusOK},
+		{"presigned rejected on local", "presigned", "local", "", "", http.StatusBadRequest},
+		{"presigned ok on s3", "presigned", "s3", "", "", http.StatusOK},
+		{"unknown mode rejected", "ftp", "s3", "", "", http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

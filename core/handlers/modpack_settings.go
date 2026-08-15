@@ -206,11 +206,6 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// not-yet-saved fields, so "can R2 actually presign" is the capabilities
 	// probe's job. Reject only the obviously impossible.
 	switch req.SolderDeliveryMode {
-	case "core":
-		if req.CorePublicURL == "" {
-			sendJSONError(w, "core delivery mode requires a core public URL", http.StatusBadRequest)
-			return
-		}
 	case "public":
 		if req.SolderMirrorURL == "" {
 			sendJSONError(w, "public delivery mode requires a solder mirror URL", http.StatusBadRequest)
