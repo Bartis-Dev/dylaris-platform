@@ -173,6 +173,21 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
+func TestSafeHead_RejectsBadInput(t *testing.T) {
+	cases := []struct{ name, url string }{
+		{"empty", ""},
+		{"no scheme", "cdn.example.com/x"},
+		{"ftp scheme", "ftp://cdn.example.com/x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := SafeHead(context.Background(), c.url, time.Second); err == nil {
+				t.Errorf("SafeHead(%q) = nil error, want error", c.url)
+			}
+		})
+	}
+}
+
 func TestSafeFetchClient_CheckRedirect(t *testing.T) {
 	mkVia := func(n int) []*http.Request {
 		via := make([]*http.Request, n)

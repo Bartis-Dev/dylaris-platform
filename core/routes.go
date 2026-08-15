@@ -277,18 +277,19 @@ var requiredCaps = map[string]string{
 	// shared template can't record two different per-method caps here, so those
 	// three are deliberately NOT listed and are deferred to the Task 22/23
 	// per-method ExemptRoutes reconciliation.
-	"/api/admin/settings/users":                        "settings.read",
-	"/api/admin/settings/modpacks":                     "settings.read",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag": "settings.write",
-	"/api/admin/settings/permissions-mode":             "settings.write",
-	"/api/admin/settings/features":                     "settings.read",
-	"/api/admin/settings/tab-proxy":                    "settings.read",
-	"/api/admin/health":                                "settings.read",
-	"/api/admin/db/migration":                          "settings.read",
-	"/api/admin/db/migration/test-connection":          "settings.write",
-	"/api/admin/db/migration/verify":                   "settings.write",
-	"/api/admin/db/hypertable":                         "settings.read",
-	"/api/admin/db/hypertable/convert":                 "settings.write",
+	"/api/admin/settings/users":                          "settings.read",
+	"/api/admin/settings/modpacks":                       "settings.read",
+	"/api/admin/settings/modpacks/delivery-capabilities": "settings.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag":   "settings.write",
+	"/api/admin/settings/permissions-mode":               "settings.write",
+	"/api/admin/settings/features":                       "settings.read",
+	"/api/admin/settings/tab-proxy":                      "settings.read",
+	"/api/admin/health":                                  "settings.read",
+	"/api/admin/db/migration":                            "settings.read",
+	"/api/admin/db/migration/test-connection":            "settings.write",
+	"/api/admin/db/migration/verify":                     "settings.write",
+	"/api/admin/db/hypertable":                           "settings.read",
+	"/api/admin/db/hypertable/convert":                   "settings.write",
 	// Blob storage migration (Task 15). /api/admin/storage/migration is one
 	// template shared by GET (job status) and POST (start): the manifest's
 	// documented convention records the representative .read cap here and the
@@ -847,6 +848,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Modpack settings + system feature flags (PANEL settings.*; Phase 4 Task 17) ---
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.Set))).Methods("PUT")
+	api.HandleFunc("/admin/settings/modpacks/delivery-capabilities", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.DeliveryCapabilities))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.SetUserFlag))).Methods("PATCH")
 	// GET /system/features stays EXEMPT-authed here (Phase 4 Task 19 territory - not touched by Task 17).
 	api.HandleFunc("/system/features", authHandler.AuthMiddleware(systemFeaturesHandler.Get)).Methods("GET")

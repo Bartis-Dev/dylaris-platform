@@ -121,3 +121,33 @@ func SafeFetch(ctx context.Context, rawURL string, maxBytes int64, timeout time.
 	}
 	return body, nil
 }
+
+// SafeHead issues an SSRF-guarded HEAD and returns the HTTP status code. Unlike
+// SafeFetch it does NOT require 200 — the caller classifies the status (e.g.
+// 401/403 => not publicly readable). It reuses safeFetchClient, whose dialer
+// rejects private/loopback/link-local targets at dial time, so this cannot be
+// an SSRF lever. A guarded/blocked target surfaces as a transport error.
+func SafeHead(ctx context.Context, rawURL string, timeout time.Duration) (int, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0, fmt.Errorf("safehead: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return 0, fmt.Errorf("safehead: unsupported scheme %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return 0, fmt.Errorf("safehead: missing host")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := safeFetchClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
