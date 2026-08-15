@@ -15,7 +15,7 @@ func TestModpackSettings_ConnectionIDRoundTrips(t *testing.T) {
 	h := newModpackSettingsTestHandler(fs)
 
 	// PUT with a selected connection.
-	body, _ := json.Marshal(modpackSettings{Provider: "s3", ConnectionID: 7})
+	body, _ := json.Marshal(modpackSettings{Provider: "s3", ConnectionID: 7, CorePublicURL: "https://panel.example.com"})
 	rw := httptest.NewRecorder()
 	h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 	if rw.Code != http.StatusOK {
@@ -39,7 +39,7 @@ func TestModpackSettings_ConnectionIDRoundTrips(t *testing.T) {
 	}
 
 	// PUT with 0 clears it.
-	body, _ = json.Marshal(modpackSettings{Provider: "s3", ConnectionID: 0})
+	body, _ = json.Marshal(modpackSettings{Provider: "s3", ConnectionID: 0, CorePublicURL: "https://panel.example.com"})
 	rw = httptest.NewRecorder()
 	h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 	if rw.Code != http.StatusOK {

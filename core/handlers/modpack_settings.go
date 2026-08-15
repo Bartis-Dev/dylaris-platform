@@ -45,6 +45,10 @@ type modpackSettings struct {
 	// storage is built from that connection (buildModpackStorageProvider) and the
 	// inline s3 fields are ignored. 0 = use the inline config.
 	ConnectionID int `json:"connectionId"`
+	// SolderDeliveryMode selects how Solder mod URLs are served: "core"
+	// (Core proxy, default), "presigned" (private bucket, expiring URLs) or
+	// "public" (public base = solderMirrorUrl). Orthogonal to Provider.
+	SolderDeliveryMode string `json:"solderDeliveryMode"`
 }
 
 // Get GET /api/admin/settings/modpacks - PANEL settings.read (RequireCap at the route).
@@ -83,6 +87,10 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.ConnectionID, _ = strconv.Atoi(get(keyModpackStorageConnectionID)) // "" or bad -> 0 = none
 	out.CorePublicURL = get("core_public_url")
 	out.SolderMirrorURL = get("solder_mirror_url")
+	out.SolderDeliveryMode = get("solder_delivery_mode")
+	if out.SolderDeliveryMode == "" {
+		out.SolderDeliveryMode = "core"
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": out,
@@ -103,6 +111,17 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func validModpackProvider(p string) bool {
 	switch p {
 	case "local", "s3", "core-storage":
+		return true
+	}
+	return false
+}
+
+// validSolderDeliveryMode allowlists the Solder delivery mode. Mirrors the
+// switch in solderModURL / solderMirrorBase so an unknown value can never
+// persist and silently break the serve path later.
+func validSolderDeliveryMode(m string) bool {
+	switch m {
+	case "core", "presigned", "public":
 		return true
 	}
 	return false
@@ -176,6 +195,33 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if req.SolderDeliveryMode == "" {
+		req.SolderDeliveryMode = "core"
+	}
+	if !validSolderDeliveryMode(req.SolderDeliveryMode) {
+		sendJSONError(w, "solder delivery mode must be core, presigned or public", http.StatusBadRequest)
+		return
+	}
+	// Syntactic gate only: the save handler cannot build a provider from the
+	// not-yet-saved fields, so "can R2 actually presign" is the capabilities
+	// probe's job. Reject only the obviously impossible.
+	switch req.SolderDeliveryMode {
+	case "core":
+		if req.CorePublicURL == "" {
+			sendJSONError(w, "core delivery mode requires a core public URL", http.StatusBadRequest)
+			return
+		}
+	case "public":
+		if req.SolderMirrorURL == "" {
+			sendJSONError(w, "public delivery mode requires a solder mirror URL", http.StatusBadRequest)
+			return
+		}
+	case "presigned":
+		if req.Provider == "local" {
+			sendJSONError(w, "presigned delivery mode requires S3/R2-backed storage (not local)", http.StatusBadRequest)
+			return
+		}
+	}
 
 	// Normalize paths: strip empties + dedupe + MkdirAll so the provider
 	// doesn't fail on first Put. We deliberately do NOT validate writability
@@ -211,6 +257,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{keyModpackStorageConnectionID, storageConnIDSetting(req.ConnectionID)},
 		{"core_public_url", req.CorePublicURL},
 		{"solder_mirror_url", req.SolderMirrorURL},
+		{"solder_delivery_mode", req.SolderDeliveryMode},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {

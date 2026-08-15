@@ -46,7 +46,7 @@ func TestModpackSettingsHandler_Set_ProviderValidation(t *testing.T) {
 			fs := newCoreStorageHTTPFakeStore()
 			h := newModpackSettingsTestHandler(fs)
 
-			body, _ := json.Marshal(modpackSettings{Provider: c.provider})
+			body, _ := json.Marshal(modpackSettings{Provider: c.provider, CorePublicURL: "https://panel.example.com"})
 			rw := httptest.NewRecorder()
 			h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
@@ -107,7 +107,7 @@ func TestModpackSettingsHandler_Set_RejectsCredentialsInTheS3Endpoint(t *testing
 			fs := newCoreStorageHTTPFakeStore()
 			h := newModpackSettingsTestHandler(fs)
 
-			body, _ := json.Marshal(modpackSettings{Provider: c.provider, S3Endpoint: c.endpoint})
+			body, _ := json.Marshal(modpackSettings{Provider: c.provider, S3Endpoint: c.endpoint, CorePublicURL: "https://panel.example.com"})
 			rw := httptest.NewRecorder()
 			h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
@@ -146,7 +146,7 @@ func TestModpackSettingsHandler_Set_AllowsMovingFromAnyStoredValueToValid(t *tes
 	fs.kv["modpack_storage_provider"] = "some-legacy-value"
 	h := newModpackSettingsTestHandler(fs)
 
-	body, _ := json.Marshal(modpackSettings{Provider: "core-storage"})
+	body, _ := json.Marshal(modpackSettings{Provider: "core-storage", CorePublicURL: "https://panel.example.com"})
 	rw := httptest.NewRecorder()
 	h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
@@ -155,5 +155,53 @@ func TestModpackSettingsHandler_Set_AllowsMovingFromAnyStoredValueToValid(t *tes
 	}
 	if fs.kv["modpack_storage_provider"] != "core-storage" {
 		t.Errorf("stored provider = %q, want core-storage", fs.kv["modpack_storage_provider"])
+	}
+}
+
+func TestModpackSettingsHandler_Set_DeliveryModeValidation(t *testing.T) {
+	cases := []struct {
+		name     string
+		mode     string
+		provider string
+		corePub  string
+		mirror   string
+		wantCode int
+	}{
+		{"empty defaults to core, ok with core url", "", "s3", "https://panel.example.com", "", http.StatusOK},
+		{"core requires core public url", "core", "s3", "", "", http.StatusBadRequest},
+		{"core ok with core url", "core", "s3", "https://panel.example.com", "", http.StatusOK},
+		{"public requires mirror url", "public", "s3", "https://panel.example.com", "", http.StatusBadRequest},
+		{"public ok with mirror url", "public", "s3", "https://panel.example.com", "https://cdn.example.com/m", http.StatusOK},
+		{"presigned rejected on local", "presigned", "local", "https://panel.example.com", "", http.StatusBadRequest},
+		{"presigned ok on s3", "presigned", "s3", "https://panel.example.com", "", http.StatusOK},
+		{"unknown mode rejected", "ftp", "s3", "https://panel.example.com", "", http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := newCoreStorageHTTPFakeStore()
+			h := newModpackSettingsTestHandler(fs)
+			body, _ := json.Marshal(modpackSettings{
+				Provider: c.provider, CorePublicURL: c.corePub,
+				SolderMirrorURL: c.mirror, SolderDeliveryMode: c.mode,
+			})
+			rw := httptest.NewRecorder()
+			h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
+			if rw.Code != c.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.wantCode, rw.Body.String())
+			}
+			if c.wantCode == http.StatusBadRequest {
+				if _, ok := fs.kv["solder_delivery_mode"]; ok {
+					t.Errorf("rejected mode %q reached the store", c.mode)
+				}
+				return
+			}
+			want := c.mode
+			if want == "" {
+				want = "core"
+			}
+			if fs.kv["solder_delivery_mode"] != want {
+				t.Errorf("stored mode = %q, want %q", fs.kv["solder_delivery_mode"], want)
+			}
+		})
 	}
 }
