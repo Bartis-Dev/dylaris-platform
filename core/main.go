@@ -491,6 +491,20 @@ func main() {
 		}
 	}
 
+	// Backfill the region-subnet Redis mirror for every existing region. The seed
+	// block above only fires on an empty regions table, so a Core restart against
+	// an already-populated table needs this to repopulate the mirror a warp leader
+	// reads at boot.
+	if regions, err := pgStore.ListWarpRegions(); err == nil {
+		for _, rg := range regions {
+			if err := services.PublishRegionSubnet(context.Background(), redisClient, rg.Region, rg.Subnet); err != nil {
+				log.Printf("warp: region subnet mirror backfill failed for %s: %v", rg.Region, err)
+			}
+		}
+	} else {
+		log.Printf("warp: region subnet backfill: list regions failed: %v", err)
+	}
+
 	root, extras := buildAPIRouter(appState, authHandler, routeCfg{
 		JWTSecret:               cfg.JWTSecret,
 		Region:                  cfg.Region,

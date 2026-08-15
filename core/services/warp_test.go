@@ -1,9 +1,12 @@
 package services
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -40,5 +43,29 @@ func TestNextFreeIP_Exhausted(t *testing.T) {
 	}
 	if _, err := NextFreeIP("10.0.99.0/24", taken); err == nil {
 		t.Fatal("expected exhaustion error")
+	}
+}
+
+func TestWarpRegionSubnetKeyFormat(t *testing.T) {
+	// Frozen cross-repo contract: the gateway warp leader reads this exact key.
+	if got := warpRegionSubnetKey("eu-central"); got != "dylaris:warp:region:eu-central:subnet" {
+		t.Fatalf("key contract drift: %q", got)
+	}
+}
+
+func TestPublishRegionSubnetWritesKey(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	if err := PublishRegionSubnet(context.Background(), rdb, "eu-central", "10.0.99.0/24"); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	got, err := mr.Get("dylaris:warp:region:eu-central:subnet")
+	if err != nil || got != "10.0.99.0/24" {
+		t.Fatalf("mirror = %q, %v; want 10.0.99.0/24", got, err)
 	}
 }

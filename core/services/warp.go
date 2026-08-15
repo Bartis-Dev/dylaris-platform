@@ -576,3 +576,18 @@ func (s *WarpService) RegionsOverview(ctx context.Context) ([]RegionView, error)
 	}
 	return out, nil
 }
+
+// --- Region subnet mirror (Redis) ---
+
+// warpRegionSubnetKey is the fixed key Core mirrors a region's subnet to so a warp
+// leader can read its authoritative subnet at boot. MUST stay byte-identical to the
+// gateway warp leader's reader (cross-repo contract; no version byte).
+func warpRegionSubnetKey(region string) string {
+	return "dylaris:warp:region:" + region + ":subnet"
+}
+
+// PublishRegionSubnet mirrors a region's subnet to Redis. Authoritative source for
+// the warp leader's gateway IP / route / NAT. Idempotent; TTL 0 (config, not liveness).
+func PublishRegionSubnet(ctx context.Context, rdb *redis.Client, region, subnet string) error {
+	return rdb.Set(ctx, warpRegionSubnetKey(region), subnet, 0).Err()
+}

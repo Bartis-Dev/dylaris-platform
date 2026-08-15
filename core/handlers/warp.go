@@ -463,6 +463,11 @@ func (h *WarpHandler) UpsertRegion(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to save region", http.StatusInternalServerError)
 		return
 	}
+	// Mirror to Redis for the warp leader's boot resolve. Best-effort: the DB write
+	// above is the source of truth, and the boot backfill self-heals a missed write.
+	if err := services.PublishRegionSubnet(r.Context(), h.state.Redis, req.Region, req.Subnet); err != nil {
+		log.Printf("warp region subnet mirror failed for %s: %v", req.Region, err)
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
