@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
@@ -28,6 +30,27 @@ type Deps struct {
 	//
 	// Nil for callers that never touch the "core-storage" provider.
 	CoreStorage func(subPrefix string) (Storage, error)
+
+	// Connection builds a Storage from a saved storage connection (the named,
+	// reusable S3 credential set the panel manages), scoped to prefix.
+	//
+	// Same closure shape and the same reason as CoreStorage: resolving the
+	// connection needs the store, and this package must not import it. It also
+	// resolves PER CALL on purpose - that is the whole point of pointing
+	// backups at a connection instead of copying its keys into this row: a
+	// rotated credential takes effect everywhere at once, with nothing to
+	// re-enter and nothing left stale behind.
+	//
+	// Nil for callers that never touch the "connection" provider.
+	Connection func(connectionID int, prefix string) (Storage, error)
+}
+
+// ConnectionConfig is the backup_storages.config blob for the "connection"
+// provider. It deliberately holds NO credentials: only a reference and the
+// prefix under which this target writes.
+type ConnectionConfig struct {
+	ConnectionID int    `json:"connectionId"`
+	Prefix       string `json:"prefix"`
 }
 
 // CoreStorageSubPrefix is the namespace server backups occupy inside the ONE
@@ -81,6 +104,33 @@ func Open(ctx context.Context, bs *models.BackupStorage, deps Deps) (Storage, er
 		st, err := deps.CoreStorage(CoreStorageSubPrefix)
 		if err != nil {
 			return nil, fmt.Errorf("core-storage backup provider: %w", err)
+		}
+		return st, nil
+	case "connection":
+		if deps.Connection == nil {
+			return nil, fmt.Errorf("connection backup provider requires a Connection builder")
+		}
+		var cfg ConnectionConfig
+		if len(bs.Config) > 0 {
+			if err := json.Unmarshal(bs.Config, &cfg); err != nil {
+				return nil, fmt.Errorf("invalid connection config: %w", err)
+			}
+		}
+		if cfg.ConnectionID <= 0 {
+			return nil, fmt.Errorf("connection backup provider requires a connectionId")
+		}
+		prefix := cfg.Prefix
+		if strings.TrimSpace(prefix) == "" {
+			// Default to the same namespace core-storage backups use. Without
+			// it a connection shared with Core file storage would write archives
+			// beside library/ and modpacks/ in the bucket root - legal, but it
+			// makes lifecycle rules and quota accounting per subsystem
+			// impossible after the fact.
+			prefix = CoreStorageSubPrefix
+		}
+		st, err := deps.Connection(cfg.ConnectionID, prefix)
+		if err != nil {
+			return nil, fmt.Errorf("connection backup provider: %w", err)
 		}
 		return st, nil
 	default:

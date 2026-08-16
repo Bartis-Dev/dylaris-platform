@@ -732,6 +732,7 @@ func (r *StorageDataSetResolver) backupDeps() backupstorage.Deps {
 			}
 			return storage.NewCoreStorageBackupAdapter(prov), nil
 		},
+		Connection: r.state.ConnectionBackupBuilder(),
 	}
 }
 

@@ -390,7 +390,16 @@ export const unlinkServerFromProxy = (serverId: number) =>
     fetchAPI(`/servers/${serverId}/proxy`, { method: 'DELETE' });
 
 // --- BACKUPS ---
-export type BackupProvider = 'local' | 's3' | 'node-local' | 'shared';
+// 'connection' references a saved storage connection instead of carrying its
+// own credentials, so rotating that connection updates every subsystem using it.
+export type BackupProvider = 'local' | 's3' | 'node-local' | 'shared' | 'core-storage' | 'connection';
+
+// Config blob for the 'connection' provider. Holds no credentials on purpose.
+export interface BackupConnectionConfig {
+    connectionId: number;
+    /** Key prefix inside the bucket. Defaults to "server-backups" server-side. */
+    prefix?: string;
+}
 
 export interface BackupStorage {
     id: number;
@@ -991,6 +1000,36 @@ export const deleteWarpLeader = (leaderId: string) =>
     fetchAPI(`/warp/leaders/${encodeURIComponent(leaderId)}`, { method: 'DELETE' });
 export const mintWarpKey = (data: MintWarpKeyInput) =>
     fetchAPI('/admin/warp/keys', { method: 'POST', body: JSON.stringify(data) });
+
+// One enrolled client of a key. A key with no peers was minted but never used.
+export interface WarpKeyPeer {
+    pubkey: string;
+    wg_ip: string;
+    region: string;
+    assigned_leader: string;
+    created_at: string;
+}
+// The enrollment-key inventory. The key itself is never returned - only its
+// hash is stored, so it exists in readable form exactly once, at mint time.
+export interface WarpKeyView {
+    id: number;
+    name: string;
+    policy: 'fixed' | 'general';
+    max_conns: number;
+    on_new_conn: 'kill_old' | 'block';
+    region: string;
+    node_id: string;
+    fixed_wg_ip: string;
+    revoked: boolean;
+    created_at: string;
+    peers: WarpKeyPeer[];
+}
+export const listWarpKeys = (): Promise<{ success: boolean; keys: WarpKeyView[] }> =>
+    fetchAPI('/admin/warp/keys');
+// Revoking also disconnects live peers: an established WireGuard tunnel has no
+// memory of the key that created it and would otherwise keep forwarding.
+export const revokeWarpKey = (id: number): Promise<{ success: boolean; disconnected?: number; message?: string }> =>
+    fetchAPI(`/admin/warp/keys/${id}`, { method: 'DELETE' });
 
 // Warp overlay segmentation: the admin-configurable spoke destination-port
 // allowlist the region leaders enforce (comma-separated TCP ports).

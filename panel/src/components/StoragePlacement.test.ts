@@ -35,3 +35,10 @@ describe('effectiveOrder', () => {
     expect(effectiveOrder([], ['/a'])).toEqual([]);
   });
 });
+
+// Go marshals a nil slice as JSON null; a fresh deploy has no saved order and
+// this exact input crashed the whole Placement tab (null.filter) in prod.
+it('effectiveOrder tolerates a null/undefined order from the API', () => {
+    expect(effectiveOrder(['/storage'], null)).toEqual(['/storage']);
+    expect(effectiveOrder(['/storage'], undefined)).toEqual(['/storage']);
+});

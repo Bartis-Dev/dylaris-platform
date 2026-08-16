@@ -48,6 +48,7 @@ func TestValidBackupProvider(t *testing.T) {
 		{"s3", true},
 		{"node-local", true},
 		{"core-storage", true},
+		{"connection", true},
 		{"", false},
 		{"core storage", false},
 		{"corestorage", false},
@@ -135,5 +136,25 @@ func TestUpdateStorage_AcceptsCoreStorage(t *testing.T) {
 	}
 	if fs.updated != 1 {
 		t.Errorf("core-storage update was not persisted (%d updates)", fs.updated)
+	}
+}
+
+func TestCreateStorage_AcceptsConnection(t *testing.T) {
+	fs := &backupValidationFakeStore{}
+	h := NewBackupHandler(&AppState{Store: fs})
+
+	body, _ := json.Marshal(models.BackupStorage{
+		Name:     "R2 backups",
+		Provider: "connection",
+		Config:   json.RawMessage(`{"connectionId":3,"prefix":"server-backups"}`),
+	})
+	rw := httptest.NewRecorder()
+	h.CreateStorage(rw, httptest.NewRequest(http.MethodPost, "/api/backup-storages", bytes.NewReader(body)))
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("CreateStorage status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if fs.created != 1 {
+		t.Errorf("connection provider was not persisted (%d creates)", fs.created)
 	}
 }

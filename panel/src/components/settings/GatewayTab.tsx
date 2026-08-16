@@ -71,6 +71,7 @@ const DNS_STATUS_BADGE: Record<DnsRecordStatus, { cls: string; label: string }> 
     mismatch: { cls: 'badge-warning', label: 'Mismatch' },
     missing: { cls: 'badge-error', label: 'Missing' },
     unresolved: { cls: 'badge-error', label: 'Unresolved' },
+    info: { cls: 'badge-neutral', label: 'Optional' },
 };
 
 // One copyable record value (the expected DNS target). Shows a transient

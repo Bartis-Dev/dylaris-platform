@@ -24,7 +24,11 @@ const FleetPlacementKey = "dylaris:placement:storage_default"
 // LoadFleetPlacement reads the fleet default. Missing or unparseable means auto,
 // the same fallback a node applies on its own.
 func LoadFleetPlacement(ctx context.Context, rdb *redis.Client) NodePlacement {
-	out := NodePlacement{Mode: storageplacement.ModeAuto}
+	// Order is [] rather than nil so the JSON reads "order": [], never
+	// "order": null - the panel feeds it straight into array operations, and a
+	// fresh deploy with nothing saved crashed the whole Placement tab on
+	// null.filter before this.
+	out := NodePlacement{Mode: storageplacement.ModeAuto, Order: []string{}}
 	if rdb == nil {
 		return out
 	}
@@ -39,7 +43,7 @@ func LoadFleetPlacement(ctx context.Context, rdb *redis.Client) NodePlacement {
 // auto, never an error: an unreadable default must not stop a server from being
 // placed, it just stops expressing a preference.
 func decodeFleetPlacement(raw string) NodePlacement {
-	out := NodePlacement{Mode: storageplacement.ModeAuto}
+	out := NodePlacement{Mode: storageplacement.ModeAuto, Order: []string{}}
 	if raw == "" {
 		return out
 	}
@@ -48,6 +52,9 @@ func decodeFleetPlacement(raw string) NodePlacement {
 		return out
 	}
 	stored.Mode = storageplacement.NormalizeMode(stored.Mode)
+	if stored.Order == nil {
+		stored.Order = []string{}
+	}
 	return stored
 }
 

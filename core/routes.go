@@ -347,6 +347,7 @@ var requiredCaps = map[string]string{
 	"/api/warp/leaders":                     "topology.write",
 	"/api/warp/leaders/{leaderId}":          "topology.write",
 	"/api/admin/warp/keys":                  "topology.write",
+	"/api/admin/warp/keys/{id:[0-9]+}":       "topology.write",
 
 	// Phase 4 Task 19: module mutations (PANEL settings.write - there is no
 	// dedicated modules.* cap). GET /api/modules is EXEMPT-authed (navbar
@@ -897,6 +898,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.UpsertLeader))).Methods("POST")
 	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.DeleteLeader))).Methods("DELETE")
 	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.MintAPIKey))).Methods("POST")
+	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(warpHandler.ListAPIKeys))).Methods("GET")
+	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.RevokeAPIKey))).Methods("DELETE")
 	// Route-only link kits (tenant self-service; BYON-gated inside the handler)
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.ListLinkKits)).Methods("GET")
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")

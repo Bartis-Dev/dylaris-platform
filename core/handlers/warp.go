@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,6 +191,105 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true, "id": id, "api_key": plaintext,
 	})
+}
+
+// ListAPIKeys GET /api/admin/warp/keys - the external-node inventory.
+//
+// Every admin-minted enrollment key with its live peers, so an operator can see
+// what they issued and what is actually connected. The key itself is NOT
+// returned - only its hash is stored, and that is the point: a key is shown once
+// at mint time and never again.
+//
+// A key with no peers is minted-but-never-used; several peers on one key is the
+// "general" policy doing its job.
+func (h *WarpHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := h.state.Store.ListWarpAPIKeys()
+	if err != nil {
+		sendJSONError(w, "Failed to load enrollment keys", http.StatusInternalServerError)
+		return
+	}
+	type peerView struct {
+		Pubkey         string `json:"pubkey"`
+		WGIP           string `json:"wg_ip"`
+		Region         string `json:"region"`
+		AssignedLeader string `json:"assigned_leader"`
+		CreatedAt      string `json:"created_at"`
+	}
+	type keyView struct {
+		ID        int        `json:"id"`
+		Name      string     `json:"name"`
+		Policy    string     `json:"policy"`
+		MaxConns  int        `json:"max_conns"`
+		OnNewConn string     `json:"on_new_conn"`
+		Region    string     `json:"region"`
+		NodeID    string     `json:"node_id"`
+		FixedWGIP string     `json:"fixed_wg_ip"`
+		Revoked   bool       `json:"revoked"`
+		CreatedAt string     `json:"created_at"`
+		Peers     []peerView `json:"peers"`
+	}
+	out := make([]keyView, 0, len(keys))
+	for _, k := range keys {
+		kv := keyView{
+			ID: k.ID, Name: k.Name, Policy: k.Policy, MaxConns: k.MaxConns,
+			OnNewConn: k.OnNewConn, Region: k.Region, NodeID: k.NodeID,
+			FixedWGIP: k.FixedWGIP, Revoked: k.RevokedAt != nil,
+			CreatedAt: k.CreatedAt.Format(time.RFC3339),
+			Peers:     []peerView{},
+		}
+		peers, perr := h.state.Store.ListWarpPeersByKey(k.ID)
+		if perr == nil {
+			for _, p := range peers {
+				kv.Peers = append(kv.Peers, peerView{
+					Pubkey: p.Pubkey, WGIP: p.WGIP, Region: p.Region,
+					AssignedLeader: p.AssignedLeader,
+					CreatedAt:      p.CreatedAt.Format(time.RFC3339),
+				})
+			}
+		}
+		out = append(out, kv)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "keys": out})
+}
+
+// RevokeAPIKey DELETE /api/admin/warp/keys/{id} - revoke an enrollment key AND
+// disconnect whatever it already enrolled.
+//
+// Marking the key revoked alone would only block the next enroll: an established
+// WireGuard tunnel carries no memory of the key that created it and would keep
+// forwarding indefinitely. So the peers are dropped from every leader of their
+// region as well, which is what makes this an actual kill switch.
+func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid key id", http.StatusBadRequest)
+		return
+	}
+	key, err := h.state.Store.GetWarpAPIKeyByID(id)
+	if err != nil || key == nil {
+		sendJSONError(w, "Key not found", http.StatusNotFound)
+		return
+	}
+	// Tenant link kits have their own teardown (routes + Redis ACL); routing one
+	// through here would revoke the key and leave those behind.
+	if key.OwnerID != "" {
+		sendJSONError(w, "This is a tenant link kit — revoke it from Protected Addresses", http.StatusBadRequest)
+		return
+	}
+	if derr := h.state.Store.RevokeWarpAPIKeyByID(id); derr != nil {
+		sendJSONError(w, "Failed to revoke key", http.StatusInternalServerError)
+		return
+	}
+	removed := 0
+	if h.svc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		removed = h.svc.DisconnectKeyPeers(ctx, id)
+	}
+	log.Printf("warp: revoked enrollment key %d (%s), disconnected %d peer(s)", id, key.Name, removed)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "disconnected": removed})
 }
 
 // MintLinkKit (tenant) creates a route-only "link kit": a warp enrollment key

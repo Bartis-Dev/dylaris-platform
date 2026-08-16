@@ -96,7 +96,7 @@ func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
 // existing three.
 func validBackupProvider(p string) bool {
 	switch p {
-	case "local", "shared", "s3", "node-local", "core-storage":
+	case "local", "shared", "s3", "node-local", "core-storage", "connection":
 		return true
 	}
 	return false
@@ -114,7 +114,7 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validBackupProvider(req.Provider) {
-		sendJSONError(w, "invalid provider (expected shared, s3, node-local or core-storage)", 400)
+		sendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
 	}
 	id, err := h.state.Store.CreateBackupStorage(&req)
@@ -143,7 +143,7 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ID = id
 	if !validBackupProvider(req.Provider) {
-		sendJSONError(w, "invalid provider (expected shared, s3, node-local or core-storage)", 400)
+		sendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
 	}
 	// The panel edits with the secret redacted, so an update normally carries no
@@ -644,6 +644,7 @@ func (h *BackupHandler) backupDeps() backupstorage.Deps {
 		Registry:    h.state.GRPCRegistry,
 		NodeStore:   h.state.Store,
 		CoreStorage: h.state.CoreStorageBackupBuilder(),
+		Connection:  h.state.ConnectionBackupBuilder(),
 	}
 }
 
@@ -662,6 +663,39 @@ func (s *AppState) CoreStorageBackupBuilder() func(subPrefix string) (backupstor
 		prov, err := s.buildCoreStorageProvider(subPrefix)
 		if err != nil {
 			return nil, err
+		}
+		return storage.NewCoreStorageBackupAdapter(prov), nil
+	}
+}
+
+// ConnectionBackupBuilder returns the closure that opens a saved storage
+// connection as a backup backend, scoped to prefix. Exported for the same
+// reason as CoreStorageBackupBuilder: the scheduler lives in package services
+// and is wired from main.go, and without this every "connection" job would be
+// refused by backupstorage.Open.
+//
+// Resolves PER CALL. That is the entire benefit of referencing a connection
+// rather than copying its keys into the backup row: rotating the credential in
+// one place takes effect everywhere, with no stale copy left behind.
+func (s *AppState) ConnectionBackupBuilder() func(connectionID int, prefix string) (backupstorage.Storage, error) {
+	return func(connectionID int, prefix string) (backupstorage.Storage, error) {
+		if s.Store == nil {
+			return nil, fmt.Errorf("storage connection %d: no store", connectionID)
+		}
+		conn, err := s.Store.GetStorageConnection(connectionID)
+		if err != nil {
+			return nil, fmt.Errorf("storage connection %d could not be loaded: %w", connectionID, err)
+		}
+		cfg := coreStorageConfigFromConnection(conn)
+		if err := validateCoreStorageConfig(cfg); err != nil {
+			return nil, fmt.Errorf("storage connection %q is not usable: %w", conn.Name, err)
+		}
+		// Same provider construction Core file storage uses, so a connection
+		// behaves identically whichever subsystem points at it - including the
+		// connection's own prefix, which nests ABOVE the backup prefix.
+		prov, err := newStorageProviderForConfig(cfg, prefix, s.StorageGate, s.StorageS3)
+		if err != nil {
+			return nil, fmt.Errorf("storage connection %q: %w", conn.Name, err)
 		}
 		return storage.NewCoreStorageBackupAdapter(prov), nil
 	}

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -103,6 +104,19 @@ func normalizeDNSName(s string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), ".")
 }
 
+// publishableIP reports whether an advertised address may be written into
+// public DNS. Containers self-detect their address, and inside Swarm the
+// outbound interface is the docker_gwbridge (172.18.0.0/16) - a relay that
+// advertises it would have the DNS updater publish a private address to the
+// world. Reuses the SSRF classifier: everything it blocks (loopback, RFC1918,
+// CGNAT, link-local, multicast, unspecified) is equally unpublishable here.
+// Filtering the advert also makes the reconciler DELETE an already-written bad
+// record, because the name simply goes unadvertised.
+func publishableIP(s string) bool {
+	ip := net.ParseIP(strings.TrimSpace(s))
+	return ip != nil && !isDisallowedIP(ip)
+}
+
 // BuildDNSPlan derives the desired records from the live edges, the live beam
 // relays, the operator's per-region name selection, and the managed zones.
 //
@@ -126,7 +140,7 @@ func BuildDNSPlan(edges []GatewayEdgeInfo, relays []RelayAdvert, regionNames map
 			continue
 		}
 		ip := strings.TrimSpace(e.IP)
-		if ip == "" {
+		if !publishableIP(ip) {
 			continue
 		}
 		region := normalizeDNSName(e.Region)
@@ -196,7 +210,7 @@ func addRelayNames(plan *DNSPlan, relays []RelayAdvert, zones []string) {
 	for _, r := range relays {
 		name := normalizeDNSName(r.Name)
 		ip := strings.TrimSpace(r.IP)
-		if name == "" || ip == "" {
+		if name == "" || !publishableIP(ip) {
 			continue
 		}
 		if _, ok := byName[name]; !ok {

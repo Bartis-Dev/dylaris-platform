@@ -14,7 +14,8 @@ export type DnsRecordType = 'A' | 'CNAME';
 // Per-record verdict. ok = resolves to an expected target; mismatch = resolves
 // but to the wrong value; missing = no record at all; unresolved = lookup
 // failed / target itself doesn't resolve (e.g. CNAME target, panel origin).
-export type DnsRecordStatus = 'ok' | 'mismatch' | 'missing' | 'unresolved';
+// 'info' = advisory row, nothing to fix (e.g. the optional player-base record).
+export type DnsRecordStatus = 'ok' | 'mismatch' | 'missing' | 'unresolved' | 'info';
 
 export interface DnsRecord {
     category: DnsRecordCategory;

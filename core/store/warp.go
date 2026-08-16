@@ -62,6 +62,62 @@ func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, er
 	return out, rows.Err()
 }
 
+// ListWarpAPIKeys returns every ADMIN-minted enrollment key (owner_id IS NULL),
+// including revoked ones, newest first - the panel's external-node inventory.
+// Tenant link kits are deliberately excluded: those are listed per-owner as
+// "Protected Addresses" and revoking them takes the full route/ACL teardown,
+// not the plain key revoke this list feeds.
+func (s *PostgresStore) ListWarpAPIKeys() ([]WarpAPIKey, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
+		       COALESCE(owner_id::text,''), revoked_at, created_at
+		FROM warp_api_keys
+		WHERE owner_id IS NULL
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpAPIKey
+	for rows.Next() {
+		var k WarpAPIKey
+		var fixedIP, nodeID, region, owner sql.NullString
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// GetWarpAPIKeyByID fetches one key regardless of owner or revocation state.
+func (s *PostgresStore) GetWarpAPIKeyByID(id int) (*WarpAPIKey, error) {
+	var k WarpAPIKey
+	var fixedIP, nodeID, region, owner sql.NullString
+	err := s.db.QueryRow(`
+		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
+		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
+		       COALESCE(owner_id::text,''), revoked_at, created_at
+		FROM warp_api_keys WHERE id = $1`, id).
+		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
+			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
+	return &k, nil
+}
+
+// RevokeWarpAPIKeyByID marks one key revoked (idempotent). Blocking future
+// enrolls only; disconnecting its live peers is the WarpService's job.
+func (s *PostgresStore) RevokeWarpAPIKeyByID(id int) error {
+	_, err := s.db.Exec(`UPDATE warp_api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, id)
+	return err
+}
+
 // ListLinkKitsForACLReconcile returns the non-revoked route-only link kits the
 // ACL reconciler should keep provisioned: every link EXCEPT those whose owner is
 // hard-suspended (suspended and past the enforcement grace). hardSuspendedBefore

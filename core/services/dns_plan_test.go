@@ -402,3 +402,42 @@ func TestDNSPlanAdvertisedNames(t *testing.T) {
 		t.Errorf("AdvertisedNames() = %v", got)
 	}
 }
+
+// A self-detected container address must never reach public DNS. Inside Swarm a
+// relay's outbound interface is the docker_gwbridge (172.18.0.0/16), and before
+// this guard the updater published exactly that for beam.<zone>. Filtering the
+// advert (rather than erroring) also means an already-written bad record goes
+// unadvertised and is deleted by the reconciler on its own.
+func TestBuildDNSPlan_PrivateAddressesAreNotPublishable(t *testing.T) {
+	edges := []GatewayEdgeInfo{
+		onlineEdge("e1", "eu", "172.18.0.6", "*.eu.dylaris.com"), // gwbridge
+		onlineEdge("e2", "eu", "94.130.98.3", "*.eu.dylaris.com"),
+	}
+	relays := []RelayAdvert{
+		{Name: "beam.dylaris.com", IP: "172.18.0.6"},  // gwbridge
+		{Name: "beam.dylaris.com", IP: "10.20.0.14"},  // overlay
+		{Name: "beam.dylaris.com", IP: "100.72.1.9"},  // CGNAT
+		{Name: "beam.dylaris.com", IP: "not-an-ip"},
+		{Name: "beam.dylaris.com", IP: "94.130.98.3"},
+	}
+	plan := BuildDNSPlan(edges, relays, nil, []string{"dylaris.com"})
+
+	if len(plan.Names) != 2 {
+		t.Fatalf("Names = %+v, want wildcard + relay name", plan.Names)
+	}
+	for _, n := range plan.Names {
+		if !reflect.DeepEqual(n.IPs, []string{"94.130.98.3"}) {
+			t.Errorf("%s IPs = %v, want only the public address", n.Name, n.IPs)
+		}
+	}
+}
+
+// A relay whose ONLY addresses are private disappears from the plan entirely -
+// that is the deletion path for a record that was already written wrong.
+func TestBuildDNSPlan_RelayWithOnlyPrivateAddressesIsDropped(t *testing.T) {
+	relays := []RelayAdvert{{Name: "beam.dylaris.com", IP: "172.18.0.6"}}
+	plan := BuildDNSPlan(nil, relays, nil, []string{"dylaris.com"})
+	if len(plan.Names) != 0 {
+		t.Fatalf("Names = %+v, want none", plan.Names)
+	}
+}

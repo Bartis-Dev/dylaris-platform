@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle,
+    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2,
 } from 'lucide-react';
 import {
     BackupStorage,
@@ -10,6 +10,8 @@ import {
     BackupProvider,
     listBackupStorages, createBackupStorage, updateBackupStorage, deleteBackupStorage, testBackupStorage,
     getBackupConfig, saveBackupConfig,
+    listStorageConnections,
+    type StorageConnection, type BackupConnectionConfig,
 } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -236,6 +238,15 @@ export default function BackupsTab() {
         setLoading(false);
     }, []);
 
+    // Saved storage connections, so a backup target can reference one instead of
+    // repeating its credentials. Non-fatal if it fails: the other providers work.
+    const [connections, setConnections] = useState<StorageConnection[]>([]);
+    useEffect(() => {
+        listStorageConnections().then(res => {
+            if (res.success && res.connections) setConnections(res.connections);
+        }).catch(() => { });
+    }, []);
+
     useEffect(() => { reload(); }, [reload]);
 
     const handleNew = (mode: BackupConfig['mode']) => {
@@ -362,9 +373,26 @@ export default function BackupsTab() {
                             </button>
                         )}
                         {activeProvider === 's3' && (
-                            <button onClick={() => handleNew('s3')} className="btn btn-primary btn-sm">
-                                <Cloud size={12} /> Add S3
-                            </button>
+                            <>
+                                <button onClick={() => handleNew('s3')} className="btn btn-primary btn-sm">
+                                    <Cloud size={12} /> Add S3
+                                </button>
+                                {connections.length > 0 && (
+                                    <button
+                                        onClick={() => setEditing({
+                                            id: 0,
+                                            name: connections[0].name + ' backups',
+                                            provider: 'connection',
+                                            config: { connectionId: connections[0].id, prefix: 'server-backups' } as unknown as Record<string, unknown>,
+                                            isDefault: storages.length === 0,
+                                        })}
+                                        className="btn btn-secondary btn-sm"
+                                        title="Reuse a saved storage connection instead of entering credentials again"
+                                    >
+                                        <Link2 size={12} /> Use Connection
+                                    </button>
+                                )}
+                            </>
                         )}
                         {activeProvider === 'node-local' && (
                             <button onClick={() => handleNew('node-local')} className="btn btn-primary btn-sm">
@@ -382,7 +410,9 @@ export default function BackupsTab() {
                             <div key={s.id} className="space-y-1.5">
                                 <div className="flex items-center justify-between gap-3 bg-(--base-03) border border-(--base-04) rounded-md px-3 py-2.5">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        {s.provider === 's3'
+                                        {s.provider === 'connection'
+                                            ? <Link2 size={16} className="text-(--accent-light) shrink-0" />
+                                            : s.provider === 's3'
                                             ? <Cloud size={16} className="text-(--accent-light) shrink-0" />
                                             : s.provider === 'node-local'
                                                 ? <Server size={16} className="text-(--primary-light) shrink-0" />
@@ -454,6 +484,48 @@ export default function BackupsTab() {
                                 <div className="alert alert-info text-xs">
                                     Node-local stores have no per-instance config — backups live inside each server's container folder on whichever Node hosts it. This row exists so the rest of the system can reference a storage id; you can name it whatever helps you tell instances apart.
                                 </div>
+                            )}
+
+                            {editing.provider === 'connection' && (
+                                <>
+                                    <div className="form-group">
+                                        <label className="input-label">Storage Connection</label>
+                                        <select
+                                            className="input-field"
+                                            value={(editing.config as unknown as BackupConnectionConfig).connectionId || 0}
+                                            onChange={e => setEditing({
+                                                ...editing,
+                                                config: { ...(editing.config as object), connectionId: Number(e.target.value) },
+                                            })}
+                                        >
+                                            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                        <p className="text-xs text-(--base-06)">
+                                            Credentials come from the connection, so rotating them there updates every
+                                            subsystem that uses it. Nothing is copied into this backup target.
+                                        </p>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="input-label">Prefix</label>
+                                        <input
+                                            type="text"
+                                            value={(editing.config as unknown as BackupConnectionConfig).prefix ?? ''}
+                                            onChange={e => setEditing({
+                                                ...editing,
+                                                config: { ...(editing.config as object), prefix: e.target.value },
+                                            })}
+                                            className="input-field font-mono"
+                                            placeholder="server-backups"
+                                        />
+                                        <p className="text-xs text-(--base-06)">
+                                            Key prefix inside the bucket. Defaults to <span className="font-mono">server-backups</span>.
+                                            Keep it distinct from what other subsystems write (Core file storage uses
+                                            <span className="font-mono"> library/</span>, <span className="font-mono">modpacks/</span>,
+                                            <span className="font-mono"> ticket-attachments/</span>) so one bucket can hold
+                                            all of them without their lifecycle rules or quotas overlapping.
+                                        </p>
+                                    </div>
+                                </>
                             )}
 
                             {editing.provider === 's3' && (

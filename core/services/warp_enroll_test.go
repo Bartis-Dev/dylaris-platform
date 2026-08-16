@@ -57,6 +57,19 @@ func (f *fakeWarpStore) ListWarpPeersByRegion(region string) ([]store.WarpPeer, 
 	}
 	return out, nil
 }
+func (f *fakeWarpStore) ListWarpPeersByKey(apiKeyID int) ([]store.WarpPeer, error) {
+	var out []store.WarpPeer
+	for _, p := range f.peers {
+		if p.APIKeyID == apiKeyID {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+func (f *fakeWarpStore) DeleteWarpPeerByPubkey(pubkey string) error {
+	delete(f.peers, pubkey)
+	return nil
+}
 func (f *fakeWarpStore) CountWarpPeersByRegion() (map[string]int, error) {
 	out := map[string]int{}
 	for _, p := range f.peers {

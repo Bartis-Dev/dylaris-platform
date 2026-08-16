@@ -22,6 +22,8 @@ import (
 // store.Store and by test fakes).
 type warpStore interface {
 	GetWarpPeerByPubkey(pubkey string) (*store.WarpPeer, error)
+	ListWarpPeersByKey(apiKeyID int) ([]store.WarpPeer, error)
+	DeleteWarpPeerByPubkey(pubkey string) error
 	ListWarpPeersByRegion(region string) ([]store.WarpPeer, error)
 	CountWarpPeersByRegion() (map[string]int, error)
 	EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedIP, region string, allocIP func(taken map[string]bool) (string, error)) (wgIP string, evicted string, err error)
@@ -464,6 +466,35 @@ func (s *WarpService) Assignment(ctx context.Context, key store.WarpAPIKey, pubk
 		return EnrollResult{}, ErrWarpPeerNotFound
 	}
 	return s.buildResult(ctx, peer.Region, peer.WGIP, peer.AssignedLeader)
+}
+
+// DisconnectKeyPeers removes every peer enrolled under one API key: the WG peer
+// is dropped from each leader of its region and the row is deleted.
+//
+// Revoking a key alone only blocks the NEXT enroll - an already-established
+// tunnel keeps forwarding, because WireGuard has no notion of the key that
+// created it. Without this, "revoke" in the panel would leave a live overlay
+// member behind and read as a security control that is not one.
+//
+// Best-effort per peer and per leader: a leader that is down misses the command
+// but converges on its next resync, which rebuilds the peer set from the DB
+// rows this function has already deleted. Returns how many peers were removed.
+func (s *WarpService) DisconnectKeyPeers(ctx context.Context, keyID int) int {
+	peers, err := s.warp.ListWarpPeersByKey(keyID)
+	if err != nil {
+		log.Printf("warp: list peers for key %d: %v", keyID, err)
+		return 0
+	}
+	removed := 0
+	for _, p := range peers {
+		s.pushToRegion(ctx, p.Region, map[string]interface{}{"type": "remove_peer", "pubkey": p.Pubkey})
+		if derr := s.warp.DeleteWarpPeerByPubkey(p.Pubkey); derr != nil {
+			log.Printf("warp: delete peer %s: %v", p.Pubkey, derr)
+			continue
+		}
+		removed++
+	}
+	return removed
 }
 
 // --- Resync ---

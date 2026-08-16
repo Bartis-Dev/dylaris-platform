@@ -70,10 +70,17 @@ func TestDecodeFleetPlacement(t *testing.T) {
 		wantOrder []string
 	}{
 		{"a stored policy", `{"mode":"manual","order":["/a","/b"]}`, storageplacement.ModeManual, []string{"/a", "/b"}},
-		{"empty value is auto", "", storageplacement.ModeAuto, nil},
+		// Order is EMPTY, never nil: a nil slice marshals to JSON null, and the
+		// panel feeds this straight into array operations. A fresh deploy with
+		// nothing stored took the whole Placement tab down on null.filter, so
+		// the non-nil empty slice is the contract, not an implementation detail.
+		{"empty value is auto with an empty order", "", storageplacement.ModeAuto, []string{}},
 		// An unreadable default must not stop a server from being placed; it
 		// just stops expressing a preference.
-		{"malformed json is auto", `{not json`, storageplacement.ModeAuto, nil},
+		{"malformed json is auto with an empty order", `{not json`, storageplacement.ModeAuto, []string{}},
+		// Stored JSON without an "order" key decodes to a nil slice; it must be
+		// normalised for the same reason.
+		{"a stored policy with no order key", `{"mode":"manual"}`, storageplacement.ModeManual, []string{}},
 		// An unknown mode normalises rather than being rejected, matching what
 		// the node does with the same value.
 		{"an unknown mode normalises to auto", `{"mode":"sideways","order":["/a"]}`, storageplacement.ModeAuto, []string{"/a"}},

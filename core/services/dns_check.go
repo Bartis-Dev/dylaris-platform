@@ -126,9 +126,18 @@ func RunDNSCheck(ctx context.Context, rdb *redis.Client, cfg DNSCheckConfig) DNS
 			continue
 		}
 
-		// Player base: A <base> -> edge IP.
-		result.Records = append(result.Records,
-			checkAgainstEdges(ctx, resolver, "player", base, base, edgeIPs))
+		// Player base: A <base> -> edge IP. INFORMATIONAL only: players always
+		// connect to <sub>.<base> (a route's subdomain is mandatory, and a custom
+		// domain equal to a hoster base is rejected), so the bare base is never a
+		// player address. Grading it "mismatch" sent operators chasing a record
+		// that nothing needs - a base legitimately pointing at a website, or not
+		// existing at all, is fine. Only the wildcard row is load-bearing.
+		baseRec := checkAgainstEdges(ctx, resolver, "player", base, base, edgeIPs)
+		if baseRec.Status == "mismatch" || baseRec.Status == "unresolved" {
+			baseRec.Status = "info"
+			baseRec.Hint = "Optional: players connect to subdomains (covered by the wildcard record below), never to the bare base domain. Pointing it somewhere else (e.g. a website) or leaving it unset is fine."
+		}
+		result.Records = append(result.Records, baseRec)
 
 		// Wildcard: A *.<base> -> edge IP. You can't query "*.base" directly;
 		// a wildcard A record answers ANY subdomain, so we resolve a synthetic

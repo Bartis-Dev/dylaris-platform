@@ -22,9 +22,14 @@ interface Props {
  * resolution the node applies is the point - otherwise the admin edits a list
  * that does not match where servers actually land.
  */
-export function effectiveOrder(paths: string[], order: string[]): string[] {
+export function effectiveOrder(paths: string[], order: string[] | null | undefined): string[] {
+  // Go marshals a nil slice as JSON null, and a fresh deploy has no saved
+  // order - null.filter here took down the entire Placement tab. This is the
+  // single choke point both the fleet and the per-node form pass through, so
+  // tolerate it here rather than at every call site.
+  const safe = order ?? [];
   const known = new Set(paths);
-  const listed = order.filter((p, i) => known.has(p) && order.indexOf(p) === i);
+  const listed = safe.filter((p, i) => known.has(p) && safe.indexOf(p) === i);
   return [...listed, ...paths.filter((p) => !listed.includes(p))];
 }
 
