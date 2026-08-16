@@ -201,6 +201,9 @@ type GatewaySettings struct {
 	Limits               GatewayLimits  `json:"limits"`
 	HosterDomains        []HosterDomain `json:"hosterDomains"`
 	CustomDomainsEnabled bool           `json:"customDomainsEnabled"`
+	// CnameTarget is a single DNS LABEL (e.g. "route"), not a full domain. It is
+	// expanded per hoster domain into route.<base>, so one setting covers every
+	// region: a user picks whichever base matches the region they want.
 	CnameTarget          string         `json:"cnameTarget"`
 	// BlockedRoutePrefixes are leftmost labels users may not register as a route
 	// (e.g. "admin", "dylaris"). Applies to the hoster-subdomain picker and the
@@ -211,9 +214,13 @@ type GatewaySettings struct {
 
 // defaultBlockedRoutePrefixes seeds a protective reserved list when the admin has
 // never saved one. Once saved (even empty), the admin's list wins.
+// "route" is reserved because it is the default custom-domain CNAME label: a
+// user who claimed route.<base> would take over the very name other users are
+// told to point their own domains at.
 var defaultBlockedRoutePrefixes = []string{
 	"admin", "dylaris", "app", "api", "www", "panel", "gateway", "edge", "hub",
 	"link", "warp", "beam", "mail", "ns", "status", "support", "staff", "system", "root",
+	"route",
 }
 
 type GatewayLimits struct {
@@ -359,6 +366,16 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	}
 	hostersJSON, _ := json.Marshal(cleaned)
 
+	// The CNAME target is a LABEL, not a domain: it is prefixed onto each hoster
+	// base. Reject a full domain outright rather than silently building
+	// "route.eu.example.com.eu.example.com", which would resolve nowhere and
+	// only surface as a customer whose CNAME never works.
+	cnameLabel := strings.ToLower(strings.TrimSpace(req.CnameTarget))
+	if cnameLabel != "" && !subRegexDNS.MatchString(cnameLabel) {
+		sendJSONError(w, "CNAME target must be a single label such as \"route\", not a full domain — it is combined with each hoster domain automatically", http.StatusBadRequest)
+		return
+	}
+
 	// Normalize the reserved-prefix list: lowercase, trimmed, deduped, non-empty.
 	blockedSeen := map[string]bool{}
 	blocked := make([]string, 0, len(req.BlockedRoutePrefixes))
@@ -377,7 +394,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		{"gateway_port_mc_enabled", fmt.Sprintf("%t", req.Limits.PortMcEnabled)},
 		{"gateway_hoster_domains", string(hostersJSON)},
 		{"gateway_custom_domains_enabled", fmt.Sprintf("%t", req.CustomDomainsEnabled)},
-		{"gateway_cname_target", strings.TrimSpace(req.CnameTarget)},
+		{"gateway_cname_target", cnameLabel},
 		{"gateway_blocked_route_prefixes", string(blockedJSON)},
 	}
 	for _, p := range portSettings {

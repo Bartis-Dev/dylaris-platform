@@ -139,11 +139,21 @@ func RunDNSCheck(ctx context.Context, rdb *redis.Client, cfg DNSCheckConfig) DNS
 		result.Records = append(result.Records, rec)
 	}
 
-	// --- Custom-domain CNAME target (only when custom domains are enabled). ---
+	// --- Custom-domain CNAME targets: one per hoster base. ---
+	// CNAMETarget is a LABEL ("route"), expanded to route.<base> for every
+	// hoster domain, so each region gets its own target and a customer points
+	// their domain at the region they actually want.
 	if cfg.CustomDomainsOn && cfg.CNAMETarget != "" {
-		target := strings.ToLower(strings.TrimSpace(cfg.CNAMETarget))
-		result.Records = append(result.Records,
-			checkAgainstEdges(ctx, resolver, "cname", target, target, edgeIPs))
+		label := strings.ToLower(strings.TrimSpace(cfg.CNAMETarget))
+		for _, base := range cfg.HosterDomains {
+			base = strings.ToLower(strings.TrimSpace(base))
+			if base == "" {
+				continue
+			}
+			fqdn := label + "." + base
+			result.Records = append(result.Records,
+				checkAgainstEdges(ctx, resolver, "cname", fqdn, fqdn, edgeIPs))
+		}
 	}
 
 	// --- Reachability: TCP-dial the MC ingress on each edge + the panel. ---

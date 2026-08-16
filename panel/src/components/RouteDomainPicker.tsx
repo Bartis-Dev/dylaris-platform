@@ -11,6 +11,7 @@ import {
     getGatewayRouteOptions,
 } from '@/lib/api';
 import { AlertCircle, Check, Globe, Loader2, X } from 'lucide-react';
+import { cnameTargetsFor } from '@/lib/cnameTargets';
 
 // Availability state surfaced to the parent so it can disable submit when
 // the picker is mid-check or has landed on a taken domain.
@@ -194,6 +195,9 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
     }
 
     const hosters = opts.hosterDomains || [];
+    // One CNAME target per hoster base: the admin configures a single label and
+    // the user picks the region they want to be routed through.
+    const cnameTargets = cnameTargetsFor(opts.cnameTarget || '', hosters);
     const showHosterMode = hosters.length > 0;
     const showCustomMode = opts.customDomainsEnabled;
 
@@ -292,14 +296,30 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                         </div>
                         {portChildren}
                     </div>
-                    {opts.cnameTarget && (
+                    {cnameTargets.length > 0 && (
                         <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--accent)/5 border border-(--accent)/20 text-xs">
                             <AlertCircle size={12} className="text-(--accent-light) shrink-0 mt-0.5" />
-                            <span className="text-(--base-07)">
-                                Set a CNAME record on your domain pointing to{' '}
-                                <code className="font-mono text-(--accent-light) bg-(--base-02) px-1.5 py-0.5 rounded">{opts.cnameTarget}</code>
-                                {' '}before saving — otherwise the route will not resolve.
-                            </span>
+                            <div className="text-(--base-07) flex flex-col gap-1.5">
+                                {cnameTargets.length === 1 ? (
+                                    <span>
+                                        Set a CNAME record on your domain pointing to{' '}
+                                        <code className="font-mono text-(--accent-light) bg-(--base-02) px-1.5 py-0.5 rounded">{cnameTargets[0]}</code>
+                                        {' '}before saving — otherwise the route will not resolve.
+                                    </span>
+                                ) : (
+                                    <>
+                                        <span>
+                                            Set a CNAME record on your domain before saving, pointing at the region you
+                                            want to play in — otherwise the route will not resolve. Pick one:
+                                        </span>
+                                        <div className="flex flex-col gap-1">
+                                            {cnameTargets.map(t => (
+                                                <code key={t} className="font-mono text-(--accent-light) bg-(--base-02) px-1.5 py-0.5 rounded w-fit">{t}</code>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

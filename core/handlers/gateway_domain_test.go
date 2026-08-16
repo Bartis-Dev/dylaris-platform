@@ -353,3 +353,46 @@ func TestIsSnapshotFetchHostAllowed(t *testing.T) {
 		}
 	})
 }
+
+// TestCnameLabelValidation pins that the custom-domain CNAME setting is a single
+// DNS LABEL, not a full domain. It is prefixed onto every hoster base, so a
+// value like "route.eu.example.com" would silently build
+// "route.eu.example.com.eu.example.com" - a name that resolves nowhere and only
+// surfaces as a customer whose CNAME never works. Save-side validation uses the
+// same subRegexDNS the subdomain picker uses, so this pins the shared contract.
+func TestCnameLabelValidation(t *testing.T) {
+	valid := []string{"route", "connect", "mc", "r", "play-here", "a1"}
+	for _, v := range valid {
+		if !subRegexDNS.MatchString(v) {
+			t.Errorf("label %q should be accepted as a CNAME label", v)
+		}
+	}
+
+	invalid := []string{
+		"route.eu.example.com", // the whole point: a full domain is rejected
+		"route.eu",
+		".route",
+		"route.",
+		"-route",  // a DNS label may not start with a hyphen
+		"route-",  // ...nor end with one
+		"ROUTE",   // callers lowercase first; the raw form must not slip through
+		"ro ute",
+		"route_1",
+	}
+	for _, v := range invalid {
+		if subRegexDNS.MatchString(v) {
+			t.Errorf("label %q should be rejected as a CNAME label", v)
+		}
+	}
+}
+
+// TestRouteIsReservedByDefault pins that "route" cannot be claimed as a user
+// subdomain. It is the default CNAME label, so a user holding route.<base>
+// would hijack the exact name every other user is told to point their own
+// domain at.
+func TestRouteIsReservedByDefault(t *testing.T) {
+	h := newGatewayDomainHandler(nil)
+	if !h.loadBlockedRoutePrefixes()["route"] {
+		t.Fatal("'route' must be in the default reserved-prefix list")
+	}
+}

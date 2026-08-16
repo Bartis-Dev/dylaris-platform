@@ -17,6 +17,7 @@ import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/comp
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import { useAppData } from '@/lib/AppDataContext';
 import { useBusy } from '@/lib/useBusy';
+import { cnameTargetsFor } from '@/lib/cnameTargets';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -311,6 +312,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         cnameTarget: '',
         blockedRoutePrefixes: [],
     });
+    // Preview of what users will actually be told to point their domain at:
+    // the label combined with every hoster base, one target per region.
+    const cnameTargets = cnameTargetsFor(settings.cnameTarget, settings.hosterDomains);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -682,15 +686,35 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     </div>
                     {settings.customDomainsEnabled && (
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">CNAME Target</label>
+                            <label className="input-label">CNAME Label</label>
                             <input
                                 type="text"
                                 value={settings.cnameTarget}
-                                onChange={e => setSettings(prev => ({ ...prev, cnameTarget: e.target.value }))}
-                                placeholder="route.dylaris.com"
+                                onChange={e => setSettings(prev => ({ ...prev, cnameTarget: e.target.value.toLowerCase() }))}
+                                placeholder="route"
                                 className="input-field input-mono text-sm"
                             />
-                            <p className="text-xs text-(--base-06)">Shown to users as the CNAME record they need to point their domain at.</p>
+                            <p className="text-xs text-(--base-06)">
+                                A single label, not a full domain. It is combined with every hoster domain above, so one
+                                entry covers all regions and each user picks the target for the region they want.
+                            </p>
+                            {cnameTargets.length > 0 && (
+                                <div className="mt-1 flex flex-col gap-1">
+                                    <span className="text-xs text-(--base-06)">Users will be told to point their domain at:</span>
+                                    {cnameTargets.map(t => (
+                                        <code key={t} className="font-mono text-xs text-(--accent-light) bg-(--base-02) px-1.5 py-0.5 rounded w-fit">{t}</code>
+                                    ))}
+                                    <span className="text-xs text-(--base-06)">
+                                        Each of these needs its own A record pointing at that region&apos;s edge IPs. The
+                                        wildcard does not cover them.
+                                    </span>
+                                </div>
+                            )}
+                            {settings.cnameTarget.trim() !== '' && settings.hosterDomains.length === 0 && (
+                                <span className="text-xs text-(--warning-light)">
+                                    Add a hoster domain above — without one there is nothing to combine this label with.
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>
