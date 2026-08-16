@@ -102,7 +102,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			nodes[i].UnusableReason = "requires_gateway"
 		}
 		// A node with no region was booted with only a CLUSTER_SECRET (no
-		// DYLARIS_REGION) and never adopted — flag it so the panel can prompt
+		// NODE_REGION) and never adopted — flag it so the panel can prompt
 		// an admin to configure name/region/tags.
 		if nodes[i].Region == "" {
 			nodes[i].NeedsConfiguration = true

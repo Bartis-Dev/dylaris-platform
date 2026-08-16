@@ -195,10 +195,12 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 // MintLinkKit (tenant) creates a route-only "link kit": a warp enrollment key
 // bound to the calling user plus an auto-generated link identity (node_id). The
 // customer runs warp (joins the overlay) + link (tunnels their LOCAL server out
-// through warp) — no managed node. Returns the plaintext warp key, the link
-// identity and the DERIVED link token ONCE. The customer sets the link token as
-// the link's AGENT_SECRET, so the cluster secret never leaves Core (a tenant must
-// never be able to derive another tenant's link token).
+// through warp) — no managed node. Returns the plaintext warp key and the link
+// identity ONCE; it does NOT return the link token. That same key doubles as the
+// link's LINK_BOOT_KEY: the link exchanges it at /api/warp/link-boot for its
+// derived token at boot, so the token never travels with the kit and the cluster
+// secret never leaves Core (a tenant must never be able to derive another
+// tenant's link token).
 func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	if !byonActive(h.state, r) {
 		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"dylaris-core/config"
 	"fmt"
@@ -33,11 +34,54 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 
 	useTimescale := config.UsesTimescale(cfg.DBType)
 	log.Printf("DB_TYPE=%s (server_stats: %s)", cfg.DBType, map[bool]string{true: "TimescaleDB hypertable + native retention", false: "plain table + hourly retention sweep"}[useTimescale])
-	if err := ensureSchema(db, useTimescale); err != nil {
+	if err := ensureSchemaExclusive(db, useTimescale); err != nil {
 		return nil, err
 	}
 
 	return db, nil
+}
+
+// schemaLockKey is the advisory-lock id every Core replica serialises schema
+// creation on. Arbitrary but fixed: only Core uses it.
+const schemaLockKey int64 = 0x44594C41 // "DYLA"
+
+// ensureSchemaExclusive runs ensureSchema while holding a Postgres advisory
+// lock, so replicas booting at the same time apply the schema one after another.
+//
+// The individual statements are idempotent, but idempotent is not the same as
+// concurrency-safe: two sessions running CREATE TABLE IF NOT EXISTS for the same
+// table at the same time can still fail on pg_type's unique index, because the
+// existence check and the insert are not atomic against each other. That turns a
+// `deploy: mode: global` Core into a boot crash-loop on first deploy, which then
+// "fixes itself" on retry - the worst kind of bug to diagnose.
+//
+// The lock is session-scoped and released automatically if the connection dies,
+// so a Core that is killed mid-migration cannot wedge the others permanently.
+func ensureSchemaExclusive(db *sql.DB, useTimescale bool) error {
+	ctx := context.Background()
+	// Lock and unlock must run on the SAME session, so pin one connection
+	// instead of letting the pool hand out a different one.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("schema lock: acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	// Bounded wait: a healthy peer finishes in seconds, so a multi-minute block
+	// means something is wrong and a loud failure beats hanging the boot.
+	if _, err := conn.ExecContext(ctx, `SET lock_timeout = '180s'`); err != nil {
+		return fmt.Errorf("schema lock: set lock_timeout: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, schemaLockKey); err != nil {
+		return fmt.Errorf("schema lock: acquire (another Core may be migrating): %w", err)
+	}
+	defer func() {
+		if _, uerr := conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, schemaLockKey); uerr != nil {
+			log.Printf("schema lock: release failed (freed on disconnect anyway): %v", uerr)
+		}
+	}()
+
+	return ensureSchema(db, useTimescale)
 }
 
 // pingWithRetry blocks until the database answers or the attempt budget
