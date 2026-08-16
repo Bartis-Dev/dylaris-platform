@@ -67,6 +67,27 @@ Everything is self-hosted: your servers, your data, your infrastructure.
 - **Warp** - pull external/home nodes behind NAT into the swarm over an encrypted WireGuard tunnel, and run servers on them as if they were in your DC. See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
 - **Optional Gateway stack** — public ingress/proxy (edge), hub and link services for routing player traffic without exposing node IPs. Lives in a separate repo (`dylaris-gateway`).
 
+### Solder API (Technic Launcher)
+
+Core serves a Solder-compatible API for the Technic Launcher: a PUBLIC,
+UNAUTHENTICATED route tree at `/solder/api/...` plus a mod/loader-zip mirror at
+`/solder/mirror/...`, both on the Core port (`core/routes.go`). These bypass the
+setup-lock, maintenance, and auth middleware by design — the launcher must reach
+published packs at all times — and gate the modpacks feature in-handler instead.
+
+The `solder_delivery_mode` setting (default `core`) controls how mod download
+URLs are served: `core` streams through Core's own mirror route; `presigned`
+hands back short-lived signed URLs from the configured S3/R2 backend;
+`public` advertises an operator-configured external mirror URL directly. A
+read-only probe, `GET /api/admin/settings/modpacks/delivery-capabilities`,
+reports which modes the current storage backend actually supports.
+
+**Warning:** in `public` mode, a private/hidden pack's mod files still live in
+the same publicly readable bucket as public packs — Core simply avoids handing
+out that direct URL through its own API for a gated pack, but the file is not
+otherwise protected if the URL is discovered or guessed. Use `presigned` when
+private packs must stay confidential.
+
 ## Architecture
 
 DYLARIS is a small set of independently deployable services that coordinate through **Redis/Valkey** (queues, pub/sub, discovery, settings) and a **gRPC mesh** (Core ↔ Node). State lives in **TimescaleDB** (PostgreSQL 16 + time-series for stats).
@@ -436,6 +457,17 @@ region whose edges are all offline is left untouched.
 | `DYLARIS_STATS_BUFFER_MAXLEN` | `1800` | No | MaxLen of the per-server stats buffer stream (~1h at 2s). Reduce for very large fleets. |
 | `STATS_STREAM_MAXLEN` | `360` | No | MaxLen of the node system-stats stream (~3h at 30s). |
 
+#### Host-networked node (`--network host`)
+
+A node started with `--network host` (typical for a standalone BYON node with no
+Swarm overlay) behaves differently: it creates a LOCAL `dylaris_net` bridge for
+its MC containers when no overlay is found (a non-host-net node instead treats a
+missing overlay as a hard error), per-tenant network isolation is disabled (MC
+servers all stay on that shared local network), MC container addresses are
+resolved via Docker inspect instead of Docker DNS (which a host-net container
+cannot use), and disk quotas degrade to a `du`-based usage estimate instead of
+enforced project quotas.
+
 #### Shared node storage is not supported
 
 A `STORAGE_PATHS` entry must be backed by a filesystem that belongs to exactly
@@ -716,10 +748,10 @@ assets.
   missing the app cannot render its UI; install the free WebView2 runtime from
   Microsoft (the NSIS installer also fetches it when absent).
 - Auto-updates. The in-app updater covers `windows-amd64` with the same
-  fail-closed sha256 + Ed25519 verification as Linux. It stays inert until the
-  owner runs `go run ./cmd/beam-release keygen`, embeds the real public key in
-  `beam/app/update_pubkey.go`, and publishes a release that carries a
-  `windows-amd64` manifest entry.
+  fail-closed sha256 + Ed25519 verification as Linux; the real signing key is
+  already embedded in `beam/app/update_pubkey.go`. It stays inert for Windows
+  only until the owner publishes a release that carries a `windows-amd64`
+  manifest entry.
 
 ## Development
 
@@ -738,11 +770,17 @@ go work sync
 # Build the log-shipper binary baked into the MC container image (from the repo root):
 ./build_shipper.sh
 
-# Frontend
-cd panel && npm install
+# Frontend - this is an npm workspaces monorepo; the lockfile lives at the repo
+# root (root package.json declares "workspaces": ["packages/*", "panel"]), so
+# install from the root, not from panel/:
+npm install --workspaces --include-workspace-root
 cd panel && npm run dev      # dev server
 cd panel && npm run build    # production build
 ```
+
+CI (`ci.yml`) gates every build job on: the Go test matrix, **staticcheck**, a
+`-race` gate over every Go module, a `db-tests` job against a real Postgres, and
+panel `npx vitest run` - all must pass before an image is built.
 
 **Code conventions**
 
