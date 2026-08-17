@@ -8,3 +8,8 @@
 {"date":"2026-08-17","service":"core","type":"fix","summary":"The modpack on/off switch no longer exists twice: Settings -> Features owns it, Settings -> Modpacks owns storage"}
 {"date":"2026-08-17","service":"panel","type":"change","summary":"What's new is a modal now, with the latest update on top and the history below it"}
 {"date":"2026-08-17","service":"panel","type":"fix","summary":"The what's-new icon stays highlighted while entries exist and only greys out when there is nothing to show"}
+{"date":"2026-08-17","service":"core","type":"change","summary":"A rejected 2FA setup code is now logged with the reason: clock drift (and by how much) or a code from an older secret"}
+{"date":"2026-08-17","service":"panel","type":"feature","summary":"The 2FA wizard explains a rejected code and offers \"start over with a new QR\""}
+{"date":"2026-08-17","service":"panel","type":"change","summary":"The disk-quota warning now names the fix (pquota / prjquota) instead of only the problem"}
+{"date":"2026-08-17","service":"panel","type":"fix","summary":"Warp: \"when the limit is reached\" is now settable for multi-connection keys too, not just fixed ones"}
+{"date":"2026-08-17","service":"panel","type":"feature","summary":"Warp: inline help for policy, max connections and how external nodes relate to Infrastructure -> Nodes"}

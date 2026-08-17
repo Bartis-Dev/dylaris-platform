@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"dylaris-core/models"
 
@@ -103,6 +105,12 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !totp.Validate(req.Code, req.Secret) {
+		// Say WHY in the log. "Invalid code" alone left clock skew and a stale
+		// authenticator entry indistinguishable, and both are common enough that
+		// diagnosing them meant guessing. The response stays generic; only the
+		// operator's log gets the detail, and it never contains the secret or the
+		// code.
+		log.Printf("2fa setup: rejected code for user %s: %s", user.Username, diagnoseRejectedTOTP(req.Secret, req.Code, time.Now()))
 		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
 		return
 	}

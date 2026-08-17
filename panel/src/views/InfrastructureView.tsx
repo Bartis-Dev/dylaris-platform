@@ -412,7 +412,18 @@ function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
       {!cap.quotaEnforceable && (
         <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
           <AlertTriangle size={10} className="mt-0.5 shrink-0" />
-          <span>Disk limits cannot be enforced here: project quotas need xfs or ext4. Limits are recorded but nothing stops a server from exceeding them.</span>
+          {/* The remedy belongs here. The warning alone was accurate and useless:
+              the node already proved at startup which step is missing, and that
+              detail only existed in its log. */}
+          <span>
+            Disk limits cannot be enforced here, so they are recorded but nothing stops a server from
+            exceeding them. Usage is still measured (via <code className="font-mono">du</code>).
+            {' '}Project quotas need xfs mounted with <code className="font-mono">pquota</code>, or ext4 with
+            the <code className="font-mono">project</code> feature (<code className="font-mono">tune2fs -O project,quota</code>,
+            filesystem unmounted) and mounted with <code className="font-mono">prjquota</code>. The node
+            logs which of the two is missing on startup (search its log for <code className="font-mono">quota:</code>);
+            it re-checks on restart.
+          </span>
         </p>
       )}
     </div>

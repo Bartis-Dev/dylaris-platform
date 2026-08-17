@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes } from '@/lib/api/auth';
@@ -345,7 +345,15 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
   const [acknowledged, setAcknowledged] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
+  // Every call mints a FRESH secret, so the QR below and the entry in the
+  // authenticator only match as long as this is the last one fetched. That is
+  // the usual cause of "the code is invalid": an entry scanned from an earlier
+  // setup attempt keeps producing codes that can never verify. `startOver` makes
+  // the fix reachable, and the hint on the error names it.
+  const loadSecret = useCallback(() => {
+    setStep('loading');
+    setError('');
+    setCode('');
     setupTOTP().then(res => {
       if (res?.success) {
         setSecret(res.secret);
@@ -356,6 +364,10 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
       }
     });
   }, []);
+
+  useEffect(() => {
+    loadSecret();
+  }, [loadSecret]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -395,8 +407,24 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
 
         <div className="modal-body">
           {error && (
-            <div className="alert alert-error mb-3">
-              {error}
+            <div className="alert alert-error mb-3 flex-col items-start gap-2">
+              <span>{error}</span>
+              {/* Naming the usual cause here rather than in a tooltip: a
+                  rejected code almost always means the authenticator still holds
+                  an entry from an earlier open of this wizard, and no amount of
+                  retyping will ever fix that one. */}
+              {step === 'scan' && (
+                <>
+                  <span className="text-xs text-(--base-07)">
+                    The code has to come from the QR shown right now. If your app still has an older
+                    &ldquo;Dylaris&rdquo; entry from a previous attempt, delete it and scan again. A code from
+                    that entry can never be accepted.
+                  </span>
+                  <button type="button" onClick={loadSecret} disabled={busy} className="btn btn-secondary btn-sm">
+                    Start over with a new QR
+                  </button>
+                </>
+              )}
             </div>
           )}
 

@@ -357,6 +357,16 @@ export default function WarpTab() {
             {/* Mint enrollment key */}
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Connect External Node</h3>
+                {/* Says what this tab is NOT, because the overlap with
+                    Infrastructure -> Nodes is the part people get wrong: a warp
+                    peer is a machine on the overlay, a node is a host running the
+                    agent, and route-only customers never become one. */}
+                <p className="text-xs text-(--base-06)">
+                    This is the overlay side: an enrollment key lets a machine join the tunnel. A BYON host
+                    that runs the node agent then also shows up under Infrastructure -&gt; Nodes; a route-only
+                    customer stays here and never becomes a node. Each machine needs its own warp client,
+                    so a key with several connections means several machines, not one machine sharing its tunnel.
+                </p>
                 <fieldset disabled={!gateOpen} className="space-y-4 disabled:opacity-50">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
@@ -373,24 +383,41 @@ export default function WarpTab() {
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Policy</label>
                             <select className="input-field" value={form.policy} onChange={e => setForm(f => ({ ...f, policy: e.target.value as 'fixed' | 'general' }))}>
-                                <option value="general">General (N connections)</option>
-                                <option value="fixed">Fixed (1 connection)</option>
+                                <option value="general">General (several machines)</option>
+                                <option value="fixed">Fixed (exactly one machine)</option>
                             </select>
+                            <p className="text-[11px] text-(--base-06)">
+                                {form.policy === 'fixed'
+                                    ? 'One machine only, and it can be pinned to a fixed overlay IP. For a known host that must always land on the same address.'
+                                    : 'Several machines may join with this one key, each running its own warp client. A machine cannot share its tunnel with others, so one slot = one machine.'}
+                            </p>
                         </div>
-                        {form.policy === 'general' ? (
+                        {form.policy === 'general' && (
                             <div className="flex flex-col gap-[5px]">
                                 <label className="input-label">Max Connections</label>
                                 <input type="number" min={1} className="input-field" value={form.max_conns} onChange={e => setForm(f => ({ ...f, max_conns: parseInt(e.target.value) || 1 }))} />
-                            </div>
-                        ) : (
-                            <div className="flex flex-col gap-[5px]">
-                                <label className="input-label">On New Connection</label>
-                                <select className="input-field" value={form.on_new_conn} onChange={e => setForm(f => ({ ...f, on_new_conn: e.target.value as 'kill_old' | 'block' }))}>
-                                    <option value="block">Block new</option>
-                                    <option value="kill_old">Kill old</option>
-                                </select>
+                                <p className="text-[11px] text-(--base-06)">
+                                    How many machines (WireGuard keys) may be enrolled on this key at the same time. Fixed always means 1.
+                                </p>
                             </div>
                         )}
+                        {/* Shown for BOTH policies: the backend applies
+                            on_new_conn whenever the limit is reached, and fixed
+                            has a limit of 1, so it is just as relevant there.
+                            It used to render only for fixed, which made a
+                            general key with kill_old impossible to create. */}
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label">When the limit is reached</label>
+                            <select className="input-field" value={form.on_new_conn} onChange={e => setForm(f => ({ ...f, on_new_conn: e.target.value as 'kill_old' | 'block' }))}>
+                                <option value="block">Refuse the new machine</option>
+                                <option value="kill_old">Disconnect the oldest machine</option>
+                            </select>
+                            <p className="text-[11px] text-(--base-06)">
+                                {form.on_new_conn === 'block'
+                                    ? 'A further machine is turned away and the existing ones keep running.'
+                                    : 'The longest-idle machine is removed from every leader and the new one takes its slot.'}
+                            </p>
+                        </div>
                     </div>
                     <button onClick={handleMint} disabled={minting || !gateOpen} className="btn btn-primary disabled:opacity-40">
                         <Plus size={14} /> Mint Enrollment Key
