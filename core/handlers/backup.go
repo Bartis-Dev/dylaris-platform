@@ -485,7 +485,12 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storageCfgJSON, presignedGet := services.PrepareNodeStorage(r.Context(), h.state.Store, storage, node, run.StorageKey, "get")
+	storageCfgJSON, presignedGet, err := services.PrepareNodeStorage(r.Context(), h.state.Store, storage, node, run.StorageKey, "get", h.backupDeps())
+	if err != nil {
+		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", err.Error(), time.Now())
+		sendJSONError(w, err.Error(), 500)
+		return
+	}
 	subServer := ""
 	if job.SubServer != nil {
 		subServer = *job.SubServer
@@ -810,7 +815,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	}
 	// BYON nodes get a presigned PUT URL + creds-stripped storage so the tenant's
 	// machine never receives the bucket credentials. Operator nodes are unchanged.
-	storageCfgJSON, presignedPut := services.PrepareNodeStorage(ctx, h.state.Store, storage, node, storageKey, "put")
+	storageCfgJSON, presignedPut, err := services.PrepareNodeStorage(ctx, h.state.Store, storage, node, storageKey, "put", h.backupDeps())
+	if err != nil {
+		h.state.Store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
+		return runID, err
+	}
 	payload := map[string]interface{}{
 		"action":          "backup_run",
 		"runId":           runID,

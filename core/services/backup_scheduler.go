@@ -31,6 +31,9 @@ type BackupScheduler struct {
 	// coreStorage opens the shared Core file storage as a backup backend.
 	// Optional; required only for jobs whose storage row is "core-storage".
 	coreStorage func(subPrefix string) (backupstorage.Storage, error)
+	// connection opens a saved storage connection as a backup backend.
+	// Optional; required only for jobs whose storage row is "connection".
+	connection func(connectionID int, prefix string) (backupstorage.Storage, error)
 }
 
 func NewBackupScheduler(s store.Store, r *redis.Client, q *QueueService) *BackupScheduler {
@@ -56,6 +59,14 @@ func (b *BackupScheduler) SetRegistry(reg *nodegrpc.Registry) {
 // core-storage-backed archives.
 func (b *BackupScheduler) SetCoreStorage(fn func(subPrefix string) (backupstorage.Storage, error)) {
 	b.coreStorage = fn
+}
+
+// SetConnection wires the builder that opens a saved storage connection as a
+// backup backend. Same shape and same reason as SetCoreStorage: without it,
+// backupstorage.Open refuses every job whose storage row is "connection", which
+// covers dispatch, the retention delete and the reaper's probe alike.
+func (b *BackupScheduler) SetConnection(fn func(connectionID int, prefix string) (backupstorage.Storage, error)) {
+	b.connection = fn
 }
 
 // SetLeader wires the leader-election gate. Without it the scheduler ticks
@@ -218,12 +229,15 @@ func (b *BackupScheduler) enforceRetention(ctx context.Context, jobID int) {
 // are assembled, so a provider that needs one of them cannot work on one code
 // path and be refused on another. That is what happened to core-storage: the
 // retention delete and the reaper each built their own Deps literal without a
-// CoreStorage builder.
+// CoreStorage builder — and then again to "connection", which had no builder
+// here at all, so retention could never delete an expired archive from a saved
+// storage connection.
 func (b *BackupScheduler) storageDeps() backupstorage.Deps {
 	return backupstorage.Deps{
 		Registry:    b.registry,
 		NodeStore:   b.store,
 		CoreStorage: b.coreStorage,
+		Connection:  b.connection,
 	}
 }
 
@@ -429,7 +443,14 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("queue unavailable")
 	}
 
-	storageCfgJSON, presignedPut := PrepareNodeStorage(ctx, b.store, storage, node, storageKey, "put")
+	storageCfgJSON, presignedPut, err := PrepareNodeStorage(ctx, b.store, storage, node, storageKey, "put", b.storageDeps())
+	if err != nil {
+		// An indirection target Core could not resolve. Failing here names the
+		// storage row; dispatching anyway would surface as the node's opaque
+		// "unknown provider" two hops later.
+		b.store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
+		return err
+	}
 	subServer := ""
 	if job.SubServer != nil {
 		subServer = *job.SubServer

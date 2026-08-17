@@ -142,7 +142,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}{
 		Domain: req.Domain, Subdomain: req.Subdomain, HosterDomain: req.HosterDomain,
 		CustomDomain: req.CustomDomain, TargetPort: req.TargetPort,
-	})
+	}, IsAdmin(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -273,7 +273,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 		HosterDomain: q.Get("hosterDomain"),
 		CustomDomain: q.Get("customDomain"),
 	}
-	finalDomain, err := h.resolveRouteDomain(&req)
+	finalDomain, err := h.resolveRouteDomain(&req, IsAdmin(r))
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"available": false,
@@ -339,7 +339,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		req.TargetPort = 25565
 	}
 
-	finalDomain, err := h.resolveRouteDomain(&req)
+	finalDomain, err := h.resolveRouteDomain(&req, IsAdmin(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -381,16 +381,24 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 // final lowercase FQDN to register. It enforces the admin's hoster-domain
 // configuration: subdomains must match the per-hoster validation mode, custom
 // domains may only be used when the admin enabled them and may not collide
-// with any hoster domain.
+// with any hoster domain. allowReserved lifts the blocked-prefix check for an
+// admin caller.
 func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	Domain       string `json:"domain"`
 	Subdomain    string `json:"subdomain"`
 	HosterDomain string `json:"hosterDomain"`
 	CustomDomain string `json:"customDomain"`
 	TargetPort   int    `json:"targetPort"`
-}) (string, error) {
+}, allowReserved bool) (string, error) {
 	hosters, customEnabled, _ := h.loadGatewayDomainConfig()
 	blocked := h.loadBlockedRoutePrefixes()
+	// The reserved list exists to keep confusable / impersonating names away
+	// from TENANTS. An admin is who the names are reserved FOR: they are the
+	// ones who legitimately need play.<base> or mc.<base> for the platform's own
+	// server, and refusing them left the reserved names unusable by anyone.
+	if allowReserved {
+		blocked = nil
+	}
 
 	// 1) Hoster-picker path
 	if req.Subdomain != "" || req.HosterDomain != "" {

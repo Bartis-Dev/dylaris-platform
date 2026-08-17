@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/models"
@@ -134,7 +135,7 @@ const linkRouteUserID = "user-1"
 func baseLinkRouteBody() map[string]interface{} {
 	return map[string]interface{}{
 		"linkId":     "link-abc",
-		"domain":     "mc.example.com",
+		"domain":     "survival.example.com",
 		"targetHost": "192.168.1.50",
 		"targetPort": 25565,
 	}
@@ -353,7 +354,7 @@ func TestCreateLinkRoute_Success(t *testing.T) {
 	}
 	got := gw.createRouteViaLinkCalls[0]
 	want := linkRouteCreateCall{
-		ownerID: linkRouteUserID, domain: "mc.example.com", linkToken: "tunnel-tok-xyz",
+		ownerID: linkRouteUserID, domain: "survival.example.com", linkToken: "tunnel-tok-xyz",
 		targetHost: "192.168.1.50", targetPort: 25565,
 	}
 	if got != want {
@@ -367,7 +368,7 @@ func TestCreateLinkRoute_Success(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !resp.Success || resp.Domain != "mc.example.com" {
+	if !resp.Success || resp.Domain != "survival.example.com" {
 		t.Fatalf("response = %+v", resp)
 	}
 }
@@ -406,5 +407,24 @@ func TestCreateLinkRoute_InvalidJSON(t *testing.T) {
 	h.CreateLinkRoute(rec, r)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Route-only is a tenant path, so the reserved-name list has to apply there too.
+// It resolves domains through the same helper as the server-route path; a
+// divergence would let a customer claim "mc.<base>" through the door nobody
+// checked.
+func TestCreateLinkRoute_TenantCannotClaimAReservedLabel(t *testing.T) {
+	h := newLinkRouteHandler(baseLinkRouteStore(), &linkRouteFakeGateway{}, newLinkRouteRedis(t))
+	body := baseLinkRouteBody()
+	body["domain"] = "mc.example.com"
+	rec := httptest.NewRecorder()
+	h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 - a tenant claimed a reserved label", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "reserved") {
+		t.Errorf("body = %q, want it to say the label is reserved", rec.Body.String())
 	}
 }

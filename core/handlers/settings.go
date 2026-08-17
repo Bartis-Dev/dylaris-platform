@@ -218,10 +218,17 @@ type GatewaySettings struct {
 // "route" is reserved because it is the default custom-domain CNAME label: a
 // user who claimed route.<base> would take over the very name other users are
 // told to point their own domains at.
+// The second group is the set a hoster wants for its OWN flagship server and a
+// tenant must not be able to take first: "play.<base>" and "mc.<base>" read as
+// the platform's official address, not as one customer's. Admins are exempt
+// (resolveRouteDomain's allowReserved), so reserving them costs the operator
+// nothing and keeps them available.
 var defaultBlockedRoutePrefixes = []string{
 	"admin", "dylaris", "app", "api", "www", "panel", "gateway", "edge", "hub",
 	"link", "warp", "beam", "mail", "ns", "status", "support", "staff", "system", "root",
 	"route",
+	"minecraft", "mc", "play", "server", "store", "shop", "billing", "account",
+	"login", "auth", "cdn", "docs", "help",
 }
 
 type GatewayLimits struct {

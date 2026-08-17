@@ -621,6 +621,7 @@ func main() {
 	// request or from the scheduler. Without it the scheduler is refused by
 	// backupstorage.Open for exactly those jobs.
 	backupScheduler.SetCoreStorage(appState.CoreStorageBackupBuilder())
+	backupScheduler.SetConnection(appState.ConnectionBackupBuilder())
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
 

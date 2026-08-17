@@ -39,16 +39,19 @@ func newGatewayDomainHandler(settings map[string]string) *GatewayHandler {
 	return &GatewayHandler{state: &AppState{Store: &gatewayDomainFakeStore{settings: settings}}}
 }
 
-// routeDomainReq builds the exact anonymous struct type resolveRouteDomain
-// takes (gateway.go:425-431), field-for-field including json tags, so it is
+// routeDomainReqT names the exact anonymous struct type resolveRouteDomain
+// takes, field-for-field including json tags, so it is identical to it and
 // directly assignable without a conversion.
-func routeDomainReq(domain, subdomain, hosterDomain, customDomain string, targetPort int) *struct {
+type routeDomainReqT = struct {
 	Domain       string `json:"domain"`
 	Subdomain    string `json:"subdomain"`
 	HosterDomain string `json:"hosterDomain"`
 	CustomDomain string `json:"customDomain"`
 	TargetPort   int    `json:"targetPort"`
-} {
+}
+
+// routeDomainReq builds one.
+func routeDomainReq(domain, subdomain, hosterDomain, customDomain string, targetPort int) *routeDomainReqT {
 	return &struct {
 		Domain       string `json:"domain"`
 		Subdomain    string `json:"subdomain"`
@@ -76,7 +79,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("valid hoster subdomain", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hostersJSON(t)})
-		got, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "dylaris.com", "", 25565))
+		got, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "dylaris.com", "", 25565), false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -87,7 +90,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("hoster subdomain rejects an unconfigured hoster domain", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hostersJSON(t)})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "not-configured.com", "", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "not-configured.com", "", 25565), false)
 		if err == nil {
 			t.Fatalf("expected an error for an unconfigured hoster domain")
 		}
@@ -95,10 +98,10 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("valid custom domain", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{
-			"gateway_hoster_domains":            hostersJSON(t),
-			"gateway_custom_domains_enabled":    "true",
+			"gateway_hoster_domains":         hostersJSON(t),
+			"gateway_custom_domains_enabled": "true",
 		})
-		got, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565))
+		got, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565), false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -109,7 +112,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("custom domain rejected when custom domains are not enabled", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "false"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565), false)
 		if err == nil {
 			t.Fatalf("expected an error when custom domains are disabled")
 		}
@@ -117,7 +120,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("reserved-label refusal on the hoster-picker path", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hostersJSON(t)})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "admin", "dylaris.com", "", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "admin", "dylaris.com", "", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Fatalf("err = %v, want a 'reserved' error for the default-blocklisted 'admin' subdomain", err)
 		}
@@ -125,7 +128,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("reserved-label refusal on the custom-domain path (leftmost label)", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "admin.example.com", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "admin.example.com", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Fatalf("err = %v, want a 'reserved' error for the default-blocklisted 'admin' leftmost label", err)
 		}
@@ -133,7 +136,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("custom domain with too few labels rejected", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "onelabel", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "onelabel", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "at most two subdomain levels") {
 			t.Fatalf("err = %v, want the label-count error", err)
 		}
@@ -141,7 +144,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("custom domain with too many labels rejected", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "a.b.c.d.e", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "a.b.c.d.e", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "at most two subdomain levels") {
 			t.Fatalf("err = %v, want the label-count error", err)
 		}
@@ -152,7 +155,7 @@ func TestResolveRouteDomain(t *testing.T) {
 			"gateway_hoster_domains":         hostersJSON(t),
 			"gateway_custom_domains_enabled": "true",
 		})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "test.dylaris.com", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "test.dylaris.com", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "may not be a subdomain of a hoster domain") {
 			t.Fatalf("err = %v, want the hoster-suffix rejection", err)
 		}
@@ -160,18 +163,20 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("legacy raw domain path is accepted and lowercased", func(t *testing.T) {
 		h := newGatewayDomainHandler(nil)
-		got, err := h.resolveRouteDomain(routeDomainReq("MC.Example.com", "", "", "", 25565))
+		// Not "MC.Example.com": "mc" is a default-reserved leftmost label, so
+		// that input now tests the blocklist instead of the lowercasing.
+		got, err := h.resolveRouteDomain(routeDomainReq("Survival.Example.com", "", "", "", 25565), false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "mc.example.com" {
-			t.Fatalf("got %q, want mc.example.com", got)
+		if got != "survival.example.com" {
+			t.Fatalf("got %q, want survival.example.com", got)
 		}
 	})
 
 	t.Run("no domain provided at all is rejected", func(t *testing.T) {
 		h := newGatewayDomainHandler(nil)
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "", 25565))
+		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "", 25565), false)
 		if err == nil {
 			t.Fatalf("expected an error when no domain field is set")
 		}
@@ -219,9 +224,9 @@ func TestEffectiveRouteLimit(t *testing.T) {
 
 	t.Run("user override wins even when zero (explicitly disabled)", func(t *testing.T) {
 		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{
-			"user:" + uid:   {MaxRoutes: 0},
-			"user_default":  {MaxRoutes: 5},
-			"global":        {MaxRoutes: 10},
+			"user:" + uid:  {MaxRoutes: 0},
+			"user_default": {MaxRoutes: 5},
+			"global":       {MaxRoutes: 10},
 		})
 		limit, has := h.effectiveRouteLimit(uid)
 		if !has || limit != 0 {
@@ -373,9 +378,9 @@ func TestCnameLabelValidation(t *testing.T) {
 		"route.eu",
 		".route",
 		"route.",
-		"-route",  // a DNS label may not start with a hyphen
-		"route-",  // ...nor end with one
-		"ROUTE",   // callers lowercase first; the raw form must not slip through
+		"-route", // a DNS label may not start with a hyphen
+		"route-", // ...nor end with one
+		"ROUTE",  // callers lowercase first; the raw form must not slip through
 		"ro ute",
 		"route_1",
 	}
@@ -394,5 +399,75 @@ func TestRouteIsReservedByDefault(t *testing.T) {
 	h := newGatewayDomainHandler(nil)
 	if !h.loadBlockedRoutePrefixes()["route"] {
 		t.Fatal("'route' must be in the default reserved-prefix list")
+	}
+}
+
+// The reserved list protects tenants from claiming names the platform speaks
+// with. Admins are the exception it exists for: without the bypass nobody could
+// ever register play.<base> or mc.<base>, including the operator whose server it
+// is. Both entry shapes must agree, or the availability hint would say "reserved"
+// on a name the create call then accepts.
+func TestResolveRouteDomain_AdminMayUseReservedPrefixes(t *testing.T) {
+	h := newGatewayDomainHandler(map[string]string{
+		"gateway_hoster_domains":         `[{"domain":"dylaris.com","validation":"letters"}]`,
+		"gateway_custom_domains_enabled": "true",
+	})
+
+	for _, tc := range []struct {
+		name string
+		req  *routeDomainReqT
+		want string
+	}{
+		{"hoster subdomain", routeDomainReq("", "admin", "dylaris.com", "", 25565), "admin.dylaris.com"},
+		{"custom domain", routeDomainReq("", "", "", "play.example.com", 25565), "play.example.com"},
+		{"raw domain", routeDomainReq("mc.example.com", "", "", "", 25565), "mc.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := h.resolveRouteDomain(tc.req, false); err == nil {
+				t.Fatal("a non-admin was allowed a reserved prefix")
+			}
+			got, err := h.resolveRouteDomain(tc.req, true)
+			if err != nil {
+				t.Fatalf("admin refused a reserved prefix: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The bypass lifts ONLY the reserved-name check. Everything else the resolver
+// enforces is structural (format, hoster config, label count) and an admin
+// hitting those has a broken request, not a privileged one.
+func TestResolveRouteDomain_AdminBypassDoesNotLiftOtherRules(t *testing.T) {
+	h := newGatewayDomainHandler(map[string]string{
+		"gateway_hoster_domains": `[{"domain":"dylaris.com","validation":"letters"}]`,
+	})
+	cases := map[string]*routeDomainReqT{
+		"unconfigured hoster": routeDomainReq("", "admin", "not-configured.com", "", 25565),
+		"custom domains off":  routeDomainReq("", "", "", "admin.example.com", 25565),
+		"too many labels":     routeDomainReq("", "", "", "a.b.c.d.e", 25565),
+		"invalid raw domain":  routeDomainReq("not a domain", "", "", "", 25565),
+	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := h.resolveRouteDomain(req, true); err == nil {
+				t.Error("admin bypass swallowed a structural validation error")
+			}
+		})
+	}
+}
+
+// The names a hoster needs for its own flagship server are the ones tenants want
+// most. They are worth nothing reserved if the operator cannot use them either,
+// so this pins both halves: blocked by default, available to an admin.
+func TestDefaultBlockedPrefixesReserveTheHostersOwnNames(t *testing.T) {
+	h := newGatewayDomainHandler(nil)
+	blocked := h.loadBlockedRoutePrefixes()
+	for _, name := range []string{"play", "mc", "minecraft", "admin", "dylaris", "store"} {
+		if !blocked[name] {
+			t.Errorf("%q is not reserved by default — a tenant could claim the platform's own address", name)
+		}
 	}
 }
