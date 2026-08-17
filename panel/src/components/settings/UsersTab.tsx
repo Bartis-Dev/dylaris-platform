@@ -20,6 +20,8 @@ import {
     type UserBillingAdmin,
 } from '@/lib/api/billing';
 import { getPlans, setUserPlan, setUserLimitOverrides, type Plan } from '@/lib/api/plans';
+import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement } from '@/lib/api/entitlement';
+import { entitlementExplanation } from '@/lib/entitlementText';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
@@ -962,8 +964,25 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [tCombined, setTCombined] = useState('');
     const [savingPlan, setSavingPlan] = useState(false);
 
+    // Entitlement: WHAT the tenant may use, as opposed to the status and caps
+    // below. Shown first because it is the question an operator actually opens
+    // this modal with ("can this person do BYON yet"), and because a grant is
+    // the one control here that hands out capability rather than restricting it.
+    const [ent, setEnt] = useState<Entitlement | null>(null);
+    const [grantKind, setGrantKind] = useState<'byon' | 'route_only' | 'both'>('byon');
+    const [grantDays, setGrantDays] = useState('14');
+    const [savingGrant, setSavingGrant] = useState(false);
+
     useEffect(() => {
         getPlans().then(r => { if (r.success) setPlans(r.plans || []); });
+        getUserEntitlement(user.id).then(e => {
+            if (e.success) {
+                setEnt({
+                    byon: !!e.byon, routeOnly: !!e.routeOnly, source: e.source || 'none',
+                    planKind: e.planKind, grantKind: e.grantKind, grantExpiresAt: e.grantExpiresAt,
+                });
+            }
+        });
         getUserBilling(user.id).then(d => {
             if (d.success) {
                 setData(d);
@@ -984,6 +1003,37 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     }, [user.id]);
 
     const show = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3000); };
+
+    const applyEntitlement = (r: { success: boolean; message?: string; byon?: boolean; routeOnly?: boolean; source?: string; planKind?: string; grantKind?: string; grantExpiresAt?: string }, okMsg: string) => {
+        if (!r.success) { show(r.message || 'Failed', false); return; }
+        // The response carries the RESOLVED entitlement, so the panel reflects
+        // what the server decided rather than what the form asked for. Those
+        // differ whenever a plan already covers what was granted.
+        setEnt({
+            byon: !!r.byon, routeOnly: !!r.routeOnly, source: r.source || 'none',
+            planKind: r.planKind, grantKind: r.grantKind, grantExpiresAt: r.grantExpiresAt,
+        });
+        show(okMsg, true);
+    };
+
+    const handleGrant = async () => {
+        const days = parseInt(grantDays, 10);
+        if (!Number.isFinite(days) || days < 1 || days > 730) {
+            show('Days must be between 1 and 730', false);
+            return;
+        }
+        setSavingGrant(true);
+        const r = await grantEntitlement(user.id, grantKind, days);
+        setSavingGrant(false);
+        applyEntitlement(r, `Granted for ${days} day${days === 1 ? '' : 's'}`);
+    };
+
+    const handleRevokeGrant = async () => {
+        setSavingGrant(true);
+        const r = await revokeEntitlement(user.id);
+        setSavingGrant(false);
+        applyEntitlement(r, 'Grant removed');
+    };
 
     const specOk = (v: string) => v === '' || SPEC_RE.test(v);
     const quotaOk = quota === '' || /^\d+$/.test(quota);
@@ -1047,6 +1097,78 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                         </div>
                     ) : (
                         <>
+                            {/* Entitlement: what this tenant may USE. First, because
+                                it is the question this modal usually gets opened
+                                with, and the grant is the only control here that
+                                hands out capability instead of limiting it. */}
+                            <section className="space-y-3">
+                                <label className="input-label">Access</label>
+                                {!ent ? (
+                                    <SkeletonText width="w-1/2" className="h-2" />
+                                ) : (
+                                    <>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className={`badge ${ent.byon ? 'badge-accent' : 'badge-neutral'}`}>
+                                                {ent.byon ? 'Bring your own node' : 'No BYON'}
+                                            </span>
+                                            <span className={`badge ${ent.routeOnly ? 'badge-accent' : 'badge-neutral'}`}>
+                                                {ent.routeOnly ? 'Route only' : 'No routes'}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-(--base-06)">
+                                            {entitlementExplanation(ent)}
+                                        </p>
+                                        {ent.grantKind && ent.grantExpiresAt && (
+                                            <div className="flex items-center justify-between gap-3 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2">
+                                                <div className="text-xs text-(--base-07)">
+                                                    Granted <span className="font-mono">{ent.grantKind}</span> until {new Date(ent.grantExpiresAt).toLocaleDateString()}
+                                                </div>
+                                                <button
+                                                    onClick={handleRevokeGrant}
+                                                    disabled={savingGrant}
+                                                    className="btn btn-secondary btn-sm disabled:opacity-40"
+                                                >
+                                                    Remove grant
+                                                </button>
+                                            </div>
+                                        )}
+                                        <div className="flex flex-wrap items-end gap-2">
+                                            <div className="flex flex-col gap-[5px]">
+                                                <label className="input-label">Give access to</label>
+                                                <select
+                                                    className="input-field"
+                                                    value={grantKind}
+                                                    onChange={e => setGrantKind(e.target.value as 'byon' | 'route_only' | 'both')}
+                                                >
+                                                    <option value="byon">Bring your own node</option>
+                                                    <option value="route_only">Route only</option>
+                                                    <option value="both">Both</option>
+                                                </select>
+                                            </div>
+                                            <div className="flex flex-col gap-[5px] w-24">
+                                                <label className="input-label">For (days)</label>
+                                                <input
+                                                    type="number"
+                                                    min={1}
+                                                    max={730}
+                                                    className="input-field"
+                                                    value={grantDays}
+                                                    onChange={e => setGrantDays(e.target.value)}
+                                                />
+                                            </div>
+                                            <button onClick={handleGrant} disabled={savingGrant} className="btn btn-primary disabled:opacity-40">
+                                                {savingGrant ? 'Saving...' : ent.grantKind ? 'Replace grant' : 'Grant'}
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-(--base-06)">
+                                            A grant is added on top of whatever their plan already allows, so buying a plan
+                                            later extends the access rather than colliding with it. It lapses on its own at
+                                            the end of the period.
+                                        </p>
+                                    </>
+                                )}
+                            </section>
+
                             {/* Lifecycle status */}
                             <section className="space-y-2">
                                 <div className="flex items-center justify-between">

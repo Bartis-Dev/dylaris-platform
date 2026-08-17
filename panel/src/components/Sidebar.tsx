@@ -5,11 +5,12 @@ import { useParams } from 'next/navigation';
 import { Server } from '../lib/api';
 import { listServersViaTickets } from '@/lib/api/tickets';
 import RegionBadge from '@/components/RegionBadge';
-import { ShieldCheck, Search, X, ChevronDown, ChevronRight, PlusCircle, Network } from 'lucide-react';
+import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import GuardedLink from '@/components/GuardedLink';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
+import CreateMenu from '@/components/CreateMenu';
 
 interface SidebarProps {
   onNewServer?: () => void;
@@ -392,15 +393,10 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
         )}
       </div>
 
-      <div className="shrink-0 border-t border-(--base-03)">
-        <button
-          onClick={onNewServer}
-          className="btn w-full px-4 py-3 text-sm text-(--accent-light) bg-transparent border-0 hover:bg-(--base-03) justify-start"
-        >
-          <PlusCircle size={16} />
-          New Container
-        </button>
-      </div>
+      {/* Was an unconditional "New Container" for every user, including ones
+          with nowhere to deploy. CreateMenu decides what is offered and says why
+          when something is not. */}
+      <CreateMenu onNewServer={onNewServer} />
     </aside>
   );
 }

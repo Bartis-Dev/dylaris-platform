@@ -13,3 +13,6 @@
 {"date":"2026-08-17","service":"panel","type":"change","summary":"The disk-quota warning now names the fix (pquota / prjquota) instead of only the problem"}
 {"date":"2026-08-17","service":"panel","type":"fix","summary":"Warp: \"when the limit is reached\" is now settable for multi-connection keys too, not just fixed ones"}
 {"date":"2026-08-17","service":"panel","type":"feature","summary":"Warp: inline help for policy, max connections and how external nodes relate to Infrastructure -> Nodes"}
+{"date":"2026-08-17","service":"panel","type":"change","summary":"The sidebar's \"New Container\" is now a \"+\" menu that says what you can create and why not"}
+{"date":"2026-08-17","service":"panel","type":"feature","summary":"New \"My nodes\" page: connect your own machine, manage enrollment keys, see its status"}
+{"date":"2026-08-17","service":"panel","type":"feature","summary":"Settings -> Users -> Billing shows what a tenant may use and can grant BYON or route-only for N days"}

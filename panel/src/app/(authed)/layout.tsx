@@ -18,7 +18,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe, ShieldCheck, CloudOff } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe, ShieldCheck, CloudOff, HardDrive } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
@@ -86,7 +86,14 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     // Owner-gating signal: there is no admin-level "owner" flag on the user
     // itself, so we derive it from server ownership (each owned server
     // carries role: 'owner') in addition to platform admins.
+    // Access manages SERVER grants, so it stays tied to owning a server: with no
+    // server there is nothing to share, and showing it would open an empty page.
     const canAccess = user.isAdmin || servers.some(s => s.role === 'owner');
+    // "My nodes" is the tenant half of BYON. Shown to non-admins whenever BYON is
+    // on, including those without an entitlement yet - the page explains what is
+    // missing, which is more use than a link that silently is not there. Admins
+    // manage the fleet in Settings instead, so they do not need it twice.
+    const canSeeMyNodes = featureFlags.byon && !user.isAdmin;
 
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
@@ -109,6 +116,20 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
                         regular users see only their inbox. */}
+                    {canSeeMyNodes && (
+                        <GuardedLink
+                            href="/nodes"
+                            className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
+                                pathname?.startsWith('/nodes')
+                                    ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
+                                    : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent'
+                            }`}
+                        >
+                            <HardDrive size={20} />
+                            <span className="text-sm hidden md:block">My nodes</span>
+                        </GuardedLink>
+                    )}
+
                     {canAccess && (
                         <GuardedLink
                             href="/access"

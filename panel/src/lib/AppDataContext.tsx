@@ -9,6 +9,7 @@ import { listRegions, Region } from '@/lib/api/regions';
 import { API_URL, GATE_TIMEOUT_MS, getAuthHeader } from '@/lib/api/core';
 import { systemEvents } from '@/lib/systemEvents';
 import { getSystemFeatures, FeatureFlags } from '@/lib/api/featureFlags';
+import { getMyEntitlement, Entitlement } from '@/lib/api/entitlement';
 
 interface CoreInfo {
     region: string;
@@ -53,6 +54,12 @@ interface AppData {
     regions: Region[];
     coreInfo: CoreInfo | null;
     refreshRegions: () => Promise<void>;
+    // What this user may USE (BYON / route-only), resolved server-side from
+    // their plan plus any admin grant. null until the first fetch returns;
+    // treat null as "not yet known" and NOT as "no", or the UI briefly tells an
+    // entitled tenant they have nothing.
+    entitlement: Entitlement | null;
+    refreshEntitlement: () => Promise<void>;
 }
 
 const AppDataContext = createContext<AppData | null>(null);
@@ -85,6 +92,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // guessing the wider of two audiences would flash user-facing authoring
     // controls at someone who is not allowed to use them.
     const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false });
+    const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
     const [ready, setReady] = useState(false);
     const [apiUnreachable, setApiUnreachable] = useState(false);
     const [bootAttempt, setBootAttempt] = useState(0);
@@ -120,6 +128,22 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const refreshFeatureFlags = useCallback(async () => {
         const res = await getSystemFeatures();
         if (res.success && res.features) setFeatureFlags(res.features);
+    }, []);
+
+    // Stays null on failure rather than falling back to an all-false object:
+    // "not known yet" and "you have nothing" must not render the same, or a
+    // network blip tells an entitled tenant their account was downgraded.
+    const refreshEntitlement = useCallback(async () => {
+        const res = await getMyEntitlement();
+        if (!res.success) return;
+        setEntitlement({
+            byon: !!res.byon,
+            routeOnly: !!res.routeOnly,
+            source: res.source || 'none',
+            planKind: res.planKind,
+            grantKind: res.grantKind,
+            grantExpiresAt: res.grantExpiresAt,
+        });
     }, []);
 
     // /api/system/core-info — public on the auth surface, returns the region
@@ -184,7 +208,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             // no default timeout. Rendering with one stale slice beats not
             // rendering at all; the SSE subscriptions refresh them anyway.
             await Promise.race([
-                Promise.allSettled([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo(), refreshFeatureFlags()]),
+                Promise.allSettled([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo(), refreshFeatureFlags(), refreshEntitlement()]),
                 new Promise(resolve => setTimeout(resolve, GATE_TIMEOUT_MS)),
             ]);
             setReady(true);
@@ -205,7 +229,10 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             systemEvents.on('servers.changed', () => { refreshServers(); }),
             systemEvents.on('regions.changed', () => { refreshRegions(); }),
             systemEvents.on('modules.changed', () => { refreshModules(); }),
-            systemEvents.on('features.changed', () => { refreshSettings(); refreshFeatureFlags(); }),
+            systemEvents.on('features.changed', () => { refreshSettings(); refreshFeatureFlags(); refreshEntitlement(); }),
+            // A grant/revoke publishes users.changed; without this the tenant's own
+            // "+" menu stays stale until they reload.
+            systemEvents.on('users.changed', () => { refreshEntitlement(); }),
             systemEvents.on('modpack_settings.changed', () => { refreshFeatureFlags(); }),
             // maintenance state is consumed by MaintenanceBanner via its own
             // fetcher; we re-broadcast through window event so it (and any
@@ -249,6 +276,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         gatewayEnabled, libraryEnabled,
         featureFlags, refreshFeatureFlags,
         regions, coreInfo, refreshRegions,
+        entitlement, refreshEntitlement,
     };
 
     return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
