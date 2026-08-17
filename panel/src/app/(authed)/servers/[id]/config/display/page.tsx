@@ -67,7 +67,7 @@ function renderMotdPreview(raw: string): ColoredSegment[][] {
 
 export default function ServerConfigDisplayPage() {
     const params = useParams();
-    const { servers } = useAppData();
+    const { servers, gatewayEnabled } = useAppData();
     const serverId = Number(params?.id);
     const server = servers.find(s => s.id === serverId);
     const activeSubServer = server?.activeSubServer || '';
@@ -378,7 +378,12 @@ export default function ServerConfigDisplayPage() {
                 </div>
             </section>
 
-            {/* Edge MOTD (transitional) */}
+            {/* Edge MOTD (transitional). Only the gateway edge can answer a ping
+                for a server whose container is not running - it is the thing
+                standing in front of the port. With routing on ip_port there is no
+                listener at all while the server is down, so the whole card would
+                configure something nothing reads. */}
+            {gatewayEnabled && (
             <section className="card p-5 space-y-4">
                 <header className="flex items-start gap-3">
                     <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
@@ -447,6 +452,7 @@ export default function ServerConfigDisplayPage() {
                     </button>
                 </div>
             </section>
+            )}
 
             {toast && (
                 <div className="toast-container">

@@ -71,3 +71,35 @@ export function bellState(unseen: number, entryCount: number): BellState {
     if (entryCount > 0) return 'unread';
     return 'idle';
 }
+
+/**
+ * How many entries in a set are BREAKING - a change that does not apply itself.
+ *
+ * The other types describe what changed; this one is the only one that says the
+ * operator has to do something, so it is the one piece of the feed that must be
+ * impossible to miss. Counting is separate from rendering so the modal can lead
+ * with it instead of leaving it to be spotted in a list.
+ */
+export function breakingCount<T extends UpdateEntryLike>(entries: T[]): number {
+    return entries.filter(e => (e.type ?? '').trim().toLowerCase() === 'breaking').length;
+}
+
+/** True when any entry in the set is breaking. */
+export function hasBreaking<T extends UpdateEntryLike>(entries: T[]): boolean {
+    return breakingCount(entries) > 0;
+}
+
+/**
+ * Counts per change type, in the feed's own order of first appearance, for the
+ * one-line "what came with this update" summary above the latest group.
+ */
+export function typeCounts<T extends UpdateEntryLike>(entries: T[]): Array<{ type: string; count: number }> {
+    const out: Array<{ type: string; count: number }> = [];
+    for (const e of entries) {
+        const type = (e.type ?? '').trim().toLowerCase() || 'update';
+        const found = out.find(o => o.type === type);
+        if (found) found.count++;
+        else out.push({ type, count: 1 });
+    }
+    return out;
+}

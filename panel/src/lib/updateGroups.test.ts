@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupByDate, splitLatest, bellState } from './updateGroups';
+import { groupByDate, splitLatest, bellState, breakingCount, hasBreaking, typeCounts } from './updateGroups';
 
 const e = (date: string, summary: string) => ({ date, summary, service: 'core', type: 'fix' });
 
@@ -75,5 +75,40 @@ describe('bellState', () => {
         // Entries are capped per service, so a large unseen count can outrun the
         // list. The badge must still light up.
         expect(bellState(2, 0)).toBe('new');
+    });
+});
+
+describe('breakingCount / hasBreaking', () => {
+    // "breaking" is the only type that means the operator must act. Everything
+    // else describes what changed; this decides whether the modal leads with a
+    // warning, so it must not be lost to casing or stray whitespace in a feed
+    // line nobody validates.
+    it('counts breaking entries regardless of casing or padding', () => {
+        expect(breakingCount([
+            { type: 'breaking' }, { type: 'BREAKING' }, { type: '  Breaking ' },
+            { type: 'feature' }, { type: 'fix' },
+        ])).toBe(3);
+    });
+
+    it('is zero for a feed with nothing breaking', () => {
+        expect(breakingCount([{ type: 'feature' }, { type: 'fix' }])).toBe(0);
+        expect(hasBreaking([{ type: 'feature' }])).toBe(false);
+        expect(hasBreaking([])).toBe(false);
+    });
+
+    it('does not treat a missing type as breaking', () => {
+        expect(hasBreaking([{ summary: 'no type at all' }])).toBe(false);
+    });
+});
+
+describe('typeCounts', () => {
+    it('counts per type in first-appearance order', () => {
+        expect(typeCounts([
+            { type: 'feature' }, { type: 'fix' }, { type: 'feature' },
+        ])).toEqual([{ type: 'feature', count: 2 }, { type: 'fix', count: 1 }]);
+    });
+
+    it('buckets an absent type as "update" rather than dropping the entry', () => {
+        expect(typeCounts([{ summary: 'x' }])).toEqual([{ type: 'update', count: 1 }]);
     });
 });

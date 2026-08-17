@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability,
     GatewayRoute, CreateRouteRequest,
@@ -33,16 +33,26 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
     const [deleting, setDeleting] = useState(false);
     const [availability, setAvailability] = useState<AvailabilityState>({ status: 'idle' });
 
+    // The callback is held in a ref, NOT in loadRoutes' dependency list. A parent
+    // that passes an inline arrow (SetupView did) hands a new function identity on
+    // every render; with it as a dependency, loadRoutes was new every render too,
+    // the mount effect re-ran, its result called back into the parent, the parent
+    // re-rendered - an endless refetch that read on screen as a modal refreshing
+    // forever. The ref keeps the latest callback reachable without making the
+    // loader's identity depend on it.
+    const onRoutesChangedRef = useRef(onRoutesChanged);
+    onRoutesChangedRef.current = onRoutesChanged;
+
     const loadRoutes = useCallback(async () => {
         setRoutesLoading(true);
         try {
             const res = await getServerRoutes(serverId);
             const next: GatewayRoute[] = Array.isArray(res) ? res : (res.routes ?? []);
             setRoutes(next);
-            onRoutesChanged?.(next);
+            onRoutesChangedRef.current?.(next);
         } catch { setRoutes([]); }
         setRoutesLoading(false);
-    }, [serverId, onRoutesChanged]);
+    }, [serverId]);
 
     useEffect(() => { loadRoutes(); }, [loadRoutes]);
 
@@ -104,7 +114,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                     const real: GatewayRoute[] = Array.isArray(list) ? list : (list.routes ?? []);
                     if (!resolvedDomain || real.some(r => r.domain === resolvedDomain)) {
                         setRoutes(real);
-                        onRoutesChanged?.(real);
+                        onRoutesChangedRef.current?.(real);
                         break;
                     }
                 } catch { /* keep polling */ }
@@ -133,7 +143,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
             }
             const next = routes.filter(r => r.domain !== target);
             setRoutes(next);
-            onRoutesChanged?.(next);
+            onRoutesChangedRef.current?.(next);
         } catch {
             setDeleteError('The request could not be sent.');
             setDeleting(false);

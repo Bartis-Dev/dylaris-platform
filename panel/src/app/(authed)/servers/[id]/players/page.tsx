@@ -119,9 +119,13 @@ export default function ServerPlayersPage() {
         } catch { return []; }
     }, [activeSub, uuid]);
 
-    const refresh = useCallback(async () => {
+    // background=true is the 10s poll: it must not touch `loading`, or the whole
+    // list is swapped for six skeleton cards every ten seconds. Only a first load
+    // and an explicit Refresh show a loading state; a poll replaces the data in
+    // place, which is what makes it invisible.
+    const refresh = useCallback(async (background = false) => {
         if (!serverId || effectiveSection === 'rcon') return;
-        setLoading(true);
+        if (!background) setLoading(true);
         setActionError(null);
 
         if (effectiveSection === 'online') {
@@ -144,13 +148,15 @@ export default function ServerPlayersPage() {
         setLoading(false);
     }, [serverId, effectiveSection, loadJsonList]);
 
+    // Section switches DO show the skeleton: the previous section's rows would
+    // otherwise sit there looking like this section's data.
     useEffect(() => { refresh(); }, [refresh]);
 
     // Online list auto-poll every 10s. Other sections are file-backed and
     // change only on user-initiated RCON commands — refresh on action.
     useEffect(() => {
         if (effectiveSection !== 'online') return;
-        const id = setInterval(refresh, 10_000);
+        const id = setInterval(() => refresh(true), 10_000);
         return () => clearInterval(id);
     }, [effectiveSection, refresh]);
 
@@ -160,7 +166,7 @@ export default function ServerPlayersPage() {
             showToast(`${label}: ${friendlyRconError(res.error, 'failed')}`, false);
         } else {
             showToast(`${label} ✓`, true);
-            refresh();
+            refresh(true);
         }
     };
 
@@ -240,7 +246,10 @@ export default function ServerPlayersPage() {
                                 className="input-field pl-7 w-48 text-xs py-1"
                             />
                         </div>
-                        <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
+                        {/* Not onClick={refresh}: the handler would receive the
+                            MouseEvent as `background` and every manual refresh
+                            would silently become a background one. */}
+                        <button onClick={() => refresh()} className="btn btn-secondary btn-sm" disabled={loading}>
                             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                             Refresh
                         </button>

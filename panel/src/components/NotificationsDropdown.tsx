@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { API_URL, getGatewayBandwidthOverview } from '@/lib/api';
+import { shouldWarnBeamRelayMissing } from '@/lib/beamRelayNotice';
 import { listNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, Notification as InboxNotification } from '@/lib/api/notifications';
 
 // ---------------------------------------------------------------------------
@@ -25,7 +26,7 @@ interface Notification {
 // null when everything is fine. Add new checks as the platform grows.
 // ---------------------------------------------------------------------------
 
-async function checkBeamRelayMissing(): Promise<Notification | null> {
+async function checkBeamRelayMissing(ctx: CheckContext): Promise<Notification | null> {
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
         const res = await fetch(`${API_URL}/settings/beam`, {
@@ -34,14 +35,13 @@ async function checkBeamRelayMissing(): Promise<Notification | null> {
         if (!res.ok) return null;
         const data = await res.json();
         if (!data.success || !data.settings) return null;
-        const enabled = data.settings.enabled !== false;
-        if (!enabled) return null;
-        const addr = (
-            data.settings.manualOverride ??
-            data.settings.relayAddress ??
-            ''
-        ).toString().trim();
-        if (addr) return null;
+        // The decision lives in shouldWarnBeamRelayMissing, with the two reasons
+        // this check used to fire on healthy installs written down beside it.
+        if (!shouldWarnBeamRelayMissing({
+            enabled: data.settings.enabled !== false,
+            relayAddress: data.settings.relayAddress,
+            gatewayEnabled: ctx.gatewayEnabled,
+        })) return null;
         return {
             id: 'beam-relay-missing',
             severity: 'warning',
@@ -56,7 +56,10 @@ async function checkBeamRelayMissing(): Promise<Notification | null> {
     }
 }
 
-async function checkGatewayBandwidth(): Promise<Notification | null> {
+async function checkGatewayBandwidth(ctx: CheckContext): Promise<Notification | null> {
+    // Bandwidth budgets are a gateway concept: the alerts come from edges and
+    // links, and without routing there are none to be over budget.
+    if (!ctx.gatewayEnabled) return null;
     try {
         const ov = await getGatewayBandwidthOverview();
         if (!ov?.alerts?.length) return null;
@@ -77,8 +80,14 @@ async function checkGatewayBandwidth(): Promise<Notification | null> {
     }
 }
 
+// What every check gets to decide with, so a check never has to reach into
+// context itself (they run outside React).
+interface CheckContext {
+    gatewayEnabled: boolean;
+}
+
 // All registered checks. Run in parallel; null results are dropped.
-const CHECKS: Array<() => Promise<Notification | null>> = [
+const CHECKS: Array<(ctx: CheckContext) => Promise<Notification | null>> = [
     checkBeamRelayMissing,
     checkGatewayBandwidth,
 ];
@@ -88,7 +97,7 @@ const CHECKS: Array<() => Promise<Notification | null>> = [
 // ---------------------------------------------------------------------------
 
 export default function NotificationsDropdown() {
-    const { user, featureFlags } = useAppData();
+    const { user, featureFlags, gatewayEnabled } = useAppData();
     // Notifications are backed by the Ticket System. When it is off, Core 503s
     // the unread-count/list endpoints, so gate the poll on the flag to keep the
     // bell quiet (the 503 is also swallowed defensively in the api client).
@@ -107,9 +116,9 @@ export default function NotificationsDropdown() {
             setItems([]);
             return;
         }
-        const results = await Promise.all(CHECKS.map(c => c()));
+        const results = await Promise.all(CHECKS.map(c => c({ gatewayEnabled })));
         setItems(results.filter((n): n is Notification => n !== null));
-    }, [isAdmin]);
+    }, [isAdmin, gatewayEnabled]);
 
     // Refresh user inbox + unread badge. Cheap unread-count endpoint runs on
     // the same interval; the full inbox is only fetched on open.

@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, X, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getUpdates, markUpdatesSeen, UpdateEntry, UpdateServiceBlock } from '@/lib/api/updates';
-import { bellState, splitLatest, type UpdateGroup } from '@/lib/updateGroups';
+import { bellState, splitLatest, breakingCount, typeCounts, type UpdateGroup } from '@/lib/updateGroups';
 
 // ---------------------------------------------------------------------------
 // Admin-only "What's new". Shows the platform changelog (always) and the
@@ -19,34 +19,56 @@ import { bellState, splitLatest, type UpdateGroup } from '@/lib/updateGroups';
 // ---------------------------------------------------------------------------
 
 // Per-change-type accent, matching the "Carbon Steel x Plasma Violet" tokens.
-const TYPE_STYLES: Record<string, { label: string; color: string }> = {
-    feature: { label: 'Feature', color: 'text-(--accent-light)' },
-    fix: { label: 'Fix', color: 'text-(--success-light)' },
-    change: { label: 'Change', color: 'text-(--info)' },
-    security: { label: 'Security', color: 'text-(--error-light)' },
+//
+// `breaking` is the odd one out and deliberately loud: every other type
+// describes what changed, this one says the update does not finish applying
+// itself and the operator has to do something. It gets a border and a callout,
+// not just a colour, so it survives being skimmed.
+const TYPE_STYLES: Record<string, { label: string; color: string; dot: string }> = {
+    breaking: { label: 'Breaking', color: 'text-(--error-light)', dot: 'bg-(--error)' },
+    security: { label: 'Security', color: 'text-(--error-light)', dot: 'bg-(--error-light)' },
+    feature: { label: 'Feature', color: 'text-(--accent-light)', dot: 'bg-(--accent)' },
+    fix: { label: 'Fix', color: 'text-(--success-light)', dot: 'bg-(--success-light)' },
+    change: { label: 'Change', color: 'text-(--info)', dot: 'bg-(--info)' },
 };
 
 function typeStyle(t: string) {
-    return TYPE_STYLES[t] || { label: t || 'Update', color: 'text-(--base-07)' };
+    const key = (t || '').trim().toLowerCase();
+    return TYPE_STYLES[key] || { label: t || 'Update', color: 'text-(--base-07)', dot: 'bg-(--base-05)' };
 }
 
-// One changelog line. `service` is shown because a single date can carry core,
-// panel and node changes and "which part changed" is the first thing an operator
-// wants from a changelog.
+function isBreaking(entry: UpdateEntry) {
+    return (entry.type || '').trim().toLowerCase() === 'breaking';
+}
+
+// One changelog line, as a bullet. `service` is shown because a single date can
+// carry core, panel and node changes and "which part changed" is the first thing
+// an operator wants from a changelog.
 function EntryRow({ entry }: { entry: UpdateEntry }) {
     const s = typeStyle(entry.type);
+    const breaking = isBreaking(entry);
     return (
-        <div className="flex items-start gap-3 px-4 py-2.5 hover:bg-(--base-03)/60 transition-colors">
-            <span className={`shrink-0 mt-0.5 w-16 font-mono text-[9px] uppercase tracking-[0.06em] ${s.color}`}>
-                {s.label}
-            </span>
+        <li className={`flex items-start gap-3 px-4 py-2 ${
+            breaking ? 'bg-(--error-ghost)/40 border-l-2 border-(--error)' : ''
+        }`}>
+            <span className={`shrink-0 mt-[7px] w-1.5 h-1.5 rounded-full ${s.dot}`} aria-hidden="true" />
             <div className="min-w-0 flex-1">
-                <div className="text-sm text-(--base-08) leading-snug">{entry.summary}</div>
-                {entry.service && (
-                    <div className="text-[10px] font-mono text-(--base-06) mt-0.5">{entry.service}</div>
-                )}
+                <div className="text-sm text-(--base-08) leading-relaxed">
+                    <span className={`font-mono text-[10px] uppercase tracking-[0.06em] mr-2 ${s.color}`}>
+                        {s.label}
+                    </span>
+                    {entry.summary}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                    {entry.service && (
+                        <span className="text-[10px] font-mono text-(--base-06)">{entry.service}</span>
+                    )}
+                    {breaking && (
+                        <span className="text-[10px] font-mono text-(--error-light)">action required</span>
+                    )}
+                </div>
             </div>
-        </div>
+        </li>
     );
 }
 
@@ -63,9 +85,53 @@ function DateGroup({ group, heading }: { group: UpdateGroup<UpdateEntry>; headin
                     <span className="font-mono text-[10px] text-(--base-07)">{group.date}</span>
                 )}
             </div>
-            <div className="divide-y divide-(--base-03)/50">
+            <ul className="divide-y divide-(--base-03)/50">
                 {group.entries.map((e, i) => <EntryRow key={`${group.date}-${i}`} entry={e} />)}
+            </ul>
+        </div>
+    );
+}
+
+// The header of the newest group: the date, what it contains by type, and - when
+// anything in it is breaking - a callout the operator has to read before
+// updating. This is the "last update" block the modal leads with.
+function LatestHeader({ group }: { group: UpdateGroup<UpdateEntry> }) {
+    const counts = typeCounts(group.entries);
+    const breaking = breakingCount(group.entries);
+    return (
+        <div className="px-4 pt-4 pb-3 border-b border-(--base-03)">
+            <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <h4 className="text-base font-display font-semibold text-(--base-09)">Latest update</h4>
+                <span className="font-mono text-xs text-(--base-07)">{group.date || 'Undated'}</span>
             </div>
+            <div className="flex items-center gap-2 flex-wrap mt-2">
+                {counts.map(c => {
+                    const s = typeStyle(c.type);
+                    return (
+                        <span
+                            key={c.type}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--base-03) border border-(--base-04) text-[11px]"
+                        >
+                            <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} aria-hidden="true" />
+                            <span className="text-(--base-08)">
+                                {c.count} {s.label.toLowerCase()}{c.count === 1 ? '' : 's'}
+                            </span>
+                        </span>
+                    );
+                })}
+            </div>
+            {breaking > 0 && (
+                <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-md bg-(--error-ghost) border border-(--error)/40">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5 text-(--error-light)" />
+                    <p className="text-xs text-(--base-08) leading-snug">
+                        <span className="font-medium text-(--error-light)">
+                            {breaking} breaking change{breaking === 1 ? '' : 's'} in this update.
+                        </span>
+                        {' '}Applying it needs action from you. The entries marked below say what; read them
+                        before you deploy.
+                    </p>
+                </div>
+            )}
         </div>
     );
 }
@@ -83,7 +149,14 @@ function ServiceSection({ title, block }: { title: string; block: UpdateServiceB
                     <span className="badge badge-accent">update available</span>
                 )}
             </div>
-            {latest && <DateGroup group={latest} heading="Latest update" />}
+            {latest && (
+                <>
+                    <LatestHeader group={latest} />
+                    <ul className="divide-y divide-(--base-03)/50">
+                        {latest.entries.map((e, i) => <EntryRow key={`latest-${i}`} entry={e} />)}
+                    </ul>
+                </>
+            )}
             {earlier.length > 0 && (
                 <>
                     <div className="px-4 pt-4 pb-1 font-mono text-[9px] uppercase tracking-[0.08em] text-(--base-05)">
@@ -189,7 +262,7 @@ export default function UpdatesBell() {
                     className="modal-overlay animate-fade-in z-50"
                     onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}
                 >
-                    <div className="modal-panel w-full max-w-lg" role="dialog" aria-modal="true" aria-label="What's new">
+                    <div className="modal-panel w-full max-w-3xl" role="dialog" aria-modal="true" aria-label="What's new">
                         <div className="flex items-center justify-between px-4 py-3 border-b border-(--base-03)">
                             <div className="flex items-center gap-2">
                                 <Sparkles size={15} className="text-(--accent-light)" />
@@ -207,7 +280,7 @@ export default function UpdatesBell() {
                         </div>
 
                         {entryCount > 0 ? (
-                            <div className="max-h-[70vh] overflow-y-auto pb-3">
+                            <div className="max-h-[75vh] overflow-y-auto pb-4">
                                 <ServiceSection title="Platform" block={platform} />
                                 <ServiceSection title="Gateway" block={gateway} />
                             </div>

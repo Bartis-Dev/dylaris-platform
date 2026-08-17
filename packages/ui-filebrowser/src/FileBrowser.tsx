@@ -219,6 +219,14 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     });
   };
 
+  // `picking` is select mode ACTUALLY active: read-only has no bulk download to
+  // offer and global search spans folders, so a same-folder selection would be
+  // meaningless there. Every select-mode branch below tests this one value, so
+  // the row behaviour and the disabled per-row actions can never disagree - a
+  // row that selects while its Delete button still deletes is the failure this
+  // prevents.
+  const picking = selectMode && !readOnly && !globalSearchTerm;
+
   // Select mode owns the selection lifecycle: turning it on starts empty
   // (already guaranteed since turning it off just cleared it below), turning
   // it off clears whatever was picked so no hidden selection lingers and the
@@ -871,7 +879,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       {isSearching && <p className="text-center text-xl text-(--warning)">Searching...</p>}
       {showLoading && !showUploadPopup && <p className="text-center text-xl text-(--warning)">Loading...</p>}
       {error && <p className="text-(--error) text-center text-xl mb-4">{error}</p>}
-      {selectMode && !readOnly && !globalSearchTerm && selected.size > 0 && (
+      {/* Rows carry no checkbox any more, so the mode has to say what a click
+          does now - otherwise a user in select mode just sees folders that
+          stopped opening. */}
+      {picking && selected.size === 0 && (
+        <div className="mb-3 px-3 py-2 rounded-md bg-(--base-03) border border-(--base-04) text-sm text-(--base-07)">
+          Click entries to select them. Row actions are paused until you leave select mode.
+        </div>
+      )}
+      {picking && selected.size > 0 && (
         <div className="flex items-center justify-between gap-3 mb-3 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent-border)">
           <span className="text-sm font-medium text-(--accent-light)">{selected.size} selected</span>
           <div className="flex items-center gap-2">
@@ -887,34 +903,26 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         </div>
       )}
       <ul className="space-y-2">
-        {currentPath && !globalSearchTerm && (
+        {currentPath && !globalSearchTerm && !picking && (
           <li onClick={handleGoUp} className="server-row justify-between">
-            {selectMode && !readOnly && (
-              <span className="w-6 shrink-0" aria-hidden="true" />
-            )}
             <span className="flex flex-1 items-center min-w-0 truncate pr-4 text-(--base-09)">
               <CornerDownLeft size={36} className="mr-3 text-(--primary-light)" />
                <span className="text-lg">..</span>
             </span>
           </li>
         )}
-        {sortedFiles.map((file) => (
-          <li key={file.path || file.name} onClick={() => handleFileClick(file.name, file.is_dir, file.path)} className="server-row justify-between">
-            {selectMode && !readOnly && !globalSearchTerm && (
-              <span
-                onClick={(e) => e.stopPropagation()}
-                className="flex items-center justify-center w-6 shrink-0"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(file.name)}
-                  onChange={() => toggleSelected(file.name)}
-                  className="accent-(--accent) w-4 h-4 cursor-pointer"
-                  title="Select for bulk download"
-                />
-              </span>
-            )}
-            <span className="flex items-center flex-1 min-w-0 truncate pr-4 text-(--base-09)">
+        {sortedFiles.map((file) => {
+          const isPicked = picking && selected.has(file.name);
+          return (
+          <li
+            key={file.path || file.name}
+            onClick={() => picking
+              ? toggleSelected(file.name)
+              : handleFileClick(file.name, file.is_dir, file.path)}
+            aria-selected={picking ? selected.has(file.name) : undefined}
+            className={`server-row justify-between ${isPicked ? 'border-(--accent) bg-(--accent-ghost)' : ''}`}
+          >
+            <span className={`flex items-center flex-1 min-w-0 truncate pr-4 ${isPicked ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
               {renderFileRepresentation(file)}
               <div>
                   <span className="text-lg">{file.name}</span>
@@ -924,17 +932,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             <div className="flex items-center space-x-1 text-sm shrink-0">
               <span className="text-(--base-09) hidden sm:inline mr-2">{formatBytes(file.size)}</span>
               {file.path && file.path !== file.name && (
-                <button title="Go to folder" onClick={(e) => { e.stopPropagation(); handleFileClick(file.name, true, file.path) }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+                <button title="Go to folder" disabled={picking} onClick={(e) => { e.stopPropagation(); handleFileClick(file.name, true, file.path) }} className="disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light) p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
                     <ExternalLink size={18} />
                 </button>
               )}
-              <button title="Rename" onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(file.name); setPopupMode('rename'); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+              <button title="Rename" disabled={picking} onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(file.name); setPopupMode('rename'); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                   <FilePen size={18} />
               </button>
-              <button title="Copy" onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(getCopyName(file.name, file.is_dir, files)); setPopupMode('copy'); setPopupError(''); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+              <button title="Copy" disabled={picking} onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(getCopyName(file.name, file.is_dir, files)); setPopupMode('copy'); setPopupError(''); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                 <Copy size={18} />
               </button>
-              <button title="Download" disabled={!!downloadProgress} onClick={async (e) => {
+              <button title="Download" disabled={picking || !!downloadProgress} onClick={async (e) => {
                 e.stopPropagation();
                 if (blockReadOnly()) return;
                 // Single-flight: ignore clicks while a download is already
@@ -962,12 +970,13 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                 <Download size={18} />
               </button>
-              <button title="Delete" onClick={(e) => handleDeleteClick(e, file)} className="p-2 flex items-center justify-center text-(--error) rounded-md transition-colors hover:bg-(--error) hover:text-white">
+              <button title="Delete" disabled={picking} onClick={(e) => handleDeleteClick(e, file)} className="p-2 flex items-center justify-center text-(--error) rounded-md transition-colors hover:bg-(--error) hover:text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--error)">
                 <Trash2 size={18} />
               </button>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       {popupMode && (

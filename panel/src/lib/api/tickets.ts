@@ -26,6 +26,8 @@ export interface Ticket {
     serverUuid?: string;
     serverRegion?: string;
     serverName?: string;
+    /** Numeric id for the /servers/<id> link. Detail reads only. */
+    serverId?: number;
     title: string;
     status: TicketStatus;
     priority: TicketPriority;

@@ -19,6 +19,10 @@ interface SettingsTab {
     module?: string;
     // Hidden unless the hosted store is wired (STORE_URL + STORE_SHARED_KEY).
     requiresStore?: boolean;
+    // Hidden unless the gateway is actually routing (routing_mode gateway|both).
+    // For tabs that configure the gateway data plane and control nothing when it
+    // is off: their settings are stored but no component reads them.
+    requiresGateway?: boolean;
 }
 
 interface SettingsGroup {
@@ -61,8 +65,15 @@ const TAB_GROUPS: SettingsGroup[] = [
             { slug: 'regions', label: 'Regions', always: true },
             { slug: 'dns', label: 'DNS', always: true },
             { slug: 'nodes', label: 'Nodes', always: true },
+            // Gateway configures the player-traffic data plane: hoster domains,
+            // route limits, reserved names. With routing on ip_port nothing reads
+            // any of it. It stays reachable by URL so an operator can turn routing
+            // ON from the routing-mode control it also owns.
             { slug: 'gateway', label: 'Gateway', always: true },
-            { slug: 'warp', label: 'Warp', always: true },
+            // Warp is the overlay external nodes join. It belongs to the gateway
+            // subsystem and is deployed with it, so without routing there is no
+            // overlay for it to configure.
+            { slug: 'warp', label: 'Warp', always: true, requiresGateway: true },
             { slug: 'beam', label: 'Beam', always: true },
         ],
     },
@@ -254,7 +265,7 @@ function SettingsLayoutInner({
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
-    const { user, modules, ready, featureFlags } = useAppData();
+    const { user, modules, ready, featureFlags, gatewayEnabled } = useAppData();
 
     // Admin-only gate
     useEffect(() => {
@@ -279,6 +290,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             ...g,
             tabs: g.tabs.filter(tab => {
                 if (tab.requiresStore && !featureFlags.store) return false;
+                if (tab.requiresGateway && !gatewayEnabled) return false;
                 if (tab.always) return true;
                 return modules.some(m => m.name === tab.module && m.isEnabled);
             }),

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { HardDrive, Plus, Copy, Check, Trash2, AlertTriangle, Clock, ShieldCheck } from 'lucide-react';
+import { HardDrive, Plus, Copy, Check, Trash2, AlertTriangle, Clock, ShieldCheck, Globe, ExternalLink, CircleCheck, CircleSlash } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getNodes } from '@/lib/api';
+import { getStoreStatus } from '@/lib/api/store';
 import { mintEnrollToken, listEnrollTokens, revokeEnrollToken } from '@/lib/api/nodeAdmission';
 import type { NodeEnrollToken } from '@/lib/api/types';
 import { nodeLabel } from '@/lib/nodeLabel';
@@ -50,8 +51,23 @@ function CopyButton({ value, label }: { value: string; label?: string }) {
     );
 }
 
+/** One line of "what your account includes", stated either way. */
+function EntitlementRow({ on, title, children }: { on: boolean; title: string; children: React.ReactNode }) {
+    return (
+        <div className="flex items-start gap-2.5">
+            {on
+                ? <CircleCheck size={15} className="shrink-0 mt-0.5 text-(--success-light)" />
+                : <CircleSlash size={15} className="shrink-0 mt-0.5 text-(--base-06)" />}
+            <div className="min-w-0">
+                <div className={`text-sm font-medium ${on ? 'text-(--base-09)' : 'text-(--base-07)'}`}>{title}</div>
+                <p className="text-xs text-(--base-06) leading-snug mt-0.5">{children}</p>
+            </div>
+        </div>
+    );
+}
+
 export default function MyNodesPage() {
-    const { featureFlags, entitlement, user } = useAppData();
+    const { featureFlags, entitlement, user, gatewayEnabled } = useAppData();
     const [nodes, setNodes] = useState<OwnNode[]>([]);
     const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
     const [loading, setLoading] = useState(true);
@@ -59,9 +75,14 @@ export default function MyNodesPage() {
     const [label, setLabel] = useState('');
     const [revealed, setRevealed] = useState<{ token: string; fingerprint?: string } | null>(null);
     const [error, setError] = useState('');
+    // The real storefront origin, not a hardcoded dylaris.com: a self-host
+    // install with the store wired points somewhere else, and a link that goes to
+    // the wrong shop is worse than no link.
+    const [storeUrl, setStoreUrl] = useState<string | null>(null);
 
     const isAdmin = user?.isAdmin ?? false;
     const entitled = entitlement?.byon ?? false;
+    const routeOnly = entitlement?.routeOnly ?? false;
     // null means "not fetched yet". Rendering the refusal during that window
     // would tell an entitled tenant they have nothing, then take it back.
     const entitlementKnown = entitlement !== null;
@@ -74,6 +95,15 @@ export default function MyNodesPage() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    useEffect(() => {
+        if (!featureFlags.store) return;
+        let cancelled = false;
+        getStoreStatus().then(res => {
+            if (!cancelled && res.success && res.storeUrl) setStoreUrl(res.storeUrl);
+        });
+        return () => { cancelled = true; };
+    }, [featureFlags.store]);
 
     const handleMint = async () => {
         setMinting(true);
@@ -129,25 +159,69 @@ export default function MyNodesPage() {
                 </div>
             )}
 
-            {/* Not entitled: say so plainly and stop. Showing the enrollment form
-                and letting the backend refuse would be a worse version of the same
-                answer. Admins bypass, since their own account may hold no plan. */}
-            {entitlementKnown && !entitled && !isAdmin ? (
-                <div className="card p-5 space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium text-(--base-09)">
-                        <ShieldCheck size={15} className="text-(--base-06)" />
-                        Not enabled for your account yet
-                    </div>
-                    <p className="text-sm text-(--base-07)">
-                        Your account does not currently include bring-your-own-node.
-                        {featureFlags.store
-                            ? ' You can add it to your plan, or ask an admin to enable it for you.'
-                            : ' Ask an admin to enable it for you.'}
-                    </p>
+            {/* What the account actually includes, stated for BOTH capabilities.
+                A tenant with route-only but not BYON used to land here, see a
+                bare refusal, and have no way to learn that the other half of
+                their plan exists. */}
+            {entitlementKnown && !isAdmin && (
+                <div className="card p-5 space-y-3">
+                    <h2 className="text-sm font-display font-semibold text-(--accent-light)">Your access</h2>
+                    <EntitlementRow on={entitled} title="Bring your own node">
+                        {entitled
+                            ? 'Connect your own machines and run servers on them.'
+                            : 'Not included in your account yet.'}
+                    </EntitlementRow>
+                    <EntitlementRow on={routeOnly} title="Route only">
+                        {routeOnly
+                            ? 'A protected Dylaris address for a Minecraft server you already run yourself. Your operator issues the connection kit.'
+                            : 'A protected address for a server you host yourself. Not included in your account yet.'}
+                    </EntitlementRow>
                     {entitlement?.source === 'suspended' && (
                         <p className="text-sm text-(--warning-light)">
-                            Your account is currently suspended, which pauses node access until it is reactivated.
+                            Your account is suspended, which pauses everything above until it is reactivated.
                         </p>
+                    )}
+                    {routeOnly && gatewayEnabled && (
+                        <a href="/routes" className="btn btn-secondary btn-sm inline-flex w-fit">
+                            <Globe size={13} /> Manage your addresses
+                        </a>
+                    )}
+                </div>
+            )}
+
+            {/* Not entitled to BYON: say so plainly and stop. Showing the
+                enrollment form and letting the backend refuse would be a worse
+                version of the same answer. Admins bypass, since their own account
+                may hold no plan. */}
+            {entitlementKnown && !entitled && !isAdmin ? (
+                <div className="card p-5 space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-medium text-(--base-09)">
+                        <ShieldCheck size={15} className="text-(--base-06)" />
+                        Bring-your-own-node is not on your account
+                    </div>
+                    <p className="text-sm text-(--base-07)">
+                        {entitlement?.source === 'suspended'
+                            ? 'Reactivate your account to connect machines again.'
+                            : featureFlags.store
+                                ? 'Add it to your plan in the store, or ask an admin to enable it for you.'
+                                : 'Ask an admin to enable it for you.'}
+                    </p>
+                    {featureFlags.store && entitlement?.source !== 'suspended' && (
+                        storeUrl ? (
+                            <a
+                                href={storeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn btn-primary btn-sm inline-flex w-fit"
+                            >
+                                Get a plan <ExternalLink size={12} />
+                            </a>
+                        ) : (
+                            // features.store is on but /store/status has not answered
+                            // yet (or the storefront is unreachable). Never guess a
+                            // URL here - a dead link reads as a broken checkout.
+                            <span className="text-xs text-(--base-06)">Loading store link…</span>
+                        )
                     )}
                 </div>
             ) : (

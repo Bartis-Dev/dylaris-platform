@@ -56,19 +56,23 @@ export function serverOption(i: CreateOptionsInput): CreateOption {
 /**
  * Whether the caller can add their own node, and why not.
  *
- * Admins are sent to the fleet-wide screen instead: enrolling a platform node is
- * a different flow from a tenant adding theirs, and conflating them in one button
- * would put an admin through the tenant path by accident.
+ * An admin always can, and gets the fleet instructions rather than the tenant
+ * enrolment page: enrolling a platform node is a different flow from a tenant
+ * adding theirs, and conflating them would put an admin through the tenant path
+ * by accident.
  */
 export function nodeOption(i: CreateOptionsInput): CreateOption {
+    // Admins first: adding a node is an operator action that exists on every
+    // install, BYON or not. Gating it on the tenant feature flag hid the entry on
+    // exactly the self-host installs where the operator is the only one who can
+    // add nodes at all. `href` is empty because there is no page to send them to
+    // — the caller opens the instructions modal.
+    if (i.isAdmin) return { enabled: true };
     if (!i.byonEnabled) {
         return {
             enabled: false,
             reason: 'Bring-your-own-node is turned off on this platform.',
         };
-    }
-    if (i.isAdmin) {
-        return { enabled: true, href: '/settings?tab=warp', hrefLabel: 'Manage nodes' };
     }
     if (i.entitledByon) return { enabled: true, href: '/nodes' };
     return {

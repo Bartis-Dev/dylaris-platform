@@ -9,6 +9,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppData } from '@/lib/AppDataContext';
+import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -166,15 +167,14 @@ export default function ServerContentPage() {
         return () => { cancelled = true; };
     }, []);
 
-    // Show the categories for this server's content type (mod/plugin), falling
-    // back to the full list if none match, and de-duplicate by name.
+    // Categories for this server's content type. See visibleCategoriesFor: the
+    // full-list fallback it replaces is what put resourcepack resolutions
+    // (8x/16x/32x...) in front of plugin servers.
     const browseProjectType = PROJECT_TYPE_FOR_LOADER[defaultLoader] || 'mod';
-    const visibleCategories = useMemo(() => {
-        const forType = categories.filter(c => c.project_type === browseProjectType);
-        const list = forType.length ? forType : categories;
-        const seen = new Set<string>();
-        return list.filter(c => (seen.has(c.name) ? false : (seen.add(c.name), true)));
-    }, [categories, browseProjectType]);
+    const visibleCategories = useMemo(
+        () => visibleCategoriesFor(categories, browseProjectType),
+        [categories, browseProjectType],
+    );
 
     // ----- Browse search -----
 
@@ -582,36 +582,41 @@ export default function ServerContentPage() {
             {section === 'browse' && (
                 <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
                     {/* Category sidebar (always visible) + Advanced-gated filters */}
-                    <aside className="w-52 shrink-0 overflow-y-auto card p-3 space-y-4">
+                    <aside className="w-60 shrink-0 overflow-y-auto card p-3 space-y-4">
                         <div>
                             <label className="input-label">Categories</label>
-                            <div className="mt-1.5 space-y-0.5">
+                            {/* One bordered button per category. The old flush 0.5-gap
+                                stack of borderless rows read as a single block of text
+                                rather than as a list of controls. */}
+                            <div className="mt-2 flex flex-col gap-1.5">
                                 {categoriesLoading ? (
                                     <div className="space-y-1.5 py-1">
-                                        {[0, 1, 2, 3, 4, 5].map(i => <SkeletonText key={i} width="w-full" className="h-3.5" />)}
+                                        {[0, 1, 2, 3, 4, 5].map(i => <SkeletonText key={i} width="w-full" className="h-6" />)}
                                     </div>
                                 ) : visibleCategories.length === 0 ? (
-                                    <p className="text-xs text-(--base-06) italic">Categories unavailable.</p>
+                                    <p className="text-xs text-(--base-06) italic">No categories for this server type.</p>
                                 ) : (
                                     visibleCategories.map(cat => {
                                         const on = selectedCategory === cat.name;
                                         return (
                                             <button
                                                 key={cat.name}
+                                                type="button"
+                                                aria-pressed={on}
                                                 onClick={() => setSelectedCategory(on ? null : cat.name)}
-                                                className={`w-full flex items-center gap-2 px-2 py-1 rounded-md text-xs capitalize transition-colors ${
+                                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[13px] capitalize transition-colors ${
                                                     on
-                                                        ? 'bg-(--accent-ghost) text-(--accent-light)'
-                                                        : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
+                                                        ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
+                                                        : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:bg-(--base-03) hover:border-(--base-04) hover:text-(--base-09)'
                                                 }`}
                                             >
                                                 {/* Category icon is a trusted inline SVG proxied from Modrinth. */}
                                                 <span
-                                                    className="shrink-0 [&_svg]:w-3.5 [&_svg]:h-3.5"
+                                                    className="shrink-0 [&_svg]:w-4 [&_svg]:h-4"
                                                     aria-hidden="true"
                                                     dangerouslySetInnerHTML={{ __html: cat.icon }}
                                                 />
-                                                <span className="truncate">{cat.name.replace(/-/g, ' ')}</span>
+                                                <span className="truncate">{categoryLabel(cat.name)}</span>
                                             </button>
                                         );
                                     })

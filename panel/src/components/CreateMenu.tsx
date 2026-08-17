@@ -5,6 +5,7 @@ import { Plus, Server, HardDrive, ArrowRight, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getNodes } from '@/lib/api';
 import { serverOption, nodeOption, hasAnyCreateOption, type CreateOption, type CreateOptionsInput } from '@/lib/createOptions';
+import AddNodeModal from '@/components/AddNodeModal';
 
 // ---------------------------------------------------------------------------
 // The sidebar's "+" menu.
@@ -72,6 +73,7 @@ function MenuEntry({
 export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }) {
     const { user, featureFlags, entitlement } = useAppData();
     const [open, setOpen] = useState(false);
+    const [showAddNode, setShowAddNode] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -121,6 +123,16 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
     // button that only ever says no.
     if (!hasAnyCreateOption(input) && !featureFlags.byon) return null;
 
+    // Admins get instructions, not a destination: adding a node happens on the
+    // host. The old entry navigated to /settings?tab=warp, a query shape the
+    // settings routes do not read, so it landed on the first tab in the list and
+    // left the admin somewhere unrelated.
+    const onNodeClick = () => {
+        setOpen(false);
+        if (isAdmin) { setShowAddNode(true); return; }
+        navigate(node.href || '/nodes');
+    };
+
     const navigate = (href: string) => {
         setOpen(false);
         if (typeof window !== 'undefined') window.location.href = href;
@@ -155,14 +167,16 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
                         icon={<HardDrive size={15} />}
                         title={isAdmin ? 'Add a node' : 'Add your own machine'}
                         subtitle={isAdmin
-                            ? 'Enroll a node into the fleet.'
+                            ? 'How to join a machine to the fleet.'
                             : 'Run servers on your own hardware, connected through the overlay.'}
                         option={node}
-                        onClick={() => navigate(node.href || '/nodes')}
+                        onClick={onNodeClick}
                         onNavigate={navigate}
                     />
                 </div>
             )}
+
+            {showAddNode && <AddNodeModal onClose={() => setShowAddNode(false)} />}
         </div>
     );
 }

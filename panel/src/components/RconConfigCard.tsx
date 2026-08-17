@@ -26,6 +26,11 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
     const [enabled, setEnabled] = useState(false);
     const [port, setPort] = useState(25575);
     const [hasSecret, setHasSecret] = useState(false);
+    // Console noise filter. Kept as its own piece of state and saved on its own
+    // because it applies live: unlike everything else on this card it never
+    // touches server.properties and needs no restart.
+    const [hideLogNoise, setHideLogNoise] = useState(false);
+    const [savingFilter, setSavingFilter] = useState(false);
     const [revealed, setRevealed] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [dirty, setDirty] = useState(false);
@@ -56,6 +61,7 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
         setEnabled(res.enabled);
         setPort(res.port || 25575);
         setHasSecret(res.hasSecret);
+        setHideLogNoise(res.hideLogNoise ?? false);
         setLoaded(true);
         setDirty(false);
         // A persisted restartRequired means MC has not reopened the RCON listener
@@ -99,6 +105,24 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
             onEnabledChange?.(res.enabled);
         }
     }, [serverId, enabled, port, showToast, onEnabledChange]);
+
+    // Saved immediately on toggle rather than through the Save button: it takes
+    // effect within seconds and has no restart to wait for, so queueing it behind
+    // the dirty/Save flow that exists for server.properties would only make it
+    // look like it needs one.
+    const handleFilterToggle = useCallback(async (next: boolean) => {
+        setHideLogNoise(next);
+        setSavingFilter(true);
+        const res = await setRconConfig(serverId, { enabled, port, hideLogNoise: next });
+        setSavingFilter(false);
+        if (!res.success) {
+            setHideLogNoise(!next); // roll back so the switch never lies
+            showToast(res.message || 'Could not save the console filter', false);
+            return;
+        }
+        setHideLogNoise(res.hideLogNoise ?? next);
+        showToast(next ? 'RCON connection lines hidden from the console.' : 'RCON connection lines shown again.', true);
+    }, [serverId, enabled, port, showToast]);
 
     const handleRestart = useCallback(async () => {
         setRestarting(true);
@@ -236,6 +260,30 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                         </p>
                     )}
                 </div>
+            </div>
+
+            {/* Console filter. Above the Save row on purpose: it saves itself and
+                is NOT covered by the "requires a restart" note below it. */}
+            <div className="flex items-start justify-between gap-3 border-t border-(--base-03) pt-3">
+                <div className="min-w-0">
+                    <div className="text-sm font-medium text-(--base-09)">Hide RCON lines from the console</div>
+                    <p className="text-xs text-(--base-06) mt-0.5 leading-snug">
+                        The panel opens an RCON connection every few seconds to read the player list, and Minecraft
+                        logs a start and a shutdown line for each one. Hiding them keeps the console readable.
+                        Applies within a few seconds, no restart.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={hideLogNoise}
+                    aria-label="Hide RCON connection lines from the console"
+                    onClick={() => handleFilterToggle(!hideLogNoise)}
+                    disabled={!loaded || savingFilter}
+                    className={`toggle-track shrink-0 mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed ${hideLogNoise ? 'toggle-track-on' : 'toggle-track-off'}`}
+                >
+                    <span className={`toggle-knob ${hideLogNoise ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                </button>
             </div>
 
             <div className="flex items-center justify-between border-t border-(--base-03) pt-3">

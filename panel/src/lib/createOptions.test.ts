@@ -46,10 +46,21 @@ describe('nodeOption', () => {
         expect(o.reason).toMatch(/turned off/i);
     });
 
-    it('sends an admin to the fleet screen, not the tenant flow', () => {
+    // An admin gets no href: adding a node happens on the host, so the caller
+    // opens the instructions modal instead of navigating. The old href pointed at
+    // /settings?tab=warp, a query shape the settings routes never read, and it
+    // silently landed on whatever tab came first.
+    it('offers an admin the node flow with no destination to navigate to', () => {
         const o = nodeOption(w({ byonEnabled: true, isAdmin: true }));
         expect(o.enabled).toBe(true);
-        expect(o.href).toContain('settings');
+        expect(o.href).toBeUndefined();
+    });
+
+    // Adding a node is an operator action on every install. Gating it on the
+    // tenant BYON flag hid it on exactly the self-host installs where the admin is
+    // the only one who can add nodes at all.
+    it('stays available to an admin with BYON off', () => {
+        expect(nodeOption(w({ byonEnabled: false, isAdmin: true })).enabled).toBe(true);
     });
 
     it('is available to an entitled tenant', () => {

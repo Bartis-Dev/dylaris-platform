@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Server, linkServerToProxy, unlinkServerFromProxy } from '@/lib/api';
 import { backendAddress } from '@/lib/proxyConfig';
 import { Network, Link, Unlink, Info, Copy, Server as ServerIcon } from 'lucide-react';
+import { useAppData } from '@/lib/AppDataContext';
 
 function getStatusDot(status: string) {
   switch (status) {
@@ -21,6 +22,7 @@ interface NetworkViewProps {
 }
 
 export default function NetworkView({ server, allServers, onServerSelect, onRefreshServers }: NetworkViewProps) {
+  const { gatewayEnabled } = useAppData();
   const [selectedId, setSelectedId] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -278,7 +280,11 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
               <p>If the proxy owner grants you <span className="font-medium text-(--base-09)">Inherit</span> permissions, you'll automatically get access to all linked servers.</p>
             </>
           )}
-          <p>Domain routes are managed in the <span className="font-medium text-(--base-09)">Setup</span> tab.</p>
+          {/* Domain routes only exist with gateway routing; pointing at a tab
+              that has no such field is worse than saying nothing. */}
+          {gatewayEnabled && (
+            <p>Domain routes are managed in the <span className="font-medium text-(--base-09)">Setup</span> tab.</p>
+          )}
         </div>
       </div>
     </div>

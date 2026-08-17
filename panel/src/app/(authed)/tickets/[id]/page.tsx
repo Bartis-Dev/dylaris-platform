@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
     ArrowLeft, Send, Loader2, LifeBuoy, Lock, UserPlus, X as XIcon, History, CircleAlert, CircleCheckBig,
-    Paperclip, Download, Trash2, MessageSquareQuote,
+    Paperclip, Download, Trash2, MessageSquareQuote, Server as ServerIcon, ExternalLink,
 } from 'lucide-react';
 import {
     getTicket, addTicketReply, setTicketStatus, setTicketAssignment,
@@ -248,8 +248,30 @@ export default function TicketDetailPage() {
                         <h1 className="text-xl font-display text-(--base-09)">{ticket.title}</h1>
                         <p className="text-xs text-(--base-06) mt-1 font-mono">
                             #{ticket.id} · {ticket.categoryName} · opened by {ticket.username}
-                            {ticket.serverName ? ` · server: ${ticket.serverName}` : ''}
                         </p>
+                        {/* The way into the attached server. This replaces the
+                            sidebar's "Via tickets" tab, which listed those servers
+                            beside the user's own and made a support grant look like
+                            ownership. Opens in a new tab so the ticket stays put. */}
+                        {ticket.serverName && (
+                            ticket.serverId ? (
+                                <a
+                                    href={`/servers/${ticket.serverId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 mt-2 px-2 py-1 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-xs text-(--accent-light) hover:bg-(--accent)/15 transition-colors"
+                                >
+                                    <ServerIcon size={12} />
+                                    {ticket.serverName}
+                                    <ExternalLink size={11} />
+                                </a>
+                            ) : (
+                                <span className="inline-flex items-center gap-1.5 mt-2 px-2 py-1 rounded-md bg-(--base-03) border border-(--base-04) text-xs text-(--base-06)">
+                                    <ServerIcon size={12} />
+                                    {ticket.serverName} (deleted)
+                                </span>
+                            )
+                        )}
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                         {canMutate ? (

@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { Server } from '../lib/api';
-import { listServersViaTickets } from '@/lib/api/tickets';
 import RegionBadge from '@/components/RegionBadge';
 import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -66,34 +65,18 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'mine' | 'invited' | 'tickets'>('mine');
+  const [activeTab, setActiveTab] = useState<'mine' | 'invited'>('mine');
   const [collapsedUsers, setCollapsedUsers] = useState<Set<string>>(new Set());
   const [collapsedProxies, setCollapsedProxies] = useState<Set<number>>(new Set());
 
   const isAdmin = currentUser?.isAdmin ?? false;
-  // Admins see the same tab so their own permission flags + the data path are exercised.
-  const isSupport = currentUser?.role === 'support' || isAdmin;
-
-  // servers reachable via active tickets assigned to me. Polled
-  // on tab focus only; not refreshed automatically since the ticket list
-  // itself is the live source of truth. Disabled when the platform-wide
-  // tickets toggle is off.
-  const [viaTicketsServers, setViaTicketsServers] = useState<Server[]>([]);
-  useEffect(() => {
-    if (activeTab !== 'tickets' || !isSupport || !featureFlags.tickets) return;
-    let cancelled = false;
-    listServersViaTickets().then(res => {
-      if (cancelled) return;
-      if (res.success) setViaTicketsServers(res.servers || []);
-    });
-    return () => { cancelled = true; };
-  }, [activeTab, isSupport, featureFlags.tickets]);
-
-  // If the toggle flips off while the "Via tickets" tab was selected, drop
-  // back to "mine" so the tab strip stays consistent with the active panel.
-  useEffect(() => {
-    if (!featureFlags.tickets && activeTab === 'tickets') setActiveTab('mine');
-  }, [featureFlags.tickets, activeTab]);
+  // There used to be a third "Via tickets" tab here listing servers a supporter
+  // could reach through an assigned ticket. It sat beside "My Servers" and
+  // "Invited", which framed a temporary support grant as a standing
+  // relationship, and it was the only route into those servers. The ticket
+  // itself is the right place for that link: the ticket detail page now opens
+  // its attached server in a new tab, so the access is reachable exactly where
+  // the reason for it is.
 
   const filteredServers = useMemo(() => {
     if (!searchQuery.trim()) return servers;
@@ -359,18 +342,6 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             >
               Invited {invitedServers.length > 0 && <span className="ml-1 text-(--accent-light)">({invitedServers.length})</span>}
             </button>
-            {isSupport && featureFlags.tickets && (
-              <button
-                onClick={() => setActiveTab('tickets')}
-                className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-colors ${
-                  activeTab === 'tickets'
-                    ? 'bg-(--base-02) text-(--base-09) shadow-sm'
-                    : 'text-(--base-07) hover:text-(--base-09)'
-                }`}
-              >
-                Via tickets
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -383,11 +354,6 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
               invitedServers.length === 0
                 ? <div className="text-sm text-(--base-06) italic">No invited servers.</div>
                 : renderServerList(invitedServers)
-            )}
-            {activeTab === 'tickets' && isSupport && (
-              viaTicketsServers.length === 0
-                ? <div className="text-sm text-(--base-06) italic">No active tickets assigned to you have a server attached.</div>
-                : renderServerList(viaTicketsServers)
             )}
           </>
         )}

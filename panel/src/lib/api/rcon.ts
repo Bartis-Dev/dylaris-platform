@@ -22,6 +22,10 @@ export interface RconConfig {
     // restarts - the panel uses this instead of guessing from a later
     // connection-refused error.
     restartRequired?: boolean;
+    // Console filter: drops Minecraft's per-RCON-connection thread lines from
+    // the log stream. Applies live (the log-shipper re-reads it from Redis on a
+    // timer), so it is deliberately NOT covered by restartRequired.
+    hideLogNoise?: boolean;
 }
 
 export async function execRcon(serverId: number, command: string, timeoutMs?: number): Promise<RconResponse> {
@@ -50,7 +54,10 @@ export async function getRconConfig(serverId: number): Promise<RconConfig> {
 
 export async function setRconConfig(
     serverId: number,
-    payload: { enabled: boolean; port: number; password?: string; regenerate?: boolean },
+    // hideLogNoise is OPTIONAL on purpose and the backend field is a pointer:
+    // omitting it keeps the stored value, so an unrelated save (port, password)
+    // cannot silently turn the console filter back off.
+    payload: { enabled: boolean; port: number; password?: string; regenerate?: boolean; hideLogNoise?: boolean },
 ): Promise<RconConfig> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/rcon/config`, {

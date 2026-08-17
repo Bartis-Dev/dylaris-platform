@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
+import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, CircleCheck, CircleAlert } from 'lucide-react';
 import { API_URL } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
@@ -224,6 +225,7 @@ function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
 // ─────────────────────────────────────────────
 
 function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    const { gatewayEnabled } = useAppData();
     const [settings, setSettings] = useState<BeamSettings>({
         relayAddress: '',
         bwLimit: 0,
@@ -235,6 +237,11 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    // The download-link field stays read-only until the admin acknowledges what a
+    // custom link costs. Session-scoped on purpose: it guards the decision at the
+    // moment it is made, so there is nothing worth persisting.
+    const [downloadLinkUnlocked, setDownloadLinkUnlocked] = useState(false);
+    const [showDownloadLinkWarning, setShowDownloadLinkWarning] = useState(false);
 
     // Snapshot of last-saved editable fields for dirty detection.
     const snapshotRef = useRef<BeamEditableSnapshot | null>(null);
@@ -321,6 +328,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
     );
 
     return (
+        <>
         <div className="space-y-6">
             <div>
                 <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Beam Desktop Client</h2>
@@ -368,23 +376,50 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                         placeholder="beam.example.com:25550"
                         className="input-field"
                     />
+                    {/* A relay only exists inside the gateway subsystem, so with
+                        routing on ip_port there is nothing missing - the field
+                        stays editable (an admin may set it up before switching
+                        routing on) but warning about it would be noise. */}
                     {!settings.relayAddress?.trim() && (
-                        <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-1">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
-                            <span>No relay address set. Remote access via the gateway is unavailable until you add one; LAN and direct connections are unaffected.</span>
-                        </p>
+                        gatewayEnabled ? (
+                            <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-1">
+                                <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
+                                <span>No relay address set. Remote access via the gateway is unavailable until you add one; LAN and direct connections are unaffected.</span>
+                            </p>
+                        ) : (
+                            <p className="text-xs text-(--base-06) mt-1">
+                                Not needed while Game Traffic is on IP:Port — Beam connects over LAN or directly.
+                            </p>
+                        )
                     )}
                 </div>
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Beam Download Link</label>
+                    <p className="text-xs text-(--base-06) mb-1">
+                        Where the Files tab sends users to install Beam Desktop. Leave it EMPTY unless you build
+                        your own Beam: empty means users get the official signed build, which this Core verifies
+                        against the release manifest before it will let a client connect.
+                    </p>
                     <input
                         type="text"
                         value={settings.downloadLink}
+                        // Locked until acknowledged. Pointing this at your own URL
+                        // replaces a signed, verified download with one nothing
+                        // checks, and that is not visible from a text field with a
+                        // URL placeholder - which is all it was.
+                        readOnly={!downloadLinkUnlocked}
+                        onFocus={() => { if (!downloadLinkUnlocked) setShowDownloadLinkWarning(true); }}
+                        onClick={() => { if (!downloadLinkUnlocked) setShowDownloadLinkWarning(true); }}
                         onChange={e => setSettings(s => ({ ...s, downloadLink: e.target.value }))}
-                        placeholder="https://releases.example.com/beam/latest"
-                        className="input-field"
+                        placeholder="Empty — users get the official build"
+                        aria-describedby="beam-download-link-help"
+                        className={`input-field ${downloadLinkUnlocked ? '' : 'cursor-pointer'}`}
                     />
-                    <p className="text-xs text-(--base-06) mt-0.5">When set, a download button appears in the Files tab for all users.</p>
+                    <p id="beam-download-link-help" className="text-xs text-(--base-06) mt-0.5">
+                        {downloadLinkUnlocked
+                            ? 'Custom link active. Core cannot verify a build it does not publish — you are responsible for what this URL serves.'
+                            : 'Only needed if you ship your own Beam build or a fork. Click the field to change it.'}
+                    </p>
                 </div>
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Minimum Beam Version</label>
@@ -571,6 +606,41 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
 
             </div>
         </div>
+
+        {showDownloadLinkWarning && (
+            <div className="modal-overlay animate-fade-in" onClick={() => setShowDownloadLinkWarning(false)}>
+                <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                    <div className="modal-header">
+                        <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
+                            <AlertTriangle size={16} /> Use your own download link?
+                        </h3>
+                    </div>
+                    <div className="modal-body space-y-3 text-sm text-(--base-07)">
+                        <p>
+                            You only need this if you build and host Beam Desktop yourself, or run a fork.
+                        </p>
+                        <p>
+                            Leaving it empty is the normal setup: users get the official build, and Core verifies
+                            it against the signed release manifest. A custom URL bypasses that check — Core cannot
+                            verify a build it does not publish, and everyone who installs from here trusts whatever
+                            that URL serves.
+                        </p>
+                    </div>
+                    <div className="modal-footer">
+                        <button onClick={() => setShowDownloadLinkWarning(false)} className="btn btn-secondary">
+                            Cancel
+                        </button>
+                        <button
+                            onClick={() => { setDownloadLinkUnlocked(true); setShowDownloadLinkWarning(false); }}
+                            className="btn btn-primary"
+                        >
+                            I build my own Beam
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+        </>
     );
 }
 
