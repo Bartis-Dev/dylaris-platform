@@ -25,12 +25,20 @@ type UserBilling struct {
 	TrafficEdgeGB     *int64 `json:"trafficEdgeGb,omitempty"`
 	TrafficRelayGB    *int64 `json:"trafficRelayGb,omitempty"`
 	TrafficCombinedGB *int64 `json:"trafficCombinedGb,omitempty"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	// Admin-granted entitlement, independent of any plan or store subscription:
+	// "" | "byon" | "route_only" | "both", valid until ManualEntitlementExpiresAt.
+	// Resolved by services.EffectiveEntitlement, which ignores it once expired -
+	// so a stale row is inert rather than quietly still granting.
+	ManualEntitlement          string     `json:"manualEntitlement,omitempty"`
+	ManualEntitlementExpiresAt *time.Time `json:"manualEntitlementExpiresAt,omitempty"`
+	ManualEntitlementGrantedAt *time.Time `json:"manualEntitlementGrantedAt,omitempty"`
+	ManualEntitlementGrantedBy string     `json:"manualEntitlementGrantedBy,omitempty"`
+	UpdatedAt                  time.Time  `json:"updatedAt"`
 }
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, updated_at`
 
 func scanUserBilling(row interface {
 	Scan(dest ...any) error
@@ -39,10 +47,21 @@ func scanUserBilling(row interface {
 	var grace, susp sql.NullTime
 	var gp, r2, nr sql.NullString
 	var quota, maxNodes, maxLinks, tEdge, tRelay, tComb sql.NullInt64
+	var meKind, meBy sql.NullString
+	var meExp, meAt sql.NullTime
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
-		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb, &b.UpdatedAt); err != nil {
+		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
+		&meKind, &meExp, &meAt, &meBy, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
+	b.ManualEntitlement = meKind.String
+	if meExp.Valid {
+		b.ManualEntitlementExpiresAt = &meExp.Time
+	}
+	if meAt.Valid {
+		b.ManualEntitlementGrantedAt = &meAt.Time
+	}
+	b.ManualEntitlementGrantedBy = meBy.String
 	if grace.Valid {
 		b.GraceUntil = &grace.Time
 	}
@@ -117,6 +136,46 @@ func (s *PostgresStore) SetUserBillingOverrides(userID, gracePeriod, r2Retention
 			r2_quota_gb    = $5,
 			updated_at     = NOW()`,
 		userID, gracePeriod, r2Retention, nodeRetention, r2QuotaGB)
+	return err
+}
+
+// SetUserManualEntitlement upserts the admin-granted entitlement, leaving status
+// and every override untouched.
+//
+// kind is "byon" | "route_only" | "both"; expiresAt is when it lapses. Pass an
+// empty kind (and a nil expiry) to REVOKE: the row is cleared rather than left
+// with a past date, so "no grant" and "an expired grant" are the same state in
+// the database instead of two that read differently in the admin UI.
+//
+// grantedBy is the acting admin, kept for the audit trail; empty writes NULL.
+func (s *PostgresStore) SetUserManualEntitlement(userID, kind string, expiresAt *time.Time, grantedBy string) error {
+	if kind == "" {
+		expiresAt = nil
+	}
+	var by any
+	if grantedBy != "" {
+		by = grantedBy
+	}
+	// granted_at is only stamped when a grant is actually present, so a revoke
+	// does not leave a timestamp for something that no longer exists. Decided in
+	// Go rather than with a CASE on $2: reusing one placeholder as both an
+	// assigned value and a literal comparison makes Postgres refuse to prepare the
+	// statement (it cannot infer one type for both uses).
+	var grantedAt any
+	if kind != "" {
+		grantedAt = time.Now()
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, manual_entitlement, manual_entitlement_expires_at,
+			manual_entitlement_granted_at, manual_entitlement_granted_by, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			manual_entitlement            = EXCLUDED.manual_entitlement,
+			manual_entitlement_expires_at = EXCLUDED.manual_entitlement_expires_at,
+			manual_entitlement_granted_at = EXCLUDED.manual_entitlement_granted_at,
+			manual_entitlement_granted_by = EXCLUDED.manual_entitlement_granted_by,
+			updated_at                    = NOW()`,
+		userID, kind, expiresAt, grantedAt, by)
 	return err
 }
 

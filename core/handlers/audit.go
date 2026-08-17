@@ -18,6 +18,12 @@ const (
 	AuditEventUserRegionsChanged   = "user_regions_changed"
 	AuditEventUserAllRegionsToggle = "user_all_regions_toggled"
 
+	// Manual entitlement grants. Audited because a grant hands out paid capability
+	// for free, with an expiry an operator will not remember setting - "who gave
+	// this tenant BYON, when, and for how long" has to be answerable later.
+	AuditEventEntitlementGranted = "entitlement_granted"
+	AuditEventEntitlementRevoked = "entitlement_revoked"
+
 	// 2FA / TOTP lifecycle. The "consumed" event distinguishes
 	// successful backup-code uses (rare, expected to drop ownership counts)
 	// from regular TOTP success (noisy, intentionally not audited).

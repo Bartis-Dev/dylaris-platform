@@ -263,6 +263,10 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/billing":                           "plans.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/billing":           "plans.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides": "plans.write",
+	// One path, three methods: plans.read for the GET and plans.write for the
+	// grant/revoke. The map is keyed by path, so the stricter cap is recorded
+	// here and each route carries its own RequireCap.
+	"/api/admin/users/{id:[0-9a-f-]{36}}/entitlement": "plans.write",
 	"/api/admin/usage":                                      "plans.read",
 
 	// Phase 4 Task 17: admin platform-settings surface (PANEL settings.*).
@@ -524,6 +528,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	tabProxySettingsHandler := handlers.NewTabProxySettingsHandler(appState)
 	usageHandler := handlers.NewUsageHandler(appState)
 	billingHandler := handlers.NewBillingHandler(appState)
+	entitlementHandler := handlers.NewEntitlementHandler(appState)
 	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
@@ -826,11 +831,20 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// /me/billing is the caller's OWN lifecycle state: EXEMPT-authed, no RequireCap
 	// (not in requiredCaps). The admin billing routes below are PANEL plans.*.
 	api.HandleFunc("/me/billing", authHandler.AuthMiddleware(billingHandler.GetMyBilling)).Methods("GET")
+	// Own entitlement: what the caller may use. Deliberately NOT gated on
+	// RequireBYONEnabled - with BYON off the tenant UI still asks, and needs the
+	// answer "no" rather than a 503 it would have to special-case.
+	api.HandleFunc("/me/entitlement", authHandler.AuthMiddleware(entitlementHandler.GetMine)).Methods("GET")
 	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(billingHandler.GetBillingSettings)))).Methods("GET")
 	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingSettings)))).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(billingHandler.GetUserBilling)))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingStatus)))).Methods("PATCH")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingOverrides)))).Methods("PATCH")
+	// Entitlement = WHAT a tenant may use (BYON / route-only), as opposed to the
+	// billing routes above, which are status and HOW MUCH.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(entitlementHandler.GetForUser)))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(entitlementHandler.Grant)))).Methods("POST")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(entitlementHandler.Revoke)))).Methods("DELETE")
 
 	// --- BYON plans + per-user plan/limit overrides (admin, PANEL plans.*) ---
 	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(plansHandler.List)))).Methods("GET")

@@ -106,6 +106,7 @@ var ExemptRoutes = map[string]bool{
 	// Caller's own metered usage / billing / history / regions.
 	"/api/me/usage":               true, // authed; own usage
 	"/api/me/billing":             true, // authed; own billing
+	"/api/me/entitlement":         true, // authed; own entitlement (what I may use)
 	"/api/me/username-history":    true, // authed; own history
 	"/api/me/regions":             true, // authed; own region assignment
 	"/api/me/security-questions":  true, // authed; own security questions

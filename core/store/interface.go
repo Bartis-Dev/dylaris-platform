@@ -70,6 +70,9 @@ type Store interface {
 	GetUserBilling(userID string) (*UserBilling, error)
 	SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error
 	SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string, r2QuotaGB *int64) error
+	// SetUserManualEntitlement grants or revokes an admin entitlement
+	// ("byon" | "route_only" | "both", empty = revoke) with an expiry.
+	SetUserManualEntitlement(userID, kind string, expiresAt *time.Time, grantedBy string) error
 	ListUserBillingByStatus(status string) ([]UserBilling, error)
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 	ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error)

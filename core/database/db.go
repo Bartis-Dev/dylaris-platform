@@ -240,6 +240,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyModpackAuthoringSchema(db); err != nil {
 		return err
 	}
+	if err := applyEntitlementSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

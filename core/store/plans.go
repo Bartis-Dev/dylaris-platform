@@ -20,25 +20,42 @@ var ErrPlanInUse = errors.New("plan is still assigned to users")
 // edge+relay). A plan's value is the baseline; a per-user override in user_billing
 // wins (see services.EffectiveLimits).
 type Plan struct {
-	ID                int       `json:"id"`
-	Name              string    `json:"name"`
-	PriceLabel        string    `json:"priceLabel"`
-	MaxNodes          int64     `json:"maxNodes"`
-	MaxLinks          int64     `json:"maxLinks"`
-	R2QuotaGB         int64     `json:"r2QuotaGb"`
-	TrafficEdgeGB     int64     `json:"trafficEdgeGb"`
-	TrafficRelayGB    int64     `json:"trafficRelayGb"`
-	TrafficCombinedGB int64     `json:"trafficCombinedGb"`
-	IsDefault         bool      `json:"isDefault"`
-	CreatedAt         time.Time `json:"createdAt"`
+	ID                int    `json:"id"`
+	Name              string `json:"name"`
+	PriceLabel        string `json:"priceLabel"`
+	MaxNodes          int64  `json:"maxNodes"`
+	MaxLinks          int64  `json:"maxLinks"`
+	R2QuotaGB         int64  `json:"r2QuotaGb"`
+	TrafficEdgeGB     int64  `json:"trafficEdgeGb"`
+	TrafficRelayGB    int64  `json:"trafficRelayGb"`
+	TrafficCombinedGB int64  `json:"trafficCombinedGb"`
+	IsDefault         bool   `json:"isDefault"`
+	// Kind is WHAT the plan grants: "byon" | "route_only" | "both". Defaults to
+	// "both" so existing plans keep allowing everything (see the entitlement
+	// migration); narrow it per plan deliberately. An unrecognised value grants
+	// nothing - services.kindGrants fails closed rather than open.
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
-const planCols = `id, name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, created_at`
+const planCols = `id, name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, kind, created_at`
+
+// normalizePlanKind keeps an unknown or empty kind from being written. Empty
+// means "the caller did not say", and the behaviour-preserving answer there is
+// "both" - the same default the column carries - not "nothing".
+func normalizePlanKind(kind string) string {
+	switch kind {
+	case "byon", "route_only", "both":
+		return kind
+	default:
+		return "both"
+	}
+}
 
 func scanPlan(row interface{ Scan(dest ...any) error }) (*Plan, error) {
 	var p Plan
 	if err := row.Scan(&p.ID, &p.Name, &p.PriceLabel, &p.MaxNodes, &p.MaxLinks, &p.R2QuotaGB,
-		&p.TrafficEdgeGB, &p.TrafficRelayGB, &p.TrafficCombinedGB, &p.IsDefault, &p.CreatedAt); err != nil {
+		&p.TrafficEdgeGB, &p.TrafficRelayGB, &p.TrafficCombinedGB, &p.IsDefault, &p.Kind, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -90,9 +107,9 @@ func (s *PostgresStore) CreatePlan(p Plan) (int, error) {
 	}
 	var id int
 	err = tx.QueryRow(`
-		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).Scan(&id)
+		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+		p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, normalizePlanKind(p.Kind)).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -113,9 +130,9 @@ func (s *PostgresStore) UpdatePlan(p Plan) error {
 	}
 	if _, err = tx.Exec(`
 		UPDATE plans SET name=$2, price_label=$3, max_nodes=$4, max_links=$5, r2_quota_gb=$6,
-			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10
+			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10, kind=$11
 		WHERE id=$1`,
-		p.ID, p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault); err != nil {
+		p.ID, p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB, p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, normalizePlanKind(p.Kind)); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -21,8 +21,8 @@ func TestGetDefaultPlan_Found(t *testing.T) {
 	now := time.Now()
 	rows := sqlmock.NewRows([]string{
 		"id", "name", "price_label", "max_nodes", "max_links", "r2_quota_gb",
-		"traffic_edge_gb", "traffic_relay_gb", "traffic_combined_gb", "is_default", "created_at",
-	}).AddRow(1, "Starter", "$5/mo", int64(2), int64(1), int64(10), int64(50), int64(50), int64(100), true, now)
+		"traffic_edge_gb", "traffic_relay_gb", "traffic_combined_gb", "is_default", "kind", "created_at",
+	}).AddRow(1, "Starter", "$5/mo", int64(2), int64(1), int64(10), int64(50), int64(50), int64(100), true, "both", now)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + planCols + ` FROM plans WHERE is_default LIMIT 1`)).
 		WillReturnRows(rows)
@@ -85,10 +85,10 @@ func TestCreatePlan_ClearsExistingDefault(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE plans SET is_default = FALSE WHERE is_default`)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`)).
+		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`)).
 		WithArgs(p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB,
-			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).
+			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, "both").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(5))
 	mock.ExpectCommit()
 
@@ -118,10 +118,10 @@ func TestCreatePlan_NotDefault(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`)).
+		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`)).
 		WithArgs(p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB,
-			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).
+			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, "both").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(6))
 	mock.ExpectCommit()
 
@@ -152,10 +152,10 @@ func TestCreatePlan_InsertErrorRollsBack(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`)).
+		INSERT INTO plans (name, price_label, max_nodes, max_links, r2_quota_gb, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, is_default, kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`)).
 		WithArgs(p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB,
-			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).
+			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, "both").
 		WillReturnError(boom)
 	mock.ExpectRollback()
 
@@ -191,10 +191,10 @@ func TestUpdatePlan_ClearsOtherDefault(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE plans SET name=$2, price_label=$3, max_nodes=$4, max_links=$5, r2_quota_gb=$6,
-			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10
+			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10, kind=$11
 		WHERE id=$1`)).
 		WithArgs(p.ID, p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB,
-			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).
+			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, "both").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -221,10 +221,10 @@ func TestUpdatePlan_NotDefaultSkipsClear(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE plans SET name=$2, price_label=$3, max_nodes=$4, max_links=$5, r2_quota_gb=$6,
-			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10
+			traffic_edge_gb=$7, traffic_relay_gb=$8, traffic_combined_gb=$9, is_default=$10, kind=$11
 		WHERE id=$1`)).
 		WithArgs(p.ID, p.Name, p.PriceLabel, p.MaxNodes, p.MaxLinks, p.R2QuotaGB,
-			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault).
+			p.TrafficEdgeGB, p.TrafficRelayGB, p.TrafficCombinedGB, p.IsDefault, "both").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
