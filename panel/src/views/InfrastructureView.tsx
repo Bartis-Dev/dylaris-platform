@@ -19,6 +19,7 @@ import {
 } from '@/lib/sharedStorage';
 import { timeAgo } from '@/lib/time';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
+import { nodeLabel } from '@/lib/nodeLabel';
 
 interface StorageInfo {
   path: string;
@@ -67,6 +68,9 @@ async function fetchNodeStorage(nodeId: number): Promise<{ storage: StorageInfo[
 interface NodeInfo {
   id: number;
   name: string;
+  // Admin-editable human label, defaulted to the hostname the node reported at
+  // enroll. `name`/`token` are the Core-minted identity, not a label.
+  displayName?: string;
   token?: string;
   address: string;
   status: string;
@@ -151,7 +155,10 @@ function NodeCard({
   onNavigateToAdminDisk: (nodeId: number) => void;
 }) {
   const isOnline = node.status === 'online';
-  const displayName = node.token || node.name;
+  const label = nodeLabel(node);
+  // The token IS the node identity now (a Core-minted UUID), so it is shown as
+  // such under the name rather than standing in for it.
+  const identity = node.token && node.token !== label ? node.token : '';
   const serverCount = node.serverCount ?? 0;
   const linkCount = node.linkCount ?? 0;
   const hasStats = (node.ramTotal ?? 0) > 0;
@@ -178,7 +185,12 @@ function NodeCard({
             const dot = dotFor(tier, 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]');
             return <div className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />;
           })()}
-          <p className="text-sm font-semibold text-(--base-09) truncate">{displayName}</p>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-(--base-09) truncate">{label}</p>
+            {identity && (
+              <p className="mono-label text-(--base-05) truncate" title={identity}>{identity}</p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className={`mono-label ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>

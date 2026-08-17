@@ -331,6 +331,10 @@ func (h *AuthHandler) IsAdminToken(r *http.Request) bool {
 	return claims.IsAdmin
 }
 
+// invalidLoginMessage is returned for BOTH an unknown username and a wrong
+// password, so a failed login says nothing about which of the two it was.
+const invalidLoginMessage = "Invalid username or password"
+
 func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
@@ -344,7 +348,9 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := h.state.Store.GetUserByUsername(req.Username)
 
 	if err == sql.ErrNoRows {
-		sendJSONError(w, "User not found", http.StatusUnauthorized)
+		// Same wording as the wrong-password branch below, deliberately: a
+		// distinct "user not found" turns the login form into a username oracle.
+		sendJSONError(w, invalidLoginMessage, http.StatusUnauthorized)
 		return
 	} else if err != nil {
 		if dbUnavailable(err) {
@@ -356,7 +362,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		sendJSONError(w, "Invalid Password", http.StatusUnauthorized)
+		sendJSONError(w, invalidLoginMessage, http.StatusUnauthorized)
 		return
 	}
 

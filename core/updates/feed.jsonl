@@ -1,0 +1,4 @@
+{"date":"2026-08-17","service":"core","type":"change","summary":"The what's-new feed now refreshes every 15 minutes instead of every 30"}
+{"date":"2026-08-17","service":"panel","type":"fix","summary":"A failed login now shows why it failed instead of \"Request failed (401)\""}
+{"date":"2026-08-17","service":"core","type":"security","summary":"A rejected login no longer reveals whether the username exists"}
+{"date":"2026-08-17","service":"panel","type":"fix","summary":"Nodes are listed by hostname again instead of their internal identity UUID"}

@@ -9,6 +9,7 @@ import {
     DiskAnalysis, Node,
 } from '@/lib/api';
 import { AssignOrphanModal } from './AssignOrphanModal';
+import { nodeLabel } from '@/lib/nodeLabel';
 
 // Single confirm modal handles both flows (orphan folder + DB stray).
 // `target` describes what's being deleted; null means closed.
@@ -107,7 +108,7 @@ export function DiskAnalysisPanel({
             >
                 <div className="flex items-center gap-2.5">
                     <div className={`w-1.5 h-1.5 rounded-full ${node.status === 'online' ? 'bg-(--success-light)' : 'bg-(--error)'}`} />
-                    <span className="text-sm font-medium text-(--base-09)">{node.name}</span>
+                    <span className="text-sm font-medium text-(--base-09)">{nodeLabel(node)}</span>
                     {orphanCount > 0 && (
                         <span className="badge bg-(--warning-ghost) text-(--warning) border border-(--warning-border) text-[10px]">
                             {orphanCount} orphaned

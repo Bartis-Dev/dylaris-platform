@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/store"
+	"dylaris-core/updates"
 )
 
 // fakeUpdatesStore embeds the (nil) store.Store interface and overrides only the
@@ -21,6 +22,22 @@ type fakeUpdatesStore struct {
 	setGateway   int
 	setCalled    bool
 	routingMode  string
+}
+
+// newUpdatesHandlerNoBaseline is NewUpdatesHandler with the build-baked
+// baseline forced to empty.
+//
+// NewUpdatesHandler derives platformInstalled from the embedded feed.jsonl, so a
+// test that asserts "all N remote lines are new" only holds while that file is
+// empty - and it stops being empty the first time a real changelog line is
+// appended. Tests that care about the delta arithmetic pin their own baseline
+// here; TestGetUpdatesInstalledBaselineIsTheBakedFeed covers the wiring to the
+// real file.
+func newUpdatesHandlerNoBaseline(state *AppState, platformURL, gatewayURL string) *UpdatesHandler {
+	h := NewUpdatesHandler(state, platformURL, gatewayURL)
+	h.platformInstalled = 0
+	h.platformBaked = nil
+	return h
 }
 
 func (f *fakeUpdatesStore) GetUserUpdatesSeen(userID string) (int, int, error) {
@@ -105,8 +122,24 @@ func TestBuildServiceBlockCapsEntries(t *testing.T) {
 	}
 }
 
-func TestGetUpdatesRequiresAdmin(t *testing.T) {
+// TestGetUpdatesInstalledBaselineIsTheBakedFeed covers what
+// newUpdatesHandlerNoBaseline deliberately bypasses: the handler's "installed"
+// mark really is the line count of the embedded feed. Asserted against
+// updates.PlatformFeed() rather than a literal, so appending a changelog line
+// never breaks it.
+func TestGetUpdatesInstalledBaselineIsTheBakedFeed(t *testing.T) {
 	h := NewUpdatesHandler(&AppState{Store: &fakeUpdatesStore{}}, "", "")
+	want := updates.LineCount(updates.PlatformFeed())
+	if h.platformInstalled != want {
+		t.Errorf("platformInstalled = %d, want %d (the baked feed's line count)", h.platformInstalled, want)
+	}
+	if len(h.platformBaked) != want {
+		t.Errorf("len(platformBaked) = %d, want %d", len(h.platformBaked), want)
+	}
+}
+
+func TestGetUpdatesRequiresAdmin(t *testing.T) {
+	h := newUpdatesHandlerNoBaseline(&AppState{Store: &fakeUpdatesStore{}}, "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", false))
 	rec := httptest.NewRecorder()
 	h.GetUpdates(rec, req)
@@ -127,7 +160,7 @@ func TestGetUpdatesAdminPlatformOnly(t *testing.T) {
 	// routingMode empty -> gateway off, so the gateway block is absent even with
 	// a gateway URL set.
 	fake := &fakeUpdatesStore{}
-	h := NewUpdatesHandler(&AppState{Store: fake}, srv.URL, "")
+	h := newUpdatesHandlerNoBaseline(&AppState{Store: fake}, srv.URL, "")
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", true))
 	rec := httptest.NewRecorder()
 	h.GetUpdates(rec, req)
@@ -167,7 +200,7 @@ func TestGetUpdatesAdminWithGatewayEnabled(t *testing.T) {
 	defer gSrv.Close()
 
 	fake := &fakeUpdatesStore{routingMode: "gateway"}
-	h := NewUpdatesHandler(&AppState{Store: fake}, pSrv.URL, gSrv.URL)
+	h := newUpdatesHandlerNoBaseline(&AppState{Store: fake}, pSrv.URL, gSrv.URL)
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", true))
 	rec := httptest.NewRecorder()
 	h.GetUpdates(rec, req)
@@ -196,7 +229,7 @@ func TestGetUpdatesAdminWithGatewayEnabled(t *testing.T) {
 
 func TestGetUpdatesFailOpenOnUnreachableFeed(t *testing.T) {
 	// Empty platform URL -> no fetch -> falls back to the (empty) baked baseline.
-	h := NewUpdatesHandler(&AppState{Store: &fakeUpdatesStore{}}, "", "")
+	h := newUpdatesHandlerNoBaseline(&AppState{Store: &fakeUpdatesStore{}}, "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", true))
 	rec := httptest.NewRecorder()
 	h.GetUpdates(rec, req)
@@ -221,7 +254,7 @@ func TestMarkUpdatesSeenServerComputed(t *testing.T) {
 	defer srv.Close()
 
 	fake := &fakeUpdatesStore{seenGateway: 7} // prior gateway marker must be preserved
-	h := NewUpdatesHandler(&AppState{Store: fake}, srv.URL, "")
+	h := newUpdatesHandlerNoBaseline(&AppState{Store: fake}, srv.URL, "")
 	req := httptest.NewRequest(http.MethodPut, "/api/me/updates-seen", nil).WithContext(adminCtx("u1", true))
 	rec := httptest.NewRecorder()
 	h.MarkUpdatesSeen(rec, req)
@@ -241,7 +274,7 @@ func TestMarkUpdatesSeenServerComputed(t *testing.T) {
 }
 
 func TestMarkUpdatesSeenRequiresAuth(t *testing.T) {
-	h := NewUpdatesHandler(&AppState{Store: &fakeUpdatesStore{}}, "", "")
+	h := newUpdatesHandlerNoBaseline(&AppState{Store: &fakeUpdatesStore{}}, "", "")
 	req := httptest.NewRequest(http.MethodPut, "/api/me/updates-seen", nil).WithContext(adminCtx("", false))
 	rec := httptest.NewRecorder()
 	h.MarkUpdatesSeen(rec, req)

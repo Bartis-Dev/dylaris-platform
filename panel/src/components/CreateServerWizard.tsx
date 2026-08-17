@@ -10,6 +10,7 @@ import { regionLabel, regionFlag } from '../lib/regions';
 import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu } from 'lucide-react';
 import CpuPinningControl from './CpuPinningControl';
 import { useAppData } from '@/lib/AppDataContext';
+import { nodeLabel } from '@/lib/nodeLabel';
 
 interface StoragePathInfo {
     path: string;
@@ -461,7 +462,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                                     <Server size={14} className="text-(--accent-light)" />
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
-                                                                    <div className="text-sm text-(--base-09) truncate">{node.name}</div>
+                                                                    <div className="text-sm text-(--base-09) truncate">{nodeLabel(node)}</div>
                                                                     <div className="text-[10px] font-mono text-(--base-06) truncate">
                                                                         {node.address}
                                                                         {node.serverCount !== undefined && ` · ${node.serverCount} servers`}

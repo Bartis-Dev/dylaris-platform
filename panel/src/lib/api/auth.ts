@@ -10,43 +10,50 @@ export const login = async (username: string, password: string, totpCode?: strin
       body: JSON.stringify(body),
     });
 
+    // Read the body EXACTLY ONCE. A Response body is a one-shot stream: this
+    // used to be read here for the 2FA/verification flags and then again inside
+    // handleResponse, where the second read throws "body stream already read".
+    // handleResponse treats a throw as "the body was not JSON" and reports
+    // `Request failed (401)` - so every wrong password showed a status code
+    // instead of Core's actual message. Do not reintroduce a second read.
+    //
+    // handleResponse is deliberately not used at all here: its 401 branch
+    // treats the status as an expired session, and a failed LOGIN never is one.
+    const data: any = await res.json().catch(() => null);
+
+    if (res.ok) {
+      // Store the token under BOTH keys ("token" and "authToken") so neither
+      // older nor newer code paths break when reading.
+      if (data?.token && typeof window !== 'undefined') {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('authToken', data.token);
+      }
+      return { success: true, ...(data ?? {}) };
+    }
+
     // 401 with requires2FA flag is the "password OK, give me the TOTP code" path
-    if (res.status === 401) {
-      const data = await res.json().catch(() => ({}));
-      if (data.requires2FA) return { success: false, requires2FA: true, message: data.message };
+    if (res.status === 401 && data?.requires2FA) {
+      return { success: false, requires2FA: true, message: data.message };
     }
 
     // 403 covers the policy-driven gates: unverified email or
     // missing 2FA-setup when required. Surface the flags so the
     // login form can route to the right next step.
-    if (res.status === 403) {
-      const data = await res.json().catch(() => ({}));
-      if (data.requiresVerification) {
-        return { success: false, requiresVerification: true, email: data.email, message: data.message };
-      }
-      if (data.requires2FASetup) {
-        return {
-          success: false,
-          requires2FASetup: true,
-          setupToken: data.setupToken,
-          setupTokenExpires: data.setupTokenExpires,
-          message: data.message,
-        };
-      }
+    if (res.status === 403 && data?.requiresVerification) {
+      return { success: false, requiresVerification: true, email: data.email, message: data.message };
+    }
+    if (res.status === 403 && data?.requires2FASetup) {
+      return {
+        success: false,
+        requires2FASetup: true,
+        setupToken: data.setupToken,
+        setupTokenExpires: data.setupTokenExpires,
+        message: data.message,
+      };
     }
 
-    const data = await handleResponse(res);
-
-    // Store the token under BOTH keys ("token" and "authToken") so neither
-    // older nor newer code paths break when reading.
-    if (data.success && data.token) {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('authToken', data.token);
-      }
-    }
-
-    return data;
+    // Keep the status only when there was no parsable body to quote.
+    return { success: false, message: data?.message || `Request failed (${res.status})` };
   } catch (err) {
     return handleError(err);
   }
