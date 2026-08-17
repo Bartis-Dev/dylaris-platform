@@ -12,10 +12,12 @@ import (
 	"dylaris-core/updates"
 )
 
-// updatesFeedTTL bounds how often Core re-fetches a remote update feed. The feed
-// changes at most a few times a day, so a long TTL keeps the admin bell cheap
-// and shields the upstream from the polling navbar.
-const updatesFeedTTL = 30 * time.Minute
+// updatesFeedTTL bounds how often Core re-fetches a remote update feed, and so
+// is the worst-case delay before a freshly pushed changelog entry reaches the
+// admin bell. Short enough to see a same-day push, long enough to shield the
+// upstream from the polling navbar (the panel polls every 60s but is served from
+// this cache).
+const updatesFeedTTL = 15 * time.Minute
 
 // updatesEntryCap limits how many since-install entries the endpoint returns per
 // service (newest first) so a long-lived feed never bloats the response.

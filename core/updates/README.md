@@ -23,14 +23,22 @@ Two layers:
 1. **Build-baked baseline** — this file is `//go:embed`-ed into Core and its
    line count is the "installed" mark. It normally stays empty.
 2. **Runtime remote fetch** — Core fetches a raw JSONL URL live (8s timeout,
-   1 MiB cap, 30-min cache) and diffs its line count against the baked baseline
+   1 MiB cap, 15-min cache) and diffs its line count against the baked baseline
    to compute "new since your build". The default URL is:
 
        https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/feed.jsonl
 
 Because the delta is computed against the running build's baked count, you do
 NOT need to rebuild the image to publish updates: appending lines to the remote
-file is enough, and the running Core picks them up within the 30-minute TTL.
+file is enough, and the running Core picks them up within the 15-minute TTL.
+The panel polls every 60s, but is served from that cache, so 15 minutes is the
+worst-case delay between a push and the bell lighting up.
+
+One consequence of the baked baseline is worth knowing when publishing: a line
+appended in the same commit an image is built from is baked into that image, so
+whoever runs that image will NOT see it (correctly — they already have the
+change). Entries only ever surface to builds older than the commit that added
+them.
 
 ## Owner-population steps
 
