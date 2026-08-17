@@ -1030,6 +1030,11 @@ export const listWarpKeys = (): Promise<{ success: boolean; keys: WarpKeyView[] 
 // memory of the key that created it and would otherwise keep forwarding.
 export const revokeWarpKey = (id: number): Promise<{ success: boolean; disconnected?: number; message?: string }> =>
     fetchAPI(`/admin/warp/keys/${id}`, { method: 'DELETE' });
+// Removes the row entirely. Disconnects peers first, server-side: warp_peers
+// cascades, so deleting the row before pushing the peers out would leave a live
+// WireGuard peer with no record that could ever remove it.
+export const deleteWarpKey = (id: number): Promise<{ success: boolean; disconnected?: number; message?: string }> =>
+    fetchAPI(`/admin/warp/keys/${id}/purge`, { method: 'DELETE' });
 
 // Warp overlay segmentation: the admin-configurable spoke destination-port
 // allowlist the region leaders enforce (comma-separated TCP ports).
@@ -1043,7 +1048,14 @@ export interface WarpFirewallSettings {
      */
     tunnelSubnets: string;
 }
-export const getWarpFirewallSettings = (): Promise<{ success: boolean; settings: WarpFirewallSettings }> =>
+// Detected, not stored: what Core works out the overlay CIDR to be, so a
+// self-hoster never has to look it up. Candidates are most-confident first.
+export interface SuggestedTunnelSubnets {
+    suggested: string;
+    candidates: string[];
+    source: string;
+}
+export const getWarpFirewallSettings = (): Promise<{ success: boolean; settings: WarpFirewallSettings; suggestedTunnelSubnets?: SuggestedTunnelSubnets }> =>
     fetchAPI('/settings/warp-firewall');
 export const saveWarpFirewallSettings = (
     data: WarpFirewallSettings,

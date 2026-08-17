@@ -1,23 +1,32 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Server, Circle, Shield, Check, KeyRound, Terminal, RefreshCw } from 'lucide-react';
+import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Server, Circle, Shield, Check, KeyRound, Terminal, RefreshCw, Ban } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getWarpRegions, upsertWarpRegion, deleteWarpRegion,
     upsertWarpLeader, deleteWarpLeader, mintWarpKey,
     getWarpFirewallSettings, saveWarpFirewallSettings,
-    listWarpKeys, revokeWarpKey,
+    listWarpKeys, revokeWarpKey, deleteWarpKey,
     type WarpRegionView, type WarpKeyView,
 } from '@/lib/api/types';
-import { warpOnlyCompose, nodeCompose, deployCli, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
+import { routeOnlyCompose, nodeCompose, deployCli, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
 import { API_URL } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 const enrollUrl = API_URL.replace(/\/api\/?$/, '');
 
+type WarpSubTab = 'settings' | 'nodes';
+
 export default function WarpTab() {
-    const { routingMode, fileAccessMode } = useAppData();
+    const { routingMode, fileAccessMode, featureFlags } = useAppData();
+    const [subTab, setSubTab] = useState<WarpSubTab>('settings');
+    // External nodes only make sense on a hosted platform: BYON and route-only
+    // are the tenant-facing offering, and a self-hoster has no tenants. Gate on
+    // the same signals the rest of the BYON UI uses - store wiring (STORE_URL +
+    // STORE_SHARED_KEY) or the BYON flag - so an open-core install shows only
+    // the overlay settings it can actually use.
+    const externalNodesVisible = featureFlags.store || featureFlags.byon;
     const gateOpen = routingMode === 'gateway' && fileAccessMode === 'beam';
 
     const [regions, setRegions] = useState<WarpRegionView[]>([]);
@@ -39,6 +48,10 @@ export default function WarpTab() {
 
     const [fwPorts, setFwPorts] = useState('');
     const [fwSubnets, setFwSubnets] = useState('');
+    // What Core detected, shown when nothing is stored yet so the operator can
+    // accept it rather than look the CIDR up. Kept separate from fwSubnets so
+    // "detected" and "saved" never look the same.
+    const [subnetHint, setSubnetHint] = useState<{ suggested: string; candidates: string[]; source: string } | null>(null);
     const [fwLoaded, setFwLoaded] = useState(false);
     const [savingFw, setSavingFw] = useState(false);
 
@@ -48,7 +61,16 @@ export default function WarpTab() {
         try {
             const [res, fw] = await Promise.all([getWarpRegions(), getWarpFirewallSettings()]);
             if (res.success) setRegions(res.regions || []);
-            if (fw.success) { setFwPorts(fw.settings.allowedPorts); setFwSubnets(fw.settings.tunnelSubnets || ''); setFwLoaded(true); }
+            if (fw.success) {
+                setFwPorts(fw.settings.allowedPorts);
+                const stored = fw.settings.tunnelSubnets || '';
+                const hint = fw.suggestedTunnelSubnets ?? null;
+                setSubnetHint(hint);
+                // Pre-fill the detected value when nothing is saved: the field is
+                // then ready to save instead of empty. A stored value always wins.
+                setFwSubnets(stored || hint?.suggested || '');
+                setFwLoaded(true);
+            }
         } catch {
             showToast('Failed to load Warp settings', false);
         } finally {
@@ -86,6 +108,26 @@ export default function WarpTab() {
             loadKeys();
         } else {
             showToast(res.message || 'Revoke failed.', false);
+        }
+    };
+
+    const handleDeleteKey = async (k: WarpKeyView) => {
+        const live = k.peers.length;
+        const ok = await confirmDialog({
+            title: `Delete "${k.name}"?`,
+            message: live > 0
+                ? `Removes the key and its history for good, and disconnects ${live} connected ${live === 1 ? 'node' : 'nodes'} from the overlay. Revoke instead if you want the record kept.`
+                : 'Removes the key and its history for good. Revoke instead if you want the record kept.',
+            confirmLabel: 'Delete',
+            destructive: true,
+        });
+        if (!ok) return;
+        const res = await deleteWarpKey(k.id);
+        if (res.success) {
+            showToast(res.disconnected ? `Deleted. ${res.disconnected} peer(s) disconnected.` : 'Key deleted.');
+            loadKeys();
+        } else {
+            showToast(res.message || 'Delete failed.', false);
         }
     };
 
@@ -181,6 +223,29 @@ export default function WarpTab() {
                 </p>
             </div>
 
+            {externalNodesVisible && (
+                <div className="flex gap-1 border-b border-(--base-03)">
+                    {([
+                        { id: 'settings' as const, label: 'Overlay Settings', icon: Shield },
+                        { id: 'nodes' as const, label: 'External Nodes', icon: Server },
+                    ]).map(({ id, label, icon: Icon }) => (
+                        <button
+                            key={id}
+                            onClick={() => setSubTab(id)}
+                            className={`flex items-center gap-2 px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                                subTab === id
+                                    ? 'border-(--accent) text-(--accent-light)'
+                                    : 'border-transparent text-(--base-07) hover:text-(--base-09)'
+                            }`}
+                        >
+                            <Icon size={14} />
+                            {label}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {(!externalNodesVisible || subTab === 'settings') && (<>
             {/* Regions + leaders */}
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Regions & Hubs</h3>
@@ -243,11 +308,36 @@ export default function WarpTab() {
                         disabled={!fwLoaded}
                     />
                     <p className="text-xs text-(--base-06) mt-1">
-                        The network where Redis and Core gRPC live. Core cannot detect this - it never sees your Docker
-                        overlay - so set it once here and every deploy snippet is handed out ready to run instead of
-                        carrying a placeholder. Comma-separate several ranges. Must be a network address
+                        The network where Redis and Core gRPC live. Every deploy snippet is handed out with this value
+                        filled in, so nobody has to look it up. Comma-separate several ranges. Must be a network address
                         (<span className="font-mono">10.20.0.0/16</span>, not <span className="font-mono">10.20.0.5/16</span>).
                     </p>
+                    {subnetHint && subnetHint.suggested !== '' && (
+                        <p className="text-xs text-(--base-06) mt-1">
+                            Pre-filled with <span className="font-mono text-(--accent-light)">{subnetHint.suggested}</span>,
+                            {' '}{subnetHint.source}. Save to keep it.
+                            {subnetHint.candidates.length > 1 && (
+                                <> Core is attached to several networks; the others are{' '}
+                                    {subnetHint.candidates.slice(1).map((c, i) => (
+                                        <span key={c}>
+                                            {i > 0 && ', '}
+                                            <button
+                                                type="button"
+                                                onClick={() => setFwSubnets(c)}
+                                                className="font-mono text-(--accent-light) hover:underline"
+                                            >{c}</button>
+                                        </span>
+                                    ))}.
+                                </>
+                            )}
+                        </p>
+                    )}
+                    {subnetHint && subnetHint.suggested === '' && (
+                        <p className="text-xs text-(--warning-light) mt-1">
+                            Could not be detected on this host - enter it manually. It is the subnet of the Docker
+                            network Core and Redis share.
+                        </p>
+                    )}
                 </div>
                 <div className="flex items-start gap-2 p-3 rounded-md border border-(--warning)/40 bg-(--warning)/5">
                     <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
@@ -261,6 +351,9 @@ export default function WarpTab() {
                 </button>
             </div>
 
+            </>)}
+
+            {externalNodesVisible && subTab === 'nodes' && (<>
             {/* Mint enrollment key */}
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Connect External Node</h3>
@@ -348,10 +441,13 @@ export default function WarpTab() {
                                             <Terminal size={12} /> Deploy
                                         </button>
                                         {!k.revoked && (
-                                            <button onClick={() => handleRevokeKey(k)} className="btn btn-danger btn-sm" title="Revoke key and disconnect its nodes">
-                                                <Trash2 size={12} />
+                                            <button onClick={() => handleRevokeKey(k)} className="btn btn-secondary btn-sm" title="Block future enrolments and disconnect its nodes; keeps the record">
+                                                <Ban size={12} /> Revoke
                                             </button>
                                         )}
+                                        <button onClick={() => handleDeleteKey(k)} className="btn btn-danger btn-sm" title="Remove the key and its history for good">
+                                            <Trash2 size={12} />
+                                        </button>
                                     </div>
                                 </div>
 
@@ -373,6 +469,7 @@ export default function WarpTab() {
                     </div>
                 )}
             </div>
+            </>)}
 
             {(revealed || showDeploy) && (
                 <DeployModal
@@ -495,11 +592,11 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, onClose, showToas
     onClose: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }) {
-    const [kind, setKind] = useState<'node' | 'warp'>('node');
+    const [kind, setKind] = useState<'node' | 'route-only'>('node');
     const [copied, setCopied] = useState<string | null>(null);
 
     const input = { apiKey: apiKey ?? '<your-warp-key>', enrollUrl, tunnelSubnets };
-    const compose = kind === 'node' ? nodeCompose(input) : warpOnlyCompose(input);
+    const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
     const cli = deployCli(kind);
 
     const copy = (what: string, text: string) => {
@@ -539,37 +636,38 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, onClose, showToas
                     )}
 
                     <div className="flex gap-2">
-                        {(['node', 'warp'] as const).map(k => (
+                        {(['node', 'route-only'] as const).map(k => (
                             <button
                                 key={k}
                                 onClick={() => setKind(k)}
                                 className={`btn btn-sm ${kind === k ? 'btn-primary' : 'btn-secondary'}`}
                             >
-                                {k === 'node' ? 'Managed node (warp + node + link)' : 'Overlay access only (warp)'}
+                                {k === 'node' ? 'BYON — bring your own node' : 'Route-only — protected address'}
                             </button>
                         ))}
                     </div>
                     <div className="text-xs text-(--base-06) space-y-1.5">
                         {kind === 'node' ? (
                             <p>
-                                Runs Minecraft servers on this machine. warp joins the overlay first; the node then
-                                reaches Redis and Core over it and starts its OWN link sidecar
+                                Dylaris runs Minecraft servers ON this machine. warp joins the overlay first; the node
+                                then reaches Redis and Core over it and starts its OWN link sidecar
                                 (<span className="font-mono">NODE_MANAGES_LINK</span>) - do not run link yourself.
                             </p>
                         ) : (
                             <>
                                 <p>
-                                    Joins the overlay and nothing else: no node, no link, so this machine hosts no
-                                    servers and carries no player traffic. Useful when it should be reachable before
-                                    you decide its role.
+                                    The customer runs the Minecraft server themselves and gets a protected Dylaris
+                                    address for it. warp joins the overlay, link tunnels the local server out to the
+                                    edges. No node, no swarm join, no published ports - only outbound connections.
                                 </p>
                                 <p>
-                                    <strong>This is not route-only.</strong> Route-only gives a customer a protected
-                                    address for a server they run themselves, and needs warp <em>plus a link</em>
-                                    container. Nothing deploys link automatically here - only a managed node does that
-                                    for itself. Mint a route-only kit under Protected Addresses instead; it is
-                                    tenant-scoped and issues its own link identity, which an admin enrolment key
-                                    cannot.
+                                    Afterwards create the route(s) in the panel and point them at this link. How many
+                                    a customer may create is capped by their plan (route limit and link limit), so
+                                    billing controls it - not this dialog.
+                                </p>
+                                <p className="text-(--warning-light)">
+                                    Linux only: the kit uses kernel WireGuard, which needs host networking and
+                                    NET_ADMIN. There is no Windows or macOS path.
                                 </p>
                             </>
                         )}

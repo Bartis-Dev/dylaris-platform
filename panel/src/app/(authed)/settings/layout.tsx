@@ -17,6 +17,8 @@ interface SettingsTab {
     // carry a `module` name that must be enabled for them to appear.
     always: boolean;
     module?: string;
+    // Hidden unless the hosted store is wired (STORE_URL + STORE_SHARED_KEY).
+    requiresStore?: boolean;
 }
 
 interface SettingsGroup {
@@ -26,6 +28,11 @@ interface SettingsGroup {
     requiresByon?: boolean;
     tabs: SettingsTab[];
 }
+
+// Per-tab gate, for tabs inside an otherwise-visible group. requiresStore means
+// the tab is meaningless without the hosted store: plans map onto Stripe
+// products and billing acts on subscriptions, so on a self-host build they would
+// be controls with nothing behind them.
 
 // Grouped settings nav. Slugs/routes are unchanged from the previous flat list;
 // only the presentation moved to a left vertical grouped sidebar. The BYON group
@@ -89,9 +96,11 @@ const TAB_GROUPS: SettingsGroup[] = [
         group: 'BYON',
         requiresByon: true,
         tabs: [
+            // Traffic metering is useful on any BYON install, store or not.
             { slug: 'usage', label: 'Usage', always: true },
-            { slug: 'billing', label: 'Billing', always: true },
-            { slug: 'plans', label: 'Plans', always: true },
+            // Both act on Stripe subscriptions: hidden without the store.
+            { slug: 'billing', label: 'Billing', always: true, requiresStore: true },
+            { slug: 'plans', label: 'Plans', always: true, requiresStore: true },
         ],
     },
 ];
@@ -269,6 +278,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
         .map(g => ({
             ...g,
             tabs: g.tabs.filter(tab => {
+                if (tab.requiresStore && !featureFlags.store) return false;
                 if (tab.always) return true;
                 return modules.some(m => m.name === tab.module && m.isEnabled);
             }),

@@ -1,23 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { warpOnlyCompose, nodeCompose, deployCli, EXTERNAL_NODE_PORTS } from './warpDeploy';
+import { routeOnlyCompose, nodeCompose, deployCli, EXTERNAL_NODE_PORTS } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
 
-describe('warpOnlyCompose', () => {
+describe('routeOnlyCompose', () => {
     it('embeds the key and enroll url', () => {
-        const out = warpOnlyCompose(base);
+        const out = routeOnlyCompose(base);
         expect(out).toContain('API_KEY: "KEY123"');
         expect(out).toContain('ENROLL_URL: "https://api.example.com"');
     });
 
+    // The link is what makes this route-only rather than plain overlay access.
+    it('includes the link container', () => {
+        const out = routeOnlyCompose(base);
+        expect(out).toContain('dylaris-gateway-link');
+        expect(out).toContain('depends_on: [warp]');
+    });
+
+    // One key does both jobs: the link exchanges it for its own derived token,
+    // so no second secret is handed out.
+    it('reuses the warp key as LINK_BOOT_KEY', () => {
+        expect(routeOnlyCompose(base)).toContain('LINK_BOOT_KEY: "KEY123"');
+    });
+
+    // Against a plain-TCP Redis a TLS client fails the handshake and the link
+    // never registers - the exact trap the repo example still carries.
+    it('defaults REDIS_USE_TLS to false', () => {
+        expect(routeOnlyCompose(base)).toContain('REDIS_USE_TLS: "false"');
+    });
+
+    // LINK_ALLOWED_TARGETS is compared as an exact host string; a port never matches.
+    it('uses a bare host for the local target', () => {
+        const out = routeOnlyCompose({ ...base, localTarget: '192.168.1.50' });
+        expect(out).toContain('LINK_ALLOWED_TARGETS: "192.168.1.50"');
+        expect(out).not.toContain('192.168.1.50:');
+        expect(routeOnlyCompose(base)).toContain('LINK_ALLOWED_TARGETS: "127.0.0.1"');
+    });
+
     it('leaves an obvious placeholder when the overlay CIDR is unknown', () => {
-        expect(warpOnlyCompose(base)).toContain('<overlay-cidr');
-        expect(warpOnlyCompose({ ...base, tunnelSubnets: '10.20.0.0/16' }))
+        expect(routeOnlyCompose(base)).toContain('<overlay-cidr');
+        expect(routeOnlyCompose({ ...base, tunnelSubnets: '10.20.0.0/16' }))
             .toContain('TUNNEL_SUBNETS: "10.20.0.0/16"');
     });
 
     it('treats a whitespace-only value as unset rather than emitting an empty string', () => {
-        expect(warpOnlyCompose({ ...base, tunnelSubnets: '   ' })).toContain('<overlay-cidr');
+        expect(routeOnlyCompose({ ...base, tunnelSubnets: '   ' })).toContain('<overlay-cidr');
     });
 });
 
@@ -55,13 +82,14 @@ describe('nodeCompose', () => {
 
 describe('deployCli', () => {
     it('names the matching compose file', () => {
-        expect(deployCli('warp')).toContain('warp.yml');
+        expect(deployCli('route-only')).toContain('route-only.yml');
         expect(deployCli('node')).toContain('byon-node.yml');
     });
 
-    it('only mentions node logs for the node variant', () => {
+    it('tails the container that matters for each variant', () => {
         expect(deployCli('node')).toContain('logs -f node');
-        expect(deployCli('warp')).not.toContain('logs -f node');
+        expect(deployCli('route-only')).not.toContain('logs -f node');
+        expect(deployCli('route-only')).toContain('logs -f link');
     });
 });
 

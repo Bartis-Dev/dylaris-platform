@@ -118,6 +118,16 @@ func (s *PostgresStore) RevokeWarpAPIKeyByID(id int) error {
 	return err
 }
 
+// DeleteWarpAPIKeyByID removes the row outright. warp_peers has ON DELETE
+// CASCADE, so its peer rows go with it - which is exactly why the caller MUST
+// disconnect those peers from the leaders first: once the rows are gone, the
+// resync that would otherwise clean them up no longer knows they existed, and a
+// live WireGuard peer would keep forwarding with nothing left to remove it.
+func (s *PostgresStore) DeleteWarpAPIKeyByID(id int) error {
+	_, err := s.db.Exec(`DELETE FROM warp_api_keys WHERE id = $1`, id)
+	return err
+}
+
 // ListLinkKitsForACLReconcile returns the non-revoked route-only link kits the
 // ACL reconciler should keep provisioned: every link EXCEPT those whose owner is
 // hard-suspended (suspended and past the enforcement grace). hardSuspendedBefore

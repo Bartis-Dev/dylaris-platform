@@ -1274,6 +1274,9 @@ func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http
 			AllowedPorts:  h.LoadWarpSpokeAllowedPorts(),
 			TunnelSubnets: h.LoadWarpTunnelSubnets(),
 		},
+		// Detected rather than stored: the panel pre-fills this when nothing is
+		// saved yet, so a self-hoster never has to look the overlay CIDR up.
+		"suggestedTunnelSubnets": h.state.suggestTunnelSubnets(),
 	})
 }
 

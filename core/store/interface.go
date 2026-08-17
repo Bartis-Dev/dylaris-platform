@@ -280,6 +280,7 @@ type Store interface {
 	ListWarpAPIKeys() ([]WarpAPIKey, error)
 	GetWarpAPIKeyByID(id int) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByID(id int) error
+	DeleteWarpAPIKeyByID(id int) error
 	// ListLinkKitsForACLReconcile returns non-revoked route-only link kits whose
 	// owner is NOT hard-suspended (owner suspended with suspended_at <=
 	// hardSuspendedBefore is excluded; NULL-owner admin kits are always included).

@@ -27,6 +27,8 @@ export type WarpDeployInput = {
     redisAddr?: string;
     /** Stable id for the machine. */
     nodeId?: string;
+    /** Route-only: the local host the link may dial. Host only, no port. */
+    localTarget?: string;
 };
 
 const REG = 'ghcr.io/bartis-dev';
@@ -37,15 +39,19 @@ function or(value: string | undefined, placeholder: string): string {
 }
 
 /**
- * warpOnlyCompose is the minimal case: join the overlay, nothing else.
+ * routeOnlyCompose is warp + link: the customer runs the Minecraft server
+ * themselves and gets a protected Dylaris address for it. No node, no swarm
+ * join, no published ports - the machine only makes OUTBOUND connections.
  *
- * NOT route-only. Route-only is warp PLUS a link container, and it is minted as
- * a tenant link kit (its own link identity), not from an admin enrolment key.
- * Nothing here deploys link: only a managed node starts one, for itself, via
- * NODE_MANAGES_LINK.
+ * The link is what makes this route-only rather than plain overlay access, and
+ * nothing deploys it implicitly: a managed node starts its own link, but here
+ * the customer runs it. It fetches its tunnel token and a scoped Redis
+ * credential from Core at boot, authenticated by the same warp key, so no
+ * second secret has to be handed out and nothing secret lands on disk.
  */
-export function warpOnlyCompose(i: WarpDeployInput): string {
-    return `# warp.yml  ->  docker compose -f warp.yml up -d
+export function routeOnlyCompose(i: WarpDeployInput): string {
+    return `# route-only.yml  ->  docker compose -f route-only.yml up -d
+# Linux only: the kit uses kernel WireGuard (host networking + NET_ADMIN).
 services:
   warp:
     image: ${REG}/dylaris-gateway-warp:latest
@@ -54,10 +60,29 @@ services:
       LEADER: "false"
       API_KEY: "${i.apiKey}"
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
-      # Overlay CIDR(s) where Redis and core live - NOT your home LAN.
+      # Overlay CIDR(s) where Redis and the edges live - NOT your home LAN.
       TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
     network_mode: host
     cap_add: [NET_ADMIN]
+
+  link:
+    image: ${REG}/dylaris-gateway-link:latest
+    restart: unless-stopped
+    depends_on: [warp]
+    environment:
+      # Both are the SAME warp key: the link exchanges it at boot for its own
+      # derived token, so the token never travels with the kit.
+      CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
+      LINK_BOOT_KEY: "${i.apiKey}"
+      REDIS_ADDR: "${or(i.redisAddr, '<redis e.g. 10.20.0.5:6379>')}"
+      # false unless your operator terminates TLS on Redis. Against a plain-TCP
+      # Redis a TLS client fails the handshake and the link never registers.
+      REDIS_USE_TLS: "false"
+      # The LOCAL address the link may dial - your own server. Host only, NO
+      # port: this is compared as an exact host string.
+      LINK_ALLOWED_TARGETS: "${or(i.localTarget, '127.0.0.1')}"
+      LOCAL_HOST: "${or(i.localTarget, '127.0.0.1')}"
+    network_mode: host
 `;
 }
 
@@ -117,8 +142,8 @@ volumes:
 }
 
 /** CLI steps that go with either compose file. */
-export function deployCli(kind: 'warp' | 'node'): string {
-    const file = kind === 'warp' ? 'warp.yml' : 'byon-node.yml';
+export function deployCli(kind: 'route-only' | 'node'): string {
+    const file = kind === 'route-only' ? 'route-only.yml' : 'byon-node.yml';
     return `# 1. Save the compose file above, then start it:
 docker compose -f ${file} up -d
 
@@ -131,7 +156,9 @@ ${kind === 'node'
             ? `
 # 4. The node registers itself; it appears in the panel under Nodes within ~30s.
 docker compose -f ${file} logs -f node`
-            : ''}`;
+            : `
+# 4. The link registers its tunnel; then create the route(s) in the panel.
+docker compose -f ${file} logs -f link`}`;
 }
 
 /**

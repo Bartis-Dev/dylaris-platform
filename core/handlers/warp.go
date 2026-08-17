@@ -292,6 +292,46 @@ func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "disconnected": removed})
 }
 
+// DeleteAPIKey DELETE /api/admin/warp/keys/{id}/purge - remove the key row
+// entirely, after disconnecting whatever it enrolled.
+//
+// Revoke keeps the row so the history stays visible; this is for cleaning up
+// test keys and decommissioned machines. Order matters and is not cosmetic:
+// warp_peers cascades on delete, so the peers MUST be pushed out to the leaders
+// first. Delete the row first and the peer rows vanish with it, leaving a live
+// WireGuard peer on every leader and no record that would ever remove it - the
+// resync rebuilds from the rows, and there would be none.
+func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid key id", http.StatusBadRequest)
+		return
+	}
+	key, err := h.state.Store.GetWarpAPIKeyByID(id)
+	if err != nil || key == nil {
+		sendJSONError(w, "Key not found", http.StatusNotFound)
+		return
+	}
+	if key.OwnerID != "" {
+		sendJSONError(w, "This is a tenant link kit — remove it from Protected Addresses", http.StatusBadRequest)
+		return
+	}
+
+	removed := 0
+	if h.svc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		removed = h.svc.DisconnectKeyPeers(ctx, id)
+	}
+	if derr := h.state.Store.DeleteWarpAPIKeyByID(id); derr != nil {
+		sendJSONError(w, "Failed to delete key", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("warp: deleted enrollment key %d (%s), disconnected %d peer(s)", id, key.Name, removed)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "disconnected": removed})
+}
+
 // MintLinkKit (tenant) creates a route-only "link kit": a warp enrollment key
 // bound to the calling user plus an auto-generated link identity (node_id). The
 // customer runs warp (joins the overlay) + link (tunnels their LOCAL server out
