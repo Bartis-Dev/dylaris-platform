@@ -178,8 +178,10 @@ func (s *PostgresStore) GetTicket(id int) (*models.Ticket, error) {
 	// has no server attached and the join would be wasted.
 	if t.ServerUUID != "" {
 		var name string
-		s.db.QueryRow(`SELECT name FROM servers WHERE uuid = $1`, t.ServerUUID).Scan(&name)
+		var id int
+		s.db.QueryRow(`SELECT id, name FROM servers WHERE uuid = $1`, t.ServerUUID).Scan(&id, &name)
 		t.ServerName = name
+		t.ServerID = id
 	}
 	return t, nil
 }

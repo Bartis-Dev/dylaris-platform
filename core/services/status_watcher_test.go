@@ -23,6 +23,9 @@ type statusWatcherFakeStore struct {
 	edgeMotd       []store.ServerEdgeMotd
 	edgeMotdErr    error
 
+	rconLogFilter    []store.ServerRconLogFilter
+	rconLogFilterErr error
+
 	statusCalls []schedStatusCall // {id, status}
 	portCalls   []portCall
 }
@@ -55,6 +58,10 @@ func (f *statusWatcherFakeStore) ListServers(filterByUser string) ([]models.Serv
 
 func (f *statusWatcherFakeStore) ListServerEdgeMotd() ([]store.ServerEdgeMotd, error) {
 	return f.edgeMotd, f.edgeMotdErr
+}
+
+func (f *statusWatcherFakeStore) ListServerRconLogFilter() ([]store.ServerRconLogFilter, error) {
+	return f.rconLogFilter, f.rconLogFilterErr
 }
 
 func newStatusWatcherTest(t *testing.T, fs *statusWatcherFakeStore) *StatusWatcherService {
@@ -251,7 +258,7 @@ func TestPublishDesiredStates_WritesEachServersDesiredState(t *testing.T) {
 	svc := newStatusWatcherTest(t, fs)
 	ctx := context.Background()
 
-	svc.publishDesiredStates(ctx)
+	svc.publishServerStateKeys(ctx)
 
 	a, err := svc.redis.Get(ctx, "dylaris:server:srv-a:desired_state").Result()
 	if err != nil || a != "online" {
@@ -268,7 +275,7 @@ func TestPublishDesiredStates_ListError_NoWrites(t *testing.T) {
 	svc := newStatusWatcherTest(t, fs)
 	ctx := context.Background()
 
-	svc.publishDesiredStates(ctx) // must not panic; simply nothing to write
+	svc.publishServerStateKeys(ctx) // must not panic; simply nothing to write
 
 	n, err := svc.redis.Exists(ctx, "dylaris:server:srv-a:desired_state").Result()
 	if err != nil {
@@ -276,5 +283,40 @@ func TestPublishDesiredStates_ListError_NoWrites(t *testing.T) {
 	}
 	if n != 0 {
 		t.Error("expected no desired_state keys written when ListServers fails")
+	}
+}
+
+// The bug this key exists for: the gateway edge read :status, which the scan
+// above DELETES within one 5s tick, so during a restart the edge saw nothing and
+// players got a raw connection drop instead of "Server Restarting". :live_status
+// is published from the DB every tick and must survive the scan.
+func TestPublishServerStateKeys_LiveStatusIsDurableAndSurvivesTheStatusScan(t *testing.T) {
+	fs := &statusWatcherFakeStore{
+		listServers: []models.Server{{UUID: "srv-a", Status: "restarting", DesiredState: "online"}},
+		serversByUUID: map[string]models.Server{
+			"srv-a": {ID: 1, UUID: "srv-a", Status: "restarting"},
+		},
+	}
+	svc := newStatusWatcherTest(t, fs)
+	ctx := context.Background()
+
+	// A node event on the transient key, exactly as the node writes it.
+	if err := svc.redis.Set(ctx, "dylaris:server:srv-a:status", "restarting", 0).Err(); err != nil {
+		t.Fatalf("seed status event: %v", err)
+	}
+
+	svc.scan()
+
+	// The event key is consumed, as before.
+	if n, _ := svc.redis.Exists(ctx, "dylaris:server:srv-a:status").Result(); n != 0 {
+		t.Error("the transient :status event key should still be consumed by the scan")
+	}
+	// The durable one is what the edge reads, and it is still there.
+	got, err := svc.redis.Get(ctx, "dylaris:server:srv-a:live_status").Result()
+	if err != nil || got != "restarting" {
+		t.Fatalf("live_status = %q (err=%v), want restarting — the edge has nothing to render without it", got, err)
+	}
+	if ttl, _ := svc.redis.TTL(ctx, "dylaris:server:srv-a:live_status").Result(); ttl <= 0 {
+		t.Errorf("live_status TTL = %v, want a positive expiry so a deleted server's key ages out", ttl)
 	}
 }

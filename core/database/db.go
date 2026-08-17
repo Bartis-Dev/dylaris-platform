@@ -243,6 +243,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyEntitlementSchema(db); err != nil {
 		return err
 	}
+	if err := applyRconLogFilterSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

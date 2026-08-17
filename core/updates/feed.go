@@ -20,10 +20,20 @@ import (
 var platformFeed []byte
 
 // FeedEntry is one changelog line in a JSONL update feed.
+//
+// Type is not validated here on purpose - an unknown value renders under its own
+// name rather than being dropped, so a feed written by a newer build is never
+// silently swallowed by an older panel. The known set:
+//
+//	feature | fix | change | security | breaking
+//
+// "breaking" is the only one that changes what the operator must DO: it means
+// the update does not finish applying itself, and the panel leads the What's-new
+// modal with a callout when a date contains one. Use it only for that.
 type FeedEntry struct {
 	Date    string `json:"date"`
 	Service string `json:"service"`
-	Type    string `json:"type"` // feature | fix | change | security
+	Type    string `json:"type"`
 	Summary string `json:"summary"`
 }
 

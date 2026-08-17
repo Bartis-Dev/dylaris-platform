@@ -102,15 +102,20 @@ type TicketCategory struct {
 // supporter currently responsible; AssignedTeam carries the
 // support_team string and drives the cross-team visibility scope.
 type Ticket struct {
-	ID             int        `json:"id"`
-	Region         string     `json:"region"`
-	CategoryID     int        `json:"categoryId"`
-	CategoryName   string     `json:"categoryName,omitempty"`
-	UserID         string     `json:"userId"`
-	Username       string     `json:"username,omitempty"`
-	ServerUUID     string     `json:"serverUuid,omitempty"`
-	ServerRegion   string     `json:"serverRegion,omitempty"`
-	ServerName     string     `json:"serverName,omitempty"`
+	ID           int    `json:"id"`
+	Region       string `json:"region"`
+	CategoryID   int    `json:"categoryId"`
+	CategoryName string `json:"categoryName,omitempty"`
+	UserID       string `json:"userId"`
+	Username     string `json:"username,omitempty"`
+	ServerUUID   string `json:"serverUuid,omitempty"`
+	ServerRegion string `json:"serverRegion,omitempty"`
+	ServerName   string `json:"serverName,omitempty"`
+	// ServerID is the numeric id the panel routes on (/servers/<id>). The row
+	// stores the UUID, but every panel link needs the id, so the detail read
+	// resolves it alongside the name. Populated by GetTicket only — list views
+	// show the name and do not link.
+	ServerID       int        `json:"serverId,omitempty"`
 	Title          string     `json:"title"`
 	Status         string     `json:"status"`
 	Priority       string     `json:"priority"`

@@ -133,3 +133,43 @@ func TestUUIDRegex(t *testing.T) {
 		}
 	}
 }
+
+// The panel polls RCON continuously, and Minecraft logs a thread start and a
+// shutdown for every one of those connections. At the polling rate that pushes
+// the server's actual output out of the 1000-line stream.
+func TestIsRconNoiseLine(t *testing.T) {
+	noise := []string{
+		"[12:00:00] [RCON Listener #1/INFO]: Thread RCON Client /172.18.0.1 started",
+		"[12:00:00] [RCON Client /172.18.0.1 #4/INFO]: Thread RCON Client /172.18.0.1 shutting down",
+		"[12:00:01] [RCON Listener #1/INFO]: RCON running on 0.0.0.0:25575",
+	}
+	for _, line := range noise {
+		if !isRconNoiseLine(line) {
+			t.Errorf("not filtered: %q", line)
+		}
+	}
+
+	// Matched on the logger THREAD, not the message: a player saying the word in
+	// chat, or the server reporting a real RCON problem from another thread, is
+	// content the operator asked for.
+	keep := []string{
+		"[12:00:00] [Server thread/INFO]: <Steve> how do I set up rcon?",
+		"[12:00:00] [Server thread/WARN]: Failed to bind rcon port",
+		"[12:00:00] [Server thread/INFO]: Done (5.2s)! For help, type \"help\"",
+		"",
+	}
+	for _, line := range keep {
+		if isRconNoiseLine(line) {
+			t.Errorf("wrongly filtered: %q", line)
+		}
+	}
+}
+
+// The filter is opt-in. A zero-value flag must let everything through, or a
+// server whose Redis key was never written would silently lose console lines.
+func TestRconFilterDefaultsOff(t *testing.T) {
+	var f rconFilterFlag
+	if f.on.Load() {
+		t.Fatal("the RCON filter is on before anything set it")
+	}
+}

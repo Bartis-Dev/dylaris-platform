@@ -170,6 +170,11 @@ type rconConfigRequest struct {
 	Port       int    `json:"port"`
 	Password   string `json:"password,omitempty"`
 	Regenerate bool   `json:"regenerate,omitempty"`
+	// HideLogNoise drops Minecraft's per-RCON-connection thread lines from the
+	// console. A POINTER so an old client that omits the field keeps the stored
+	// value: a plain bool would default to false and silently turn the filter off
+	// on every unrelated RCON config save.
+	HideLogNoise *bool `json:"hideLogNoise,omitempty"`
 }
 
 type rconConfigResponse struct {
@@ -187,6 +192,10 @@ type rconConfigResponse struct {
 	// regardless of enabled/disabled direction: disabling also rewrites the
 	// file and is equally inert until restart. No auto-restart happens here.
 	RestartRequired bool `json:"restartRequired"`
+	// HideLogNoise mirrors servers.rcon_log_filter. Applies live - the
+	// log-shipper re-reads it from Redis on a timer, no restart involved, which
+	// is why it is deliberately NOT part of RestartRequired above.
+	HideLogNoise bool `json:"hideLogNoise"`
 }
 
 // GetConfig GET /api/servers/{id}/rcon/config — returns enabled/port +
@@ -208,12 +217,16 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	// outage that GetServerRconConfig above would already have caught; fall back
 	// to false rather than blanking the whole config card.
 	needsRestart, _ := h.state.Store.GetServerRconNeedsRestart(serverID)
+	// Same non-fatal treatment: NOT NULL DEFAULT FALSE, so a read error means a
+	// DB outage the config read above already surfaced.
+	hideNoise, _ := h.state.Store.GetServerRconLogFilter(serverID)
 	json.NewEncoder(w).Encode(rconConfigResponse{
 		Success:         true,
 		Enabled:         enabled,
 		Port:            port,
 		HasSecret:       password != "",
 		RestartRequired: needsRestart,
+		HideLogNoise:    hideNoise,
 	})
 }
 
@@ -294,6 +307,27 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to save rcon config", http.StatusInternalServerError)
 		return
 	}
+	// Console filter. Independent of everything above: it never touches
+	// server.properties and takes effect without a restart, so it is applied even
+	// when the RCON write path did nothing.
+	hideNoise, _ := h.state.Store.GetServerRconLogFilter(serverID)
+	if req.HideLogNoise != nil && *req.HideLogNoise != hideNoise {
+		hideNoise = *req.HideLogNoise
+		if err := h.state.Store.SetServerRconLogFilter(serverID, hideNoise); err != nil {
+			sendJSONError(w, "Failed to save console filter", http.StatusInternalServerError)
+			return
+		}
+		// Publish immediately so a running server picks it up on its next poll
+		// rather than waiting for the status watcher's republish tick.
+		if h.state.Redis != nil {
+			v := "false"
+			if hideNoise {
+				v = "true"
+			}
+			h.state.Redis.Set(r.Context(), fmt.Sprintf("dylaris:server:%s:log_filter_rcon", srv.UUID), v, 60*time.Second)
+		}
+	}
+
 	json.NewEncoder(w).Encode(rconConfigResponse{
 		Success:         true,
 		Enabled:         req.Enabled,
@@ -302,6 +336,7 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		Password:        exposeNew,
 		Message:         "RCON config saved and written to server.properties. Restart the server to apply.",
 		RestartRequired: needsRestart,
+		HideLogNoise:    hideNoise,
 	})
 }
 

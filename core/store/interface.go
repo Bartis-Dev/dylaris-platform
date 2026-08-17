@@ -543,6 +543,15 @@ type Store interface {
 	GetServerRconNeedsRestart(serverID int) (bool, error)
 	SetServerRconNeedsRestart(serverID int, needsRestart bool) error
 
+	// rcon_log_filter is the per-server console toggle that drops Minecraft's
+	// per-RCON-connection thread chatter from the log stream. Same lazy-accessor
+	// shape as the two above; ListServerRconLogFilter is the bulk read the
+	// periodic Redis republish uses (the log-shipper reads the live value from
+	// Redis so the toggle applies without recreating the container).
+	GetServerRconLogFilter(serverID int) (bool, error)
+	SetServerRconLogFilter(serverID int, on bool) error
+	ListServerRconLogFilter() ([]ServerRconLogFilter, error)
+
 	// --- Edge transitional MOTD (per-server) ---
 	// Lazy accessors (same rationale as RCON): the two columns stay off the
 	// giant server-list scans. ListServerEdgeMotd is a single bulk query used

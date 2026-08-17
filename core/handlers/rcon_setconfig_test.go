@@ -34,6 +34,8 @@ type rconConfigFakeStore struct {
 	rconPassword string
 	getRconErr   error
 
+	logFilter bool
+
 	setRconCalls []rconSetCall
 	setRconErr   error
 
@@ -71,6 +73,15 @@ func (f *rconConfigFakeStore) GetInvite(serverID int, userID string) (*models.Se
 
 func (f *rconConfigFakeStore) GetServerRconConfig(serverID int) (bool, int, string, error) {
 	return f.rconEnabled, f.rconPort, f.rconPassword, f.getRconErr
+}
+
+func (f *rconConfigFakeStore) GetServerRconLogFilter(serverID int) (bool, error) {
+	return f.logFilter, nil
+}
+
+func (f *rconConfigFakeStore) SetServerRconLogFilter(serverID int, on bool) error {
+	f.logFilter = on
+	return nil
 }
 
 func (f *rconConfigFakeStore) SetServerRconConfig(serverID int, enabled bool, port int, password string) error {
@@ -505,5 +516,42 @@ func TestRconSetConfig_NeedsRestartPersistFailure(t *testing.T) {
 	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// hideLogNoise is a POINTER in the request. A plain bool would read as false on
+// every client that does not send the field, so saving an unrelated RCON change
+// (port, password) would silently turn the console filter back off.
+func TestRconSetConfig_OmittedLogFilterKeepsStoredValue(t *testing.T) {
+	fs := &rconConfigFakeStore{server: &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "main"}, logFilter: true}
+	h := newRconConfigHandler(fs)
+
+	rec := httptest.NewRecorder()
+	h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{"enabled": true, "port": 25575}))
+
+	if !fs.logFilter {
+		t.Error("an unrelated RCON save turned the console filter off")
+	}
+	if resp := decodeRconConfigResp(t, rec); !resp.HideLogNoise {
+		t.Errorf("response hideLogNoise = false, want the stored true")
+	}
+}
+
+func TestRconSetConfig_LogFilterTogglesBothWays(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		fs := &rconConfigFakeStore{server: &models.Server{ID: 1, OwnerName: "alice", ActiveSubServer: "main"}, logFilter: !want}
+		h := newRconConfigHandler(fs)
+
+		rec := httptest.NewRecorder()
+		h.SetConfig(rec, rconSetConfigReq(1, "alice", false, "u1", map[string]interface{}{
+			"enabled": true, "port": 25575, "hideLogNoise": want,
+		}))
+
+		if fs.logFilter != want {
+			t.Errorf("stored filter = %v, want %v", fs.logFilter, want)
+		}
+		if resp := decodeRconConfigResp(t, rec); resp.HideLogNoise != want {
+			t.Errorf("response hideLogNoise = %v, want %v", resp.HideLogNoise, want)
+		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -49,6 +50,11 @@ const (
 	// hasn't fired in 5min the value is effectively stale anyway, and the
 	// panel falls back to the container metric.
 	heapKeyTTL = 5 * time.Minute
+
+	// How often the RCON-filter toggle is re-read. A console setting does not
+	// need to be instant, and this bounds the extra Redis load to one GET per
+	// server per interval regardless of log volume.
+	rconFilterRefresh = 15 * time.Second
 
 	// Crash-loop limits. This supervisor is PID 1 of the server container, so
 	// for as long as it keeps restarting a process that cannot live, the
@@ -138,6 +144,64 @@ func parseHeapAfterGC(line string) (int64, bool) {
 // user-requested and should pass through.
 func isUnifiedGCLine(line string) bool {
 	return strings.Contains(line, "][gc")
+}
+
+// isRconNoiseLine reports whether a line is Minecraft's per-RCON-connection
+// chatter rather than anything about the server.
+//
+// The panel polls RCON (the online-player list every 10s, plus status reads), and
+// vanilla/Paper logs a thread start AND a shutdown for every one of those
+// connections. The console fills with
+//
+//	[12:00:00] [RCON Listener #1/INFO]: Thread RCON Client /172.18.0.1 started
+//	[12:00:00] [RCON Client /172.18.0.1 #4/INFO]: Thread RCON Client /172.18.0.1 shutting down
+//
+// at the panel's polling rate, which pushes real output out of the 1000-line
+// stream. Matched on the LOGGER THREAD ("[RCON ") rather than the message text, so
+// a chat message that happens to contain the word RCON is not swallowed; the
+// bracket is what makes it a thread name and not user content.
+//
+// Opt-in: it hides output the operator might want, so the default is off and the
+// per-server toggle turns it on.
+func isRconNoiseLine(line string) bool {
+	return strings.Contains(line, "[RCON Listener") ||
+		strings.Contains(line, "[RCON Client") ||
+		strings.Contains(line, "Thread RCON Client")
+}
+
+// rconFilterFlag tracks the per-server "hide RCON connection noise" toggle.
+// Read on EVERY log line, refreshed on a timer: a Redis GET per line would put
+// one round-trip in front of every line a busy server prints.
+type rconFilterFlag struct{ on atomic.Bool }
+
+// watch keeps the flag current from Redis. Written by Core when the toggle
+// changes (dylaris:server:<uuid>:log_filter_rcon) and refreshed by Core's status
+// watcher, same as the edge-MOTD keys. A read error leaves the last known value
+// rather than flipping the filter: losing Redis should not suddenly change what
+// the console shows.
+func (f *rconFilterFlag) watch(ctx context.Context, rdb *redis.Client, key string) {
+	poll := func() {
+		v, err := rdb.Get(ctx, key).Result()
+		if err == redis.Nil {
+			f.on.Store(false) // key absent is a definite "off", not an error
+			return
+		}
+		if err != nil {
+			return
+		}
+		f.on.Store(v == "true" || v == "1")
+	}
+	poll()
+	ticker := time.NewTicker(rconFilterRefresh)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			poll()
+		}
+	}
 }
 
 func getEnv(key, fallback string) string {
@@ -250,7 +314,7 @@ func scanLines(r io.Reader, ch chan<- string) {
 // Side effect: also scans each line for JVM GC summaries and updates a
 // per-server Redis key with the latest post-GC heap size so the node
 // stats collector can surface live heap usage to the panel.
-func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string, lineCh <-chan string) {
+func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string, lineCh <-chan string, rconFilter *rconFilterFlag) {
 	ticker := time.NewTicker(batchInterval)
 	defer ticker.Stop()
 
@@ -310,6 +374,12 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 			// here anyway, so this is purely about not exposing platform-
 			// internal logs to the operator.
 			if isUnifiedGCLine(line) {
+				continue
+			}
+			// Per-server toggle, off by default. Dropped here rather than at
+			// read time so the filter can be turned on and off on a running
+			// server without restarting it.
+			if rconFilter != nil && rconFilter.on.Load() && isRconNoiseLine(line) {
 				continue
 			}
 			buf = append(buf, line)
@@ -384,9 +454,15 @@ func main() {
 	// enough -- a fresh log-shipper instance overwrites stale values.
 	heapKey := fmt.Sprintf("dylaris:server:%s:java-heap", serverUUID)
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", serverUUID)
+	// Per-server console toggle, written by Core. Not an env var: an env change
+	// needs the container recreated, and this has to be flippable while the
+	// server runs.
+	rconFilterKey := fmt.Sprintf("dylaris:server:%s:log_filter_rcon", serverUUID)
 
 	rdb := connectRedis()
 	defer rdb.Close()
+
+	rconFilter := &rconFilterFlag{}
 
 	// Check if working directory exists (may have been renamed by user)
 	cwd, _ := os.Getwd()
@@ -442,7 +518,8 @@ func main() {
 		go func() { defer scanWG.Done(); scanLines(stderrPipe, lineCh) }()
 
 		go forwardInput(ctx, rdb, inputKey, stdinPipe)
-		go shipLogs(ctx, rdb, streamKey, heapKey, lineCh)
+		go rconFilter.watch(ctx, rdb, rconFilterKey)
+		go shipLogs(ctx, rdb, streamKey, heapKey, lineCh, rconFilter)
 
 		// Wait for Java process to exit
 		if err := javaCmd.Wait(); err != nil {

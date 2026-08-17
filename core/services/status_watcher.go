@@ -95,11 +95,13 @@ func (s *StatusWatcherService) scan() {
 		dirty = true
 	}
 
-	// Publish desired states to Redis so nodes can reconcile
-	s.publishDesiredStates(ctx)
+	// Publish the durable per-server state keys the node reconciler and the
+	// gateway edge read (desired_state + live_status).
+	s.publishServerStateKeys(ctx)
 
 	// Publish per-server edge transitional-MOTD config so the gateway edge sees it.
 	s.publishEdgeMotd(ctx)
+	s.publishRconLogFilter(ctx)
 
 	// Sync host ports: Redis → DB (sets dirty=true if anything moved)
 	if s.syncPortsFromRedis(ctx) {
@@ -230,8 +232,26 @@ func (s *StatusWatcherService) consumeReconcileFailures(ctx context.Context) boo
 	}
 }
 
-// publishDesiredStates syncs desired_state from DB to Redis for node reconciliation.
-func (s *StatusWatcherService) publishDesiredStates(ctx context.Context) {
+// publishServerStateKeys syncs the two per-server keys that consumers OUTSIDE
+// Core read as durable state, from the DB, every scan tick with a 60s TTL:
+//
+//   - :desired_state — what the node's reconciler should be running.
+//   - :live_status   — what the server actually IS, for the gateway edge.
+//
+// The second one exists because the edge was reading :status, and :status is not
+// state at all: it is a one-shot EVENT key the node writes with a 30s TTL and the
+// scan above consumes with a Del, usually within 5 seconds. So for almost the
+// whole of a restart the edge MGET returned nil, transitionalMOTD("") was empty,
+// and a player got a raw connection drop instead of "Server Restarting" - while
+// the crash-loop notice beside it worked, because reconcile_failed IS left in
+// place. A durable key under its own name keeps the event channel and the state
+// read from being the same thing again.
+//
+// Both are written from the DB, which is the authority: the node reports into it
+// and Core owns it. A node event landing between two ticks is picked up by the
+// scan above before this runs, so the value published here is never staler than
+// one tick.
+func (s *StatusWatcherService) publishServerStateKeys(ctx context.Context) {
 	servers, err := s.store.ListServers("")
 	if err != nil {
 		return
@@ -239,11 +259,11 @@ func (s *StatusWatcherService) publishDesiredStates(ctx context.Context) {
 
 	pipe := s.redis.Pipeline()
 	for _, srv := range servers {
-		key := fmt.Sprintf("dylaris:server:%s:desired_state", srv.UUID)
-		pipe.Set(ctx, key, srv.DesiredState, 60*time.Second)
+		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", srv.UUID), srv.DesiredState, 60*time.Second)
+		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:live_status", srv.UUID), srv.Status, 60*time.Second)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("Failed to publish desired states: %v", err)
+		log.Printf("Failed to publish server state keys: %v", err)
 	}
 }
 
@@ -264,5 +284,29 @@ func (s *StatusWatcherService) publishEdgeMotd(ctx context.Context) {
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("Failed to publish edge MOTD config: %v", err)
+	}
+}
+
+// publishRconLogFilter republishes each server's console RCON-noise toggle so the
+// log-shipper inside every MC container (which re-reads
+// dylaris:server:<uuid>:log_filter_rcon on a timer) always sees a live value.
+// Same cadence/TTL as desired_state above, and for the same two reasons: a Redis
+// flush self-heals on the next tick, and a deleted server's key expires on its
+// own instead of lingering.
+func (s *StatusWatcherService) publishRconLogFilter(ctx context.Context) {
+	rows, err := s.store.ListServerRconLogFilter()
+	if err != nil {
+		return
+	}
+	pipe := s.redis.Pipeline()
+	for _, f := range rows {
+		v := "false"
+		if f.On {
+			v = "true"
+		}
+		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:log_filter_rcon", f.UUID), v, 60*time.Second)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("Failed to publish RCON log filter config: %v", err)
 	}
 }
