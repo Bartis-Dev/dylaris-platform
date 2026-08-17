@@ -37,9 +37,12 @@ function or(value: string | undefined, placeholder: string): string {
 }
 
 /**
- * warpOnlyCompose is the minimal case: join the overlay, nothing else. Useful
- * on its own for a machine that should be reachable before any node role is
- * decided.
+ * warpOnlyCompose is the minimal case: join the overlay, nothing else.
+ *
+ * NOT route-only. Route-only is warp PLUS a link container, and it is minted as
+ * a tenant link kit (its own link identity), not from an admin enrolment key.
+ * Nothing here deploys link: only a managed node starts one, for itself, via
+ * NODE_MANAGES_LINK.
  */
 export function warpOnlyCompose(i: WarpDeployInput): string {
     return `# warp.yml  ->  docker compose -f warp.yml up -d

@@ -224,3 +224,34 @@ func TestValidateXDPConfig(t *testing.T) {
 		}
 	})
 }
+
+// normalizeTunnelSubnets feeds the deploy snippet the panel hands operators, so
+// a value that looks right but means something else is worse than a rejection.
+func TestNormalizeTunnelSubnets(t *testing.T) {
+	ok := []struct{ in, want string }{
+		{"", ""},
+		{"10.20.0.0/16", "10.20.0.0/16"},
+		{" 10.20.0.0/16 , 10.0.0.0/24 ", "10.20.0.0/16,10.0.0.0/24"},
+		{"10.20.0.0/16,10.20.0.0/16", "10.20.0.0/16"}, // deduped
+	}
+	for _, c := range ok {
+		got, err := normalizeTunnelSubnets(c.in)
+		if err != nil {
+			t.Errorf("normalizeTunnelSubnets(%q) errored: %v", c.in, err)
+		} else if got != c.want {
+			t.Errorf("normalizeTunnelSubnets(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	bad := []string{
+		"10.20.0.0",      // no mask
+		"not-a-cidr",
+		"10.20.0.5/16",   // host address: the client routes the whole /16 anyway
+		"10.20.0.0/16,junk",
+	}
+	for _, in := range bad {
+		if _, err := normalizeTunnelSubnets(in); err == nil {
+			t.Errorf("normalizeTunnelSubnets(%q) should be rejected", in)
+		}
+	}
+}

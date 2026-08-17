@@ -1035,6 +1035,13 @@ export const revokeWarpKey = (id: number): Promise<{ success: boolean; disconnec
 // allowlist the region leaders enforce (comma-separated TCP ports).
 export interface WarpFirewallSettings {
     allowedPorts: string;
+    /**
+     * DC overlay CIDR(s) a warp client routes through the tunnel - where Redis
+     * and Core gRPC live. Core cannot infer this (it never sees the Docker
+     * overlay), so it is stored once here and handed out in deploy snippets.
+     * Comma-separated; "" means unset and the snippet shows a placeholder.
+     */
+    tunnelSubnets: string;
 }
 export const getWarpFirewallSettings = (): Promise<{ success: boolean; settings: WarpFirewallSettings }> =>
     fetchAPI('/settings/warp-firewall');

@@ -38,6 +38,7 @@ export default function WarpTab() {
     const [showDeploy, setShowDeploy] = useState<WarpKeyView | null>(null);
 
     const [fwPorts, setFwPorts] = useState('');
+    const [fwSubnets, setFwSubnets] = useState('');
     const [fwLoaded, setFwLoaded] = useState(false);
     const [savingFw, setSavingFw] = useState(false);
 
@@ -47,7 +48,7 @@ export default function WarpTab() {
         try {
             const [res, fw] = await Promise.all([getWarpRegions(), getWarpFirewallSettings()]);
             if (res.success) setRegions(res.regions || []);
-            if (fw.success) { setFwPorts(fw.settings.allowedPorts); setFwLoaded(true); }
+            if (fw.success) { setFwPorts(fw.settings.allowedPorts); setFwSubnets(fw.settings.tunnelSubnets || ''); setFwLoaded(true); }
         } catch {
             showToast('Failed to load Warp settings', false);
         } finally {
@@ -157,10 +158,10 @@ export default function WarpTab() {
 
     const saveFw = async () => {
         setSavingFw(true);
-        const res = await saveWarpFirewallSettings({ allowedPorts: fwPorts.trim() });
+        const res = await saveWarpFirewallSettings({ allowedPorts: fwPorts.trim(), tunnelSubnets: fwSubnets.trim() });
         setSavingFw(false);
         if (res.success) {
-            if (res.settings) setFwPorts(res.settings.allowedPorts);
+            if (res.settings) { setFwPorts(res.settings.allowedPorts); setFwSubnets(res.settings.tunnelSubnets || ''); }
             showToast('Spoke firewall allowlist saved.');
         } else {
             showToast(res.message || res.error || 'Save failed.', false);
@@ -230,6 +231,22 @@ export default function WarpTab() {
                     />
                     <p className="text-xs text-(--base-06) mt-1">
                         Defaults: <span className="font-mono">6379</span> Redis, <span className="font-mono">25560</span> edge tunnel, <span className="font-mono">25551</span> beam relay, <span className="font-mono">25501</span> Core gRPC.
+                    </p>
+                </div>
+                <div>
+                    <label className="input-label">Overlay CIDR(s) clients route through the tunnel</label>
+                    <input
+                        className="input-field input-mono"
+                        value={fwSubnets}
+                        onChange={e => setFwSubnets(e.target.value)}
+                        placeholder="10.20.0.0/16"
+                        disabled={!fwLoaded}
+                    />
+                    <p className="text-xs text-(--base-06) mt-1">
+                        The network where Redis and Core gRPC live. Core cannot detect this - it never sees your Docker
+                        overlay - so set it once here and every deploy snippet is handed out ready to run instead of
+                        carrying a placeholder. Comma-separate several ranges. Must be a network address
+                        (<span className="font-mono">10.20.0.0/16</span>, not <span className="font-mono">10.20.0.5/16</span>).
                     </p>
                 </div>
                 <div className="flex items-start gap-2 p-3 rounded-md border border-(--warning)/40 bg-(--warning)/5">
@@ -362,6 +379,7 @@ export default function WarpTab() {
                     name={revealed ? revealed.name : (showDeploy!.name || `key-${showDeploy!.id}`)}
                     apiKey={revealed ? revealed.apiKey : null}
                     enrollUrl={enrollUrl}
+                    tunnelSubnets={fwSubnets}
                     onClose={() => { setRevealed(null); setShowDeploy(null); }}
                     showToast={showToast}
                 />
@@ -468,17 +486,19 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
  * goes - which is far more useful than the old modal, which was only reachable
  * at mint time and stopped at four ENV lines.
  */
-function DeployModal({ name, apiKey, enrollUrl, onClose, showToast }: {
+function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, onClose, showToast }: {
     name: string;
     apiKey: string | null;
     enrollUrl: string;
+    /** From the Overlay Segmentation setting; "" leaves a placeholder in the snippet. */
+    tunnelSubnets: string;
     onClose: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }) {
     const [kind, setKind] = useState<'node' | 'warp'>('node');
     const [copied, setCopied] = useState<string | null>(null);
 
-    const input = { apiKey: apiKey ?? '<your-warp-key>', enrollUrl };
+    const input = { apiKey: apiKey ?? '<your-warp-key>', enrollUrl, tunnelSubnets };
     const compose = kind === 'node' ? nodeCompose(input) : warpOnlyCompose(input);
     const cli = deployCli(kind);
 
@@ -525,15 +545,35 @@ function DeployModal({ name, apiKey, enrollUrl, onClose, showToast }: {
                                 onClick={() => setKind(k)}
                                 className={`btn btn-sm ${kind === k ? 'btn-primary' : 'btn-secondary'}`}
                             >
-                                {k === 'node' ? 'Managed node (warp + node)' : 'Overlay only (warp)'}
+                                {k === 'node' ? 'Managed node (warp + node + link)' : 'Overlay access only (warp)'}
                             </button>
                         ))}
                     </div>
-                    <p className="text-xs text-(--base-06)">
-                        {kind === 'node'
-                            ? 'Runs Minecraft servers on this machine. warp joins the overlay first; the node then reaches Redis and core over it and spawns its own link sidecar.'
-                            : 'Joins the overlay only. Use this when the machine should be reachable but not host servers yet.'}
-                    </p>
+                    <div className="text-xs text-(--base-06) space-y-1.5">
+                        {kind === 'node' ? (
+                            <p>
+                                Runs Minecraft servers on this machine. warp joins the overlay first; the node then
+                                reaches Redis and Core over it and starts its OWN link sidecar
+                                (<span className="font-mono">NODE_MANAGES_LINK</span>) - do not run link yourself.
+                            </p>
+                        ) : (
+                            <>
+                                <p>
+                                    Joins the overlay and nothing else: no node, no link, so this machine hosts no
+                                    servers and carries no player traffic. Useful when it should be reachable before
+                                    you decide its role.
+                                </p>
+                                <p>
+                                    <strong>This is not route-only.</strong> Route-only gives a customer a protected
+                                    address for a server they run themselves, and needs warp <em>plus a link</em>
+                                    container. Nothing deploys link automatically here - only a managed node does that
+                                    for itself. Mint a route-only kit under Protected Addresses instead; it is
+                                    tenant-scoped and issues its own link identity, which an admin enrolment key
+                                    cannot.
+                                </p>
+                            </>
+                        )}
+                    </div>
 
                     <div className="space-y-1">
                         <div className="flex items-center justify-between">

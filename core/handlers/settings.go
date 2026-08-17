@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -1173,6 +1174,46 @@ const defaultWarpSpokeAllowedPorts = "6379,25501,25551,25560"
 
 type WarpFirewallSettings struct {
 	AllowedPorts string `json:"allowedPorts"` // comma-separated destination TCP ports the overlay leaders allow spokes to reach
+
+	// TunnelSubnets is the DC overlay CIDR(s) a warp client must route through
+	// the tunnel - where Redis and Core gRPC live. Core cannot infer this: the
+	// value is a property of the Docker overlay network, which Core never sees,
+	// and every client previously had to be told it out of band. Storing it once
+	// lets the panel hand out a ready-to-run deploy snippet instead of a
+	// placeholder the operator has to look up.
+	//
+	// Comma-separated, so a fleet spanning several DC ranges can list them all.
+	TunnelSubnets string `json:"tunnelSubnets"`
+}
+
+// normalizeTunnelSubnets validates a comma-separated CIDR list into a deduped,
+// order-preserving CSV. Rejects anything that is not a CIDR, and anything that
+// is not a network address (10.20.0.5/16 rather than 10.20.0.0/16): a client
+// routes the whole prefix regardless, so accepting a host address would show
+// operators a value that silently means something other than what it says.
+func normalizeTunnelSubnets(csv string) (string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		ip, ipnet, err := net.ParseCIDR(p)
+		if err != nil {
+			return "", fmt.Errorf("invalid CIDR %q", p)
+		}
+		if !ip.Equal(ipnet.IP) {
+			return "", fmt.Errorf("%q is a host address; use the network address %q", p, ipnet.String())
+		}
+		s := ipnet.String()
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return strings.Join(out, ","), nil
 }
 
 // normalizeWarpPorts validates and normalizes a comma-separated port list into a
@@ -1217,11 +1258,22 @@ func (h *SettingsHandler) LoadWarpSpokeAllowedPorts() string {
 	return v
 }
 
+// LoadWarpTunnelSubnets returns the persisted DC overlay CIDR(s), or "" when the
+// operator has not set one yet (the deploy snippet then shows a placeholder
+// rather than inventing a range).
+func (h *SettingsHandler) LoadWarpTunnelSubnets() string {
+	v, _ := h.state.Store.GetSetting("warp_tunnel_subnets")
+	return v
+}
+
 // GetWarpFirewallSettings GET /api/settings/warp-firewall - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
-		"settings": WarpFirewallSettings{AllowedPorts: h.LoadWarpSpokeAllowedPorts()},
+		"settings": WarpFirewallSettings{
+			AllowedPorts:  h.LoadWarpSpokeAllowedPorts(),
+			TunnelSubnets: h.LoadWarpTunnelSubnets(),
+		},
 	})
 }
 
@@ -1245,6 +1297,18 @@ func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *htt
 		sendJSONError(w, "At least one port is required", http.StatusBadRequest)
 		return
 	}
+	subnets, serr := normalizeTunnelSubnets(req.TunnelSubnets)
+	if serr != nil {
+		sendJSONError(w, "Invalid tunnel subnets: "+serr.Error(), http.StatusBadRequest)
+		return
+	}
+	// Empty is allowed: unset just means the deploy snippet keeps showing a
+	// placeholder. Unlike the port allowlist this is client configuration Core
+	// hands out, not a rule the leaders enforce, so there is nothing to publish.
+	if err := h.state.Store.SetSetting("warp_tunnel_subnets", subnets); err != nil {
+		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		return
+	}
 	if err := h.state.Store.SetSetting("warp_spoke_allowed_ports", norm); err != nil {
 		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
@@ -1258,7 +1322,7 @@ func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *htt
 	}
 	resp := map[string]interface{}{
 		"success":  true,
-		"settings": WarpFirewallSettings{AllowedPorts: norm},
+		"settings": WarpFirewallSettings{AllowedPorts: norm, TunnelSubnets: subnets},
 	}
 	if !propagated {
 		// The Postgres row IS saved (source of truth for a later successful
