@@ -1097,6 +1097,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Same reason as "start" above: this is a deliberate retry.
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
 		gracefulStop(rdb, cmd.Config.UUID, dm)
+		// gracefulStop leaves "stopping" behind, which is true while the JVM is
+		// winding down but reads to a player as "it is not coming back". From
+		// here on it is a restart, so say that instead.
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "restarting", 30*time.Second)
 		// Clean up stop-requested key to prevent race with new log-shipper instance
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
 		time.Sleep(2 * time.Second)
@@ -1577,6 +1581,17 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 
 	// Set stop flag so log-shipper knows not to restart Java
 	rdb.Set(ctx, stopKey, "1", 120*time.Second)
+
+	// Announce "stopping" BEFORE the wait, not after it. Every caller used to
+	// publish only the final status, and this function takes 5-15s on a real
+	// server (3s for save-all, then up to 30s waiting for the JVM to exit). So
+	// for that whole window the platform still claimed the server was online:
+	// the panel showed it green, and the gateway edge - which renders the player
+	// MOTD from this status - told players the NODE was offline, because the MC
+	// container's tunnel had already gone while the status had not moved.
+	//
+	// Callers overwrite this with the outcome (stopped / starting) as before.
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopping", 30*time.Second)
 
 	// Send save-all
 	log.Printf("Server %s: sending save-all...", uuid)
