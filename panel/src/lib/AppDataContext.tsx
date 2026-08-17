@@ -81,7 +81,10 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // modpacks defaults to true (legacy: ships enabled, admin opts out).
     // tickets defaults to false so the nav doesn't briefly flash a Tickets
     // module on first paint before /system/features comes back.
-    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false });
+    // modpackAuthoring defaults to FALSE for the same reason, and because
+    // guessing the wider of two audiences would flash user-facing authoring
+    // controls at someone who is not allowed to use them.
+    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false });
     const [ready, setReady] = useState(false);
     const [apiUnreachable, setApiUnreachable] = useState(false);
     const [bootAttempt, setBootAttempt] = useState(0);

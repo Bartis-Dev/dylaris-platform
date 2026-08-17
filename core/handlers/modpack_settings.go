@@ -240,8 +240,13 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		uch = 24
 	}
 
+	// feature_modpacks_enabled is deliberately NOT written here. It used to be,
+	// alongside Settings -> Features writing the same key, so the platform had one
+	// switch behind two independent toggles: flipping either moved the other, and
+	// with the authoring flag added, one of the two screens would always show a
+	// half-truth. Features owns the flags, this screen owns storage + delivery.
+	// The GET still returns featureEnabled so this tab can display the state.
 	writes := []struct{ k, v string }{
-		{"feature_modpacks_enabled", boolStr(req.FeatureEnabled)},
 		{"modpack_storage_provider", req.Provider},
 		{"modpack_storage_paths", string(pathsJSON)},
 		{"modpack_storage_s3_endpoint", req.S3Endpoint},
@@ -270,13 +275,13 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate the cached feature flag so subsequent reads in this Core
 	// pick up the new value instantly; cross-Core staleness is bounded by
-	// the 60s cache TTL.
-	h.state.FeatureFlags.Invalidate("feature_modpacks_enabled")
+	// the 60s cache TTL. feature_modpacks_enabled is not invalidated: this handler
+	// no longer writes it, so its cached value is still correct.
 	h.state.FeatureFlags.Invalidate("modpack_share_links_enabled")
 
-	// Publish events: features.changed re-renders the panel banner/gating;
-	// modpack_settings.changed wakes the Settings → Modpacks tab.
-	h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{"feature": "modpacks", "enabled": req.FeatureEnabled})
+	// Only modpack_settings.changed: features.changed belonged to the flag write
+	// that moved to Settings -> Features, and publishing it from here would tell
+	// every panel to re-render its gating over a value that did not change.
 	h.state.Events.Publish(r.Context(), "modpack_settings.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -306,7 +311,30 @@ func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Marks the row manual as a side effect, so the platform authoring toggle's
+	// bulk apply leaves this decision alone (see SetUserCanCreateModpacks).
 	if err := h.state.Store.SetUserCanCreateModpacks(userID, req.CanCreate); err != nil {
+		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// ClearUserFlagOverride DELETE /api/admin/users/{id}/modpack-flag - PANEL
+// settings.write (RequireCap at the route).
+//
+// Drops the manual marker so the user follows the platform authoring toggle
+// again, without changing their current permission. This is the per-user escape
+// hatch: the alternative is the Features screen's "also apply to users I set by
+// hand" checkbox, which resets EVERY overridden user at once. Without it a row
+// marked manual once would be pinned out of every later toggle forever.
+func (h *ModpackSettingsHandler) ClearUserFlagOverride(w http.ResponseWriter, r *http.Request) {
+	userID, ok := parseUserID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.state.Store.ClearUserCanCreateModpacksManual(userID); err != nil {
 		sendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -33,8 +33,17 @@ export default function FeaturesTab() {
     // /api/admin/settings/features and save-on-click independently of the
     // proxy/gateway settings above. Each flip persists immediately so the
     // admin doesn't have to remember a Save bar for a dangerous gate.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, autoMove: false, byon: false });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
+
+    // What the NEXT flip of "open authoring to users" should do to per-user
+    // overrides an admin set by hand. Component state on purpose, not a stored
+    // setting: it describes one action, so persisting it would silently widen a
+    // later toggle nobody connected to this checkbox.
+    const [applyToManual, setApplyToManual] = useState(false);
+    // Rows the last authoring flip actually rewrote, straight from the server, so
+    // the admin sees what the switch did instead of inferring it.
+    const [lastBulk, setLastBulk] = useState<number | null>(null);
 
     // Tickets requires Core file storage (attachments + backups need a durable
     // off-host home) - the backend 409s ("core_storage_required") on enable
@@ -102,14 +111,23 @@ export default function FeaturesTab() {
         if (platformSaving) return;
         const prev = platformFlags;
         const next = { ...platformFlags, [key]: value };
+        // applyAuthoringToManual rides along only on the toggle it describes;
+        // sending it with an unrelated flip would be a standing instruction the
+        // admin never gave.
+        const payload: FeatureFlagsAdminPayload =
+            key === 'modpackAuthoring' ? { ...next, applyAuthoringToManual: applyToManual } : next;
         setPlatformFlags(next);
         setPlatformSaving(key);
-        const res = await updateSystemFeatures(next);
+        setLastBulk(null);
+        const res = await updateSystemFeatures(payload);
         if (!res.success) {
             setPlatformFlags(prev);
             showToast(res.message || 'Save failed.', false);
-        } else if (res.features) {
-            setPlatformFlags(res.features);
+        } else {
+            if (res.features) setPlatformFlags(res.features);
+            if (key === 'modpackAuthoring' && typeof res.usersChanged === 'number') {
+                setLastBulk(res.usersChanged);
+            }
         }
         setPlatformSaving(null);
     };
@@ -230,16 +248,23 @@ export default function FeaturesTab() {
                 )}
             </div>
 
-            <div className="card p-5">
+            {/* Two switches, one subsystem. "Modpacks" turns it on for ADMINS;
+                "Open authoring to users" widens it to everyone else. Nested
+                rather than side by side because the second is meaningless without
+                the first, and the backend folds it to false when Modpacks goes
+                off - so the nesting is the real relationship, not decoration.
+                The Modpacks navbar entry follows both: it appears with the
+                subsystem and switches from admin-only to everyone with authoring. */}
+            <div className="card p-5 space-y-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
                             <Package size={18} className="text-(--accent-light)" />
                         </div>
                         <div>
-                            <div className="font-medium text-sm text-(--base-09)">Modpack Authoring</div>
+                            <div className="font-medium text-sm text-(--base-09)">Modpacks</div>
                             <div className="text-xs text-(--base-06)">
-                                When off, modpack write endpoints return 503 and the Modpacks UI is hidden for non-admins. Existing modpacks stay readable and downloadable.
+                                Turns on the modpack builder, storage and Solder endpoints for <strong>admins</strong>. When off, modpack write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable.
                             </div>
                         </div>
                     </div>
@@ -253,6 +278,53 @@ export default function FeaturesTab() {
                     >
                         <span className={`toggle-knob ${platformFlags.modpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
+                </div>
+
+                <div className={`border-t border-(--base-03) pt-4 ${platformFlags.modpacks ? '' : 'opacity-60'}`}>
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium text-(--base-09)">Open authoring to users</div>
+                            <p className="text-xs text-(--base-06)">
+                                Lets non-admin users create and publish their own modpacks. Off means admins only. You can still revoke a single user afterwards under Settings -&gt; Users.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={platformFlags.modpackAuthoring}
+                            disabled={platformSaving !== null || !platformFlags.modpacks}
+                            onClick={() => savePlatformFlag('modpackAuthoring', !platformFlags.modpackAuthoring)}
+                            className={`toggle-track ${platformFlags.modpackAuthoring ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+                        >
+                            <span className={`toggle-knob ${platformFlags.modpackAuthoring ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                        </button>
+                    </div>
+
+                    {/* Checked = the next flip of the switch above also rewrites
+                        users an admin set by hand. Unchecked (the default) keeps
+                        those decisions. Deliberately NOT a stored setting: it
+                        describes what one change should do, so remembering it
+                        across sessions would silently widen a later toggle. */}
+                    <label className={`flex items-start gap-2 mt-3 text-xs ${platformFlags.modpacks ? 'text-(--base-07) cursor-pointer' : 'text-(--base-06)'}`}>
+                        <input
+                            type="checkbox"
+                            checked={applyToManual}
+                            disabled={!platformFlags.modpacks || platformSaving !== null}
+                            onChange={e => setApplyToManual(e.target.checked)}
+                            className="mt-0.5 shrink-0"
+                        />
+                        <span>
+                            Also apply to users I set by hand. Off keeps every per-user override; on resets them to follow this switch from now on.
+                        </span>
+                    </label>
+
+                    {lastBulk !== null && (
+                        <p className="mt-2 text-xs font-mono text-(--base-06)">
+                            {lastBulk === 0
+                                ? 'No user rows needed changing.'
+                                : `${lastBulk} user${lastBulk === 1 ? '' : 's'} updated.`}
+                        </p>
+                    )}
                 </div>
             </div>
 

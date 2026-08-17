@@ -47,6 +47,10 @@ export interface User {
     // Per-user modpack authoring gate. Optional for forward-compat
     // with older API responses; the current backend always populates it.
     canCreateModpacks?: boolean;
+    // True once an admin set canCreateModpacks by hand. Read-only: it is set as a
+    // side effect of the per-user write, and it is what keeps that decision from
+    // being flattened by the platform "Open authoring to users" switch.
+    canCreateModpacksManual?: boolean;
 }
 
 export interface Node {

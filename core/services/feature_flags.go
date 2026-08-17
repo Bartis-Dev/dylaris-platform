@@ -93,6 +93,16 @@ func (f *FeatureFlags) IsModpacksEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_modpacks_enabled", false)
 }
 
+// IsModpackAuthoringEnabled gates END-USER modpack authoring. It is the second
+// half of the modpack switch: IsModpacksEnabled turns the subsystem on (admins
+// can author), and this opens it to everyone else. Default = false, so enabling
+// modpacks alone stays admin-only. Non-admin write routes require BOTH this and
+// the caller's per-user can_create_modpacks, which makes this a hard ceiling: a
+// user whose flag was set by hand still loses authoring when this goes off.
+func (f *FeatureFlags) IsModpackAuthoringEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_modpack_authoring_enabled", false)
+}
+
 // IsTicketsEnabled gates the ticket subsystem (tickets, categories, canned
 // responses, attachments, notifications, settings, deletion log). Default =
 // false (the feature ships OFF and the admin opts in via Settings → Features).

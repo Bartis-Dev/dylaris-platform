@@ -137,29 +137,32 @@ export default function ModpacksTab() {
                     Modpacks
                 </h2>
                 <p className="text-sm text-(--base-07)">
-                    Storage layout for .mrpack archives and the platform-wide modpack-authoring toggle.
+                    Storage layout and delivery for modpack archives. The on/off switches live under
+                    Settings -&gt; Features.
                 </p>
             </div>
 
-            {/* Feature toggle */}
+            {/* Read-only mirror of the platform flag, NOT a second switch.
+                This screen used to carry its own toggle writing the same
+                feature_modpacks_enabled key as Settings -> Features, so the
+                platform had one switch behind two controls: flipping either
+                moved the other, and once authoring became its own flag one of
+                the two screens would always show a half-truth. Features owns
+                the flags now; this shows the resulting state so the storage
+                config below has context. */}
             <div className="card p-5">
                 <div className="flex items-center justify-between gap-4">
                     <div>
-                        <div className="font-medium text-sm text-(--base-09)">Modpack Authoring</div>
+                        <div className="font-medium text-sm text-(--base-09)">Subsystem state</div>
                         <div className="text-xs text-(--base-06) mt-0.5 max-w-md">
-                            When off, the Modpacks UI is hidden for non-admins and write endpoints return
-                            503 feature_disabled. Existing modpacks stay readable and downloadable.
+                            {settings.featureEnabled
+                                ? 'Modpacks are enabled. Whether users may author (rather than admins only) is the "Open authoring to users" switch under Settings -> Features.'
+                                : 'Modpacks are disabled: write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable. Enable it under Settings -> Features.'}
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={settings.featureEnabled}
-                        onClick={() => setSettings(s => ({ ...s, featureEnabled: !s.featureEnabled }))}
-                        className={`toggle-track ${settings.featureEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                    >
-                        <span className={`toggle-knob ${settings.featureEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
+                    <span className={`badge shrink-0 ${settings.featureEnabled ? 'badge-accent' : 'badge-neutral'}`}>
+                        {settings.featureEnabled ? 'Enabled' : 'Disabled'}
+                    </span>
                 </div>
             </div>
 

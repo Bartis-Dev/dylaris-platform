@@ -35,6 +35,11 @@ type User struct {
 	// Admin can flip this to revoke modpack-authoring rights without disabling
 	// the feature globally.
 	CanCreateModpacks bool `json:"canCreateModpacks"`
+	// CanCreateModpacksManual is TRUE once an admin set CanCreateModpacks by
+	// hand. The bulk apply behind the platform authoring toggle can then skip
+	// this row, so a deliberate per-user decision survives the global switch.
+	// Read-only to the panel; it is set as a side effect of the per-user write.
+	CanCreateModpacksManual bool `json:"canCreateModpacksManual"`
 
 	// Verification / lifecycle
 	EmailVerifiedAt         *time.Time `json:"emailVerifiedAt,omitempty"`

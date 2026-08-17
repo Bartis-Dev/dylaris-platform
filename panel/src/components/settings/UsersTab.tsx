@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
 import { getUserRegions, setUserRegions } from '@/lib/api/regions';
-import { setUserModpackFlag } from '@/lib/api/modpackSettings';
+import { setUserModpackFlag, clearUserModpackOverride } from '@/lib/api/modpackSettings';
 import {
     getAccountPolicy,
     setAccountPolicy,
@@ -123,7 +123,27 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             return;
         }
         showToast('Modpack flag updated');
-        setSettingsUser({ ...settingsUser, canCreateModpacks: editCanCreateModpacks });
+        // Writing the flag by hand marks the row manual server-side, so reflect
+        // that here too rather than waiting for the reload - otherwise the
+        // "follows the platform switch" hint below stays wrong for a moment.
+        setSettingsUser({ ...settingsUser, canCreateModpacks: editCanCreateModpacks, canCreateModpacksManual: true });
+        loadUsers();
+    };
+
+    // Hand the user back to the platform switch without changing what they may do
+    // right now. The blunt alternative is the Features screen's "also apply to
+    // users I set by hand", which resets every overridden user at once.
+    const handleClearModpackOverride = async () => {
+        if (!settingsUser) return;
+        setModpackFlagSaving(true);
+        const res = await clearUserModpackOverride(settingsUser.id);
+        setModpackFlagSaving(false);
+        if (!res.success) {
+            showToast(res.message || 'Failed to clear the override', false);
+            return;
+        }
+        showToast('This user follows the platform setting again');
+        setSettingsUser({ ...settingsUser, canCreateModpacksManual: false });
         loadUsers();
     };
 
@@ -607,9 +627,18 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 <div className="flex items-start gap-3 min-w-0">
                                                     <Package size={16} className="text-(--accent-light) mt-0.5 shrink-0" />
                                                     <div className="min-w-0">
-                                                        <div className="font-medium text-sm text-(--base-09)">Can create modpacks</div>
+                                                        <div className="font-medium text-sm text-(--base-09) flex items-center gap-2">
+                                                            Can create modpacks
+                                                            {settingsUser?.canCreateModpacksManual && (
+                                                                <span className="badge badge-neutral" title="Set by hand, so the platform authoring switch leaves it alone">
+                                                                    Overridden
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <div className="text-xs text-(--base-06) mt-0.5">
-                                                            When off, this user cannot create or edit modpacks. Admin bypass applies.
+                                                            {settingsUser?.canCreateModpacksManual
+                                                                ? 'Set by hand: the platform "Open authoring to users" switch will not change it. Admin bypass applies.'
+                                                                : 'Follows the platform "Open authoring to users" switch. Changing it here pins it to your choice. Admin bypass applies.'}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -624,8 +653,19 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     <span className={`toggle-knob ${editCanCreateModpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                                 </button>
                                             </div>
-                                            {editCanCreateModpacks !== (settingsUser?.canCreateModpacks ?? true) && (
-                                                <div className="mt-3 flex justify-end">
+                                            <div className="mt-3 flex justify-end gap-2">
+                                                {settingsUser?.canCreateModpacksManual && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleClearModpackOverride}
+                                                        disabled={modpackFlagSaving}
+                                                        className="btn btn-secondary btn-sm disabled:opacity-40"
+                                                        title="Clear the override so this user follows the platform setting again. Does not change what they may do right now."
+                                                    >
+                                                        Follow platform setting
+                                                    </button>
+                                                )}
+                                                {editCanCreateModpacks !== (settingsUser?.canCreateModpacks ?? true) && (
                                                     <button
                                                         type="button"
                                                         onClick={handleSaveModpackFlag}
@@ -634,8 +674,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     >
                                                         {modpackFlagSaving ? 'Saving…' : 'Save modpack flag'}
                                                     </button>
-                                                </div>
-                                            )}
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 

@@ -82,3 +82,16 @@ export async function setUserModpackFlag(userId: string, canCreate: boolean): Pr
         return (await handleResponse(res)) as any;
     } catch (err) { return handleError(err) as any; }
 }
+
+// Stop overriding this user: clears the manual marker so they follow the platform
+// "Open authoring to users" switch again. Does NOT change their current
+// permission - it changes who decides it from here on.
+export async function clearUserModpackOverride(userId: string): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/users/${encodeURIComponent(userId)}/modpack-flag`, {
+            method: 'DELETE',
+            headers: getAuthHeader(),
+        });
+        return (await handleResponse(res)) as any;
+    } catch (err) { return handleError(err) as any; }
+}

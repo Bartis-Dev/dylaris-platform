@@ -136,7 +136,8 @@ const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(mi
 	COALESCE(can_change_resources, FALSE),
 	COALESCE(support_team, ''),
 	last_username_change,
-	COALESCE(can_create_modpacks, TRUE)`
+	COALESCE(can_create_modpacks, TRUE),
+	COALESCE(can_create_modpacks_manual, FALSE)`
 
 func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 	var (
@@ -154,7 +155,7 @@ func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 		&deletionWarningSentAt, &deletionScheduledAt,
 		&u.Role, &u.CanDeleteServers, &u.CanChangeResources, &u.SupportTeam,
 		&lastUsernameChange,
-		&u.CanCreateModpacks)
+		&u.CanCreateModpacks, &u.CanCreateModpacksManual)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +228,14 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 // rename flows through RenameUser instead; this method is for non-username
 // field updates.
 func (s *PostgresStore) UpdateUser(u *models.User) error {
-	query := `UPDATE users SET username = $1, password = $2, email = $3, minecraft_username = $4, is_admin = $5, is_2fa_enabled = $6, permissions = $7, can_create_modpacks = $8 WHERE id = $9`
+	// can_create_modpacks_manual is derived, not passed in: the right-hand side
+	// sees the PRE-update row, so the marker is set exactly when this write
+	// actually changes the value. Today the only caller round-trips a row it just
+	// read, so nothing flips - but the marker is what protects a per-user decision
+	// from the platform authoring toggle, and a future caller writing this column
+	// without it would silently reopen that hole.
+	query := `UPDATE users SET username = $1, password = $2, email = $3, minecraft_username = $4, is_admin = $5, is_2fa_enabled = $6, permissions = $7, can_create_modpacks = $8,
+		can_create_modpacks_manual = (can_create_modpacks_manual OR can_create_modpacks IS DISTINCT FROM $8) WHERE id = $9`
 	_, err := s.db.Exec(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.CanCreateModpacks, u.ID)
 	return err
 }
@@ -375,8 +383,13 @@ func (s *PostgresStore) SetUserPermissionFlags(userID string, canDeleteServers, 
 // call site: used by the user-edit form to revoke modpack-authoring rights
 // without disabling the feature globally. Returns "user not found" when no
 // row was touched, so the handler can return a clean 404.
+//
+// It also marks the row manual, in the same statement. That marker is what makes
+// this decision survive the next platform-wide authoring toggle: the bulk apply
+// can skip rows an admin set by hand. Doing it here rather than at the call site
+// means no future caller can set the value and forget the marker.
 func (s *PostgresStore) SetUserCanCreateModpacks(userID string, can bool) error {
-	res, err := s.db.Exec(`UPDATE users SET can_create_modpacks = $1 WHERE id = $2`, can, userID)
+	res, err := s.db.Exec(`UPDATE users SET can_create_modpacks = $1, can_create_modpacks_manual = TRUE WHERE id = $2`, can, userID)
 	if err != nil {
 		return err
 	}
@@ -384,6 +397,49 @@ func (s *PostgresStore) SetUserCanCreateModpacks(userID string, can bool) error 
 		return errors.New("user not found")
 	}
 	return nil
+}
+
+// ClearUserCanCreateModpacksManual drops the manual marker without touching the
+// value, putting the user back under the platform authoring toggle. This is the
+// "let the global switch decide again" escape hatch; without it a row marked
+// manual once would be pinned forever.
+func (s *PostgresStore) ClearUserCanCreateModpacksManual(userID string) error {
+	res, err := s.db.Exec(`UPDATE users SET can_create_modpacks_manual = FALSE WHERE id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
+// BulkSetCanCreateModpacks applies one value to every non-admin user and reports
+// how many rows changed.
+//
+// includeManual = false (the default the admin UI offers) skips rows an admin set
+// by hand, so those decisions are preserved. includeManual = true overwrites them
+// AND clears their marker, because after a deliberate "apply to everyone" the
+// rows are no longer per-user decisions and pretending otherwise would keep them
+// frozen out of every later toggle.
+//
+// Admins are excluded because their authoring never depends on this column
+// (RequireUserCanCreateModpacks lets them through before it is read), so writing
+// it for them would only be misleading in the users list.
+func (s *PostgresStore) BulkSetCanCreateModpacks(can bool, includeManual bool) (int64, error) {
+	q := `UPDATE users SET can_create_modpacks = $1 WHERE is_admin = FALSE AND can_create_modpacks IS DISTINCT FROM $1`
+	if includeManual {
+		q = `UPDATE users SET can_create_modpacks = $1, can_create_modpacks_manual = FALSE
+			WHERE is_admin = FALSE AND (can_create_modpacks IS DISTINCT FROM $1 OR can_create_modpacks_manual)`
+	} else {
+		q += ` AND NOT can_create_modpacks_manual`
+	}
+	res, err := s.db.Exec(q, can)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // GetUserBeamChannel returns the user's Beam update-channel preference

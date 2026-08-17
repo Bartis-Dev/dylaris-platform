@@ -6,14 +6,23 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
+// bulkModpackCall records one BulkSetCanCreateModpacks invocation.
+type bulkModpackCall struct {
+	can           bool
+	includeManual bool
+}
+
 // gateFakeStore serves GetSetting from a map; embeds store.Store for the rest.
 type gateFakeStore struct {
 	store.Store
-	kv map[string]string
+	kv        map[string]string
+	modules   []models.Module
+	bulkCalls []bulkModpackCall
 }
 
 func (f *gateFakeStore) GetSetting(key string) (string, error) { return f.kv[key], nil }
@@ -28,6 +37,42 @@ func (f *gateFakeStore) SetSetting(key, value string) error {
 	}
 	f.kv[key] = value
 	return nil
+}
+
+// The module surface below exists because FeatureSettingsHandler.Set keeps the
+// Modpacks navbar row in step with the two modpack flags. Recorded rather than
+// ignored, so a test can assert on the derived row.
+func (f *gateFakeStore) ListModules() ([]models.Module, error) { return f.modules, nil }
+
+func (f *gateFakeStore) CreateModule(m *models.Module) (int, error) {
+	m.ID = len(f.modules) + 1
+	f.modules = append(f.modules, *m)
+	return m.ID, nil
+}
+
+func (f *gateFakeStore) UpdateModuleStatus(id int, isEnabled bool) error {
+	for i := range f.modules {
+		if f.modules[i].ID == id {
+			f.modules[i].IsEnabled = isEnabled
+		}
+	}
+	return nil
+}
+
+func (f *gateFakeStore) SetModuleAccessRole(id int, role string) error {
+	for i := range f.modules {
+		if f.modules[i].ID == id {
+			f.modules[i].AccessRole = role
+		}
+	}
+	return nil
+}
+
+// BulkSetCanCreateModpacks records the call so a test can assert what the
+// authoring toggle asked for, including whether manual rows were included.
+func (f *gateFakeStore) BulkSetCanCreateModpacks(can bool, includeManual bool) (int64, error) {
+	f.bulkCalls = append(f.bulkCalls, bulkModpackCall{can: can, includeManual: includeManual})
+	return int64(len(f.bulkCalls)), nil
 }
 
 func TestRequireCoreStorageConfigured(t *testing.T) {

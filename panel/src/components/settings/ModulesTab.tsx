@@ -32,7 +32,18 @@ interface ModulesTabProps {
 // even though it is_system=false server-side (it stays toggle-able) - only
 // deletion is blocked, both here (hides the button) and in Core (rejects the
 // request), same as Library.
-const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets']);
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets', 'Modpacks']);
+
+// Modules whose enabled state AND audience are DERIVED from feature flags rather
+// than set here. Offering the controls would be worse than hiding them: an edit
+// would appear to work and then be silently undone the next time the owning
+// flags are saved. Position stays editable - reordering is this screen's job.
+//
+// Modpacks follows Settings -> Features: it appears with the Modpacks subsystem
+// and widens from admin-only to everyone with "Open authoring to users".
+const DERIVED_MODULES = new Map([
+    ['Modpacks', 'Settings -> Features -> Modpacks'],
+]);
 
 interface SortableModuleCardProps {
     module: AppModule;
@@ -43,6 +54,9 @@ interface SortableModuleCardProps {
 
 function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: SortableModuleCardProps) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: m.id });
+    // Non-empty when this row's state comes from feature flags: names where the
+    // admin can change it, so the lock reads as a pointer rather than a dead end.
+    const derivedFrom = DERIVED_MODULES.get(m.name);
 
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -84,7 +98,14 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                     hard-gates isAdmin, so the "all" option would never take
                     effect anyway - the toggle is locked to avoid a misleading
                     control) */}
-                {m.name === 'Servers' ? (
+                {derivedFrom ? (
+                    <div
+                        className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)"
+                        title={`Audience follows ${derivedFrom}`}
+                    >
+                        {m.accessRole === 'all' ? <><Users size={11} /> All</> : <><ShieldCheck size={11} /> Admin</>}
+                    </div>
+                ) : m.name === 'Servers' ? (
                     <div className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)" title="Always visible to all users">
                         <Users size={11} /> All
                     </div>
@@ -114,7 +135,14 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                     </div>
                 )}
 
-                {m.name === 'Servers' || m.name === 'Admin' ? (
+                {derivedFrom ? (
+                    <div
+                        className={`${m.isEnabled ? 'toggle-track toggle-track-on' : 'toggle-track toggle-track-off'} opacity-50 cursor-not-allowed`}
+                        title={`Enabled state follows ${derivedFrom}`}
+                    >
+                        <span className={m.isEnabled ? 'toggle-knob toggle-knob-on' : 'toggle-knob toggle-knob-off'} />
+                    </div>
+                ) : m.name === 'Servers' || m.name === 'Admin' ? (
                     <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title={`${m.name} module cannot be disabled`}>
                         <span className="toggle-knob toggle-knob-on" />
                     </div>

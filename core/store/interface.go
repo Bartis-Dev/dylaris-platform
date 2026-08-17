@@ -652,6 +652,13 @@ type Store interface {
 
 	// --- Per-user feature flag ---
 	SetUserCanCreateModpacks(userID string, can bool) error
+	// ClearUserCanCreateModpacksManual puts a user back under the platform
+	// authoring toggle by dropping the manual marker, leaving the value alone.
+	ClearUserCanCreateModpacksManual(userID string) error
+	// BulkSetCanCreateModpacks applies one value to every non-admin user and
+	// returns the number of rows changed. includeManual=false skips rows an
+	// admin set by hand; true overwrites them and clears their marker.
+	BulkSetCanCreateModpacks(can bool, includeManual bool) (int64, error)
 
 	// Beam update-channel preference ('stable' | 'dev'). GetUserBeamChannel
 	// defaults a missing/legacy row to 'stable'. SetUserBeamChannel does NOT

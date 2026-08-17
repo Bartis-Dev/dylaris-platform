@@ -2,3 +2,9 @@
 {"date":"2026-08-17","service":"panel","type":"fix","summary":"A failed login now shows why it failed instead of \"Request failed (401)\""}
 {"date":"2026-08-17","service":"core","type":"security","summary":"A rejected login no longer reveals whether the username exists"}
 {"date":"2026-08-17","service":"panel","type":"fix","summary":"Nodes are listed by hostname again instead of their internal identity UUID"}
+{"date":"2026-08-17","service":"panel","type":"feature","summary":"Modpacks now appears in the navbar and in Settings -> Modules once the feature is enabled"}
+{"date":"2026-08-17","service":"core","type":"feature","summary":"Modpacks split into two switches: the subsystem for admins, plus \"open authoring to users\""}
+{"date":"2026-08-17","service":"core","type":"change","summary":"A per-user modpack permission set by hand is now marked as an override and survives the platform switch"}
+{"date":"2026-08-17","service":"core","type":"fix","summary":"The modpack on/off switch no longer exists twice: Settings -> Features owns it, Settings -> Modpacks owns storage"}
+{"date":"2026-08-17","service":"panel","type":"change","summary":"What's new is a modal now, with the latest update on top and the history below it"}
+{"date":"2026-08-17","service":"panel","type":"fix","summary":"The what's-new icon stays highlighted while entries exist and only greys out when there is nothing to show"}

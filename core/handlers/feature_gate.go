@@ -18,6 +18,10 @@ const FeatureTickets = "tickets"
 // FeatureShareLinks is the canonical name for the modpack share-links sub-feature.
 const FeatureShareLinks = "modpack_share_links"
 
+// FeatureModpackAuthoring is the canonical name for the end-user half of the
+// modpack switch: the subsystem is on, but authoring is not open to users.
+const FeatureModpackAuthoring = "modpack_authoring"
+
 // FeatureCoreStorage is the canonical name used in the 503 feature_disabled
 // body when a WRITE is attempted before Core file storage is configured.
 const FeatureCoreStorage = "core_storage"
@@ -170,13 +174,26 @@ func (s *AppState) AllowReadOnlyWhenDisabled(next http.HandlerFunc) http.Handler
 	}
 }
 
-// RequireUserCanCreateModpacks checks the per-user can_create_modpacks flag.
-// Admins bypass. Layer this AFTER RequireModpacksEnabled so the user lookup
-// only happens when the platform check passes.
+// RequireUserCanCreateModpacks gates END-USER authoring: the platform-wide
+// authoring flag AND the caller's per-user can_create_modpacks. Admins bypass
+// both, which is what makes "modpacks on, authoring off" mean admins-only.
+//
+// The flag is checked BEFORE the per-user column on purpose. It is a ceiling,
+// not a default: a user whose flag was set to true by hand (and is therefore
+// marked manual, so a bulk apply leaves it alone) must still lose authoring when
+// the admin closes it for everyone. Checking only the column would let those
+// rows keep authoring after the global switch went off.
+//
+// Layer this AFTER RequireModpacksEnabled so the user lookup only happens when
+// the subsystem check passes.
 func (s *AppState) RequireUserCanCreateModpacks(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
 			next(w, r)
+			return
+		}
+		if !s.FeatureFlags.IsModpackAuthoringEnabled(r.Context()) {
+			featureDisabledResponse(w, FeatureModpackAuthoring, "Modpack authoring is not open to users on this platform.")
 			return
 		}
 		userID, _ := r.Context().Value("userID").(string)

@@ -852,6 +852,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.Set))).Methods("PUT")
 	api.HandleFunc("/admin/settings/modpacks/delivery-capabilities", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.DeliveryCapabilities))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.SetUserFlag))).Methods("PATCH")
+	// DELETE = stop overriding this user, not "revoke": it clears the manual
+	// marker so they follow the platform authoring toggle again.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.ClearUserFlagOverride))).Methods("DELETE")
 	// GET /system/features stays EXEMPT-authed here (Phase 4 Task 19 territory - not touched by Task 17).
 	api.HandleFunc("/system/features", authHandler.AuthMiddleware(systemFeaturesHandler.Get)).Methods("GET")
 	// Bundled admin GET/PUT for all platform-wide feature toggles. Replaces
