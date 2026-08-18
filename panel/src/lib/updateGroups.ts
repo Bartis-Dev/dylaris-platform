@@ -103,3 +103,75 @@ export function typeCounts<T extends UpdateEntryLike>(entries: T[]): Array<{ typ
     }
     return out;
 }
+
+/** Entries of one component, in the order the feed listed them. */
+export interface ServiceGroup<T extends UpdateEntryLike> {
+    /** Lowercased service name, '' for entries that carry none. */
+    service: string;
+    entries: T[];
+}
+
+/**
+ * Groups entries by component, in order of first appearance.
+ *
+ * Unlike groupByDate this is a MAP, not a consecutive run: the feed is written
+ * one line per change, so a day's entries arrive interleaved across components.
+ * Run-grouping them would produce "Core, Panel, Core, Panel" for a single day,
+ * which is the shape this replaces - the reader wants everything Core did, once.
+ */
+export function groupByService<T extends UpdateEntryLike>(entries: T[]): ServiceGroup<T>[] {
+    const out: ServiceGroup<T>[] = [];
+    const index = new Map<string, ServiceGroup<T>>();
+    for (const e of entries) {
+        const service = (e.service ?? '').trim().toLowerCase();
+        let group = index.get(service);
+        if (!group) {
+            group = { service, entries: [] };
+            index.set(service, group);
+            out.push(group);
+        }
+        group.entries.push(e);
+    }
+    return out;
+}
+
+/**
+ * The newest date's entries grouped by component, and everything older grouped
+ * by component ACROSS all remaining dates.
+ *
+ * The older half deliberately loses its date grouping. Reading history one day
+ * at a time means the same component's changes are scattered over a dozen
+ * headings; per-component is how someone actually reads it ("what changed in
+ * the node since I last looked"). Each entry keeps its own date for the detail.
+ */
+export function splitLatestByService<T extends UpdateEntryLike>(entries: T[]): {
+    latestDate: string;
+    latest: ServiceGroup<T>[];
+    earlier: ServiceGroup<T>[];
+} {
+    const { latest, earlier } = splitLatest(entries);
+    return {
+        latestDate: latest?.date ?? '',
+        latest: latest ? groupByService(latest.entries) : [],
+        earlier: groupByService(earlier.flatMap(g => g.entries)),
+    };
+}
+
+/** Display name for a service key. Unknown keys are title-cased, not dropped. */
+export function serviceLabel(service: string): string {
+    const s = service.trim();
+    if (!s) return 'Other';
+    const known: Record<string, string> = {
+        core: 'Core',
+        panel: 'Panel',
+        node: 'Node',
+        'log-shipper': 'Log shipper',
+        edge: 'Edge',
+        link: 'Link',
+        hub: 'Hub',
+        warp: 'Warp',
+        splice: 'Splice',
+        beam: 'Beam',
+    };
+    return known[s.toLowerCase()] ?? s.charAt(0).toUpperCase() + s.slice(1);
+}

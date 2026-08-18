@@ -3,8 +3,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sparkles, X, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { getUpdates, markUpdatesSeen, UpdateEntry, UpdateServiceBlock } from '@/lib/api/updates';
-import { bellState, splitLatest, breakingCount, typeCounts, type UpdateGroup } from '@/lib/updateGroups';
+import { getUpdates, markUpdatesSeen, UpdateEntry, UpdateServiceBlock, PerServiceBlock } from '@/lib/api/updates';
+import {
+    bellState, splitLatestByService, serviceLabel, breakingCount, typeCounts,
+    type ServiceGroup,
+} from '@/lib/updateGroups';
 
 // ---------------------------------------------------------------------------
 // Admin-only "What's new". Shows the platform changelog (always) and the
@@ -59,9 +62,14 @@ function EntryRow({ entry }: { entry: UpdateEntry }) {
                     </span>
                     {entry.summary}
                 </div>
+                {/* The service is the group heading now, so the only per-line
+                    metadata left is when it landed - quiet, and titled so the
+                    full value is there on hover. */}
                 <div className="flex items-center gap-2 mt-0.5">
-                    {entry.service && (
-                        <span className="text-[10px] font-mono text-(--base-06)">{entry.service}</span>
+                    {entry.date && (
+                        <span className="text-[10px] font-mono text-(--base-05)" title={`Published ${entry.date}`}>
+                            {entry.date}
+                        </span>
                     )}
                     {breaking && (
                         <span className="text-[10px] font-mono text-(--error-light)">action required</span>
@@ -72,37 +80,40 @@ function EntryRow({ entry }: { entry: UpdateEntry }) {
     );
 }
 
-// A date's worth of entries. `heading` overrides the date label for the
-// top-of-modal "latest" block.
-function DateGroup({ group, heading }: { group: UpdateGroup<UpdateEntry>; heading?: string }) {
+// One component's entries under its own heading. This is the unit the modal
+// groups by: the feed is one line per change, so a single day arrives
+// interleaved across core, panel and node, and listing it in arrival order gave
+// "Core, Panel, Core, Panel". Someone reading a changelog wants everything one
+// component did, once.
+function ServiceBlockGroup({ group }: { group: ServiceGroup<UpdateEntry> }) {
     return (
         <div>
             <div className="px-4 py-1.5 flex items-baseline justify-between gap-3 bg-(--base-02) border-y border-(--base-03)">
-                <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-(--base-06)">
-                    {heading ?? (group.date || 'Undated')}
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-07)">
+                    {serviceLabel(group.service)}
                 </span>
-                {heading && group.date && (
-                    <span className="font-mono text-[10px] text-(--base-07)">{group.date}</span>
-                )}
+                <span className="font-mono text-[9px] text-(--base-05)">
+                    {group.entries.length} change{group.entries.length === 1 ? '' : 's'}
+                </span>
             </div>
             <ul className="divide-y divide-(--base-03)/50">
-                {group.entries.map((e, i) => <EntryRow key={`${group.date}-${i}`} entry={e} />)}
+                {group.entries.map((e, i) => <EntryRow key={`${group.service}-${i}`} entry={e} />)}
             </ul>
         </div>
     );
 }
 
-// The header of the newest group: the date, what it contains by type, and - when
-// anything in it is breaking - a callout the operator has to read before
-// updating. This is the "last update" block the modal leads with.
-function LatestHeader({ group }: { group: UpdateGroup<UpdateEntry> }) {
-    const counts = typeCounts(group.entries);
-    const breaking = breakingCount(group.entries);
+// The header of the newest date: what it contains by type, and - when anything
+// in it is breaking - a callout the operator has to read before updating. This
+// is the "last update" block the modal leads with.
+function LatestHeader({ entries, date }: { entries: UpdateEntry[]; date: string }) {
+    const counts = typeCounts(entries);
+    const breaking = breakingCount(entries);
     return (
         <div className="px-4 pt-4 pb-3 border-b border-(--base-03)">
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <h4 className="text-base font-display font-semibold text-(--base-09)">Latest update</h4>
-                <span className="font-mono text-xs text-(--base-07)">{group.date || 'Undated'}</span>
+                <span className="font-mono text-xs text-(--base-07)">{date || 'Undated'}</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap mt-2">
                 {counts.map(c => {
@@ -136,11 +147,45 @@ function LatestHeader({ group }: { group: UpdateGroup<UpdateEntry> }) {
     );
 }
 
-// One service's slice of the modal: its latest date first, then the history.
+// Per-component standing, when the components reported one. A component that
+// never did is shown as unknown rather than as up to date: assuming it moved
+// with Core is the exact mistake this replaces.
+function ServiceStanding({ blocks }: { blocks: PerServiceBlock[] }) {
+    if (blocks.length === 0) return null;
+    return (
+        <div className="px-4 py-3 border-b border-(--base-03) flex flex-wrap gap-2">
+            {blocks.map(b => {
+                const behind = b.behind > 0;
+                return (
+                    <span
+                        key={b.service}
+                        title={b.baselineKnown
+                            ? `${serviceLabel(b.service)} was built at feed entry ${b.installedCount}`
+                            : `${serviceLabel(b.service)} does not report which build it runs; measured against Core instead`}
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] ${
+                            behind
+                                ? 'bg-(--warning-ghost) border-(--warning)/40 text-(--warning-light)'
+                                : 'bg-(--base-03) border-(--base-04) text-(--base-07)'
+                        }`}
+                    >
+                        <span className="font-medium">{serviceLabel(b.service)}</span>
+                        <span>
+                            {behind ? `${b.behind} pending` : 'up to date'}
+                        </span>
+                        {!b.baselineKnown && <span className="text-(--base-05)">(assumed)</span>}
+                    </span>
+                );
+            })}
+        </div>
+    );
+}
+
+// One FEED's slice of the modal: the newest date grouped by component, then the
+// whole history grouped by component.
 function ServiceSection({ title, block }: { title: string; block: UpdateServiceBlock | undefined }) {
     const entries: UpdateEntry[] = block?.newEntries ?? [];
     if (entries.length === 0) return null;
-    const { latest, earlier } = splitLatest(entries);
+    const { latestDate, latest, earlier } = splitLatestByService(entries);
     return (
         <section>
             <div className="px-4 pt-4 pb-2 flex items-center justify-between gap-3">
@@ -149,20 +194,19 @@ function ServiceSection({ title, block }: { title: string; block: UpdateServiceB
                     <span className="badge badge-accent">update available</span>
                 )}
             </div>
-            {latest && (
+            <ServiceStanding blocks={block?.perService ?? []} />
+            {latest.length > 0 && (
                 <>
-                    <LatestHeader group={latest} />
-                    <ul className="divide-y divide-(--base-03)/50">
-                        {latest.entries.map((e, i) => <EntryRow key={`latest-${i}`} entry={e} />)}
-                    </ul>
+                    <LatestHeader entries={latest.flatMap(g => g.entries)} date={latestDate} />
+                    {latest.map(g => <ServiceBlockGroup key={`latest-${g.service}`} group={g} />)}
                 </>
             )}
             {earlier.length > 0 && (
                 <>
                     <div className="px-4 pt-4 pb-1 font-mono text-[9px] uppercase tracking-[0.08em] text-(--base-05)">
-                        Earlier
+                        Earlier updates
                     </div>
-                    {earlier.map(g => <DateGroup key={g.date} group={g} />)}
+                    {earlier.map(g => <ServiceBlockGroup key={`earlier-${g.service}`} group={g} />)}
                 </>
             )}
         </section>

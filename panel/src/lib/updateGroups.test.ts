@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { groupByDate, splitLatest, bellState, breakingCount, hasBreaking, typeCounts } from './updateGroups';
+import {
+    groupByDate, splitLatest, bellState, breakingCount, hasBreaking, typeCounts,
+    groupByService, splitLatestByService, serviceLabel,
+} from './updateGroups';
 
 const e = (date: string, summary: string) => ({ date, summary, service: 'core', type: 'fix' });
 
@@ -110,5 +113,78 @@ describe('typeCounts', () => {
 
     it('buckets an absent type as "update" rather than dropping the entry', () => {
         expect(typeCounts([{ summary: 'x' }])).toEqual([{ type: 'update', count: 1 }]);
+    });
+});
+
+describe('groupByService', () => {
+    const e = (service: string, summary: string, date = '2026-08-18') => ({ service, summary, date });
+
+    it('collects a component ONCE even when its entries are interleaved', () => {
+        // The regression this exists for: the feed is one line per change, so a
+        // day arrives as core, panel, core, panel and run-grouping produced four
+        // headings for two components.
+        const groups = groupByService([
+            e('core', 'a'), e('panel', 'b'), e('core', 'c'), e('panel', 'd'), e('core', 'x'),
+        ]);
+        expect(groups.map(g => g.service)).toEqual(['core', 'panel']);
+        expect(groups[0].entries).toHaveLength(3);
+        expect(groups[1].entries).toHaveLength(2);
+    });
+
+    it('keeps first-appearance order rather than sorting', () => {
+        const groups = groupByService([e('node', 'a'), e('core', 'b')]);
+        expect(groups.map(g => g.service)).toEqual(['node', 'core']);
+    });
+
+    it('normalises case and whitespace so one component never becomes two', () => {
+        const groups = groupByService([e('Core', 'a'), e(' core ', 'b')]);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].service).toBe('core');
+    });
+
+    it('keeps entries with no service instead of dropping them', () => {
+        const groups = groupByService([e('', 'orphan')]);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].entries[0].summary).toBe('orphan');
+    });
+});
+
+describe('splitLatestByService', () => {
+    const e = (date: string, service: string, summary: string) => ({ date, service, summary });
+
+    it('splits the newest date out and groups both halves by component', () => {
+        const { latestDate, latest, earlier } = splitLatestByService([
+            e('2026-08-18', 'core', 'new core'),
+            e('2026-08-18', 'panel', 'new panel'),
+            e('2026-08-17', 'core', 'old core'),
+            e('2026-08-16', 'core', 'older core'),
+            e('2026-08-16', 'node', 'old node'),
+        ]);
+        expect(latestDate).toBe('2026-08-18');
+        expect(latest.map(g => g.service)).toEqual(['core', 'panel']);
+        // The older half loses its date grouping on purpose: both older core
+        // entries belong under ONE Core heading, across the two dates.
+        expect(earlier.map(g => g.service)).toEqual(['core', 'node']);
+        expect(earlier[0].entries).toHaveLength(2);
+    });
+
+    it('is empty for an empty feed rather than throwing', () => {
+        const { latestDate, latest, earlier } = splitLatestByService([]);
+        expect(latestDate).toBe('');
+        expect(latest).toEqual([]);
+        expect(earlier).toEqual([]);
+    });
+});
+
+describe('serviceLabel', () => {
+    it('names the known components', () => {
+        expect(serviceLabel('core')).toBe('Core');
+        expect(serviceLabel('log-shipper')).toBe('Log shipper');
+    });
+    it('title-cases an unknown one instead of dropping it', () => {
+        expect(serviceLabel('solder')).toBe('Solder');
+    });
+    it('has a label for an entry with no service', () => {
+        expect(serviceLabel('')).toBe('Other');
     });
 });
