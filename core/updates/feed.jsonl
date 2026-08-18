@@ -35,3 +35,9 @@
 {"date":"2026-08-18","service":"panel","type":"change","summary":"What's new groups by component: the latest update on top, then everything Core, Panel or Node changed under its own heading instead of in arrival order"}
 {"date":"2026-08-18","service":"core","type":"fix","summary":"Each component is now measured against its OWN installed build, so updating Core while leaving the nodes alone no longer reports the node's changes as installed"}
 {"date":"2026-08-18","service":"node","type":"feature","summary":"The node reports which update-feed position its image was built at, so the panel can tell whether the node specifically is behind"}
+{"date":"2026-08-18","service":"core","type":"feature","summary":"BYON customers can create their own overlay key, so a machine no longer needs an operator to hand one over by e-mail"}
+{"date":"2026-08-18","service":"panel","type":"feature","summary":"My machines hands out both secrets at once and fills them into the deploy snippet, instead of leaving a placeholder"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"Unused overlay keys are listed and revocable - each one counts towards your node limit until it is used or removed"}
+{"date":"2026-08-18","service":"panel","type":"fix","summary":"Navbar entries no longer vanish in a narrow window: labels shrink to icons first, then anything left moves into a menu"}
+{"date":"2026-08-18","service":"panel","type":"feature","summary":"The server sidebar collapses to a narrow rail, by hand or automatically in a small window; servers stay one click away"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"In a very narrow window the account and notification buttons collapse behind one menu so the module bar keeps its room"}
