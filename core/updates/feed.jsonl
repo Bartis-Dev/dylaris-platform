@@ -16,3 +16,19 @@
 {"date":"2026-08-17","service":"panel","type":"change","summary":"The sidebar's \"New Container\" is now a \"+\" menu that says what you can create and why not"}
 {"date":"2026-08-17","service":"panel","type":"feature","summary":"New \"My nodes\" page: connect your own machine, manage enrollment keys, see its status"}
 {"date":"2026-08-17","service":"panel","type":"feature","summary":"Settings -> Users -> Billing shows what a tenant may use and can grant BYON or route-only for N days"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"The server Reload button is gone; a full Restart is the reliable way to re-read plugins and config"}
+{"date":"2026-08-18","service":"panel","type":"fix","summary":"Tickets and Modpacks open their real pages instead of an empty \"coming soon\" placeholder"}
+{"date":"2026-08-18","service":"core","type":"fix","summary":"The Modpacks module row is re-derived from the feature flags on every start, so it stops showing \"Admin\" after authoring was opened"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"Username history moved into Edit Profile, and My Modpacks left the profile menu now that Modpacks has its own navbar entry"}
+{"date":"2026-08-18","service":"core","type":"change","summary":"The Beam force-update floor now always comes from the signed release manifest; the manual field is gone"}
+{"date":"2026-08-18","service":"core","type":"change","summary":"The Beam prerelease (dev) update channel was removed; everyone is on the one release stream"}
+{"date":"2026-08-18","service":"core","type":"feature","summary":"DNS now supports 13 providers - Cloudflare, Hetzner, deSEC, IONOS, GoDaddy, Gandi, Bunny, Porkbun, netcup, Namecheap, ClouDNS, OVH and Route 53"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"Providers that need more than an API token now get the right inputs instead of one box labelled \"API Token\""}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"S3 buckets and credentials are defined once under Settings -> Storage Connections; Core Storage, Modpacks and Backups reference one instead of asking again"}
+{"date":"2026-08-18","service":"core","type":"feature","summary":"Settings -> Modpacks can fill in Core's public address from the one you are reached on, instead of you retyping it"}
+{"date":"2026-08-18","service":"panel","type":"fix","summary":"Settings -> Nodes now states both ways a machine becomes a node; the old card claimed no manual setup was needed, which stopped being true with the pairing hardening"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"Settings -> Nodes split: Nodes is the connected list, Node settings holds admission and enroll tokens"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"Adding a route: subdomain and custom domain are one switch now, so the custom-domain half is findable"}
+{"date":"2026-08-18","service":"panel","type":"feature","summary":"My nodes rebuilt: bring-your-own-node and route-only as separate cards, each with its usage against your plan and the deploy stack plus commands"}
+{"date":"2026-08-18","service":"core","type":"feature","summary":"The read-only demo is reachable at /login?demo=1, so a link can drop someone straight into the panel with no account"}
+{"date":"2026-08-18","service":"core","type":"change","summary":"After connecting a store account the browser is sent back to the panel; needs FRONTEND_URL set, otherwise no link is offered"}
