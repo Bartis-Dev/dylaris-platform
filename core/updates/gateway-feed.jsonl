@@ -1,0 +1,5 @@
+{"date":"2026-08-18","service":"edge","type":"feature","summary":"A stopped server now says it is stopped instead of claiming its host is offline"}
+{"date":"2026-08-18","service":"edge","type":"fix","summary":"Restart and shutdown notices reach players within seconds instead of after the shutdown had already finished"}
+{"date":"2026-08-18","service":"link","type":"fix","summary":"A session whose byte stream lost data is refused instead of resumed, so an edge restart ends in a clean disconnect rather than a protocol error"}
+{"date":"2026-08-18","service":"edge","type":"change","summary":"Shutdown logs whether a sibling edge exists to take the players over; with none, open sessions will drop and the log now says so"}
+{"date":"2026-08-18","service":"edge","type":"change","summary":"On restart the edge now says whether the splice can actually move players to a sibling, and names why a sibling was unusable"}
