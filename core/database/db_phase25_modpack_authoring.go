@@ -51,5 +51,28 @@ func applyModpackAuthoringSchema(db *sql.DB) error {
 		WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Modpacks')`); err != nil {
 		return fmt.Errorf("modpack authoring: seed Modpacks module row: %w", err)
 	}
+
+	// Re-derive the row on every boot, not only when the Features form is saved.
+	//
+	// is_enabled and access_role are declared derived (see syncModpackModule) but
+	// were only ever computed at write time, so any row that got out of step
+	// stayed out of step forever: nothing re-reads the flags unless an admin
+	// happens to save Features again. An install that gained this row while
+	// authoring was still off therefore kept showing "Admin" in Settings ->
+	// Modules - and stayed hidden from users - long after authoring was opened.
+	//
+	// url is repaired here too: the navbar routes internal modules by that column,
+	// so an empty one silently sends Modpacks to the generic /modules/<id>
+	// placeholder instead of the real page. position and the row's existence are
+	// left alone - those are the admin's.
+	if _, err := db.Exec(`UPDATE modules SET
+			url = '/modpacks',
+			is_enabled = COALESCE((SELECT value = 'true' FROM settings WHERE key = 'feature_modpacks_enabled'), FALSE),
+			access_role = CASE WHEN COALESCE((SELECT value = 'true' FROM settings WHERE key = 'feature_modpacks_enabled'), FALSE)
+			                    AND COALESCE((SELECT value = 'true' FROM settings WHERE key = 'feature_modpack_authoring_enabled'), FALSE)
+			                   THEN 'all' ELSE 'admin' END
+		WHERE name = 'Modpacks'`); err != nil {
+		return fmt.Errorf("modpack authoring: re-derive Modpacks module row: %w", err)
+	}
 	return nil
 }

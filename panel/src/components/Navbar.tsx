@@ -12,17 +12,26 @@ interface NavbarProps {
 }
 
 // Map a DB-loaded module to its URL route.
+//
+// Every built-in module row is seeded WITH its route in `url` (see
+// seedSystemModules), so that column is the mapping - not a name switch that
+// has to be extended for each new module. It wasn't, which is why Tickets and
+// Modpacks both opened /modules/<id> and rendered a "coming soon" placeholder
+// while their real pages sat unreachable at /tickets and /modpacks.
+//
+// Only INTERNAL modules route by url; an iframe module's url is a foreign
+// origin and belongs in the iframe on /modules/<id>, not in the address bar.
+// The path check rejects "//host" (protocol-relative, i.e. off-site) so an
+// admin-editable column can never turn a nav entry into an off-site redirect.
 // Gateway was retired as a standalone module — its content moved into the
 // Infrastructure module's Routes tab and any legacy DB row is filtered out
 // server-side.
 export function moduleHref(module: AppModule): string {
-  switch (module.name) {
-    case 'Servers': return '/servers';
-    case 'Admin': return '/admin';
-    case 'Infrastructure': return '/infrastructure';
-    case 'Library': return '/library';
-    default: return `/modules/${module.id}`;
+  const url = module.url?.trim();
+  if (module.type === 'internal' && url && url.startsWith('/') && !url.startsWith('//')) {
+    return url;
   }
+  return `/modules/${module.id}`;
 }
 
 export default function Navbar({ children }: NavbarProps) {
