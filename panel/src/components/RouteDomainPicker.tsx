@@ -10,7 +10,7 @@ import {
     checkDomainAvailability,
     getGatewayRouteOptions,
 } from '@/lib/api';
-import { AlertCircle, Check, Globe, Loader2, X } from 'lucide-react';
+import { AlertCircle, Check, Globe, Loader2, Server, X } from 'lucide-react';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 
 // Availability state surfaced to the parent so it can disable submit when
@@ -236,23 +236,39 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 </div>
             )}
 
-            {/* Mode tabs (only when both hoster and custom are available) */}
+            {/* Mode switch (only when both hoster and custom are available).
+                One full-width control split down the middle rather than two
+                small pills: these are the two kinds of address a route can have,
+                and at pill size "Custom Domain" read as a button that does
+                something rather than as the half you are not currently on. */}
             {!noDomainConfigured && showHosterMode && showCustomMode && (
-                <div className="flex bg-(--base-03) p-1 rounded-md w-fit">
-                    <button
-                        type="button"
-                        onClick={() => setMode('hoster')}
-                        className={`px-3 py-1 text-xs rounded-md transition-colors ${mode === 'hoster' ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'}`}
-                    >
-                        Subdomain
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setMode('custom')}
-                        className={`px-3 py-1 text-xs rounded-md transition-colors ${mode === 'custom' ? 'bg-(--accent) text-white' : 'text-(--base-07) hover:text-(--base-09)'}`}
-                    >
-                        Custom Domain
-                    </button>
+                <div role="tablist" aria-label="Address type" className="grid grid-cols-2 gap-1 p-1 rounded-md bg-(--base-03) border border-(--base-04)">
+                    {([
+                        { id: 'hoster' as const, label: 'Subdomain', desc: 'On one of our domains', Icon: Server },
+                        { id: 'custom' as const, label: 'Custom domain', desc: 'One you own, via CNAME', Icon: Globe },
+                    ]).map(({ id, label, desc, Icon }) => {
+                        const active = mode === id;
+                        return (
+                            <button
+                                key={id}
+                                type="button"
+                                role="tab"
+                                aria-selected={active}
+                                onClick={() => setMode(id)}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-sm text-left transition-colors ${
+                                    active
+                                        ? 'bg-(--accent) text-white'
+                                        : 'text-(--base-07) hover:text-(--base-09) hover:bg-(--base-04)/60'
+                                }`}
+                            >
+                                <Icon size={15} className={`shrink-0 ${active ? 'text-white' : 'text-(--base-06)'}`} />
+                                <span className="min-w-0">
+                                    <span className="block text-xs font-medium leading-tight">{label}</span>
+                                    <span className={`block text-[10px] leading-tight truncate ${active ? 'text-white/75' : 'text-(--base-06)'}`}>{desc}</span>
+                                </span>
+                            </button>
+                        );
+                    })}
                 </div>
             )}
 
