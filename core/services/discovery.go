@@ -64,6 +64,15 @@ type NodeHeartbeat struct {
 	// changes were installed. 0 means "this build does not report one" (an older
 	// node image), which the reader must treat as unknown, not as zero.
 	FeedBaseline int `json:"feedBaseline,omitempty"`
+	// Link sidecar image state, reported only by nodes that manage their own Link.
+	// LinkManaged distinguishes "this node has no Link to update" from "this node
+	// runs an operator-deployed Link", so the panel does not offer a button that
+	// would do nothing. Empty image ids mean unknown (no container yet, or the
+	// registry was unreachable) and must not be read as an update being available.
+	LinkManaged         bool   `json:"linkManaged,omitempty"`
+	LinkImageRunning    string `json:"linkImageRunning,omitempty"`
+	LinkImageAvailable  string `json:"linkImageAvailable,omitempty"`
+	LinkUpdateAvailable bool   `json:"linkUpdateAvailable,omitempty"`
 	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
 	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
 	Timestamp int64  `json:"timestamp"`
@@ -219,6 +228,22 @@ func (s *DiscoveryService) checkCPUTopologyChange(ctx context.Context, node *mod
 // independently of Core.
 const NodeFleetFeedBaselineKey = "dylaris:nodes:feed_baseline"
 
+// NodeLinkStateKey holds a nodeID -> NodeLinkState map for the nodes that manage
+// their own Link sidecar. Published by the discovery sweep so the panel can show
+// pending Link updates without a DB column: the value is live state with a TTL,
+// not something worth a migration.
+const NodeLinkStateKey = "dylaris:nodes:link_state"
+
+// NodeLinkState is one node's Link sidecar image status.
+type NodeLinkState struct {
+	// Managed is false for a node whose Link an operator deploys. The panel must
+	// not offer an update button there - Core cannot replace that container.
+	Managed         bool   `json:"managed"`
+	Running         string `json:"running,omitempty"`
+	Available       string `json:"available,omitempty"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+}
+
 func (s *DiscoveryService) scanNodes() {
 	ctx := context.Background()
 
@@ -235,6 +260,7 @@ func (s *DiscoveryService) scanNodes() {
 	// as behind - reporting the newest would hide exactly the case this exists
 	// for. -1 = no live node reported one (all older images, or none online).
 	fleetFeedBaseline := -1
+	linkStates := map[string]NodeLinkState{}
 
 	for _, key := range keys {
 		val, err := s.redis.Get(ctx, key).Result()
@@ -256,6 +282,14 @@ func (s *DiscoveryService) scanNodes() {
 		activeNodeTokens[hb.ID] = true
 		if hb.FeedBaseline > 0 && (fleetFeedBaseline < 0 || hb.FeedBaseline < fleetFeedBaseline) {
 			fleetFeedBaseline = hb.FeedBaseline
+		}
+		if hb.LinkManaged {
+			linkStates[hb.ID] = NodeLinkState{
+				Managed:         true,
+				Running:         hb.LinkImageRunning,
+				Available:       hb.LinkImageAvailable,
+				UpdateAvailable: hb.LinkUpdateAvailable,
+			}
 		}
 
 		node, err := s.store.GetNodeByToken(hb.ID)
@@ -355,6 +389,12 @@ func (s *DiscoveryService) scanNodes() {
 	// is the honest reading of a silent fleet.
 	if fleetFeedBaseline > 0 {
 		s.redis.Set(ctx, NodeFleetFeedBaselineKey, strconv.Itoa(fleetFeedBaseline), 5*time.Minute)
+	}
+	// Same short-TTL reasoning as the baseline above: a node that stopped
+	// reporting must stop claiming an update is pending for it, rather than leave
+	// the panel offering a button for a node that is not there.
+	if b, err := json.Marshal(linkStates); err == nil {
+		s.redis.Set(ctx, NodeLinkStateKey, b, 5*time.Minute)
 	}
 
 	dbNodes, err := s.store.ListNodes()

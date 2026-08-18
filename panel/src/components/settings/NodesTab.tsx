@@ -17,6 +17,7 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import StoragePlacement from '@/components/StoragePlacement';
+import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
@@ -77,7 +78,12 @@ export default function NodesTab() {
             <div className="flex-1 pl-6 overflow-y-auto">
                 {subTab === 'nodes' && <NodesPanel showToast={showToast} />}
                 {subTab === 'placement' && <PlacementPanel showToast={showToast} />}
-                {subTab === 'enrollment' && <NodeEnrollmentPanel showToast={showToast} />}
+                {subTab === 'enrollment' && (
+                    <div className="space-y-6">
+                        <NodeEnrollmentPanel showToast={showToast} />
+                        <LinkUpdatesPanel showToast={showToast} />
+                    </div>
+                )}
             </div>
 
             {toast && (

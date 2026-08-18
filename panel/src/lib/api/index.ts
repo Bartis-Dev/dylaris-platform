@@ -7,3 +7,5 @@ export * from './regions';
 export * from './registration';
 export * from './nodeAdmission';
 export * from './hubRedisAdmin';
+export * from './linkUpdates';
+

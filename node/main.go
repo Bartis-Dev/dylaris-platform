@@ -799,6 +799,22 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if b := feedBaselineValue(); b > 0 {
 		data["feedBaseline"] = b
 	}
+	// Link sidecar image state. Reported only when this node manages its own
+	// Link: on a node with an operator-deployed Link the panel must not offer an
+	// update button, because pressing it would do nothing.
+	if nodeManagesLink {
+		running, available, updateAvailable := GetLinkImageState()
+		data["linkManaged"] = true
+		if running != "" {
+			data["linkImageRunning"] = running
+		}
+		if available != "" {
+			data["linkImageAvailable"] = available
+		}
+		if updateAvailable {
+			data["linkUpdateAvailable"] = true
+		}
+	}
 	jsonData, _ := json.Marshal(data)
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
 		log.Printf("Heartbeat warning: %v", err)
