@@ -1126,6 +1126,31 @@ export const mintLinkKit = (name: string): Promise<MintedLinkKit> =>
 export const revokeLinkKit = (linkId: string): Promise<{ success: boolean }> =>
     fetchAPI(`/warp/link-kits/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
 
+// BYON node warp keys: the overlay credential a customer machine needs BEFORE it
+// can enroll as a node. Separate product and separate cap from a link kit (max
+// nodes, not max links); the two are kept apart server-side by a node_id prefix.
+// `used` counts connected nodes AND unredeemed keys, matching what the mint
+// endpoint enforces.
+export interface NodeWarpKey {
+    id: number;
+    name: string;
+    node_id: string;
+    created_at: string;
+}
+export interface MintedNodeWarpKey {
+    success: boolean;
+    warp_key: string;
+    node_id: string;
+    note: string;
+    message?: string;
+}
+export const listNodeWarpKeys = (): Promise<{ success: boolean; keys: NodeWarpKey[]; used?: number; limit?: number }> =>
+    fetchAPI('/warp/node-keys');
+export const mintNodeWarpKey = (name: string): Promise<MintedNodeWarpKey> =>
+    fetchAPI('/warp/node-keys', { method: 'POST', body: JSON.stringify({ name }) });
+export const revokeNodeWarpKey = (nodeId: string): Promise<{ success: boolean }> =>
+    fetchAPI(`/warp/node-keys/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+
 // Live availability check for the route-create form. Accepts the same
 // three input shapes the create endpoint does and answers `{available}`
 // without leaking who owns a taken domain.

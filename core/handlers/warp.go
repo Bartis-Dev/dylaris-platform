@@ -515,8 +515,14 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		LinkID    string `json:"link_id"`
 		CreatedAt string `json:"created_at"`
 	}
+	// warp_api_keys also holds this tenant's BYON node keys. They are a different
+	// product with a different cap, so listing them here would show a node as a
+	// route-only location and let it be revoked through the wrong door.
 	out := make([]linkKit, 0, len(keys))
 	for _, k := range keys {
+		if !strings.HasPrefix(k.NodeID, "link-") {
+			continue
+		}
 		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
 	}
 	// Surface the effective link cap + current link-kit count so the panel can show
@@ -649,5 +655,195 @@ func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to delete leader", http.StatusInternalServerError)
 		return
 	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// MintNodeWarpKey POST /api/warp/node-keys - tenant self-service. Mints the warp
+// enrollment key a BYON machine needs to join the overlay before it can enroll as
+// a node.
+//
+// This is the sibling of MintLinkKit and deliberately mirrors it: same BYON gate,
+// same gateway-routing gate, same owner scoping, same shown-once secret. Two
+// things differ, and both matter:
+//
+//   - The identity carries the "node-" prefix, not "link-". LinkBoot refuses a
+//     non-link key, so a node key can never mint a link credential; and
+//     CountLinkKitsByOwner counts only "link-%", so this never eats the tenant's
+//     route-only allowance.
+//   - It is capped on max_nodes, counting EXISTING nodes plus unredeemed keys. A
+//     minted key is a node that has not connected yet, so capping on connected
+//     nodes alone would let a one-node plan mint keys without limit.
+//
+// It exists because a BYON machine needs BOTH a warp key (to reach the overlay)
+// and a node enroll token (to become a node), and only the second was
+// self-service - so the deploy snippet handed the tenant a placeholder and left
+// the operator to pass the other secret by hand, per customer.
+func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	// The overlay only exists in gateway/both routing mode; matches Enroll.
+	if !h.state.gatewayEnabled() || h.state.Gateway == nil {
+		sendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
+		return
+	}
+	userID := byonCallerID(r)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
+	if lerr != nil {
+		sendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
+		return
+	}
+	if lim.MaxNodes > 0 {
+		nodes, nerr := h.state.Store.CountNodesByOwner(userID)
+		if nerr != nil {
+			sendJSONError(w, "Failed to count nodes", http.StatusInternalServerError)
+			return
+		}
+		pending, perr := h.state.Store.CountNodeWarpKeysByOwner(userID)
+		if perr != nil {
+			sendJSONError(w, "Failed to count pending keys", http.StatusInternalServerError)
+			return
+		}
+		if int64(nodes+pending) >= lim.MaxNodes {
+			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Revoke an unused key or remove a machine first.", lim.MaxNodes), http.StatusForbidden)
+			return
+		}
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "BYON node"
+	}
+
+	nodeID, err := generateNodeWarpIdentity()
+	if err != nil {
+		sendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
+		return
+	}
+	plaintext, err := generatePlaintextKey()
+	if err != nil {
+		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		return
+	}
+	// One customer machine, one warp peer; kill_old so a restart re-enrolls
+	// cleanly instead of hitting the connection limit. Same as a link kit.
+	if _, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
+		Name:      name,
+		KeyHash:   HashAPIKey(plaintext),
+		Policy:    "general",
+		MaxConns:  1,
+		OnNewConn: "kill_old",
+		NodeID:    nodeID,
+		OwnerID:   userID,
+	}); err != nil {
+		sendJSONError(w, "Failed to create the node key", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"warp_key": plaintext,
+		"node_id":  nodeID,
+		"note":     "Shown once. Paste it as API_KEY in the node's warp service.",
+	})
+}
+
+// ListNodeWarpKeys GET /api/warp/node-keys - the caller's own BYON node keys,
+// metadata only (the secret is stored as a hash and is gone after minting).
+func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	userID := byonCallerID(r)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	keys, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
+	if err != nil {
+		sendJSONError(w, "Failed to load node keys", http.StatusInternalServerError)
+		return
+	}
+	type nodeKey struct {
+		ID        int    `json:"id"`
+		Name      string `json:"name"`
+		NodeID    string `json:"node_id"`
+		CreatedAt string `json:"created_at"`
+	}
+	out := make([]nodeKey, 0, len(keys))
+	for _, k := range keys {
+		if !strings.HasPrefix(k.NodeID, "node-") {
+			continue
+		}
+		out = append(out, nodeKey{ID: k.ID, Name: k.Name, NodeID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
+	}
+	lim, _ := services.EffectiveLimits(h.state.Store, userID)
+	nodes, _ := h.state.Store.CountNodesByOwner(userID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "keys": out,
+		// used counts nodes AND unredeemed keys, matching the mint gate - the
+		// panel must show the same number the endpoint enforces or the cap looks
+		// arbitrary the moment it is hit.
+		"used": nodes + len(out), "limit": lim.MaxNodes,
+	})
+}
+
+// RevokeNodeWarpKey DELETE /api/warp/node-keys/{nodeID} - owner or admin.
+//
+// Also the way out of a dead end: a minted key counts against max_nodes, and the
+// secret is shown once. A tenant who loses it before using it would otherwise sit
+// at their cap forever with nothing to revoke it through.
+//
+// Revoking blocks future warp enrollment for that identity. A machine already
+// connected under it keeps its current tunnel until it reconnects; removing the
+// NODE itself is a separate action, which is the honest split - this endpoint
+// owns the key, not the machine.
+func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	userID, _ := r.Context().Value("userID").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	nodeID := mux.Vars(r)["nodeID"]
+	// Prefix-checked for the same reason RevokeLinkKit checks its own: the two
+	// kinds of key must not be revocable through each other's endpoint.
+	if !strings.HasPrefix(nodeID, "node-") {
+		sendJSONError(w, "Invalid node key id", http.StatusBadRequest)
+		return
+	}
+	key, err := h.state.Store.GetWarpAPIKeyByNodeID(nodeID)
+	if err != nil {
+		sendJSONError(w, "Node key not found", http.StatusNotFound)
+		return
+	}
+	// Same message for "not yours" as for "does not exist": a different one would
+	// confirm the id belongs to someone.
+	if !isAdmin && key.OwnerID != userID {
+		sendJSONError(w, "Node key not found", http.StatusNotFound)
+		return
+	}
+	if err := h.state.Store.RevokeWarpAPIKeyByNodeID(nodeID); err != nil {
+		sendJSONError(w, "Failed to revoke the node key", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("revoke node warp key %s (owner %s)", nodeID, key.OwnerID)
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

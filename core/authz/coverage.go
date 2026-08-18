@@ -180,8 +180,10 @@ var ExemptRoutes = map[string]bool{
 	"/api/settings/filemanager/limits": true, // authed; own upload/download limits
 
 	// Store panel-session calls (distinct from the service-to-service PUBLIC ones above).
-	"/api/store/link/start": true, // authed; panel-user session
-	"/api/store/status":     true, // authed; panel-user session
+	"/api/store/link/start":        true, // authed; panel-user session
+	"/api/warp/node-keys":          true, // authed; own BYON node keys, BYON+gateway gated in-handler
+	"/api/warp/node-keys/{nodeID}": true, // authed; own BYON node key (owner-checked in-handler)
+	"/api/store/status":            true, // authed; panel-user session
 
 	// Versions: read for any authed user (software list itself is PUBLIC above).
 	"/api/versions": true, // authed; version info

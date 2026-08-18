@@ -89,6 +89,7 @@ type Store interface {
 	SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error
 	CountNodesByOwner(ownerID string) (int, error)
 	CountLinkKitsByOwner(ownerID string) (int, error)
+	CountNodeWarpKeysByOwner(ownerID string) (int, error)
 	SetNodeLastSeen(id int) error
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error

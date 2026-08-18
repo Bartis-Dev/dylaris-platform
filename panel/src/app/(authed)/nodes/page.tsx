@@ -6,7 +6,10 @@ import {
     ExternalLink, Terminal, ShoppingCart, Lock,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { getNodes, listLinkKits, mintLinkKit, revokeLinkKit, type LinkKit } from '@/lib/api';
+import {
+    getNodes, listLinkKits, mintLinkKit, revokeLinkKit, type LinkKit,
+    listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, type NodeWarpKey,
+} from '@/lib/api';
 import { getStoreStatus } from '@/lib/api/store';
 import { getMyUsage } from '@/lib/api/usage';
 import { mintEnrollToken, listEnrollTokens, revokeEnrollToken } from '@/lib/api/nodeAdmission';
@@ -169,7 +172,13 @@ export default function MyNodesPage() {
 
     const [nodeLabelDraft, setNodeLabelDraft] = useState('');
     const [minting, setMinting] = useState(false);
-    const [revealedToken, setRevealedToken] = useState<string | null>(null);
+    // A BYON machine needs BOTH secrets: a warp key to reach the overlay and an
+    // enroll token to become a node. They are minted together here so the deploy
+    // snippet is complete - handing over one and a placeholder for the other was
+    // the gap this closes.
+    const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string } | null>(null);
+    const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
+    const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
 
     const [kitNameDraft, setKitNameDraft] = useState('');
     const [kitBusy, setKitBusy] = useState(false);
@@ -240,18 +249,49 @@ export default function MyNodesPage() {
         return () => { cancelled = true; };
     }, [featureFlags.store]);
 
+    const loadNodeKeys = useCallback(async () => {
+        if (!gatewayEnabled) return;
+        const res = await listNodeWarpKeys();
+        if (res.success) {
+            setNodeKeys(res.keys || []);
+            setNodeUsage({ used: res.used ?? 0, limit: res.limit });
+        }
+    }, [gatewayEnabled]);
+
     const handleMintNodeKey = async () => {
         setMinting(true);
         setError('');
-        const res = await mintEnrollToken({ label: nodeLabelDraft.trim() || 'my machine', expiresDays: 7 });
-        setMinting(false);
-        if (!res.success || !res.token) {
-            setError(res.message || 'Could not create an enrollment key.');
+        const label = nodeLabelDraft.trim() || 'my machine';
+        // Warp key first: it is the one with a cap, so a refusal happens before an
+        // enroll token is created that nobody could use.
+        const warp = await mintNodeWarpKey(label);
+        if (!warp.success || !warp.warp_key) {
+            setMinting(false);
+            setError(warp.message || 'Could not create the overlay key.');
             return;
         }
-        setRevealedToken(res.token);
+        const res = await mintEnrollToken({ label, expiresDays: 7 });
+        setMinting(false);
+        if (!res.success || !res.token) {
+            setError(res.message || 'The overlay key was created but the enrollment key failed. Revoke the key below and try again.');
+            loadNodeKeys();
+            return;
+        }
+        setRevealedNode({ token: res.token, warpKey: warp.warp_key });
         setNodeLabelDraft('');
         load();
+        loadNodeKeys();
+    };
+
+    useEffect(() => { loadNodeKeys(); }, [loadNodeKeys]);
+
+    const handleRevokeNodeKey = async (nodeId: string) => {
+        const res = await revokeNodeWarpKey(nodeId);
+        if (!res.success) {
+            setError('Could not revoke that key.');
+            return;
+        }
+        loadNodeKeys();
     };
 
     const handleRevokeToken = async (id: string) => {
@@ -300,7 +340,12 @@ export default function MyNodesPage() {
         );
     }
 
-    const nodesAtCap = typeof nodeLimit === 'number' && nodeLimit > 0 && nodes.length >= nodeLimit;
+    // Both from /warp/node-keys when it answered: it counts connected nodes AND
+    // unredeemed keys, which is exactly what the mint endpoint enforces. Showing
+    // a different number would make the refusal look arbitrary the moment it hits.
+    const nodesUsed = nodeUsage?.used ?? nodes.length;
+    const effectiveNodeLimit = nodeUsage?.limit ?? nodeLimit;
+    const nodesAtCap = typeof effectiveNodeLimit === 'number' && effectiveNodeLimit > 0 && nodesUsed >= effectiveNodeLimit;
     const kitsAtCap = typeof kitUsage.limit === 'number' && kitUsage.limit > 0 && kitUsage.used >= kitUsage.limit;
 
     return (
@@ -349,7 +394,7 @@ export default function MyNodesPage() {
                             hardware and the disk; the panel, backups and player routing stay ours.
                         </p>
                     </div>
-                    <span className="mono-label shrink-0 pt-0.5">{usageLabel(nodes.length, nodeLimit)}</span>
+                    <span className="mono-label shrink-0 pt-0.5">{usageLabel(nodesUsed, effectiveNodeLimit)}</span>
                 </div>
 
                 {!entitlementKnown ? (
@@ -391,24 +436,69 @@ export default function MyNodesPage() {
 
                         {/* Shown once. The key is not retrievable afterwards, so the
                             copy has to say so before the user closes it. */}
-                        {revealedToken && (
+                        {revealedNode && (
                             <div className="rounded-md border border-(--accent-border) bg-(--accent-ghost) p-4 space-y-3">
                                 <div className="text-sm font-medium text-(--base-09)">
-                                    Your enrollment key. It is shown once.
+                                    Your machine&apos;s two keys. Both are shown once.
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <code className="input-mono flex-1 min-w-0 break-all bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) select-all">
-                                        {revealedToken}
-                                    </code>
-                                    <CopyButton value={revealedToken} />
+                                <div className="space-y-1">
+                                    <label className="mono-label">Overlay key (warp API_KEY)</label>
+                                    <div className="flex items-center gap-2">
+                                        <code className="input-mono flex-1 min-w-0 break-all bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) select-all">
+                                            {revealedNode.warpKey}
+                                        </code>
+                                        <CopyButton value={revealedNode.warpKey} />
+                                    </div>
                                 </div>
-                                <p className="text-xs text-(--base-07)">
-                                    It expires in 7 days and can be used once.
-                                </p>
-                                <DeployKit kind="node" warpKey={null} enrollUrl={enrollUrl} nodeEnrollToken={revealedToken} />
-                                <button type="button" onClick={() => setRevealedToken(null)} className="btn btn-secondary btn-sm">
-                                    I saved it
+                                <div className="space-y-1">
+                                    <label className="mono-label">Enrollment key (NODE_ENROLL_TOKEN)</label>
+                                    <div className="flex items-center gap-2">
+                                        <code className="input-mono flex-1 min-w-0 break-all bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) select-all">
+                                            {revealedNode.token}
+                                        </code>
+                                        <CopyButton value={revealedNode.token} />
+                                    </div>
+                                    <p className="text-xs text-(--base-07)">
+                                        It expires in 7 days and can be used once.
+                                    </p>
+                                </div>
+                                {/* Both are already filled into the snippet below,
+                                    so the usual copy-paste needs neither of the
+                                    fields above - they are there for the record. */}
+                                <DeployKit
+                                    kind="node"
+                                    warpKey={revealedNode.warpKey}
+                                    enrollUrl={enrollUrl}
+                                    nodeEnrollToken={revealedNode.token}
+                                />
+                                <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
+                                    I saved them
                                 </button>
+                            </div>
+                        )}
+
+                        {nodeKeys.length > 0 && (
+                            <div className="border-t border-(--base-03) pt-3 space-y-2">
+                                <div className="mono-label">Overlay keys in use</div>
+                                <p className="text-xs text-(--base-06)">
+                                    Each counts towards your plan whether or not the machine has connected
+                                    yet. Revoke one you never used to free the slot.
+                                </p>
+                                {nodeKeys.map(k => (
+                                    <div key={k.id} className="flex items-center justify-between gap-3 text-sm">
+                                        <div className="min-w-0">
+                                            <div className="text-(--base-08) truncate">{k.name}</div>
+                                            <div className="mono-label truncate">{k.node_id}</div>
+                                        </div>
+                                        <button
+                                            onClick={() => handleRevokeNodeKey(k.node_id)}
+                                            className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors"
+                                            title="Revoke this overlay key"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
+                                ))}
                             </div>
                         )}
 

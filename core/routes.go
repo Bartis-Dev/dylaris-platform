@@ -55,13 +55,13 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/proxy-endpoint":              "network.read",
 	// storage-path answers NODE-wide (every path on the machine + capacity), so
 	// it takes the same cap as the migrate action it feeds - see the handler.
-	"/api/servers/{id:[0-9]+}/storage-path":                "server.settings.write",
-	"/api/servers/{id:[0-9]+}/migrate-storage":             "server.settings.write",
-	"/api/servers/{id:[0-9]+}/sftp-credentials":            "sftp.access",
-	"/api/servers/{id:[0-9]+}/migration-status":            "overview.read",
-	"/api/servers/{id:[0-9]+}/automove":                    "server.settings.write",
-	"/api/servers/{id:[0-9]+}/transfer":                    "server.settings.write",
-	"/api/servers/{id:[0-9]+}/edge-motd":                   "server.settings.write",
+	"/api/servers/{id:[0-9]+}/storage-path":     "server.settings.write",
+	"/api/servers/{id:[0-9]+}/migrate-storage":  "server.settings.write",
+	"/api/servers/{id:[0-9]+}/sftp-credentials": "sftp.access",
+	"/api/servers/{id:[0-9]+}/migration-status": "overview.read",
+	"/api/servers/{id:[0-9]+}/automove":         "server.settings.write",
+	"/api/servers/{id:[0-9]+}/transfer":         "server.settings.write",
+	"/api/servers/{id:[0-9]+}/edge-motd":        "server.settings.write",
 
 	// Phase 4 Task 4: console + RCON. /rcon/config serves both GET (config.read)
 	// and PUT (config.write) on the same template; config.read is the
@@ -267,7 +267,7 @@ var requiredCaps = map[string]string{
 	// grant/revoke. The map is keyed by path, so the stricter cap is recorded
 	// here and each route carries its own RequireCap.
 	"/api/admin/users/{id:[0-9a-f-]{36}}/entitlement": "plans.write",
-	"/api/admin/usage":                                      "plans.read",
+	"/api/admin/usage": "plans.read",
 
 	// Phase 4 Task 17: admin platform-settings surface (PANEL settings.*).
 	// Uniform mapping: reads -> settings.read, writes (POST/PUT/PATCH/DELETE) ->
@@ -333,24 +333,24 @@ var requiredCaps = map[string]string{
 	// (warp API-key auth, not a session) and /api/warp/link-kits/* (tenant
 	// self-service, BYON-gated + owner-filtered in-handler) are deliberately NOT
 	// listed here - they stay EXEMPT-authed (Phase 4 controller decision #2).
-	"/api/gateway/links":                    "topology.read",
-	"/api/gateway/edges":                    "topology.read",
-	"/api/gateway/routes":                   "topology.read",
-	"/api/gateway/dns-check":                "topology.read",
-	"/api/gateway/routes/suffixes":          "topology.read",
-	"/api/gateway/routes/bulk-delete":       "topology.write",
-	"/api/gateway/routes/{domain:.+}":       "topology.write",
-	"/api/gateway/logs":                     "topology.read",
-	"/api/gateway/stats":                    "topology.read",
-	"/api/gateway/sync":                     "topology.write",
-	"/api/gateway/errors":                   "topology.read",
-	"/api/infrastructure/overview":          "topology.read",
-	"/api/infrastructure/routing-migration": "topology.read",
-	"/api/warp/regions":                     "topology.read",
-	"/api/warp/regions/{region}":            "topology.write",
-	"/api/warp/leaders":                     "topology.write",
-	"/api/warp/leaders/{leaderId}":          "topology.write",
-	"/api/admin/warp/keys":                  "topology.write",
+	"/api/gateway/links":                     "topology.read",
+	"/api/gateway/edges":                     "topology.read",
+	"/api/gateway/routes":                    "topology.read",
+	"/api/gateway/dns-check":                 "topology.read",
+	"/api/gateway/routes/suffixes":           "topology.read",
+	"/api/gateway/routes/bulk-delete":        "topology.write",
+	"/api/gateway/routes/{domain:.+}":        "topology.write",
+	"/api/gateway/logs":                      "topology.read",
+	"/api/gateway/stats":                     "topology.read",
+	"/api/gateway/sync":                      "topology.write",
+	"/api/gateway/errors":                    "topology.read",
+	"/api/infrastructure/overview":           "topology.read",
+	"/api/infrastructure/routing-migration":  "topology.read",
+	"/api/warp/regions":                      "topology.read",
+	"/api/warp/regions/{region}":             "topology.write",
+	"/api/warp/leaders":                      "topology.write",
+	"/api/warp/leaders/{leaderId}":           "topology.write",
+	"/api/admin/warp/keys":                   "topology.write",
 	"/api/admin/warp/keys/{id:[0-9]+}":       "topology.write",
 	"/api/admin/warp/keys/{id:[0-9]+}/purge": "topology.write",
 
@@ -925,6 +925,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/warp/link-boot",
 		authLimiter.Limit(30, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
 	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
+	// BYON node warp keys (tenant self-service; BYON + gateway gated inside the
+	// handler, capped on max_nodes). Separate from link kits by the "node-"
+	// node_id prefix - see MintNodeWarpKey.
+	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(warpHandler.MintNodeWarpKey)).Methods("POST")
+	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(warpHandler.ListNodeWarpKeys)).Methods("GET")
+	api.HandleFunc("/warp/node-keys/{nodeID}", authHandler.AuthMiddleware(warpHandler.RevokeNodeWarpKey)).Methods("DELETE")
 
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 

@@ -192,6 +192,18 @@ func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 	return n, err
 }
 
+// CountNodeWarpKeysByOwner returns how many UNREDEEMED BYON node warp keys a
+// tenant holds. Counted against max_nodes alongside CountNodesByOwner, because a
+// minted key is a node that has not connected YET - capping only on nodes that
+// already exist would let a tenant with a one-node plan mint keys without limit
+// and stand up as many machines as they liked.
+func (s *PostgresStore) CountNodeWarpKeysByOwner(ownerID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'node-%'`, ownerID).Scan(&n)
+	return n, err
+}
+
 // CountLinkKitsByOwner returns how many route-only link kits a tenant owns (for the
 // max_links gate). warp_api_keys also holds BYON node keys, so this filters to the
 // 'link-' node_id prefix.
