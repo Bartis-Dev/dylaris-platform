@@ -3,3 +3,4 @@
 {"date":"2026-08-18","service":"link","type":"fix","summary":"A session whose byte stream lost data is refused instead of resumed, so an edge restart ends in a clean disconnect rather than a protocol error"}
 {"date":"2026-08-18","service":"edge","type":"change","summary":"Shutdown logs whether a sibling edge exists to take the players over; with none, open sessions will drop and the log now says so"}
 {"date":"2026-08-18","service":"edge","type":"change","summary":"On restart the edge now says whether the splice can actually move players to a sibling, and names why a sibling was unusable"}
+{"date":"2026-08-18","service":"edge","type":"fix","summary":"The splice sidecar no longer reports itself as permanently unhealthy; it was answering the edge's health probe, which it never serves"}
