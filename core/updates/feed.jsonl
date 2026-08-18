@@ -32,3 +32,6 @@
 {"date":"2026-08-18","service":"panel","type":"feature","summary":"My nodes rebuilt: bring-your-own-node and route-only as separate cards, each with its usage against your plan and the deploy stack plus commands"}
 {"date":"2026-08-18","service":"core","type":"feature","summary":"The read-only demo is reachable at /login?demo=1, so a link can drop someone straight into the panel with no account"}
 {"date":"2026-08-18","service":"core","type":"change","summary":"After connecting a store account the browser is sent back to the panel; needs FRONTEND_URL set, otherwise no link is offered"}
+{"date":"2026-08-18","service":"panel","type":"change","summary":"What's new groups by component: the latest update on top, then everything Core, Panel or Node changed under its own heading instead of in arrival order"}
+{"date":"2026-08-18","service":"core","type":"fix","summary":"Each component is now measured against its OWN installed build, so updating Core while leaving the nodes alone no longer reports the node's changes as installed"}
+{"date":"2026-08-18","service":"node","type":"feature","summary":"The node reports which update-feed position its image was built at, so the panel can tell whether the node specifically is behind"}
