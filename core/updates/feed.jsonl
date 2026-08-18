@@ -41,3 +41,4 @@
 {"date":"2026-08-18","service":"panel","type":"fix","summary":"Navbar entries no longer vanish in a narrow window: labels shrink to icons first, then anything left moves into a menu"}
 {"date":"2026-08-18","service":"panel","type":"feature","summary":"The server sidebar collapses to a narrow rail, by hand or automatically in a small window; servers stay one click away"}
 {"date":"2026-08-18","service":"panel","type":"change","summary":"In a very narrow window the account and notification buttons collapse behind one menu so the module bar keeps its room"}
+{"date":"2026-08-18","service":"node","type":"fix","summary":"Nodes now notice when a newer Link image is published instead of running whatever the tag pointed at on the day they first started; external and BYON nodes apply it automatically, datacenter nodes wait until no players are connected"}

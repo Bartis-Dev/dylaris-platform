@@ -381,6 +381,47 @@ func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDisc
 	return nil
 }
 
+// LinkImageStatus refreshes the configured Link image reference and reports the
+// image the running container was created from alongside the image that
+// reference now resolves to. Either may be empty (no container, or the pull
+// failed and nothing is cached locally); a caller must treat "" as unknown and
+// not as drift, or a registry hiccup would recreate the Link on every tick.
+//
+// This mirrors what the edge already does for its splice sidecar
+// (gateway/edge/internal/sidecar/manager.go): pull, compare image IDs, recreate
+// on a real change. Comparing IDs rather than the tag string is the whole point
+// - a moving tag is invisible to a string comparison.
+func (dm *DockerManager) LinkImageStatus(image string) (running, available string) {
+	if c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName); err == nil {
+		running = c.Image
+	}
+	dm.pullImage(image)
+	if ins, _, err := dm.cli.ImageInspectWithRaw(dm.ctx, image); err == nil {
+		available = ins.ID
+	}
+	return running, available
+}
+
+// LinkEndpoint returns host:port for the Link's management server, resolved from
+// the container's own network settings.
+//
+// Deliberately not the container NAME: Docker DNS only resolves it for
+// containers attached to the same user-defined network, and a host-networked
+// node (every BYON node, and anything on Docker Desktop) is not. Asking the
+// Docker API works in every networking mode this node runs in.
+func (dm *DockerManager) LinkEndpoint() string {
+	c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName)
+	if err != nil || c.NetworkSettings == nil {
+		return ""
+	}
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep.IPAddress != "" {
+			return fmt.Sprintf("%s:%d", ep.IPAddress, linkMgmtPort)
+		}
+	}
+	return ""
+}
+
 // StopLinkContainer stops + removes the node-managed Link sidecar (best-effort).
 func (dm *DockerManager) StopLinkContainer() {
 	timeout := 15

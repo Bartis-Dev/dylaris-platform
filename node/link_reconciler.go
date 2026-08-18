@@ -16,24 +16,39 @@ func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 		return
 	}
 	var last string // signature of the last-applied spawn; "" = not running
+	var nextImageCheck time.Time
 	reconcile := func() {
 		secret, proof := getLinkCreds()
 		want := linkWanted(getRoutingMode(), secret, proof, linkImage)
 		sig := nodeID + "|" + secret + "|" + proof + "|" + linkImage
-		if want {
-			if sig != last {
-				if err := dm.EnsureLinkContainer(linkImage, nodeID, secret, proof); err != nil {
-					log.Printf("link: failed to ensure Link sidecar: %v", err)
-					return
-				}
-				log.Println("link: Link sidecar (re)started")
-				last = sig
+		if !want {
+			if last != "" {
+				dm.StopLinkContainer()
+				log.Println("link: Link sidecar stopped")
+				last = ""
 			}
-		} else if last != "" {
-			dm.StopLinkContainer()
-			log.Println("link: Link sidecar stopped")
-			last = ""
+			return
 		}
+		if sig != last {
+			if err := dm.EnsureLinkContainer(linkImage, nodeID, secret, proof); err != nil {
+				log.Printf("link: failed to ensure Link sidecar: %v", err)
+				return
+			}
+			log.Println("link: Link sidecar (re)started")
+			last = sig
+			// A fresh spawn just pulled, so the next drift check can wait a full
+			// interval rather than immediately pulling the same image again.
+			nextImageCheck = time.Now().Add(linkImageCheckInterval(getLinkUpdateIntervalMinutes()))
+			return
+		}
+		// Running and configured. The signature cannot notice that a moving tag
+		// now points somewhere else, so the image itself is checked on its own,
+		// slower cadence.
+		if time.Now().Before(nextImageCheck) {
+			return
+		}
+		nextImageCheck = time.Now().Add(linkImageCheckInterval(getLinkUpdateIntervalMinutes()))
+		checkLinkImage(dm, secret, proof)
 	}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()

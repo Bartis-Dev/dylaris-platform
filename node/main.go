@@ -608,6 +608,20 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 	if v, err := rdb.Get(ctx, "dylaris:file_access_mode").Result(); err == nil && v != "" {
 		fileAccess = v
 	}
+	// Link sidecar update settings. Advisory: an external node forces "auto"
+	// regardless (resolveLinkUpdatePolicy), so a missing key is never unsafe.
+	linkPolicy := getLinkUpdatePolicySetting()
+	linkInterval := getLinkUpdateIntervalMinutes()
+	if v, err := rdb.Get(ctx, "dylaris:link_update_policy").Result(); err == nil && v != "" {
+		linkPolicy = v
+	}
+	if v, err := rdb.Get(ctx, "dylaris:link_update_interval_min").Result(); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			linkInterval = n
+		}
+	}
+	setLinkUpdateSettings(linkPolicy, linkInterval)
+
 	if v, err := rdb.Get(ctx, "dylaris:placement:port_mode").Result(); err == nil && (v == "sequential" || v == "random") {
 		port = v
 	}
@@ -896,6 +910,14 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 // redelivery is driven by crash-before-return, not per-command logical failure.
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
+
+	// Node-level actions carry no server UUID, so they are handled before any of
+	// the per-server setup below (mode reload, cpuset defaults, storage lookup)
+	// touches cmd.Config.
+	if cmd.Action == "link_update" {
+		TriggerLinkImageUpdate(dm)
+		return
+	}
 
 	// Whether a container gets a published host port depends on the routing
 	// mode, and Core queues the redeploy IMMEDIATELY after publishing a mode
