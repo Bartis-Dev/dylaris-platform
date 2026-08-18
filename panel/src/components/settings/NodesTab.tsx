@@ -34,11 +34,16 @@ interface DeployBundle {
     linkDiscoveryProof: string;
 }
 
-type SubTab = 'nodes' | 'placement';
+type SubTab = 'nodes' | 'placement' | 'enrollment';
 
 const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'nodes', label: 'Nodes', icon: Server },
     { id: 'placement', label: 'Placement', icon: SettingsIcon },
+    // How a machine BECOMES a node (admission gate + enroll tokens) is a
+    // different job from looking after the ones that already are, and mixing
+    // the two put a rarely-touched security gate underneath a list that polls
+    // every 5 seconds.
+    { id: 'enrollment', label: 'Node settings', icon: ShieldCheck },
 ];
 
 export default function NodesTab() {
@@ -72,6 +77,7 @@ export default function NodesTab() {
             <div className="flex-1 pl-6 overflow-y-auto">
                 {subTab === 'nodes' && <NodesPanel showToast={showToast} />}
                 {subTab === 'placement' && <PlacementPanel showToast={showToast} />}
+                {subTab === 'enrollment' && <NodeEnrollmentPanel showToast={showToast} />}
             </div>
 
             {toast && (
@@ -179,18 +185,6 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
 
     return (
         <div className="space-y-6">
-            <div className="card border-(--accent-border) p-6">
-                <h3 className="text-base font-display font-bold text-(--accent-light) mb-2 flex items-center gap-2">
-                    <Network size={18} /> Auto-Discovery Active
-                </h3>
-                <p className="text-sm text-(--base-07)">
-                    New nodes register automatically when the <code className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-08) font-mono text-xs">dylaris-platform</code> stack is deployed on a node-labeled host with the cluster secret. No manual setup needed.
-                </p>
-                <p className="text-xs text-(--base-06) mt-3">
-                    Label a Swarm host as a node: <code className="bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-08) font-mono text-xs">docker node update --label-add role=node &lt;hostname&gt;</code>
-                </p>
-            </div>
-
             <div>
                 <h3 className="text-base font-display font-bold text-(--base-09) mb-4">Connected Nodes</h3>
                 <div className="space-y-3">
@@ -229,9 +223,6 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                     )}
                 </div>
             </div>
-
-            <AdmissionCard showToast={showToast} />
-            <EnrollTokensSection showToast={showToast} />
 
             {resetReveal && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setResetReveal(null)}>
@@ -1135,12 +1126,76 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
 }
 
 // ─────────────────────────────────────────────
+// Node settings: how a machine becomes a node, and who is allowed to try.
+// ─────────────────────────────────────────────
+
+function NodeEnrollmentPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    // The admission gate decides whether a minted token can ever be redeemed, so
+    // the two cards have to agree on it. One owner, passed down - not two fetches
+    // that drift the moment the gate is changed.
+    const [joinMode, setJoinMode] = useState('open');
+    return (
+        <div className="space-y-6">
+            <HowNodesJoinCard />
+            <AdmissionCard showToast={showToast} onJoinMode={setJoinMode} />
+            <EnrollTokensSection showToast={showToast} joinMode={joinMode} />
+        </div>
+    );
+}
+
+// There are exactly TWO ways a machine becomes a node, and the old card here
+// described only the first while implying it was the only one ("No manual setup
+// needed"). Since the pairing hardening landed, an unknown node is created ONLY
+// on the gRPC enroll path (grpc/server.go): either it proves possession of
+// CLUSTER_SECRET, or it presents a single-use enroll token. A heartbeat from an
+// id Core never assigned is dropped outright (services/discovery.go). Stating
+// both paths is the difference between an operator understanding why their node
+// never showed up and an operator re-reading their Swarm labels for an hour.
+function HowNodesJoinCard() {
+    return (
+        <div className="card border-(--accent-border) p-6 space-y-4">
+            <h3 className="text-base font-display font-bold text-(--accent-light) flex items-center gap-2">
+                <Network size={18} /> How a machine becomes a node
+            </h3>
+
+            <div className="space-y-1.5">
+                <div className="text-sm font-medium text-(--base-09)">1. Your own hosts — automatic</div>
+                <p className="text-sm text-(--base-07)">
+                    A host that runs the platform stack <em>and</em> holds the cluster secret proves it on
+                    connect and enrolls itself. Nothing to do here.
+                </p>
+                <p className="text-xs text-(--base-06)">
+                    Example for a Docker Swarm deployment — adapt it to however your own stack is
+                    scheduled (labels, constraints and stack name are yours, not ours):
+                </p>
+                <code className="block bg-(--base-02) border border-(--base-04) px-2.5 py-1.5 rounded-md text-(--base-08) font-mono text-xs break-all">
+                    docker node update --label-add role=node &lt;hostname&gt;
+                </code>
+            </div>
+
+            <div className="space-y-1.5 pt-1 border-t border-(--base-03)">
+                <div className="text-sm font-medium text-(--base-09)">2. Someone else&apos;s machine — enroll token</div>
+                <p className="text-sm text-(--base-07)">
+                    A bring-your-own-node machine never receives the cluster secret. It pairs with a
+                    single-use enroll token instead, minted below or by the tenant on their own
+                    &ldquo;My nodes&rdquo; page.
+                </p>
+            </div>
+
+            <p className="text-xs text-(--base-06) pt-1 border-t border-(--base-03)">
+                A machine with neither is rejected: a heartbeat alone can never create a node.
+            </p>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
 // Node Admission (P0b-5): join-mode + IP allowlist gate on a node's FIRST
 // registration. Always available regardless of BYON — this guards the
 // existing auto-discovery flow too.
 // ─────────────────────────────────────────────
 
-function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+function AdmissionCard({ showToast, onJoinMode }: { showToast: (msg: string, ok?: boolean) => void; onJoinMode?: (mode: string) => void }) {
     const [joinMode, setJoinMode] = useState<string>('open');
     const [ipMode, setIpMode] = useState<string>('allow');
     const [cidrs, setCidrs] = useState<AdmissionCIDR[]>([]);
@@ -1156,6 +1211,7 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
             setJoinMode(res.joinMode || 'open');
             setIpMode(res.ipMode || 'allow');
             setCidrs(res.cidrs || []);
+            onJoinMode?.(res.joinMode || 'open');
         }
         setLoading(false);
     };
@@ -1168,6 +1224,7 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
         if (res.success) {
             setJoinMode(nextJoin);
             setIpMode(nextIp);
+            onJoinMode?.(nextJoin);
             showToast('Admission updated.');
         } else {
             showToast(res.message || 'Save failed.', false);
@@ -1264,13 +1321,17 @@ function AdmissionCard({ showToast }: { showToast: (msg: string, ok?: boolean) =
 // visibly disabled with a "Requires BYON" note when the byon flag is off.
 // ─────────────────────────────────────────────
 
-function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string, ok?: boolean) => void; joinMode: string }) {
     // The enroll-token backend is BYON-gated (byonActive). Read the already-loaded,
     // SSE-reactive flag from the app context (same idiom as GatewayTab/UserManagementTab)
     // instead of a one-shot fetch, so this section reacts live and never flashes
     // "Requires BYON" on initial load.
     const { featureFlags } = useAppData();
     const byonEnabled = featureFlags.byon;
+    // "disabled" rejects every new registration, so a token minted now can never
+    // be redeemed. Listing and revoking existing tokens stays available - those
+    // are cleanup actions and blocking them would strand real tokens.
+    const joiningBlocked = joinMode === 'disabled';
 
     const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
     const [label, setLabel] = useState('');
@@ -1321,6 +1382,23 @@ function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: bool
                 <p className="text-sm text-(--base-06)">Requires BYON — enable it in Settings → Features to mint node enroll tokens.</p>
             ) : (
               <>
+            {/* Minting is disabled while admission rejects every new node: the
+                token would be issued, handed over, and then fail at the gate for
+                a reason that is nowhere near the token. Note the gate is NOT
+                "open" - a token is required in EVERY join mode, since it is the
+                only way a machine without the cluster secret can pair at all.
+                Only "disabled" makes a token unusable. */}
+            {joiningBlocked && (
+                <div className="alert alert-warning text-xs">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                        Node admission is set to <code className="font-mono">disabled</code>, so no new node
+                        can pair right now and a token minted here could not be redeemed. Set a join mode
+                        above first.
+                    </span>
+                </div>
+            )}
+            <fieldset disabled={joiningBlocked} className={joiningBlocked ? 'opacity-50' : undefined}>
             <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                     <label className="input-label">Label</label>
@@ -1334,6 +1412,7 @@ function EnrollTokensSection({ showToast }: { showToast: (msg: string, ok?: bool
                     <Plus size={14} /> {minting ? 'Minting…' : 'Mint token'}
                 </button>
             </div>
+            </fieldset>
 
             {tokens.length === 0 ? (
                 <div className="text-sm text-(--base-06)">No enroll tokens.</div>
