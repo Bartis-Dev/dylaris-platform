@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useAppData } from '@/lib/AppDataContext';
-import { AlertTriangle, CircleCheck, CircleAlert } from 'lucide-react';
+import { AlertTriangle, CircleCheck, CircleAlert, Info } from 'lucide-react';
 import { API_URL } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -17,18 +17,8 @@ interface BeamSettings {
     enabled: boolean;
     downloadLink: string;
 
-    // Force-update floor (empty = gating off). Clients below this get HTTP 426
-    // from GetBeamTicket and a blocking update screen. Validated server-side.
-    minVersion?: string;
-
-    // How the floor is chosen: 'manual' uses minVersion above; 'auto' follows the
-    // minVersion baked into the SIGNED release manifest (Core verifies it). In
-    // auto mode the manual input is ignored.
-    minVersionMode?: 'manual' | 'auto';
-
-    // Who may opt into the dev (prerelease) update channel from their profile:
-    // 'disabled' (default), 'admins-only', or 'all-users'.
-    devChannelAccess?: 'disabled' | 'admins-only' | 'all-users';
+    // There is no force-update floor here: it comes from the signed release
+    // manifest, which Core verifies before enforcing it. See effectiveMinVersion.
 
     // Per-direction throttle splits (bytes/sec, 0 = unlimited). Stored
     // alongside bwLimit; Core folds the internal pair into bwLimit until
@@ -180,9 +170,6 @@ function RefField({
 interface BeamEditableSnapshot {
     relayAddress: string;
     downloadLink: string;
-    minVersion: string;
-    minVersionMode: 'manual' | 'auto';
-    devChannelAccess: 'disabled' | 'admins-only' | 'all-users';
     enabled: boolean;
     bwUpInternal: number;
     bwDownInternal: number;
@@ -200,12 +187,6 @@ function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
     return {
         relayAddress: s.relayAddress,
         downloadLink: s.downloadLink,
-        minVersion: s.minVersion ?? '',
-        minVersionMode: s.minVersionMode === 'auto' ? 'auto' : 'manual',
-        devChannelAccess:
-            s.devChannelAccess === 'admins-only' || s.devChannelAccess === 'all-users'
-                ? s.devChannelAccess
-                : 'disabled',
         enabled: s.enabled,
         bwUpInternal: s.bwUpInternal ?? 0,
         bwDownInternal: s.bwDownInternal ?? 0,
@@ -231,9 +212,6 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
         bwLimit: 0,
         enabled: true,
         downloadLink: '',
-        minVersion: '',
-        minVersionMode: 'manual',
-        devChannelAccess: 'disabled',
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -281,9 +259,6 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             ...s,
             relayAddress: snap.relayAddress,
             downloadLink: snap.downloadLink,
-            minVersion: snap.minVersion,
-            minVersionMode: snap.minVersionMode,
-            devChannelAccess: snap.devChannelAccess,
             enabled: snap.enabled,
             bwUpInternal: snap.bwUpInternal,
             bwDownInternal: snap.bwDownInternal,
@@ -421,61 +396,19 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                             : 'Only needed if you ship your own Beam build or a fork. Click the field to change it.'}
                     </p>
                 </div>
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Minimum Beam Version</label>
-                    <div className="grid grid-cols-2 gap-2 mb-1">
-                        {([
-                            { value: 'manual' as const, label: 'Manual', desc: 'Use the version set below' },
-                            { value: 'auto' as const, label: 'Auto', desc: 'Follow the signed release manifest' },
-                        ]).map(opt => {
-                            const active = (settings.minVersionMode ?? 'manual') === opt.value;
-                            return (
-                                <button key={opt.value} type="button"
-                                    onClick={() => setSettings(s => ({ ...s, minVersionMode: opt.value }))}
-                                    className={`p-3 rounded-md border text-left transition-colors ${active ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
-                                    <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                                    <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <input
-                        type="text"
-                        value={settings.minVersion ?? ''}
-                        onChange={e => setSettings(s => ({ ...s, minVersion: e.target.value.trim() }))}
-                        placeholder="e.g. 1.2.3"
-                        disabled={(settings.minVersionMode ?? 'manual') === 'auto'}
-                        className="input-field input-mono disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <p className="text-xs text-(--base-06) mt-0.5">
-                        {(settings.minVersionMode ?? 'manual') === 'auto'
-                            ? 'Core reads the floor from the signed release manifest (minVersion) and verifies it before enforcing. The field above is ignored.'
-                            : 'Clients below this version cannot connect and must update. Leave empty to disable.'}
-                    </p>
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Dev Channel Access</label>
-                    <div className="grid grid-cols-3 gap-2">
-                        {([
-                            { value: 'disabled' as const, label: 'Disabled', desc: 'Nobody can opt in' },
-                            { value: 'admins-only' as const, label: 'Admins only', desc: 'Admins can opt in' },
-                            { value: 'all-users' as const, label: 'All users', desc: 'Anyone can opt in' },
-                        ]).map(opt => {
-                            const active = (settings.devChannelAccess ?? 'disabled') === opt.value;
-                            return (
-                                <button key={opt.value} type="button"
-                                    onClick={() => setSettings(s => ({ ...s, devChannelAccess: opt.value }))}
-                                    className={`p-3 rounded-md border text-left transition-colors ${active ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
-                                    <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                                    <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <p className="text-xs text-(--base-06) mt-0.5">
-                        Who may switch their Beam desktop app to the dev (prerelease) update channel from their profile. Dev builds are unstable test releases.
-                    </p>
-                </div>
+                {/* The force-update floor deliberately has no control here. It is
+                    baked into the SIGNED release manifest, which is the same
+                    artifact the app verifies before self-updating, so the release
+                    decides it. A hand-typed floor could only disagree with the
+                    binary being shipped - and a typo in it locks every client out. */}
+                <p className="flex items-start gap-1.5 text-xs text-(--base-06)">
+                    <Info size={12} className="mt-0.5 shrink-0" />
+                    <span>
+                        The minimum Beam version is read from the signed release manifest and
+                        verified before it is enforced — there is nothing to set. Clients below
+                        that floor are asked to update before they can connect.
+                    </span>
+                </p>
             </div>
 
             {/* ─── Throttle (enforced) ─── */}

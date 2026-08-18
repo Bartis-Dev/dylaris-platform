@@ -45,12 +45,6 @@ var defaultBeamManifestURL = func() string {
 // never be trusted to raise the floor and lock every client out.
 const beamUpdatePublicKeyB64 = "5WS1g2Ushib55CKq7duxHJlcJKIwD7L3wYdA6coTiA4="
 
-// beamMinVersionMode values for the beam.min_version_mode setting.
-const (
-	beamMinVersionModeManual = "manual" // admin-set beam.min_version wins (default)
-	beamMinVersionModeAuto   = "auto"   // follow the signed manifest's minVersion
-)
-
 // beamMinAutoTTL bounds how often Core re-fetches the signed manifest for the
 // auto min-version floor. GetBeamTicket runs on every connect, so an uncached
 // fetch per request would add a GitHub round-trip to the hot connect path.
@@ -166,35 +160,23 @@ func httpGetBeamManifestBytes(ctx context.Context, u string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
-// resolveBeamMinVersion is the pure force-update-floor decision. In auto mode the
-// floor is the signed manifest's minVersion (autoMin, already verified upstream;
-// "" when no manifest was verifiable, which disables the gate rather than locking
-// everyone out). In any other mode (manual, the default) the admin-set manualMin
-// wins verbatim. Pure and side-effect free for table testing.
-func resolveBeamMinVersion(mode, manualMin, autoMin string) string {
-	if strings.TrimSpace(mode) == beamMinVersionModeAuto {
-		return autoMin
-	}
-	return manualMin
-}
-
-// effectiveMinVersion returns the force-update floor Core advertises (GetBeamConfig)
-// and enforces (GetBeamTicket), honoring the beam.min_version_mode setting. Manual
-// mode (default) returns the admin-set beam.min_version with no network I/O. Auto
-// mode returns the signed manifest's minVersion, fetched+verified at most once per
-// beamMinAutoTTL and cached; a fetch/verify failure yields "" (gate off) so a
-// transient GitHub error can never lock every client out.
+// effectiveMinVersion returns the force-update floor Core advertises
+// (GetBeamConfig) and enforces (GetBeamTicket): the signed manifest's minVersion,
+// fetched+verified at most once per beamMinAutoTTL and cached.
+//
+// There used to be a second, manual mode where an admin typed the floor into
+// Settings -> Beam. It is gone: the floor is a property of the release, the
+// release manifest already carries it under a signature both ends verify, and a
+// hand-typed value could only ever disagree with the binary actually being
+// shipped - in the direction that locks clients out.
+//
+// A fetch or verify failure yields "" (gate off), so a transient GitHub error
+// can never lock every client out either.
 func (h *BeamHandler) effectiveMinVersion(ctx context.Context) string {
-	getSetting := func(key string) string {
+	return h.cachedAutoMinVersion(ctx, func(key string) string {
 		v, _ := h.state.Store.GetSetting(key)
 		return v
-	}
-	mode := strings.TrimSpace(getSetting("beam.min_version_mode"))
-	manualMin := strings.TrimSpace(getSetting("beam.min_version"))
-	if mode != beamMinVersionModeAuto {
-		return manualMin // manual (default): no fetch
-	}
-	return resolveBeamMinVersion(mode, manualMin, h.cachedAutoMinVersion(ctx, getSetting))
+	})
 }
 
 // cachedAutoMinVersion returns the verified-manifest floor, refreshing at most

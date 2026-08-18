@@ -719,21 +719,11 @@ type BeamSettings struct {
 	Enabled      bool   `json:"enabled"`
 	DownloadLink string `json:"downloadLink"` // Optional CDN URL — overrides relay-served download
 
-	// MinVersion is the Beam force-update floor (empty = gating off). Persisted
-	// to DB key beam.min_version; advertised by GetBeamConfig and enforced by
-	// GetBeamTicket. Validated empty-or-semver on save.
-	MinVersion string `json:"minVersion"`
-
-	// MinVersionMode selects how the force-update floor is chosen: "manual"
-	// (default) uses MinVersion above; "auto" follows the minVersion baked into
-	// the SIGNED release manifest (verified by Core, see effectiveMinVersion).
-	// Persisted to DB key beam.min_version_mode.
-	MinVersionMode string `json:"minVersionMode"`
-
-	// DevChannelAccess gates who may opt into the dev (prerelease) update
-	// channel: "disabled" (default), "admins-only", or "all-users". Persisted to
-	// DB key beam.dev_channel_access; enforced by SetMyBeamChannel + GetBeamConfig.
-	DevChannelAccess string `json:"devChannelAccess"`
+	// There is deliberately no force-update floor here. It comes from the SIGNED
+	// release manifest - the same artifact the app verifies before it
+	// self-updates - so whoever cuts the release sets it. An operator-typed
+	// second opinion could only ever disagree with the binary being shipped, and
+	// a typo in it locks every client out. See effectiveMinVersion.
 
 	// Throttle splits (bytes/sec, 0 = unlimited). Stored verbatim. Until
 	// the per-direction limiters land in node + relay these are advisory:
@@ -779,40 +769,8 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// The force-update floor must be empty (gating off) or a valid semver;
-	// reject a malformed value so an admin cannot set a floor that never
-	// matches (and never silently locks every client out).
-	minVersion := strings.TrimSpace(req.MinVersion)
-	if minVersion != "" {
-		if _, ok := parseBeamSemver(minVersion); !ok {
-			sendJSONError(w, "Invalid minimum version: must be empty or a semantic version like 1.2.3", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Min-version mode: empty normalizes to "manual" (the default); only
-	// "manual" or "auto" are accepted so an unknown mode can never silently
-	// change how the floor is resolved.
-	minVersionMode := strings.TrimSpace(req.MinVersionMode)
-	if minVersionMode == "" {
-		minVersionMode = beamMinVersionModeManual
-	}
-	if minVersionMode != beamMinVersionModeManual && minVersionMode != beamMinVersionModeAuto {
-		sendJSONError(w, "Invalid min-version mode: must be 'manual' or 'auto'", http.StatusBadRequest)
-		return
-	}
-
-	// Dev-channel access policy: empty normalizes to "disabled" (default);
-	// only the three known values are accepted so an unknown policy can never
-	// silently widen who reaches the prerelease channel.
-	devChannelAccess := strings.TrimSpace(req.DevChannelAccess)
-	if devChannelAccess == "" {
-		devChannelAccess = beamDevAccessDisabled
-	}
-	if devChannelAccess != beamDevAccessDisabled && devChannelAccess != beamDevAccessAdminsOnly && devChannelAccess != beamDevAccessAllUsers {
-		sendJSONError(w, "Invalid dev-channel access: must be 'disabled', 'admins-only', or 'all-users'", http.StatusBadRequest)
-		return
-	}
+	// MinVersion is deliberately not read from the request: the floor lives in
+	// the signed manifest and this endpoint no longer accepts one.
 
 	enabledStr := "false"
 	if req.Enabled {
@@ -834,9 +792,6 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.bw_limit", fmt.Sprintf("%d", effectiveBw)},
 		{"beam.enabled", enabledStr},
 		{"beam.download_link", req.DownloadLink},
-		{"beam.min_version", minVersion},
-		{"beam.min_version_mode", minVersionMode},
-		{"beam.dev_channel_access", devChannelAccess},
 
 		// New per-direction throttle splits (advisory until relay-side
 		// throttle ships). Stored verbatim so the UI round-trips.
@@ -894,25 +849,12 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 	publicHost := getSetting("beam.public_host")
 	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost, "")
 
-	minVersionMode := getSetting("beam.min_version_mode")
-	if minVersionMode != beamMinVersionModeAuto {
-		minVersionMode = beamMinVersionModeManual // default + normalize any legacy/blank value
-	}
-
-	devChannelAccess := getSetting("beam.dev_channel_access")
-	if devChannelAccess != beamDevAccessAdminsOnly && devChannelAccess != beamDevAccessAllUsers {
-		devChannelAccess = beamDevAccessDisabled // default + normalize any legacy/blank value
-	}
-
 	settings := BeamSettings{
-		RelayAddress:     effective,
-		ManualOverride:   manualOverride,
-		PublicHost:       publicHost,
-		DownloadLink:     getSetting("beam.download_link"),
-		MinVersion:       getSetting("beam.min_version"),
-		MinVersionMode:   minVersionMode,
-		DevChannelAccess: devChannelAccess,
-		Enabled:          true,
+		RelayAddress:   effective,
+		ManualOverride: manualOverride,
+		PublicHost:     publicHost,
+		DownloadLink:   getSetting("beam.download_link"),
+		Enabled:        true,
 	}
 
 	enabledStr := getSetting("beam.enabled")

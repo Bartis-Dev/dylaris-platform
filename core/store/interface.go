@@ -672,12 +672,6 @@ type Store interface {
 	// admin set by hand; true overwrites them and clears their marker.
 	BulkSetCanCreateModpacks(can bool, includeManual bool) (int64, error)
 
-	// Beam update-channel preference ('stable' | 'dev'). GetUserBeamChannel
-	// defaults a missing/legacy row to 'stable'. SetUserBeamChannel does NOT
-	// enforce the dev-channel policy - the handler validates + gates first.
-	GetUserBeamChannel(userID string) (string, error)
-	SetUserBeamChannel(userID, channel string) error
-
 	// In-panel update feed: per-user acknowledged feed counts (platform,
 	// gateway) so the navbar bell badge clears. Missing/legacy rows default to 0.
 	GetUserUpdatesSeen(userID string) (platform int, gateway int, err error)

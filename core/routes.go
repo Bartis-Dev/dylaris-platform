@@ -1463,8 +1463,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	beamDownloadLimiter := handlers.NewIPRateLimiter()
 	api.HandleFunc("/beam/download", beamDownloadLimiter.Limit(10, beamHandler.GetBeamDownload)).Methods("GET")
 	// Caller's own Beam update-channel preference (own data, authed-exempt).
-	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.GetMyBeamChannel)).Methods("GET")
-	api.HandleFunc("/me/beam-channel", authHandler.AuthMiddleware(beamHandler.SetMyBeamChannel)).Methods("PUT")
 
 	// --- In-panel update feed (admin-only "what's new" bell) ---
 	// GET /updates is admin-only, gated in-handler via IsAdmin (authed-exempt).

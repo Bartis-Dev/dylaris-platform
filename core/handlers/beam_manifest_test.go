@@ -29,25 +29,6 @@ func signManifestForTest(t *testing.T, priv ed25519.PrivateKey, version, minVers
 	return body, sig
 }
 
-func TestResolveBeamMinVersion(t *testing.T) {
-	cases := []struct {
-		name                     string
-		mode, manual, auto, want string
-	}{
-		{"manual default returns admin floor", "manual", "1.2.0", "9.9.9", "1.2.0"},
-		{"empty mode treated as manual", "", "1.2.0", "9.9.9", "1.2.0"},
-		{"unknown mode treated as manual", "weird", "1.2.0", "9.9.9", "1.2.0"},
-		{"auto returns manifest floor", "auto", "1.2.0", "3.4.5", "3.4.5"},
-		{"auto with empty manifest floor gates off", "auto", "1.2.0", "", ""},
-		{"auto trims surrounding space", "  auto  ", "1.2.0", "3.4.5", "3.4.5"},
-	}
-	for _, c := range cases {
-		if got := resolveBeamMinVersion(c.mode, c.manual, c.auto); got != c.want {
-			t.Errorf("%s: resolveBeamMinVersion(%q,%q,%q) = %q want %q", c.name, c.mode, c.manual, c.auto, got, c.want)
-		}
-	}
-}
-
 func TestVerifyBeamManifest(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -158,42 +139,42 @@ func (f *beamManifestFakeStore) GetSetting(key string) (string, error) {
 }
 
 func TestEffectiveMinVersion(t *testing.T) {
-	// Manual mode: returns the admin floor with no network access (a bogus
-	// manifest URL that would error is never fetched).
-	manualStore := &beamManifestFakeStore{settings: map[string]string{
-		"beam.min_version":      "1.2.3",
-		"beam.min_version_mode": "manual",
-		"beam.release_manifest": "http://127.0.0.1:1/never",
-	}}
-	hManual := &BeamHandler{state: &AppState{Store: manualStore}}
-	if got := hManual.effectiveMinVersion(context.Background()); got != "1.2.3" {
-		t.Errorf("manual mode floor = %q, want 1.2.3", got)
+	// The floor comes from the SIGNED manifest and nowhere else. A leftover
+	// beam.min_version row from before the manual mode was removed must not
+	// resurrect itself as a floor - that is the regression this asserts.
+	unverifiable := func(t *testing.T) string {
+		t.Helper()
+		_, otherPriv, _ := ed25519.GenerateKey(rand.Reader)
+		body, sig := signManifestForTest(t, otherPriv, "5.0.0", "4.0.0")
+		mux := http.NewServeMux()
+		mux.HandleFunc("/latest.json", func(w http.ResponseWriter, r *http.Request) { w.Write(body) })
+		mux.HandleFunc("/latest.json.sig", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(sig)) })
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv.URL + "/latest.json"
 	}
 
-	// Empty mode defaults to manual.
-	defStore := &beamManifestFakeStore{settings: map[string]string{"beam.min_version": "2.0.0"}}
-	hDef := &BeamHandler{state: &AppState{Store: defStore}}
-	if got := hDef.effectiveMinVersion(context.Background()); got != "2.0.0" {
-		t.Errorf("default (empty) mode floor = %q, want 2.0.0", got)
-	}
-
-	// Auto mode against a manifest signed by a key that is NOT the embedded
-	// beamUpdatePublicKeyB64: verification fails, so the floor resolves to ""
-	// (gate off) rather than trusting an unverifiable manifest.
-	_, otherPriv, _ := ed25519.GenerateKey(rand.Reader)
-	body, sig := signManifestForTest(t, otherPriv, "5.0.0", "4.0.0")
-	mux := http.NewServeMux()
-	mux.HandleFunc("/latest.json", func(w http.ResponseWriter, r *http.Request) { w.Write(body) })
-	mux.HandleFunc("/latest.json.sig", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(sig)) })
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
+	// Signed by a key that is NOT the embedded beamUpdatePublicKeyB64:
+	// verification fails, so the floor resolves to "" (gate off) rather than
+	// trusting an unverifiable manifest - even though a stale manual floor is
+	// still sitting in settings.
 	autoStore := &beamManifestFakeStore{settings: map[string]string{
 		"beam.min_version":      "1.2.3",
-		"beam.min_version_mode": "auto",
-		"beam.release_manifest": srv.URL + "/latest.json",
+		"beam.min_version_mode": "manual",
+		"beam.release_manifest": unverifiable(t),
 	}}
 	hAuto := &BeamHandler{state: &AppState{Store: autoStore}}
 	if got := hAuto.effectiveMinVersion(context.Background()); got != "" {
-		t.Errorf("auto mode with an unverifiable manifest floor = %q, want \"\" (fail-open)", got)
+		t.Errorf("unverifiable manifest floor = %q, want \"\" (fail-open, retired settings ignored)", got)
+	}
+
+	// No manifest reachable at all: same answer, gate off.
+	deadStore := &beamManifestFakeStore{settings: map[string]string{
+		"beam.min_version":      "2.0.0",
+		"beam.release_manifest": "http://127.0.0.1:1/never",
+	}}
+	hDead := &BeamHandler{state: &AppState{Store: deadStore}}
+	if got := hDead.effectiveMinVersion(context.Background()); got != "" {
+		t.Errorf("unreachable manifest floor = %q, want \"\" (fail-open)", got)
 	}
 }
