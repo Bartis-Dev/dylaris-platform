@@ -178,3 +178,40 @@ export const logout = () => {
     localStorage.removeItem('authToken');
   }
 };
+// Read-only demo session, no credentials. The account is forced GET-only
+// server-side (AuthMiddleware), so this session can look but never change
+// anything.
+//
+// Same storage as a normal login on purpose: from the panel's point of view a
+// demo session IS a session, and giving it a second storage path would mean
+// every reader had to know about both.
+export const demoLogin = async (): Promise<{ success: boolean; username?: string; message?: string }> => {
+  try {
+    const res = await fetch(`${API_URL}/auth/demo-login`, { method: 'POST' });
+    const data: any = await res.json().catch(() => null);
+    if (res.ok && data?.token) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('authToken', data.token);
+      }
+      return { success: true, username: data.username };
+    }
+    return { success: false, message: data?.message || 'No demo account is available.' };
+  } catch {
+    return { success: false, message: 'Could not reach the server.' };
+  }
+};
+
+// Whether a demo account exists at all. GET on the same path, minting nothing,
+// so a caller can decide whether to OFFER the demo without creating a session
+// just to find out.
+export const getDemoStatus = async (): Promise<boolean> => {
+  try {
+    const res = await fetch(`${API_URL}/auth/demo-login`);
+    if (!res.ok) return false;
+    const data: any = await res.json().catch(() => null);
+    return !!data?.available;
+  } catch {
+    return false;
+  }
+};

@@ -89,6 +89,26 @@ func (h *AuthHandler) ParseTabProxyTicket(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
+// DemoStatus GET /api/auth/demo-login — public, rate-limited. Answers only
+// whether a demo account exists, minting nothing.
+//
+// It exists so a caller can decide whether to OFFER the demo before triggering
+// it. Without it the only way to find out was to POST, which mints a session as
+// a side effect of asking a question - so anything wanting to render a "try the
+// demo" button either created sessions nobody used or advertised a button that
+// 404s. The answer leaks nothing the button itself would not.
+func (h *AuthHandler) DemoStatus(w http.ResponseWriter, r *http.Request) {
+	available := false
+	if h.state.StoreEnabled && h.state.Store != nil {
+		if uuid, _ := h.state.Store.GetSetting(demoAccountUUIDSetting); uuid != "" {
+			if u, err := h.state.Store.GetUserByID(uuid); err == nil && u != nil {
+				available = true
+			}
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "available": available})
+}
+
 // DemoLogin POST /api/auth/demo-login — public, rate-limited.
 // Issues a normal session for the designated read-only demo account, so the
 // website/panel can offer a one-click "View demo" with no credentials. The

@@ -1418,7 +1418,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
 	api.HandleFunc("/auth/register", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.Register))).Methods("POST")
 	// Public one-click read-only demo session (rate-limited). 404 when no demo account is set.
+	// GET on the same path only reports whether a demo exists, so a caller can
+	// decide whether to offer it without minting a session to find out.
 	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.DemoLogin))).Methods("POST")
+	api.HandleFunc("/auth/demo-login", authLimiter.Limit(30, authHandler.DemoStatus)).Methods("GET")
 	api.HandleFunc("/auth/verify-email", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.VerifyEmail))).Methods("POST")
 	// Rate-limited like /auth/forgot-password, the other endpoint that sends
 	// mail on an anonymous request. The handler additionally holds a per-address
