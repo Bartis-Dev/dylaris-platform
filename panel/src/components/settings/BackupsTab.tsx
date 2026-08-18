@@ -373,11 +373,15 @@ export default function BackupsTab() {
                             </button>
                         )}
                         {activeProvider === 's3' && (
+                            /* Only "from a connection". Typing endpoint / bucket /
+                               key / secret here as well meant one bucket lived in
+                               several screens, each with its own copy of the
+                               credentials and its own chance to be missed on a
+                               rotation. Existing inline targets keep working and
+                               stay editable below; there is just no way to make a
+                               new one. */
                             <>
-                                <button onClick={() => handleNew('s3')} className="btn btn-primary btn-sm">
-                                    <Cloud size={12} /> Add S3
-                                </button>
-                                {connections.length > 0 && (
+                                {connections.length > 0 ? (
                                     <button
                                         onClick={() => setEditing({
                                             id: 0,
@@ -386,11 +390,15 @@ export default function BackupsTab() {
                                             config: { connectionId: connections[0].id, prefix: 'server-backups' } as unknown as Record<string, unknown>,
                                             isDefault: storages.length === 0,
                                         })}
-                                        className="btn btn-secondary btn-sm"
-                                        title="Reuse a saved storage connection instead of entering credentials again"
+                                        className="btn btn-primary btn-sm"
+                                        title="Buckets and credentials are defined once under Settings -> Storage Connections"
                                     >
-                                        <Link2 size={12} /> Use Connection
+                                        <Link2 size={12} /> Add from a connection
                                     </button>
+                                ) : (
+                                    <span className="text-xs text-(--base-06) self-center">
+                                        Create a storage connection first
+                                    </span>
                                 )}
                             </>
                         )}
