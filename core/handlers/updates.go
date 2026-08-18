@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"dylaris-core/services"
 	"dylaris-core/updates"
 )
 
@@ -67,7 +69,8 @@ func NewUpdatesHandler(state *AppState, platformFeedURL, gatewayFeedURL string) 
 	}
 }
 
-// updateServiceBlock is one service's slice of the update response.
+// updateServiceBlock is one FEED's slice of the update response (platform,
+// gateway). Not one service - see perServiceBlock for that.
 type updateServiceBlock struct {
 	InstalledCount  int                 `json:"installedCount"`
 	LatestCount     int                 `json:"latestCount"`
@@ -75,6 +78,68 @@ type updateServiceBlock struct {
 	SeenCount       int                 `json:"seenCount"`
 	Unseen          int                 `json:"unseen"`
 	NewEntries      []updates.FeedEntry `json:"newEntries"`
+	// PerService breaks the same delta down by the component each entry names,
+	// each against ITS OWN installed baseline. See perServiceBlock.
+	PerService []perServiceBlock `json:"perService"`
+}
+
+// perServiceBlock answers "is THIS component behind, and by what".
+//
+// One baseline for the whole feed is wrong the moment an operator updates
+// unevenly. Core is the only component that answers /api/updates, so its own
+// baked feed count used to stand in for every component - and an operator who
+// deployed a new Core while leaving the node on last month's image was told the
+// node's changes were installed, because Core's baseline had moved past them.
+// The status quo is only correct when everything is deployed together, and
+// nothing enforces that.
+//
+// BaselineKnown says whether this number came from the component ITSELF or is
+// Core's baseline standing in. It must be surfaced: "up to date" and "nobody
+// asked" look identical otherwise, and that is the confusion this replaces.
+type perServiceBlock struct {
+	Service string `json:"service"`
+	// InstalledCount is the feed length this component was built at.
+	InstalledCount int  `json:"installedCount"`
+	BaselineKnown  bool `json:"baselineKnown"`
+	// Behind is how many of this component's entries were published after its
+	// own baseline. 0 means up to date, whatever the other components are doing.
+	Behind     int                 `json:"behind"`
+	NewEntries []updates.FeedEntry `json:"newEntries"`
+}
+
+// buildPerServiceBlocks splits a feed into one block per component, each diffed
+// against its own baseline. baselines maps a lowercased service name to the feed
+// length that component was built at; anything absent falls back to
+// coreBaseline, which is the old whole-feed behaviour and stays correct for a
+// fleet deployed in one go.
+//
+// Entries are newest-first, matching the rest of the response.
+func buildPerServiceBlocks(remoteLines []string, coreBaseline int, baselines map[string]int) []perServiceBlock {
+	all := updates.ParseEntries(remoteLines)
+	out := []perServiceBlock{}
+	for _, svc := range updates.Services(all) {
+		installed, known := baselines[svc]
+		if !known {
+			installed = coreBaseline
+		}
+		// Slice the GLOBAL feed at this component's baseline, then keep its own
+		// entries. Slicing per-service positions instead would compare against a
+		// count that never existed as a build.
+		delta := updates.ParseEntries(updates.Delta(remoteLines, installed))
+		mine := updates.EntriesForService(delta, svc)
+		reverseEntries(mine)
+		if len(mine) > updatesEntryCap {
+			mine = mine[:updatesEntryCap]
+		}
+		out = append(out, perServiceBlock{
+			Service:        svc,
+			InstalledCount: installed,
+			BaselineKnown:  known,
+			Behind:         len(mine),
+			NewEntries:     mine,
+		})
+	}
+	return out
 }
 
 // buildServiceBlock diffs a remote feed against the installed baseline and the
@@ -107,6 +172,43 @@ func buildServiceBlock(remoteLines []string, installedCount, seenCount int) upda
 	}
 }
 
+// serviceBaselines collects what each component reports about ITSELF.
+//
+//   - core: the feed baked into this binary. Authoritative, no round trip.
+//   - node: the LOWEST baseline any live node reported, published by the
+//     discovery loop. Absent when no node runs a build that reports one.
+//   - panel: sent by the caller, because the panel is a static bundle in
+//     someone's browser and Core has no other way to see which build it is.
+//     Spoofable, and harmless: it only changes what that one admin is shown
+//     about their own install, so it is clamped to a sane range rather than
+//     trusted or rejected.
+//
+// A component that reports nothing is simply absent here, and the caller falls
+// back to Core's baseline - the previous whole-feed behaviour, which stays
+// correct for a fleet deployed in one go.
+func (h *UpdatesHandler) serviceBaselines(r *http.Request) map[string]int {
+	out := map[string]int{"core": h.platformInstalled}
+
+	if h.state.Redis != nil {
+		if v, err := h.state.Redis.Get(r.Context(), services.NodeFleetFeedBaselineKey).Int(); err == nil && v > 0 {
+			out["node"] = v
+		}
+	}
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("panelBaseline")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 && v <= updatesMaxBaseline {
+			out["panel"] = v
+		}
+	}
+	return out
+}
+
+// updatesMaxBaseline bounds a caller-supplied baseline. Nothing breaks on a
+// large value - Delta already clamps past-the-end to "no entries" - but an
+// absurd one is a typo or a probe, not a build, and it should not be recorded as
+// one.
+const updatesMaxBaseline = 1_000_000
+
 func reverseEntries(e []updates.FeedEntry) {
 	for i, j := 0, len(e)-1; i < j; i, j = i+1, j-1 {
 		e[i], e[j] = e[j], e[i]
@@ -137,6 +239,7 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 		platformLines = h.platformBaked
 	}
 	platform := buildServiceBlock(platformLines, h.platformInstalled, seenPlatform)
+	platform.PerService = buildPerServiceBlocks(platformLines, h.platformInstalled, h.serviceBaselines(r))
 
 	resp := map[string]interface{}{
 		"success":  true,

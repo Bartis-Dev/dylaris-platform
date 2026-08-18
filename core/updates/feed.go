@@ -83,3 +83,34 @@ func Delta(remote []string, installedCount int) []string {
 	}
 	return remote[installedCount:]
 }
+
+// EntriesForService returns the entries of one service, preserving order. The
+// service name is compared case-insensitively and trimmed, because the feed is
+// hand-written and "Core" must not become a second service beside "core".
+func EntriesForService(entries []FeedEntry, service string) []FeedEntry {
+	want := strings.ToLower(strings.TrimSpace(service))
+	out := make([]FeedEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.ToLower(strings.TrimSpace(e.Service)) == want {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Services lists the distinct services a feed mentions, in order of first
+// appearance. Order of appearance rather than alphabetical so the caller can
+// render the feed's own shape instead of imposing one.
+func Services(entries []FeedEntry) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, e := range entries {
+		s := strings.ToLower(strings.TrimSpace(e.Service))
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}

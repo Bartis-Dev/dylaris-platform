@@ -777,6 +777,14 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if portRangeNotice != "" {
 		data["portRangeNotice"] = portRangeNotice
 	}
+	// Which update-feed position this IMAGE was built at. Core cannot see it any
+	// other way, and without it the panel assumes the node moved whenever Core
+	// did - so an operator who updates Core and leaves the nodes alone is told
+	// the node's changes are installed. Omitted entirely when unstamped, so an
+	// older node reads as "unknown" rather than as "built at zero".
+	if b := feedBaselineValue(); b > 0 {
+		data["feedBaseline"] = b
+	}
 	jsonData, _ := json.Marshal(data)
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
 		log.Printf("Heartbeat warning: %v", err)

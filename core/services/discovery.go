@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -56,6 +57,13 @@ type NodeHeartbeat struct {
 	// NEW node presents a valid one, it is bound to that user (owner_id). Empty
 	// for platform nodes.
 	EnrollToken string `json:"enrollToken,omitempty"`
+	// FeedBaseline is the update-feed length this node's IMAGE was built at,
+	// stamped in at build time. It is what lets the panel say whether the NODE is
+	// behind, rather than assuming it moved whenever Core did - an operator who
+	// updates Core and leaves the nodes alone was previously told the node's
+	// changes were installed. 0 means "this build does not report one" (an older
+	// node image), which the reader must treat as unknown, not as zero.
+	FeedBaseline int `json:"feedBaseline,omitempty"`
 	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
 	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
 	Timestamp int64  `json:"timestamp"`
@@ -205,6 +213,12 @@ func (s *DiscoveryService) checkCPUTopologyChange(ctx context.Context, node *mod
 	s.redis.Set(ctx, sigKey, sig, 0)
 }
 
+// NodeFleetFeedBaselineKey holds the LOWEST update-feed baseline reported by any
+// live node, refreshed every discovery tick with a short TTL. Read by the
+// updates endpoint so the panel can say whether the node fleet is behind
+// independently of Core.
+const NodeFleetFeedBaselineKey = "dylaris:nodes:feed_baseline"
+
 func (s *DiscoveryService) scanNodes() {
 	ctx := context.Background()
 
@@ -216,6 +230,11 @@ func (s *DiscoveryService) scanNodes() {
 	}
 
 	activeNodeTokens := make(map[string]bool)
+	// The LOWEST baseline any live node reports. A fleet is only as updated as
+	// its oldest member, so one node left behind has to make the whole fleet read
+	// as behind - reporting the newest would hide exactly the case this exists
+	// for. -1 = no live node reported one (all older images, or none online).
+	fleetFeedBaseline := -1
 
 	for _, key := range keys {
 		val, err := s.redis.Get(ctx, key).Result()
@@ -235,6 +254,9 @@ func (s *DiscoveryService) scanNodes() {
 
 		// 3. Find or create Node in DB
 		activeNodeTokens[hb.ID] = true
+		if hb.FeedBaseline > 0 && (fleetFeedBaseline < 0 || hb.FeedBaseline < fleetFeedBaseline) {
+			fleetFeedBaseline = hb.FeedBaseline
+		}
 
 		node, err := s.store.GetNodeByToken(hb.ID)
 
@@ -327,6 +349,14 @@ func (s *DiscoveryService) scanNodes() {
 	// but it was indistinguishable from a healthy round in which every node
 	// answered - so an operator watching nodes flip had no way to tell the two
 	// apart. Say which one happened.
+	// Publish the fleet baseline for the updates endpoint. A short TTL rather
+	// than a persistent key: a stale value would keep claiming the fleet is
+	// behind long after the nodes it described stopped reporting, and "no answer"
+	// is the honest reading of a silent fleet.
+	if fleetFeedBaseline > 0 {
+		s.redis.Set(ctx, NodeFleetFeedBaselineKey, strconv.Itoa(fleetFeedBaseline), 5*time.Minute)
+	}
+
 	dbNodes, err := s.store.ListNodes()
 	if err != nil {
 		log.Printf("Discovery: offline check skipped, could not list nodes: %v", err)

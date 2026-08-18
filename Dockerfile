@@ -15,12 +15,20 @@ COPY . .
 # Arguments
 ARG ENTRY_PATH
 ARG BUILD_TAGS=""
+# FEED_BASELINE stamps the update-feed line count this image is built at into
+# main.feedBaseline, so a component can report which feed position it is running
+# instead of Core assuming they all moved together. Left empty for components
+# that carry no such variable; the linker ignores -X for a symbol that does not
+# exist, so passing it everywhere is harmless.
+ARG FEED_BASELINE=""
 
 # Build
 # We explicitly specify the path and use sh expansion
 # BUILD_TAGS allows excluding packages (e.g. "noxdp" to skip eBPF)
-RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none})" && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags="${BUILD_TAGS}" -ldflags="-s -w" -o /app/binary ${ENTRY_PATH} && \
+RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none}, feed baseline: ${FEED_BASELINE:-unstamped})" && \
+    LD="-s -w"; \
+    if [ -n "${FEED_BASELINE}" ]; then LD="${LD} -X main.feedBaseline=${FEED_BASELINE}"; fi && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags="${BUILD_TAGS}" -ldflags="${LD}" -o /app/binary ${ENTRY_PATH} && \
     chmod +x /app/binary
 
 # --- Run Stage ---

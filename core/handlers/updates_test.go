@@ -282,3 +282,74 @@ func TestMarkUpdatesSeenRequiresAuth(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
+
+// TestBuildPerServiceBlocks_UnevenDeploy is the case the whole per-service split
+// exists for: Core is updated, the node is not, and the old whole-feed baseline
+// told the operator the node's changes were installed.
+func TestBuildPerServiceBlocks_UnevenDeploy(t *testing.T) {
+	feed := []string{
+		`{"date":"2026-08-01","service":"core","type":"fix","summary":"c1"}`,
+		`{"date":"2026-08-02","service":"node","type":"fix","summary":"n1"}`,
+		`{"date":"2026-08-03","service":"core","type":"fix","summary":"c2"}`,
+		`{"date":"2026-08-04","service":"node","type":"fix","summary":"n2"}`,
+		`{"date":"2026-08-05","service":"panel","type":"fix","summary":"p1"}`,
+	}
+
+	// Core built at the end of the feed; the node still at position 1, meaning it
+	// only contains the first line - so BOTH of its own entries (lines 1 and 3)
+	// are genuinely pending. A baseline is a length, not an index: at 1 the node
+	// holds line 0 and nothing more.
+	blocks := buildPerServiceBlocks(feed, 5, map[string]int{"core": 5, "node": 1})
+
+	byService := map[string]perServiceBlock{}
+	for _, b := range blocks {
+		byService[b.Service] = b
+	}
+
+	if got := byService["core"].Behind; got != 0 {
+		t.Errorf("core behind = %d, want 0 (it is the newest build)", got)
+	}
+	if got := byService["node"].Behind; got != 2 {
+		t.Errorf("node behind = %d, want 2 - the old whole-feed baseline reported 0 here", got)
+	}
+	if !byService["node"].BaselineKnown {
+		t.Error("node baseline came from the node, so baselineKnown must be true")
+	}
+
+	// panel reported nothing, so it falls back to Core's baseline and must be
+	// marked as ASSUMED rather than silently reading as up to date.
+	panel := byService["panel"]
+	if panel.BaselineKnown {
+		t.Error("panel reported no baseline, so baselineKnown must be false")
+	}
+	if panel.InstalledCount != 5 {
+		t.Errorf("panel fell back to %d, want Core's baseline 5", panel.InstalledCount)
+	}
+
+	// Only the node's own entries appear under the node, newest first.
+	if len(byService["node"].NewEntries) != 2 {
+		t.Fatalf("node entries = %d, want 2", len(byService["node"].NewEntries))
+	}
+	if byService["node"].NewEntries[0].Summary != "n2" {
+		t.Errorf("node entries are not newest-first: got %q", byService["node"].NewEntries[0].Summary)
+	}
+	for _, e := range byService["node"].NewEntries {
+		if e.Service != "node" {
+			t.Errorf("node block leaked a %q entry", e.Service)
+		}
+	}
+}
+
+// With every component at the same baseline the answer must be "nothing
+// pending" everywhere - the even-deploy case must not regress.
+func TestBuildPerServiceBlocks_EvenDeployHasNothingPending(t *testing.T) {
+	feed := []string{
+		`{"date":"2026-08-01","service":"core","type":"fix","summary":"c1"}`,
+		`{"date":"2026-08-02","service":"node","type":"fix","summary":"n1"}`,
+	}
+	for _, b := range buildPerServiceBlocks(feed, 2, map[string]int{"core": 2, "node": 2}) {
+		if b.Behind != 0 {
+			t.Errorf("%s behind = %d, want 0", b.Service, b.Behind)
+		}
+	}
+}
