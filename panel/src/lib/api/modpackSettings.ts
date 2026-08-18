@@ -25,6 +25,12 @@ export interface ModpackSettings {
     // built from that connection and the inline s3 fields are ignored.
     connectionId?: number;
     solderDeliveryMode: 'core' | 'presigned' | 'public';
+    // The origin the settings request itself arrived on, offered as a one-click
+    // suggestion for corePublicUrl. Read-only: sending it back changes nothing,
+    // and Core never persists it on its own (see requestOrigin in Core - the
+    // Host header is client-controlled, so it is a suggestion an admin accepts,
+    // not a value that writes itself).
+    detectedCorePublicUrl?: string;
 }
 
 // Capabilities the backend can actually serve a Solder build through, used to

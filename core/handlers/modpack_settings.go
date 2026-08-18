@@ -50,6 +50,47 @@ type modpackSettings struct {
 	// (Core proxy, default), "presigned" (private bucket, expiring URLs) or
 	// "public" (public base = solderMirrorUrl). Orthogonal to Provider.
 	SolderDeliveryMode string `json:"solderDeliveryMode"`
+
+	// DetectedCorePublicURL is the origin THIS request arrived on. Offered as a
+	// one-click suggestion for CorePublicURL, which an admin otherwise has to
+	// retype from memory even though the browser just used it.
+	//
+	// A SUGGESTION, never an auto-save: the Host header is client-controlled, and
+	// an admin reaching Core over an internal address (localhost, a service name,
+	// a LAN IP) would otherwise silently persist an origin no launcher on the
+	// internet can resolve. Displaying it to an authenticated admin who has to
+	// accept it costs nothing and cannot be poisoned into the DB.
+	DetectedCorePublicURL string `json:"detectedCorePublicUrl,omitempty"`
+}
+
+// requestOrigin reconstructs the scheme://host this request arrived on, honoring
+// the usual reverse-proxy headers (Core runs behind one in every real deploy, so
+// r.TLS is nil and r.Host alone would lose the scheme). Returns "" if there is no
+// usable host.
+func requestOrigin(r *http.Request) string {
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	// A comma-joined list means it passed several proxies; the first entry is the
+	// origin the client actually used.
+	if i := strings.IndexByte(host, ','); i >= 0 {
+		host = strings.TrimSpace(host[:i])
+	}
+	if host == "" {
+		return ""
+	}
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if i := strings.IndexByte(scheme, ','); i >= 0 {
+		scheme = strings.TrimSpace(scheme[:i])
+	}
+	if scheme != "http" && scheme != "https" {
+		scheme = "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+	}
+	return scheme + "://" + host
 }
 
 // Get GET /api/admin/settings/modpacks - PANEL settings.read (RequireCap at the route).
@@ -92,6 +133,7 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if out.SolderDeliveryMode == "" {
 		out.SolderDeliveryMode = "core"
 	}
+	out.DetectedCorePublicURL = requestOrigin(r)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": out,

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isDeliveryModeDisabled } from './ModpacksTab';
+import { isDeliveryModeDisabled, deliveryDisabledReason } from './ModpacksTab';
 import type { DeliveryCapabilities } from '@/lib/api/modpackSettings';
 
 // This repo has no component-render test harness (no @testing-library/react —
@@ -57,22 +57,47 @@ describe('isDeliveryModeDisabled', () => {
     });
 });
 
-describe('ModpacksTab wires the delivery radios and hints to the real capability state', () => {
+describe('deliveryDisabledReason', () => {
+    it('is empty for a mode that is not disabled — nothing to explain', () => {
+        expect(deliveryDisabledReason('core', disabled({ canPresign: false }))).toBe('');
+        expect(deliveryDisabledReason('presigned', disabled({ canPresign: true }))).toBe('');
+        expect(deliveryDisabledReason('public', null)).toBe('');
+    });
+
+    it('prefers the backend note over the generic fallback', () => {
+        const caps = disabled({ canPresign: false, notes: { presigned: 'this backend cannot presign' } });
+        expect(deliveryDisabledReason('presigned', caps)).toBe('this backend cannot presign');
+    });
+
+    it('still explains itself when the probe returned no note', () => {
+        // The important property: a disabled option is NEVER shown without a
+        // reason, which is the state people file bugs about.
+        expect(deliveryDisabledReason('presigned', disabled({ canPresign: false }))).not.toBe('');
+        expect(deliveryDisabledReason('public', disabled({ publicConfigured: false }))).not.toBe('');
+    });
+
+    it('explains an unreachable public base, not only an unconfigured one', () => {
+        const caps = disabled({ publicConfigured: true, publicReachable: false, notes: { public: 'base URL did not answer' } });
+        expect(deliveryDisabledReason('public', caps)).toBe('base URL did not answer');
+    });
+});
+
+describe('ModpacksTab wires the delivery options and hints to the real capability state', () => {
     const source = readFileSync(join(__dirname, 'ModpacksTab.tsx'), 'utf8');
 
-    it('the presigned/public radios compute `disabled` via isDeliveryModeDisabled, not a hand-rolled condition', () => {
-        expect(source).toMatch(/const disabled = isDeliveryModeDisabled\(mode, deliveryCaps\);/);
+    it('the delivery options compute `disabled` via isDeliveryModeDisabled, not a hand-rolled condition', () => {
+        expect(source).toMatch(/const disabled = isDeliveryModeDisabled\(opt\.value, deliveryCaps\);/);
         expect(source).toMatch(/disabled=\{disabled\}/);
     });
 
-    it('the presigned hint renders the backend-provided note, not a hardcoded string', () => {
-        expect(source).toMatch(/deliveryCaps\?\.canPresign === false && deliveryCaps\.notes\.presigned/);
-        expect(source).toMatch(/<span>\{deliveryCaps\.notes\.presigned\}<\/span>/);
+    it('the disabled reason comes from deliveryDisabledReason, not a hardcoded string per mode', () => {
+        expect(source).toMatch(/const reason = disabled \? deliveryDisabledReason\(opt\.value, deliveryCaps\) : '';/);
+        expect(source).toMatch(/<span>\{reason\}<\/span>/);
     });
 
-    it('the public hint fires on either not-configured or configured-but-unreachable', () => {
-        expect(source).toMatch(/deliveryCaps\?\.publicConfigured === false \|\| deliveryCaps\?\.publicReachable === false/);
-        expect(source).toMatch(/<span>\{deliveryCaps\.notes\.public\}<\/span>/);
+    it('a disabled option surfaces its reason inline rather than only in a tooltip', () => {
+        // title= alone would hide the reason from touch and keyboard users.
+        expect(source).toMatch(/\{reason && \(/);
     });
 
     it('capabilities are probed on mount alongside the settings load, failing open on error', () => {

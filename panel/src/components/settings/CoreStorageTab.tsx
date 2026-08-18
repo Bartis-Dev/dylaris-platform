@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useReducer, useRef } from 'react';
 import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/coreStorage';
-import { canSaveCoreStorage, s3IdentityChanged, type CoreStorageConfig } from '@/lib/coreStorage';
+import { canSaveCoreStorage, type CoreStorageConfig } from '@/lib/coreStorage';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
@@ -82,11 +82,13 @@ export default function CoreStorageTab() {
   }, []);
 
   const canSave = canSaveCoreStorage(settings, snapshotRef.current);
-  const identityChanged = settings.backend === 's3' && s3IdentityChanged(settings, snapshotRef.current);
   // A saved connection supplies the credentials; the inline s3 fields and the
   // inline Test are then hidden (the connection has its own test on the Storage
   // Connections page).
   const usingConnection = settings.backend === 's3' && (settings.connectionId ?? 0) > 0;
+  // Legacy: configured before storage connections existed, so the credentials
+  // still live on this row. Read-only now — see the notice below.
+  const hasInlineS3 = settings.backend === 's3' && !usingConnection && !!settings.s3Bucket.trim();
   // Concrete path used in the copyable docker-stack example below. Falls back to
   // the placeholder so the snippet is still valid before anything is typed.
   const exampleStoragePath = settings.path.trim() || '/mnt/dylaris-shared';
@@ -295,10 +297,13 @@ export default function CoreStorageTab() {
               onChange={e => set('connectionId', Number(e.target.value))}
               className="input-field w-full"
             >
-              <option value={0}>Enter credentials manually</option>
+              <option value={0}>&mdash; select a connection &mdash;</option>
               {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <p className="text-xs text-(--base-06)">Reuse a saved connection from Settings -&gt; Storage Connections, or enter S3 credentials inline below.</p>
+            <p className="text-xs text-(--base-06)">
+              Buckets and credentials are defined once under Settings &rarr; Storage Connections and
+              referenced here, so a rotation happens in one place instead of once per screen.
+            </p>
           </div>
 
           {usingConnection ? (
@@ -306,71 +311,31 @@ export default function CoreStorageTab() {
               <Info size={14} className="shrink-0 mt-0.5" />
               <span>Credentials come from the selected connection. Manage or test it on the Storage Connections page.</span>
             </div>
+          ) : hasInlineS3 ? (
+            /* An install configured before connections existed still has its own
+               endpoint/bucket/key stored here. It keeps working untouched - the
+               fields are just no longer editable from this screen, because two
+               editable copies of one credential is exactly the state that made a
+               rotation miss one of them. Recreate it as a connection to move it. */
+            <div className="alert alert-warning text-xs flex items-start gap-2">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              <span>
+                This backend still carries its own inline credentials
+                (<span className="font-mono">{settings.s3Bucket || 'bucket'}</span>
+                {settings.s3Endpoint ? <> at <span className="font-mono">{settings.s3Endpoint}</span></> : null}).
+                It keeps working, but credentials are no longer edited here. Recreate it under
+                Settings &rarr; Storage Connections and select it above.
+              </span>
+            </div>
           ) : (
-          <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex flex-col gap-[5px]">
-              <label className="input-label" htmlFor="core-storage-s3-endpoint">Endpoint URL (blank = AWS)</label>
-              <input id="core-storage-s3-endpoint" type="text" value={settings.s3Endpoint} onChange={e => set('s3Endpoint', e.target.value)}
-                placeholder="https://s3.example.com" className="input-mono w-full" />
+            <div className="alert alert-warning text-xs flex items-start gap-2">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              <span>
+                {connections.length === 0
+                  ? 'No storage connections exist yet. Create one under Settings → Storage Connections, then select it above.'
+                  : 'Pick a connection above — S3 storage is not configured until you do.'}
+              </span>
             </div>
-            <div className="flex flex-col gap-[5px]">
-              <label className="input-label" htmlFor="core-storage-s3-bucket">Bucket</label>
-              <input id="core-storage-s3-bucket" type="text" value={settings.s3Bucket} onChange={e => set('s3Bucket', e.target.value)}
-                placeholder="dylaris-core" className="input-mono w-full" />
-            </div>
-            <div className="flex flex-col gap-[5px]">
-              <label className="input-label" htmlFor="core-storage-s3-region">Region</label>
-              <input id="core-storage-s3-region" type="text" value={settings.s3Region} onChange={e => set('s3Region', e.target.value)}
-                placeholder="us-east-1" className="input-mono w-full" />
-            </div>
-            <div className="flex flex-col gap-[5px]">
-              <label className="input-label" htmlFor="core-storage-s3-access-key">Access Key</label>
-              <input id="core-storage-s3-access-key" type="text" value={settings.s3AccessKey} onChange={e => set('s3AccessKey', e.target.value)}
-                placeholder="AKIA..." className="input-mono w-full" />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-[5px]">
-            <label className="input-label" htmlFor="core-storage-s3-secret-key">Secret Key</label>
-            <input
-              id="core-storage-s3-secret-key"
-              type="password"
-              value={settings.s3SecretKey || ''}
-              onChange={e => set('s3SecretKey', e.target.value)}
-              placeholder={settings.s3SecretSet ? 'Leave blank to keep the stored secret' : '••••••••••••'}
-              className="input-mono w-full"
-              autoComplete="new-password"
-            />
-            {settings.s3SecretSet && !settings.s3SecretKey && (
-              <p className="text-xs text-(--success-light) flex items-center gap-1">
-                <CircleCheck size={12} /> A secret is already stored. Leaving this blank keeps it.
-              </p>
-            )}
-            {identityChanged && (
-              <div className="alert alert-warning text-xs mt-1">
-                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                <span>
-                  You changed the endpoint, bucket or access key. Re-enter the secret to save: the backend refuses to pair
-                  a stored secret with a different identity (this prevents credentials from being silently re-pointed at a
-                  different endpoint).
-                </span>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex flex-col gap-[5px]">
-              <label className="input-label" htmlFor="core-storage-s3-prefix">Key Prefix (optional)</label>
-              <input id="core-storage-s3-prefix" type="text" value={settings.s3Prefix} onChange={e => set('s3Prefix', e.target.value)}
-                placeholder="core" className="input-mono w-full" />
-            </div>
-            <label className="flex items-center gap-2 sm:mt-6 cursor-pointer select-none group">
-              <input type="checkbox" checked={settings.s3PathStyle} onChange={e => set('s3PathStyle', e.target.checked)} className="accent-(--accent)" />
-              <span className="text-xs text-(--base-08) group-hover:text-(--base-09)">Path-style addressing (required for MinIO)</span>
-            </label>
-          </div>
-          </>
           )}
         </div>
       )}

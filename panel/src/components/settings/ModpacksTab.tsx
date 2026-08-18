@@ -2,13 +2,14 @@
 
 // Settings tab for the modpack-authoring subsystem. Houses:
 //   - the platform-wide feature toggle (gates write endpoints + non-admin UI)
-//   - the .mrpack storage provider (local mirror list or S3 bucket)
-//   - the S3-secret "(unchanged — leave empty)" placeholder when a secret is
-//     already on file (GET omits the value, returns secretSet=true)
+//   - the .mrpack storage provider (local mirror list, or a saved S3 connection)
+//   - Solder delivery mode + the public base launchers download from
+// S3 credentials are NOT edited here: they live in Settings -> Storage
+// Connections and this screen only references one by id.
 // Pattern mirrors LibraryTab/FeaturesTab: snapshot + useUnsavedChanges so the
 // shared dirty-bar in settings/layout.tsx surfaces save/discard.
 
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Package, Plus, X, CircleCheck, CircleAlert, AlertTriangle } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -31,6 +32,31 @@ export function isDeliveryModeDisabled(
     return false;
 }
 
+// The backend already knows WHY a mode is unavailable and returns it in
+// caps.notes. Surfacing it beside the disabled option is the difference between
+// "this is broken" and "point this at a bucket first". Falls back to a generic
+// line only when the probe returned no note.
+export function deliveryDisabledReason(
+    mode: ModpackSettings['solderDeliveryMode'],
+    caps: DeliveryCapabilities | null,
+): string {
+    if (!isDeliveryModeDisabled(mode, caps)) return '';
+    if (mode === 'presigned') return caps?.notes?.presigned || 'The current storage backend cannot issue presigned URLs.';
+    if (mode === 'public') return caps?.notes?.public || 'No reachable public base URL is configured.';
+    return '';
+}
+
+const PROVIDER_OPTIONS = [
+    { value: 'local' as const, label: 'Local paths', desc: 'Archives on disk, mirrored across the paths below' },
+    { value: 's3' as const, label: 'S3 connection', desc: 'A bucket from Settings → Storage Connections' },
+];
+
+const DELIVERY_OPTIONS = [
+    { value: 'core' as const, label: 'Through Core', desc: 'Core proxies every file. Works everywhere, and all traffic goes through it.' },
+    { value: 'presigned' as const, label: 'Presigned', desc: 'Expiring links straight to a private bucket. Core stays out of the transfer.' },
+    { value: 'public' as const, label: 'Public base', desc: 'Files served from a public bucket or CDN. Anyone with the URL can fetch them.' },
+];
+
 const DEFAULTS: ModpackSettings = {
     featureEnabled: true,
     provider: 'local',
@@ -50,7 +76,6 @@ const DEFAULTS: ModpackSettings = {
 
 export default function ModpacksTab() {
     const [settings, setSettings] = useState<ModpackSettings>(DEFAULTS);
-    const [secretSet, setSecretSet] = useState(false);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -76,7 +101,6 @@ export default function ModpacksTab() {
                 const loaded: ModpackSettings = { ...res.settings, s3SecretKey: '' };
                 setSettings(loaded);
                 snapshotRef.current = loaded;
-                setSecretSet(res.secretSet ?? false);
             }
             setLoading(false);
         });
@@ -92,6 +116,7 @@ export default function ModpacksTab() {
     }, []);
 
     const usingConnection = settings.provider === 's3' && (settings.connectionId ?? 0) > 0;
+    const detectedUrl = (settings.detectedCorePublicUrl ?? '').trim();
 
     const handleSave = async () => {
         setSaving(true);
@@ -102,7 +127,6 @@ export default function ModpacksTab() {
             // server-side; we keep the input empty + show "(unchanged)".
             const after: ModpackSettings = { ...settings, s3SecretKey: '' };
             snapshotRef.current = after;
-            if (settings.s3SecretKey) setSecretSet(true);
             setSettings(after);
         } else {
             flash(res.message || 'Save failed.', false);
@@ -212,61 +236,74 @@ export default function ModpacksTab() {
             {/* Provider radio + provider-specific fields */}
             <div className="card p-5 space-y-5">
                 <div>
-                    <div className="font-medium text-sm text-(--base-09) mb-2">Storage Provider</div>
-                    <div className="flex gap-4">
-                        {(['local', 's3'] as const).map(p => (
-                            <label key={p} className="flex items-center gap-2 text-sm cursor-pointer">
-                                <input
-                                    type="radio"
-                                    name="provider"
-                                    checked={settings.provider === p}
-                                    onChange={() => setSettings(s => ({ ...s, provider: p }))}
-                                    className="accent-(--accent)"
-                                />
-                                <span className="font-mono uppercase tracking-wide">{p}</span>
-                            </label>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Solder delivery mode — greyed out per-mode from the probed
-                    capabilities above, so picking one the current storage
-                    config can't serve isn't possible in the first place. */}
-                <div>
-                    <div className="font-medium text-sm text-(--base-09) mb-2">Solder delivery</div>
-                    <div className="flex gap-4">
-                        {(['core', 'presigned', 'public'] as const).map(mode => {
-                            const disabled = isDeliveryModeDisabled(mode, deliveryCaps);
+                    <div className="font-medium text-sm text-(--base-09) mb-2">Storage provider</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {PROVIDER_OPTIONS.map(opt => {
+                            const active = settings.provider === opt.value;
                             return (
-                                <label
-                                    key={mode}
-                                    className={`flex items-center gap-2 text-sm ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    aria-pressed={active}
+                                    onClick={() => setSettings(s => ({ ...s, provider: opt.value }))}
+                                    className={`p-3 rounded-md border text-left transition-colors ${
+                                        active
+                                            ? 'border-(--accent) bg-(--accent)/10'
+                                            : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
+                                    }`}
                                 >
-                                    <input
-                                        type="radio"
-                                        name="solderDeliveryMode"
-                                        checked={settings.solderDeliveryMode === mode}
-                                        disabled={disabled}
-                                        onChange={() => setSettings(s => ({ ...s, solderDeliveryMode: mode }))}
-                                        className="accent-(--accent)"
-                                    />
-                                    <span className="font-mono uppercase tracking-wide">{mode}</span>
-                                </label>
+                                    <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
+                                    <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                                </button>
                             );
                         })}
                     </div>
-                    {deliveryCaps?.canPresign === false && deliveryCaps.notes.presigned && (
-                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                            <span>{deliveryCaps.notes.presigned}</span>
-                        </p>
-                    )}
-                    {(deliveryCaps?.publicConfigured === false || deliveryCaps?.publicReachable === false) && deliveryCaps?.notes.public && (
-                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                            <span>{deliveryCaps.notes.public}</span>
-                        </p>
-                    )}
+                </div>
+
+                {/* Solder delivery mode. Each option carries its own explanation
+                    and, when the current storage config cannot serve it, the
+                    concrete reason - the probe already knows it, and "greyed out
+                    with no reason" is the version of this screen people file
+                    bugs about. */}
+                <div>
+                    <div className="font-medium text-sm text-(--base-09) mb-0.5">Solder delivery</div>
+                    <p className="text-xs text-(--base-06) mb-2 max-w-2xl">
+                        How a launcher actually fetches mod files. This is independent of where they are
+                        stored — it only decides who serves the bytes.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {DELIVERY_OPTIONS.map(opt => {
+                            const disabled = isDeliveryModeDisabled(opt.value, deliveryCaps);
+                            const active = settings.solderDeliveryMode === opt.value;
+                            const reason = disabled ? deliveryDisabledReason(opt.value, deliveryCaps) : '';
+                            return (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    aria-pressed={active}
+                                    disabled={disabled}
+                                    title={reason || opt.desc}
+                                    onClick={() => setSettings(s => ({ ...s, solderDeliveryMode: opt.value }))}
+                                    className={`p-3 rounded-md border text-left transition-colors ${
+                                        disabled
+                                            ? 'border-(--base-03) bg-(--base-02) opacity-50 cursor-not-allowed'
+                                            : active
+                                                ? 'border-(--accent) bg-(--accent)/10'
+                                                : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
+                                    }`}
+                                >
+                                    <div className={`text-sm font-medium ${active && !disabled ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
+                                    <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
+                                    {reason && (
+                                        <div className="flex items-start gap-1 text-[11px] text-(--warning-light) mt-1.5">
+                                            <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+                                            <span>{reason}</span>
+                                        </div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
                     {settings.solderDeliveryMode === 'public' && (deliveryCaps?.privatePackCount ?? 0) > 0 && (
                         <p className="flex items-start gap-1.5 text-xs text-(--warning) mt-2">
                             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
@@ -335,6 +372,13 @@ export default function ModpacksTab() {
                 {/* S3 — a saved connection or inline endpoint + bucket + region + creds */}
                 {settings.provider === 's3' && (
                     <div className="space-y-4">
+                        {/* One place defines an S3 target: Settings → Storage
+                            Connections. This screen used to offer endpoint /
+                            bucket / region / key / secret inline as well, which
+                            meant the same bucket got typed in several tabs, each
+                            with its own copy of the credentials and its own
+                            chance to be wrong or to be missed on a rotation.
+                            There is no "manual" option any more. */}
                         <div className="flex flex-col gap-[5px]">
                             <label className="mono-label">Storage connection</label>
                             <select
@@ -342,55 +386,33 @@ export default function ModpacksTab() {
                                 onChange={e => setSettings(s => ({ ...s, connectionId: Number(e.target.value) }))}
                                 className="input-field w-full"
                             >
-                                <option value={0}>Enter credentials manually</option>
+                                <option value={0}>— select a connection —</option>
                                 {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
-                            <p className="text-xs text-(--base-06)">Reuse a saved connection from Settings -&gt; Storage Connections, or enter S3 credentials inline below.</p>
+                            <p className="text-xs text-(--base-06)">
+                                Buckets and credentials are defined once under Settings → Storage Connections
+                                and referenced here, so a rotation happens in one place.
+                            </p>
                         </div>
 
                         {usingConnection ? (
-                            <div className="alert alert-info text-xs">Credentials come from the selected connection. Manage or test it on the Storage Connections page.</div>
+                            <div className="alert alert-info text-xs">
+                                Credentials come from the selected connection. Manage or test it on the
+                                Storage Connections page.
+                            </div>
+                        ) : connections.length === 0 ? (
+                            <div className="alert alert-warning text-xs">
+                                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                <span>
+                                    No storage connections exist yet. Create one under Settings → Storage
+                                    Connections, then pick it here — modpack storage cannot use S3 until you do.
+                                </span>
+                            </div>
                         ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Field
-                            label="Endpoint"
-                            value={settings.s3Endpoint}
-                            onChange={v => setSettings(s => ({ ...s, s3Endpoint: v }))}
-                            placeholder="https://s3.amazonaws.com"
-                        />
-                        <Field
-                            label="Bucket"
-                            value={settings.s3Bucket}
-                            onChange={v => setSettings(s => ({ ...s, s3Bucket: v }))}
-                            placeholder="dylaris-modpacks"
-                        />
-                        <Field
-                            label="Region"
-                            value={settings.s3Region}
-                            onChange={v => setSettings(s => ({ ...s, s3Region: v }))}
-                            placeholder="us-east-1"
-                        />
-                        <Field
-                            label="Access Key"
-                            value={settings.s3AccessKey}
-                            onChange={v => setSettings(s => ({ ...s, s3AccessKey: v }))}
-                            placeholder="AKIA…"
-                        />
-                        <div className="sm:col-span-2 flex flex-col gap-[5px]">
-                            <label className="mono-label">Secret Key</label>
-                            <input
-                                type="password"
-                                value={settings.s3SecretKey ?? ''}
-                                onChange={e => setSettings(s => ({ ...s, s3SecretKey: e.target.value }))}
-                                placeholder={secretSet ? '(unchanged — leave empty to keep current)' : '(not set)'}
-                                className="input-mono w-full"
-                                autoComplete="new-password"
-                            />
-                            <p className="text-xs text-(--base-06)">
-                                The secret is write-only on the wire — GET never returns it.
-                            </p>
-                        </div>
-                    </div>
+                            <div className="alert alert-warning text-xs">
+                                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                <span>Pick a connection above — S3 storage is not configured until you do.</span>
+                            </div>
                         )}
                     </div>
                 )}
@@ -414,12 +436,27 @@ export default function ModpacksTab() {
                         placeholder="https://cdn.example.com/modpacks"
                     />
                 ) : (
-                    <Field
-                        label="Core public URL"
-                        value={settings.corePublicUrl}
-                        onChange={v => setSettings(s => ({ ...s, corePublicUrl: v }))}
-                        placeholder="https://api.example.com"
-                    />
+                    <div className="space-y-1.5">
+                        <Field
+                            label="Core public URL"
+                            value={settings.corePublicUrl}
+                            onChange={v => setSettings(s => ({ ...s, corePublicUrl: v }))}
+                            placeholder="https://api.example.com"
+                        />
+                        {/* Core reports the origin this very request came in on.
+                            Offered, never applied on its own: an admin reaching
+                            Core over localhost or a service name would otherwise
+                            silently persist an address no launcher can resolve. */}
+                        {detectedUrl && detectedUrl !== settings.corePublicUrl.trim() && (
+                            <button
+                                type="button"
+                                onClick={() => setSettings(s => ({ ...s, corePublicUrl: detectedUrl }))}
+                                className="btn btn-secondary btn-sm"
+                            >
+                                Use the address you are on: <span className="font-mono ml-1">{detectedUrl}</span>
+                            </button>
+                        )}
+                    </div>
                 )}
                 {((settings.solderDeliveryMode === 'public' ? settings.solderMirrorUrl : settings.corePublicUrl).trim() === '') && (
                     <div className="text-xs text-(--warning-light) italic">
