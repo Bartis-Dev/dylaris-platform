@@ -18,7 +18,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, History as HistoryIcon, Store, Globe, ShieldCheck, CloudOff, HardDrive } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, Globe, ShieldCheck, CloudOff, HardDrive } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
@@ -208,17 +208,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 >
                                     <Package size={20} className="mr-3" /> Modrinth
                                 </GuardedLink>
-                                {/* Hide the Modpacks entry for non-admins when the
-                                    feature is killed platform-wide. Admins keep the link so they
-                                    can still inspect / clean up while the toggle is off. */}
-                                {(featureFlags.modpacks || user.isAdmin) && (
-                                    <GuardedLink
-                                        href="/modpacks"
-                                        className="dropdown-item"
-                                    >
-                                        <Package size={20} className="mr-3" /> My Modpacks
-                                    </GuardedLink>
-                                )}
                                 {/* Route-only ("protected addresses") — gateway-gated. */}
                                 {gatewayEnabled && (
                                     <GuardedLink
@@ -237,12 +226,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                         <Store size={20} className="mr-3" /> Dylaris Store
                                     </GuardedLink>
                                 )}
-                                <GuardedLink
-                                    href="/account/username-history"
-                                    className="dropdown-item"
-                                >
-                                    <HistoryIcon size={20} className="mr-3" /> Username History
-                                </GuardedLink>
                                 <button onClick={() => { setIsProfileDropdownOpen(false); logout(); router.push('/login'); }} className="dropdown-item text-(--error) hover:bg-(--error-ghost) mt-1">
                                     <LogOut size={20} className="mr-3" /> Logout
                                 </button>

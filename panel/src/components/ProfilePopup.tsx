@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil } from 'lucide-react';
+import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
-import { getMyBeamChannel, setMyBeamChannel } from '@/lib/api/beamChannel';
+import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accountPolicy';
 import { isUsername } from '@/lib/validation';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 
@@ -53,13 +53,6 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [backupCodesRemaining, setBackupCodesRemaining] = useState<number | null>(null);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
 
-  // Beam desktop update channel (per-user). The picker is only shown when the
-  // admin policy admits this user (beamDevAllowed); otherwise everyone is on
-  // stable and there is nothing to choose.
-  const [beamChannel, setBeamChannel] = useState<'stable' | 'dev'>('stable');
-  const [beamDevAllowed, setBeamDevAllowed] = useState(false);
-  const [beamChannelBusy, setBeamChannelBusy] = useState(false);
-
   // Reload backup-code count whenever 2FA state changes (enable/disable/regen)
   // OR the user opens the Security tab. Cheap fetch — single GET.
   useEffect(() => {
@@ -73,26 +66,6 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
       }
     });
   }, [twoFactorEnabled, currentView]);
-
-  // Load the user's Beam update-channel preference + whether dev is allowed.
-  useEffect(() => {
-    getMyBeamChannel().then(res => {
-      if (res?.success) {
-        setBeamChannel(res.channel === 'dev' ? 'dev' : 'stable');
-        setBeamDevAllowed(!!res.dev_allowed);
-      }
-    }).catch(() => {});
-  }, []);
-
-  const changeBeamChannel = async (ch: 'stable' | 'dev') => {
-    if (ch === beamChannel || beamChannelBusy) return;
-    setBeamChannelBusy(true);
-    const res = await setMyBeamChannel(ch);
-    if (res?.success) {
-      setBeamChannel(res.channel === 'dev' ? 'dev' : 'stable');
-    }
-    setBeamChannelBusy(false);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -160,30 +133,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                   <label className="input-label">Minecraft Username (For Avatar)</label>
                   <input type="text" value={minecraftUsername} onChange={e => setMinecraftUsername(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                 </div>
-                {beamDevAllowed && (
-                  <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Beam Update Channel</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {([
-                        { value: 'stable' as const, label: 'Stable', desc: 'Recommended releases' },
-                        { value: 'dev' as const, label: 'Dev', desc: 'Prerelease test builds' },
-                      ]).map(opt => {
-                        const active = beamChannel === opt.value;
-                        return (
-                          <button key={opt.value} type="button" disabled={beamChannelBusy}
-                            onClick={() => changeBeamChannel(opt.value)}
-                            className={`p-3 rounded-md border text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${active ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
-                            <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                            <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-(--base-06) mt-0.5">
-                      Which builds the Beam desktop app checks for updates. Dev builds are unstable and change often. Saved immediately.
-                    </p>
-                  </div>
-                )}
+                <UsernameHistorySection />
               </div>
             )}
 
@@ -318,6 +268,65 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
     </>
   );
 };
+
+// ─────────────────────────────────────────────
+// Username history
+// ─────────────────────────────────────────────
+// Used to be its own dropdown entry and its own page, which put a rarely-read
+// audit list at the same level as "Edit Profile". It belongs next to the field
+// it is the history OF, so it lives here, collapsed. The fetch is deferred to
+// the first expand: most people opening this popup came to change something,
+// not to read their rename log.
+function UsernameHistorySection() {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<UsernameHistoryEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!open || rows !== null) return;
+    getMyUsernameHistory().then(r => setRows(r)).catch(() => setRows([]));
+  }, [open, rows]);
+
+  return (
+    <div className="rounded-md border border-(--base-03) bg-(--base-02)">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-(--base-03)/60 rounded-md"
+      >
+        <span className="flex items-center gap-2 text-sm text-(--base-08)">
+          <HistoryIcon size={15} className="text-(--base-06)" />
+          Username history
+        </span>
+        <ChevronDown
+          size={15}
+          className="text-(--base-06) transition-transform duration-200"
+          style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
+        />
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-1 border-t border-(--base-03)">
+          {rows === null ? (
+            <p className="text-xs text-(--base-06)">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs text-(--base-06)">You haven&apos;t renamed your account.</p>
+          ) : (
+            <ul className="space-y-2">
+              {rows.map(r => (
+                <li key={r.id}>
+                  <div className="font-mono text-xs text-(--base-09)">{r.oldUsername} → {r.newUsername}</div>
+                  <div className="text-[11px] text-(--base-06) mt-0.5">
+                    {new Date(r.changedAt).toLocaleString()} · {r.byAdmin ? 'by admin' : 'self'}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────
 // Two-Factor Wizard
