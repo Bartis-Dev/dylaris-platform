@@ -55,6 +55,42 @@ interface ManagedName {
     routable: boolean;
 }
 
+// One credential input a provider needs. Most want a single API token; netcup,
+// OVH, Porkbun, Namecheap, ClouDNS and Route 53 want two to four, so Core
+// declares the shape per provider rather than the panel assuming one field.
+export interface DNSCredentialField {
+    key: string;
+    label: string;
+    secret: boolean;
+    optional?: boolean;
+    hint?: string;
+}
+
+export interface DNSProviderSpec {
+    name: string;
+    label: string;
+    fields: DNSCredentialField[];
+}
+
+// The stored credential is a bare string for a one-field provider (unchanged
+// from before this catalogue existed, so nothing had to be migrated) and a JSON
+// object for the rest. Core parses both; this is the matching writer.
+export function encodeDNSCredential(
+    spec: DNSProviderSpec | undefined,
+    values: Record<string, string>,
+): string {
+    const fields = spec?.fields ?? [];
+    if (fields.length <= 1) {
+        return (values[fields[0]?.key ?? 'token'] ?? '').trim();
+    }
+    const out: Record<string, string> = {};
+    for (const f of fields) {
+        const v = (values[f.key] ?? '').trim();
+        if (v) out[f.key] = v;
+    }
+    return Object.keys(out).length === 0 ? '' : JSON.stringify(out);
+}
+
 interface DNSSettings {
     enabled: boolean;
     provider: string;
@@ -67,7 +103,7 @@ interface DNSSettings {
     // credential and the panel cannot change it.
     source: 'env' | 'panel' | 'none';
     envManaged: boolean;
-    providers: string[];
+    providers: DNSProviderSpec[];
     status?: DNSStatus;
 }
 
@@ -254,7 +290,10 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     const [zones, setZones] = useState<string[]>([]);
     const [regionNames, setRegionNames] = useState<Record<string, string[]>>({});
     const [graceMinutes, setGraceMinutes] = useState(15);
-    const [token, setToken] = useState('');
+    // Per-field credential values, keyed by the field keys the selected provider
+    // declares. Write-only like the single token it replaces: it starts empty on
+    // every load and an empty value means "keep the stored credential".
+    const [credential, setCredential] = useState<Record<string, string>>({});
     const [clearToken, setClearToken] = useState(false);
 
     const [discovered, setDiscovered] = useState<DNSZonesResponse | null>(null);
@@ -263,6 +302,19 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
     const snapshotRef = useRef<DNSSnapshot | null>(null);
 
+    // The selected provider's credential shape, and the credential encoded the way
+    // Core stores it (bare string for one field, JSON object for several).
+    const providerSpec = settings?.providers?.find(p => p.name === provider);
+    const credentialFields: DNSCredentialField[] =
+        providerSpec?.fields ?? [{ key: 'token', label: 'API token', secret: true }];
+    const encodedCredential = encodeDNSCredential(providerSpec, credential);
+    // Only nag once the admin has started filling this credential in. An untouched
+    // form is not "incomplete", it is "unchanged" - the stored one still applies.
+    const missingCredentialFields =
+        encodedCredential === ''
+            ? []
+            : credentialFields.filter(f => !f.optional && !(credential[f.key] ?? '').trim()).map(f => f.label);
+
     const applySettings = useCallback((s: DNSSettings) => {
         setSettings(s);
         setEnabled(s.enabled);
@@ -270,7 +322,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
         setZones(s.zones ?? []);
         setRegionNames(s.regionNames ?? {});
         setGraceMinutes(s.graceMinutes || 15);
-        setToken('');
+        setCredential({});
         setClearToken(false);
         setZoneDraft('');
         snapshotRef.current = {
@@ -311,7 +363,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     const handleSave = async () => {
         setSaving(true);
         const res = await saveDNSSettings({
-            enabled, provider, zones, regionNames, graceMinutes, token, clearToken,
+            enabled, provider, zones, regionNames, graceMinutes, token: encodedCredential, clearToken,
         });
         showToast(res.success ? 'DNS settings saved.' : (res.message || 'Save failed.'), res.success);
         if (res.success && res.settings) applySettings(res.settings);
@@ -326,7 +378,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
         setZones(snap.zones);
         setRegionNames(snap.regionNames);
         setGraceMinutes(snap.graceMinutes);
-        setToken('');
+        setCredential({});
         setClearToken(false);
         setZoneDraft('');
     };
@@ -347,7 +399,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
     const dirty =
         snapshotRef.current !== null &&
-        JSON.stringify({ enabled, provider, zones, regionNames, graceMinutes, token, clearToken }) !==
+        JSON.stringify({ enabled, provider, zones, regionNames, graceMinutes, token: encodedCredential, clearToken }) !==
             JSON.stringify(snapshotRef.current);
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
@@ -409,19 +461,26 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                     <label className="input-label">Provider</label>
                     <Select
                         value={provider}
-                        onChange={setProvider}
-                        options={(settings?.providers ?? ['cloudflare']).map(p => ({
-                            value: p,
-                            label: p.charAt(0).toUpperCase() + p.slice(1),
-                        }))}
+                        onChange={next => {
+                            setProvider(next);
+                            // Credentials are provider-shaped, so carrying the old
+                            // values across would post one vendor's key under
+                            // another's field names.
+                            setCredential({});
+                            setClearToken(false);
+                        }}
+                        options={(settings?.providers ?? []).map(p => ({ value: p.name, label: p.label }))}
                         ariaLabel="DNS provider"
                     />
                 </div>
 
-                {/* API token. Read-only whenever the environment supplies it: a value
-                    typed here would be stored and never read, which looks applied. */}
+                {/* Credentials. Read-only whenever the environment supplies them: a
+                    value typed here would be stored and never read, which looks
+                    applied. The inputs come from the provider's own field spec, so
+                    a two- or four-value provider is filled in properly instead of
+                    being crammed into one "API token" box. */}
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">API Token</label>
+                    <label className="input-label">Credentials</label>
                     {envManaged ? (
                         <div className="flex items-start gap-2 rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2.5">
                             <Lock size={13} className="mt-0.5 shrink-0 text-(--base-06)" />
@@ -433,41 +492,65 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                         </div>
                     ) : (
                         <>
-                            <input
-                                type="password"
-                                value={token}
-                                onChange={e => {
-                                    setToken(e.target.value);
-                                    if (e.target.value) setClearToken(false);
-                                }}
-                                placeholder={settings?.tokenSet ? 'Stored - leave empty to keep' : 'Paste the API token'}
-                                autoComplete="off"
-                                className="input-field input-mono"
-                                disabled={clearToken}
-                            />
+                            <div className="space-y-2.5">
+                                {credentialFields.map(f => (
+                                    <div key={f.key} className="flex flex-col gap-[5px]">
+                                        {credentialFields.length > 1 && (
+                                            <label className="text-xs text-(--base-07)" htmlFor={`dns-cred-${f.key}`}>
+                                                {f.label}
+                                                {f.optional && <span className="text-(--base-06)"> (optional)</span>}
+                                            </label>
+                                        )}
+                                        <input
+                                            id={`dns-cred-${f.key}`}
+                                            type={f.secret ? 'password' : 'text'}
+                                            value={credential[f.key] ?? ''}
+                                            onChange={e => {
+                                                const v = e.target.value;
+                                                setCredential(c => ({ ...c, [f.key]: v }));
+                                                if (v) setClearToken(false);
+                                            }}
+                                            placeholder={settings?.tokenSet ? 'Stored - leave empty to keep' : f.label}
+                                            autoComplete="off"
+                                            className="input-field input-mono"
+                                            disabled={clearToken}
+                                        />
+                                        {f.hint && <p className="text-xs text-(--base-06)">{f.hint}</p>}
+                                    </div>
+                                ))}
+                            </div>
                             <div className="flex items-center justify-between gap-3 mt-0.5">
                                 <p className="text-xs text-(--base-06)">
                                     {settings?.tokenSet
-                                        ? 'A token is stored. Leave this empty to keep it.'
-                                        : 'Needs permission to read and edit DNS records in the zone.'}
+                                        ? 'Credentials are stored. Leave these empty to keep them.'
+                                        : 'Needs permission to read and edit DNS records in the zones below.'}
                                 </p>
                                 {settings?.tokenSet && (
                                     <button
                                         type="button"
                                         onClick={() => {
                                             setClearToken(v => !v);
-                                            setToken('');
+                                            setCredential({});
                                         }}
                                         className="focus-ring text-xs text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
                                     >
-                                        {clearToken ? 'Keep token' : 'Remove token'}
+                                        {clearToken ? 'Keep credentials' : 'Remove credentials'}
                                     </button>
                                 )}
                             </div>
+                            {/* A partly-filled multi-field credential is the failure
+                                mode worth catching here: it saves, and then every
+                                reconcile fails with the vendor's own opaque error. */}
+                            {missingCredentialFields.length > 0 && (
+                                <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-1">
+                                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                    <span>Still needed: {missingCredentialFields.join(', ')}.</span>
+                                </p>
+                            )}
                             {clearToken && (
                                 <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-1">
                                     <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                                    <span>The stored token will be removed when you save.</span>
+                                    <span>The stored credentials will be removed when you save.</span>
                                 </p>
                             )}
                         </>
@@ -483,7 +566,7 @@ function DNSPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                         <button
                             type="button"
                             onClick={loadZones}
-                            disabled={zonesLoading || !(settings?.tokenSet || token)}
+                            disabled={zonesLoading || !(settings?.tokenSet || encodedCredential)}
                             className="focus-ring inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light) transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {zonesLoading

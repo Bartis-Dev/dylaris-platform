@@ -181,7 +181,7 @@ func TestDNSSave_Validation(t *testing.T) {
 			// An unknown provider would be rejected at construction later; catching
 			// it here keeps an unusable value out of the settings table.
 			name: "unknown provider",
-			body: map[string]any{"provider": "route53", "zones": []string{"example.com"}},
+			body: map[string]any{"provider": "not-a-real-dns-vendor", "zones": []string{"example.com"}},
 			want: http.StatusBadRequest,
 		},
 		{

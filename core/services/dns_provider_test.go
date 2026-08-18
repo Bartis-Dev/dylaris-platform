@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,8 +240,50 @@ func TestNewDNSProvider(t *testing.T) {
 		}
 	})
 	t.Run("an unknown provider is rejected loudly", func(t *testing.T) {
-		if _, err := NewDNSProvider("route53", "token"); err == nil {
+		if _, err := NewDNSProvider("not-a-real-dns-vendor", "token"); err == nil {
 			t.Error("NewDNSProvider accepted an unimplemented provider")
+		}
+	})
+	t.Run("a bare token still builds a single-field provider", func(t *testing.T) {
+		// The pre-catalogue storage format. Nothing was migrated, so this has to
+		// keep working for every one-token provider, not just cloudflare.
+		for _, name := range []string{"cloudflare", "hetzner", "desec"} {
+			p, err := NewDNSProvider(name, "some-token")
+			if err != nil || p == nil {
+				t.Errorf("NewDNSProvider(%q, bare token) = (%v, %v), want a provider", name, p, err)
+			}
+		}
+	})
+	t.Run("a multi-field provider reads its JSON credential", func(t *testing.T) {
+		p, err := NewDNSProvider("porkbun", `{"api_key":"pk","api_secret_key":"sk"}`)
+		if err != nil || p == nil {
+			t.Errorf("NewDNSProvider(porkbun, json) = (%v, %v), want a provider", p, err)
+		}
+	})
+	t.Run("a multi-field provider names the field it is missing", func(t *testing.T) {
+		// The whole point of validating here: the vendor's own error for a blank
+		// secret says nothing about WHICH of four values was left out.
+		_, err := NewDNSProvider("netcup", `{"customer_number":"12345"}`)
+		if err == nil {
+			t.Fatal("NewDNSProvider accepted netcup without its API key or password")
+		}
+		for _, want := range []string{"API key", "API password"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name the missing field %q", err, want)
+			}
+		}
+	})
+	t.Run("every catalogued provider has a constructor", func(t *testing.T) {
+		// Guards the one way this catalogue can rot: a spec added without a case
+		// in newLibDNSProvider, which the panel would offer and then fail on.
+		for _, spec := range SupportedDNSProviders() {
+			values := map[string]string{}
+			for _, f := range spec.Fields {
+				values[f.Key] = "x"
+			}
+			if _, err := newLibDNSProvider(spec.Name, values); err != nil {
+				t.Errorf("provider %q is offered but does not construct: %v", spec.Name, err)
+			}
 		}
 	})
 }

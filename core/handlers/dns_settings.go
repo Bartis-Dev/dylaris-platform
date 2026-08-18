@@ -62,7 +62,10 @@ type dnsSettingsResponse struct {
 
 	// Providers the build supports, so the panel never offers one that would be
 	// rejected on save.
-	Providers []string `json:"providers"`
+	// Each entry carries the credential FIELDS that provider needs, so the panel
+	// renders the right inputs instead of assuming every provider takes a single
+	// API token (netcup, OVH, Route 53 and friends do not).
+	Providers []services.DNSProviderSpec `json:"providers"`
 
 	Status *services.DNSReconcilerStatus `json:"status,omitempty"`
 }
@@ -409,12 +412,8 @@ func probeDNSZone(ctx context.Context, providerName, token, zone string) error {
 }
 
 func dnsProviderSupported(name string) bool {
-	for _, p := range services.SupportedDNSProviders() {
-		if p == name {
-			return true
-		}
-	}
-	return false
+	_, ok := services.DNSProviderSpecFor(name)
+	return ok
 }
 
 func boolSetting(v bool) string {
