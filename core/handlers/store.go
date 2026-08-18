@@ -97,8 +97,15 @@ func (h *StoreHandler) LinkStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // LinkVerify POST /api/store/link/verify — store-key. Body {token}. Validates +
-// consumes the token (single-use) and returns the bound {uuid, email, username}.
-// Called by dylaris.com during the connect flow.
+// consumes the token (single-use) and returns the bound {uuid, email, username}
+// plus this Core's own panel URL. Called by dylaris.com during the connect flow.
+//
+// panelUrl travels HERE rather than as a query parameter on the /connect link,
+// which is the obvious alternative and the wrong one: the storefront sends the
+// browser back to it after linking, so a value taken from the URL would be an
+// open redirect anyone could aim anywhere. Coming back over the store-key
+// channel it is attested by the same Core that minted the token, and there is
+// nothing for a visitor to tamper with.
 func (h *StoreHandler) LinkVerify(w http.ResponseWriter, r *http.Request) {
 	if !h.requireStoreKey(w, r) {
 		return
@@ -131,6 +138,9 @@ func (h *StoreHandler) LinkVerify(w http.ResponseWriter, r *http.Request) {
 		"uuid":     parts[0],
 		"email":    parts[1],
 		"username": username,
+		// Empty when FRONTEND_URL is unset; the storefront then simply offers no
+		// way back and says so, rather than guessing an origin.
+		"panelUrl": strings.TrimRight(h.state.FrontendURL, "/"),
 	})
 }
 
