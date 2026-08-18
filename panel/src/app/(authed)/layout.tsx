@@ -6,6 +6,8 @@ import { AppDataProvider, useAppData } from '@/lib/AppDataContext';
 import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import { getSetupStatus } from '@/lib/api/setup';
 import Navbar from '@/components/Navbar';
+import { SidebarCollapseProvider, useSidebarCollapse } from '@/lib/SidebarCollapse';
+import { useLayout } from '@/lib/useBreakpoint';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import UpdatesBell from '@/components/UpdatesBell';
 import ProfilePopup from '@/components/ProfilePopup';
@@ -18,7 +20,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, Globe, ShieldCheck, CloudOff, HardDrive } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, Globe, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
@@ -96,7 +98,13 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     const canSeeMyNodes = featureFlags.byon && !user.isAdmin;
 
     return (
-        <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+        <SidebarCollapseProvider>
+        {/* min-w-[720px] is a deliberate floor, not an oversight. Below it the
+            file browser, the console and the routes table stop being usable at
+            any font size, and a horizontal scrollbar is the honest answer -
+            better than a layout that renders and does not work. It also bounds
+            the testing surface to three bands instead of a continuum. */}
+        <div className="flex flex-col h-screen min-w-[720px] bg-(--base-00) text-(--base-09) font-body overflow-hidden">
             {/* Single host for confirmDialog(). Mounted here so every authed
                 screen can ask without threading a node through its own JSX. */}
             <ConfirmDialogRoot />
@@ -106,9 +114,12 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <BillingBanner />
             {/* Storage backend reachability. Renders nothing while both are ok. */}
             <StorageBanner />
-            {/* Top Navbar */}
+            {/* Top Navbar. The branding block carries the SAME width as the
+                sidebar underneath it - that is the only reason the two columns
+                line up, so it collapses with it. */}
             <div className="relative z-30 shrink-0">
-                <Navbar>
+                <Navbar brand={<SidebarBrand />}>
+                    <UtilityCluster>
                     <CoreRegionChip />
                     <UploadManagerWidget />
                     {/* UpdatesBell self-gates to admins only (regular users never see it). */}
@@ -232,6 +243,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                             </div>
                         )}
                     </div>
+                    </UtilityCluster>
                 </Navbar>
             </div>
 
@@ -249,6 +261,82 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     success={popupSuccess}
                 />
             )}
+        </div>
+        </SidebarCollapseProvider>
+    );
+}
+
+// The navbar's right-hand actions: region chip, uploads, What's new,
+// notifications, My nodes, and the profile menu.
+//
+// In the compact band they collapse behind one trigger instead of competing
+// with the module strip for the same row - which is what used to push modules
+// out of reach. The plan called for moving them into the sidebar rail; the
+// sidebar lives in servers/layout.tsx, one tree over, so doing that literally
+// would mean lifting the sidebar into this shell. One extra click here buys the
+// same room for a fraction of the risk.
+//
+// Above compact this renders its children directly, so nothing changes at the
+// widths where there was already room.
+function UtilityCluster({ children }: { children: React.ReactNode }) {
+    const { layout } = useLayout();
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => {
+        if (!open) return;
+        const close = (e: MouseEvent) => {
+            if (!(e.target as HTMLElement).closest('.utility-cluster')) setOpen(false);
+        };
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
+    }, [open]);
+
+    if (layout !== 'compact') return <>{children}</>;
+
+    return (
+        <div className="relative utility-cluster">
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label="Account and notifications"
+                title="Account and notifications"
+                className="p-1.5 rounded-md text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) transition-colors"
+            >
+                <MoreVertical size={20} />
+            </button>
+            {open && (
+                <div className="absolute right-0 top-full mt-2 z-40 rounded-md border border-(--base-03) bg-(--base-01) shadow-lg p-3 flex flex-col items-stretch gap-2 min-w-56">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// The branding block. Collapses to the mark alone at rail width so it keeps the
+// sidebar's footprint exactly - a full-width logo over a 56px rail is the
+// misalignment this avoids.
+function SidebarBrand() {
+    const { collapsed } = useSidebarCollapse();
+    if (collapsed) {
+        return (
+            <div className="flex items-center justify-center w-14 shrink-0 border-r border-(--base-03) mr-4 pr-2">
+                <div className="px-2 py-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
+                    <span className="text-xl font-logo tracking-widest select-none text-(--accent-light)">D</span>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="flex items-center justify-center w-72 shrink-0 border-r border-(--base-03) mr-6 pr-6">
+            <div className="px-3.5 py-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
+                <h1 className="text-2xl font-logo tracking-widest select-none">
+                    <span className="text-(--accent-light)">D</span>
+                    <span className="text-(--base-09)">ylaris</span>
+                </h1>
+            </div>
         </div>
     );
 }

@@ -4,9 +4,10 @@ import React, { useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { Server } from '../lib/api';
 import RegionBadge from '@/components/RegionBadge';
-import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network } from 'lucide-react';
+import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import GuardedLink from '@/components/GuardedLink';
+import { useSidebarCollapse } from '@/lib/SidebarCollapse';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import CreateMenu from '@/components/CreateMenu';
@@ -57,6 +58,7 @@ function buildProxyHierarchy(servers: Server[]) {
 }
 
 export default function Sidebar({ onNewServer }: SidebarProps) {
+  const { collapsed, toggle, width } = useSidebarCollapse();
   const { servers, user: currentUser, proxiesEnabled, featureFlags } = useAppData();
   const params = useParams();
   const activeServerId = params?.id ? Number(params.id) : null;
@@ -286,8 +288,53 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
     ));
   };
 
+  // Collapsed, the sidebar becomes a RAIL rather than disappearing. Switching
+  // servers is the most common action in the panel and it stays one click at
+  // every width; a drawer would make it two, with a focus trap in between.
+  if (collapsed) {
+    return (
+      <aside className={`${width} bg-(--base-01) border-r border-(--base-03) flex flex-col h-full shrink-0 z-20`}>
+        <div className="shrink-0 flex items-center justify-center py-3 border-b border-(--base-03)">
+          <button
+            onClick={toggle}
+            title="Expand the sidebar"
+            aria-label="Expand the sidebar"
+            className="p-1.5 rounded-md text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09) transition-colors"
+          >
+            <PanelLeftOpen size={18} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto hide-scrollbar py-2 flex flex-col items-center gap-1.5">
+          {filteredServers.map(s => {
+            const isActive = activeServerId === s.id;
+            const { tier } = nodeConnectivity(s.status, undefined, Date.now());
+            return (
+              <GuardedLink
+                key={s.id}
+                href={`/servers/${s.id}`}
+                title={s.name}
+                aria-label={s.name}
+                className={`relative w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
+                  isActive
+                    ? 'bg-(--accent-ghost) text-(--accent-light) border border-(--accent-border)'
+                    : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09) border border-transparent'
+                }`}
+              >
+                <span className="text-xs font-semibold uppercase">{s.name.slice(0, 2)}</span>
+                <span className={`absolute bottom-0.5 right-0.5 badge-dot ${dotFor(tier, getStatusDot(s.status))}`} />
+              </GuardedLink>
+            );
+          })}
+        </div>
+        <div className="shrink-0 border-t border-(--base-03) py-2 flex justify-center">
+          <CreateMenu onNewServer={onNewServer} />
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="w-72 bg-(--base-01) border-r border-(--base-03) flex flex-col h-full shrink-0 z-20">
+    <aside className={`${width} bg-(--base-01) border-r border-(--base-03) flex flex-col h-full shrink-0 z-20`}>
       <div className="shrink-0 px-4 pt-4 pb-2 border-b border-(--base-03)">
         <div className="flex items-center justify-between mb-2">
           {isAdmin ? (
@@ -301,12 +348,22 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           ) : (
             <span className="input-label">Servers</span>
           )}
-          <button
-            onClick={() => { setShowSearch(!showSearch); if (showSearch) setSearchQuery(''); }}
-            className={`p-1.5 rounded-md transition-colors ${showSearch ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09)'}`}
-          >
-            {showSearch ? <X size={18} /> : <Search size={18} />}
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => { setShowSearch(!showSearch); if (showSearch) setSearchQuery(''); }}
+              className={`p-1.5 rounded-md transition-colors ${showSearch ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09)'}`}
+            >
+              {showSearch ? <X size={18} /> : <Search size={18} />}
+            </button>
+            <button
+              onClick={toggle}
+              title="Collapse the sidebar"
+              aria-label="Collapse the sidebar"
+              className="p-1.5 rounded-md text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09) transition-colors"
+            >
+              <PanelLeftClose size={18} />
+            </button>
+          </div>
         </div>
 
         {showSearch && (
