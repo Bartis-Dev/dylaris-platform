@@ -55,7 +55,7 @@ const TAB_GROUPS: SettingsGroup[] = [
     {
         group: 'Access',
         tabs: [
-            { slug: 'users', label: 'Users', always: true },
+            { slug: 'users', label: 'User settings', always: true },
             { slug: 'roles', label: 'Roles', always: true },
         ],
     },

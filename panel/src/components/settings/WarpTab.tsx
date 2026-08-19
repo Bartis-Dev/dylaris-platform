@@ -727,7 +727,9 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, addrs, onClose, s
                                 <p>
                                     The same stack on a CUSTOMER machine. Identical compose file; what differs is that
                                     the customer has to be entitled to it, which is a billing decision and not this
-                                    dialog: grant it under Settings -&gt; Users -&gt; the user -&gt; Billing.
+                                    dialog: grant it under{' '}
+                                    <a href="/admin/users" className="text-(--accent-light) hover:underline">Admin -&gt; Users</a>,
+                                    then the user&apos;s Billing button.
                                 </p>
                                 <p>
                                     An entitled customer can also enrol the machine themselves under My machines,
