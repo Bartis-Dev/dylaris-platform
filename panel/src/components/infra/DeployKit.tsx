@@ -89,11 +89,12 @@ export function Snippet({ title, body }: { title: string; body: string }) {
  * stored as a hash, so it is shown exactly once at mint time. The snippet then
  * carries an obvious placeholder instead of a plausible-looking wrong value.
  */
-export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, config }: {
+export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config }: {
     kind: 'node' | 'route-only';
     warpKey: string | null;
     enrollUrl: string;
     nodeEnrollToken?: string;
+    grpcTlsFingerprint?: string;
     nodeId?: string;
     config?: WarpDeployConfig | null;
 }) {
@@ -101,6 +102,7 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, c
         apiKey: warpKey ?? '<your-warp-key>',
         enrollUrl,
         nodeEnrollToken,
+        grpcTlsFingerprint,
         nodeId,
         // Undetermined values stay undefined so the snippet keeps its
         // placeholder: a blank tells the reader something is missing, an empty

@@ -27,6 +27,13 @@ export type WarpDeployInput = {
     tunnelSubnets?: string;
     /** Single-use node enroll token, when the operator has one. */
     nodeEnrollToken?: string;
+    /**
+     * Core's gRPC certificate fingerprint, returned when minting the enroll
+     * token. Core sends it ONLY when GRPC_TLS_ENABLED is on, so its presence is
+     * the signal to turn TLS on for the node too - the two must match or the
+     * node cannot reach Core at all.
+     */
+    grpcTlsFingerprint?: string;
     /** Stable id for the machine. */
     nodeId?: string;
     /** Route-only: the local host the link may dial. Host only, no port. */
@@ -51,6 +58,27 @@ function or(value: string | undefined, placeholder: string): string {
 }
 
 /**
+ * The node's half of the Core gRPC pin, emitted only when there is one.
+ *
+ * Core returns a fingerprint exclusively while GRPC_TLS_ENABLED is on, so a
+ * value here means the control channel IS TLS and the node must match it. It
+ * does not verify the hostname - it compares this fingerprint - which is also
+ * why warp's local proxy in front of it changes nothing.
+ *
+ * Absent means Core runs the channel in plaintext, and emitting the pair would
+ * make the node fail its handshake against a server that offers no TLS.
+ */
+function grpcTlsLines(fingerprint: string | undefined): string {
+    const fp = (fingerprint ?? '').trim();
+    if (fp === '') return '';
+    return `      # Core's control channel is TLS. The node pins this fingerprint
+      # instead of verifying a hostname, so it must match Core exactly.
+      GRPC_TLS_ENABLED: "true"
+      GRPC_TLS_FINGERPRINT: "${fp}"
+`;
+}
+
+/**
  * Turns the location name a customer typed into a usable NODE_ID.
  *
  * NODE_ID ends up in Redis keys, the mesh identity and the environment of every
@@ -71,7 +99,12 @@ export function nodeIdFromLabel(label: string | undefined): string | undefined {
 /**
  * routeOnlyCompose is warp + link: the customer runs the Minecraft server
  * themselves and gets a protected Dylaris address for it. No node, no swarm
- * join, no published ports - the machine only makes OUTBOUND connections.
+ * join, no published ports.
+ *
+ * Both containers are host-networked, so anything they bind lands on the
+ * customer's own machine. The link's management server is therefore pinned to
+ * loopback below: nothing reads it in this mode (only a NODE-managed link has a
+ * reader), and its /health is unauthenticated.
  *
  * The link is what makes this route-only rather than plain overlay access, and
  * nothing deploys it implicitly: a managed node starts its own link, but here
@@ -114,6 +147,9 @@ services:
       # string, so "127.0.0.1:25565" never matches.
       LINK_ALLOWED_TARGETS: "${or(i.localTarget, '127.0.0.1')}"
       LOCAL_HOST: "${or(i.localTarget, '127.0.0.1')}"
+      # Host networking, so the default ":25540" would put an unauthenticated
+      # status endpoint on your LAN. Nothing reads it in route-only mode.
+      LINK_PORT: "127.0.0.1:25540"
     network_mode: host
 `;
 }
@@ -155,7 +191,7 @@ services:
       NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
       # Single-use, first boot only.
       NODE_ENROLL_TOKEN: "${or(i.nodeEnrollToken, '<enroll-token-from-panel>')}"
-      # No CORE_GRPC_ADDR and no REDIS_ADDR: the node reaches both through
+${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR and no REDIS_ADDR: the node reaches both through
       # warp's local proxy, and warp refreshes the real addresses from Core on
       # its own. Nothing in this file has to change when the platform moves.
       # NO CLUSTER_SECRET and no static Redis password on purpose: the node
@@ -211,4 +247,6 @@ export const EXTERNAL_NODE_PORTS = [
     { port: 25521, what: 'Beam gRPC', note: 'overlay-only in practice' },
     { port: 25522, what: 'Migration pull', note: 'auto-move transport' },
     { port: 25523, what: 'Beam LAN fast-path', note: 'set BEAM_LAN_FASTPATH=false to drop it' },
+    { port: 25570, what: 'Overlay proxy (Core)', note: 'bound by warp on loopback + your Docker bridges, never the LAN' },
+    { port: 25571, what: 'Overlay proxy (Redis)', note: 'same; this is how containers reach the overlay' },
 ];

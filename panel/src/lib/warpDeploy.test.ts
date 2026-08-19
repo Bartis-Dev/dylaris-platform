@@ -31,6 +31,12 @@ describe('routeOnlyCompose', () => {
         expect(routeOnlyCompose(base)).toContain('REDIS_USE_TLS: "false"');
     });
 
+    // Host networking means anything the link binds lands on the customer's
+    // machine, and /health has no auth. Nothing reads it in this mode.
+    it('keeps the link management server off the LAN', () => {
+        expect(routeOnlyCompose(base)).toContain('LINK_PORT: "127.0.0.1:25540"');
+    });
+
     // Route-only runs the link with host networking, so warp's loopback
     // listener is already in its namespace and no bridge binding is needed.
     it('points the link at the local proxy and binds no bridges', () => {
@@ -114,6 +120,27 @@ describe('nodeCompose', () => {
     // 127.0.0.1 is their own loopback and not the host warp listens on.
     it('lets warp serve the proxy to containers too', () => {
         expect(nodeCompose(base)).toContain('PROXY_BIND_DOCKER_BRIDGES: "true"');
+    });
+
+    // Core returns a fingerprint only while its gRPC channel is TLS, so its
+    // presence is the signal. Emitting the pair against a plaintext Core would
+    // make every BYON node fail its handshake instead of connecting.
+    it('pins the Core gRPC certificate only when there is a fingerprint', () => {
+        const without = nodeCompose(base);
+        expect(without).not.toContain('GRPC_TLS_ENABLED');
+        expect(without).not.toContain('GRPC_TLS_FINGERPRINT');
+
+        const withPin = nodeCompose({ ...base, grpcTlsFingerprint: 'ab12cd34' });
+        expect(withPin).toContain('GRPC_TLS_ENABLED: "true"');
+        expect(withPin).toContain('GRPC_TLS_FINGERPRINT: "ab12cd34"');
+    });
+
+    // A machine that runs our node also runs warp's proxy, and the operator is
+    // told what binds rather than left to find two unexplained ports.
+    it('lists the proxy ports among what the machine binds', () => {
+        const ports = EXTERNAL_NODE_PORTS.map(p => p.port);
+        expect(ports).toContain(25570);
+        expect(ports).toContain(25571);
     });
 });
 

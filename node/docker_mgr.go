@@ -360,9 +360,12 @@ func (dm *DockerManager) sidecarRedisAddr(netID string) (string, error) {
 
 // buildRedisEnv returns the env-slice that the log-shipper inside the container
 // needs to connect to Redis and identify the server stream.
-// MC containers are non-Swarm and may not resolve Swarm DNS, so the address is
-// resolved for their network by the caller, never taken from the node's own.
-func buildRedisEnv(uuid, subServer, redisAddr string) []string {
+//
+// sidecarAddr is resolved for the CONTAINER's network by the caller and is
+// deliberately a parameter, not the node's own package-global redisAddr: those
+// two differ on the warp proxy, where the node's is loopback and a container's
+// is the bridge gateway.
+func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
 	// Redis ACL is mandatory: MC containers always get the per-node SHIPPER user,
 	// scoped to this node's assigned server keys only (no node-scoped keys, no
 	// :cmds), so a compromised container can't reach sibling-tenant data or the
@@ -370,7 +373,7 @@ func buildRedisEnv(uuid, subServer, redisAddr string) []string {
 	user := aclShipperUsername(nodeID)
 	pass := aclShipperPassword(getNodeSecret(), nodeID)
 	env := []string{
-		fmt.Sprintf("REDIS_ADDR=%s", redisAddr),
+		fmt.Sprintf("REDIS_ADDR=%s", sidecarAddr),
 		fmt.Sprintf("REDIS_USER=%s", user),
 		fmt.Sprintf("REDIS_PASS=%s", pass),
 		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
@@ -389,7 +392,7 @@ const linkContainerName = "dylaris_link"
 // to Redis with its own per-node ACL user (derived from nodeSecret, provisioned by
 // Core), and presents the Core-delivered tunnel token + discovery proof. Redis addr
 // uses the SIDECAR (mc) address for the same non-Swarm-DNS reason as MC containers.
-func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, redisAddr string) []string {
+func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []string {
 	// Redis ACL is mandatory: Link always authenticates with its own per-node ACL
 	// user (nodeSecret guaranteed non-nil after the startup bootstrap).
 	user := aclLinkUsername(nodeID)
@@ -398,7 +401,7 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, redisAddr string) []st
 		fmt.Sprintf("NODE_ID=%s", nodeID),
 		fmt.Sprintf("LINK_SECRET=%s", linkSecret),
 		fmt.Sprintf("LINK_DISCOVERY_PROOF=%s", linkDiscoveryProof),
-		fmt.Sprintf("REDIS_ADDR=%s", redisAddr),
+		fmt.Sprintf("REDIS_ADDR=%s", sidecarAddr),
 		fmt.Sprintf("REDIS_USER=%s", user),
 		fmt.Sprintf("REDIS_PASS=%s", pass),
 		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
@@ -413,14 +416,14 @@ func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDisc
 	if err != nil {
 		return err
 	}
-	redisAddr, err := dm.sidecarRedisAddr(netID)
+	sidecarAddr, err := dm.sidecarRedisAddr(netID)
 	if err != nil {
 		return err
 	}
 	cc := &container.Config{
 		Image:    image,
 		Hostname: linkContainerName,
-		Env:      buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, redisAddr),
+		Env:      buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr),
 	}
 	// Unlike MC containers, the Link sidecar has no node-side liveness reconciler,
 	// so Docker's own restart policy is what keeps it alive across an internal crash.
@@ -864,7 +867,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	// Resolved against the network the container joins. In warp-proxy mode that
 	// is always dylaris_net: the proxy leaves mcRedisAddr empty, which turns
 	// tenant isolation off, so there is no second network in play.
-	redisAddr, err := dm.sidecarRedisAddr(netID)
+	sidecarAddr, err := dm.sidecarRedisAddr(netID)
 	if err != nil {
 		return err
 	}
@@ -873,7 +876,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		Image:      config.Docker.Image,
 		WorkingDir: "/data",
 		Hostname:   containerName,
-		Env:        buildRedisEnv(config.UUID, "", redisAddr),
+		Env:        buildRedisEnv(config.UUID, "", sidecarAddr),
 	}
 
 	hc := &container.HostConfig{
@@ -1007,7 +1010,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 
-	redisAddr, err := dm.sidecarRedisAddr(netID)
+	sidecarAddr, err := dm.sidecarRedisAddr(netID)
 	if err != nil {
 		return "", err
 	}
@@ -1017,7 +1020,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		Cmd:        cmdParts,
 		WorkingDir: fmt.Sprintf("/data/%s", config.ActiveSubServer),
 		Hostname:   containerName,
-		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer, redisAddr),
+		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr),
 	}
 
 	binds := []string{fmt.Sprintf("%s:/data", hostServerPath)}

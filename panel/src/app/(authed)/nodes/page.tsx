@@ -122,7 +122,7 @@ function MyNodesInner() {
     // enroll token to become a node. They are minted together here so the deploy
     // snippet is complete - handing over one and a placeholder for the other was
     // the gap this closes.
-    const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string; label: string } | null>(null);
+    const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string; label: string; grpcTlsFingerprint?: string } | null>(null);
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
 
@@ -248,7 +248,9 @@ function MyNodesInner() {
             loadNodeKeys();
             return;
         }
-        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label: draft });
+        // Core returns the fingerprint only while its gRPC channel is TLS, so it
+        // travels with the enroll token and lands in the snippet unchanged.
+        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label: draft, grpcTlsFingerprint: res.grpcTlsFingerprint });
         setNodeLabelDraft('');
         load();
         loadNodeKeys();
@@ -546,6 +548,7 @@ function MyNodesInner() {
                         warpKey={revealedNode.warpKey}
                         enrollUrl={enrollUrl}
                         nodeEnrollToken={revealedNode.token}
+                        grpcTlsFingerprint={revealedNode.grpcTlsFingerprint}
                         nodeId={nodeIdFromLabel(revealedNode.label)}
                         config={deployConfig}
                     />
