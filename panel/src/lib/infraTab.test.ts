@@ -1,19 +1,37 @@
 import { describe, it, expect } from 'vitest';
 import { resolveInfraTab, showInfraTabBar } from './infraTab';
 
-const both = { machines: true, routes: true };
-const machinesOnly = { machines: true, routes: false };
-const routesOnly = { machines: false, routes: true };
-const neither = { machines: false, routes: false };
+// An operator: all three halves.
+const admin = { external: true, machines: true, routes: true };
+// A tenant on a full platform: no external tab.
+const tenant = { external: false, machines: true, routes: true };
+const machinesOnly = { external: false, machines: true, routes: false };
+const routesOnly = { external: false, machines: false, routes: true };
+const neither = { external: false, machines: false, routes: false };
 
 describe('resolveInfraTab', () => {
-    it('defaults to machines', () => {
-        expect(resolveInfraTab(null, both)).toBe('machines');
-        expect(resolveInfraTab('machines', both)).toBe('machines');
+    it('defaults an admin to their own machines', () => {
+        expect(resolveInfraTab(null, admin)).toBe('external');
+        expect(resolveInfraTab('external', admin)).toBe('external');
+    });
+
+    it('defaults a tenant to bring-your-own-node', () => {
+        expect(resolveInfraTab(null, tenant)).toBe('machines');
+        expect(resolveInfraTab('machines', tenant)).toBe('machines');
+    });
+
+    // The external tab is the operator's own hardware. Core refuses
+    // ?scope=external for a non-admin as well, so this is the visible half of a
+    // rule that is enforced on both sides.
+    it('sends a tenant who asks for the external tab to their own', () => {
+        expect(resolveInfraTab('external', tenant)).toBe('machines');
+        expect(resolveInfraTab('external', routesOnly)).toBe('routes');
+        expect(resolveInfraTab('external', neither)).toBeNull();
     });
 
     it('honours an explicit routes request when routes exist', () => {
-        expect(resolveInfraTab('routes', both)).toBe('routes');
+        expect(resolveInfraTab('routes', admin)).toBe('routes');
+        expect(resolveInfraTab('routes', tenant)).toBe('routes');
     });
 
     // First bug: a bookmarked ?tab=routes opened a panel whose two endpoints
@@ -31,19 +49,29 @@ describe('resolveInfraTab', () => {
         expect(resolveInfraTab('machines', routesOnly)).toBe('routes');
     });
 
-    it('is null when neither half exists', () => {
+    // An admin on a platform with BYON off still has their own machines.
+    it('keeps the external tab for an admin with BYON off', () => {
+        const byonOff = { external: true, machines: false, routes: true };
+        expect(resolveInfraTab(null, byonOff)).toBe('external');
+        expect(resolveInfraTab('machines', byonOff)).toBe('external');
+    });
+
+    it('is null when nothing exists', () => {
         expect(resolveInfraTab(null, neither)).toBeNull();
         expect(resolveInfraTab('routes', neither)).toBeNull();
     });
 
     it('treats an unknown tab value as the default', () => {
-        expect(resolveInfraTab('nonsense', both)).toBe('machines');
+        expect(resolveInfraTab('nonsense', admin)).toBe('external');
+        expect(resolveInfraTab('nonsense', tenant)).toBe('machines');
     });
 });
 
 describe('showInfraTabBar', () => {
-    it('appears only when there are two halves to move between', () => {
-        expect(showInfraTabBar(both)).toBe(true);
+    it('appears only when there is more than one place to go', () => {
+        expect(showInfraTabBar(admin)).toBe(true);
+        expect(showInfraTabBar(tenant)).toBe(true);
+        expect(showInfraTabBar({ external: true, machines: false, routes: false })).toBe(false);
         expect(showInfraTabBar(machinesOnly)).toBe(false);
         expect(showInfraTabBar(routesOnly)).toBe(false);
         expect(showInfraTabBar(neither)).toBe(false);

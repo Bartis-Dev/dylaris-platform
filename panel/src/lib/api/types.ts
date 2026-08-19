@@ -298,7 +298,16 @@ export const getNodeStorage = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/sto
 // The secret-free BYON deploy bundle for an already-enrolled node.
 export const getNodeDeployBundle = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/deploy-bundle`);
 
-export const getNodes = () => fetchAPI('/nodes');
+/**
+ * `scope` narrows the list to one kind of machine:
+ *   'external' - the operator's own machines outside the swarm. Admin only;
+ *                Core answers 403 to anyone else, so this is not a UI-side rule.
+ *   'byon'     - machines a tenant brought. Already owner-scoped for a tenant.
+ * Omitted returns everything the caller may see, which is what the node pickers
+ * elsewhere in the panel want.
+ */
+export const getNodes = (scope?: 'external' | 'byon') =>
+    fetchAPI(scope ? `/nodes?scope=${scope}` : '/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
 export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { method: 'DELETE' });

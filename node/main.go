@@ -140,6 +140,24 @@ func hasTag(tags, target string) bool {
 	return false
 }
 
+// tagsWithExternal carries the NODE_EXTERNAL flag into the tags the heartbeat
+// reports, so Core can tell an external machine from a swarm one.
+//
+// It could not before. NODE_EXTERNAL is a node-local variable and the BYON
+// deploy snippet sets it WITHOUT setting NODE_TAGS, so every external node
+// reported empty tags and Node.IsExternal() on the Core side answered false for
+// all of them. That silently disabled the "requires gateway" badge too - it is
+// guarded by exactly that method.
+func tagsWithExternal(tags string, external bool) string {
+	if !external || hasTag(tags, "external") {
+		return tags
+	}
+	if strings.TrimSpace(tags) == "" {
+		return "external"
+	}
+	return tags + ",external"
+}
+
 // applyExternalOverride forces gateway+beam when external; otherwise passes through.
 func applyExternalOverride(routing, file string, external bool) (string, string) {
 	if external {
@@ -408,6 +426,7 @@ func parseConfig() {
 	if nodeExternal {
 		log.Println("Node flagged EXTERNAL — forcing gateway routing + beam file access locally")
 	}
+	nodeTags = tagsWithExternal(nodeTags, nodeExternal)
 	nodeRegion = os.Getenv("NODE_REGION")
 
 	// CLUSTER_SECRET is OPTIONAL: a node authenticates to Redis via its

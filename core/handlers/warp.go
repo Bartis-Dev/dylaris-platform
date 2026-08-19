@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/services"
 	"dylaris-core/store"
+	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
 )
@@ -720,9 +721,14 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
+	// Required, and to a fixed shape. It used to fall back to "BYON node" for
+	// everyone who left it blank, which made a list of machines unreadable the
+	// moment there was more than one - and the name is also what the deploy
+	// snippet slugs into NODE_ID, so it has to be safe there.
 	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = "BYON node"
+	if !validate.IsLocationName(name) {
+		sendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
+		return
 	}
 
 	nodeID, err := generateNodeWarpIdentity()

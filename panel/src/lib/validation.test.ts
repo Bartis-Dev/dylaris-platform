@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isUsername, isEmail, isServerName, isPackSlug, isSemver, isMcVersion, sanitizeServerName, clampInt } from './validation';
+import { isUsername, isEmail, isServerName, isPackSlug, isSemver, isMcVersion, isLocationName, sanitizeServerName, clampInt } from './validation';
 
 describe('isUsername (mirrors validate.Username)', () => {
     it('accepts valid handles', () => {
@@ -51,5 +51,26 @@ describe('clampInt', () => {
         expect(clampInt(99, 0, 10)).toBe(10);
         expect(clampInt('abc', 256)).toBe(256);
         expect(clampInt(1024, 256)).toBe(1024);
+    });
+});
+
+describe('isLocationName (mirrors validate.LocationName)', () => {
+    it('accepts what people actually call a machine', () => {
+        for (const s of ['home-desktop', 'pc01', 'a1b2', 'twenty-chars-exactly']) {
+            expect(isLocationName(s)).toBe(true);
+        }
+    });
+    it('rejects too short, too long and empty', () => {
+        for (const s of ['', 'pc1', 'twenty-one-chars-here']) expect(isLocationName(s)).toBe(false);
+    });
+    // A leading hyphen survives into NODE_ID and reads as a flag to anything
+    // that shells out; a trailing one is just noise.
+    it('rejects a hyphen at either end', () => {
+        for (const s of ['-leading', 'trailing-', '-', '----']) expect(isLocationName(s)).toBe(false);
+    });
+    it('rejects anything outside letters, digits and hyphen', () => {
+        for (const s of ['has space', 'under_score', 'dot.name', 'slash/name', 'colon:name']) {
+            expect(isLocationName(s)).toBe(false);
+        }
     });
 });

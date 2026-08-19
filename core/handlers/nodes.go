@@ -56,6 +56,29 @@ func (h *NodeHandler) nodeExists(nodeID int) bool {
 	return err == nil
 }
 
+// The infrastructure page has one tab per KIND of machine, and these are the
+// two kinds it can name. What is left over - a swarm host, the operator's own
+// in-cluster hardware - belongs on neither and stays on /infrastructure.
+//
+// owner_id is the reliable half: it is written at enroll time and nothing else
+// sets it. The external tag is reported by the node itself; before 2026-08-19
+// no external node reported it at all, so a machine that has not reconnected
+// since then is missing from the external tab until it does.
+func isExternalPlatformNode(n models.Node) bool { return n.IsExternal() && n.OwnerID == nil }
+func isBYONNode(n models.Node) bool             { return n.OwnerID != nil }
+
+// filterNodes keeps the nodes keep() accepts, preserving order. Returns an
+// empty slice rather than nil so the JSON stays [] and never null.
+func filterNodes(nodes []models.Node, keep func(models.Node) bool) []models.Node {
+	out := make([]models.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if keep(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
@@ -89,6 +112,29 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		nodes = owned
+	}
+
+	// ?scope= narrows the list to one KIND of machine. The infrastructure page
+	// has a tab per kind and an admin sees all three, so without this an admin
+	// got the whole fleet - swarm hosts included - under "my machines".
+	//
+	// Enforced here rather than filtered in the panel: the external tab is the
+	// operator's own machines, and a tab a non-admin can reach by editing the
+	// URL is not admin-only in any sense that matters.
+	if scope := strings.TrimSpace(r.URL.Query().Get("scope")); scope != "" {
+		switch scope {
+		case "external":
+			if !admin {
+				sendJSONError(w, "Forbidden", 403)
+				return
+			}
+			nodes = filterNodes(nodes, isExternalPlatformNode)
+		case "byon":
+			nodes = filterNodes(nodes, isBYONNode)
+		default:
+			sendJSONError(w, "Unknown scope", 400)
+			return
+		}
 	}
 
 	// Derive the unusable flag at response time (no DB column needed): an

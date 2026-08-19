@@ -50,6 +50,20 @@ var (
 	// then lower alnum / - / _ .
 	Label = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
+	// LocationName is the name a customer gives one of their machines on the
+	// infrastructure page: length 4-20, letters / digits / hyphen, and it may
+	// neither start nor end with a hyphen.
+	//
+	// The hyphen is allowed on purpose - "home-desktop" is how people name a
+	// machine - but only in the middle. A LEADING hyphen is the one that bites:
+	// the name is slugged into NODE_ID and lands in a compose file, where
+	// anything that shells out reads "-foo" as a flag. The panel's
+	// nodeIdFromLabel already stripped those, and this makes the two agree
+	// instead of one silently rewriting what the other accepted.
+	//
+	// 4 is a floor against "pc"; 20 keeps it readable in a list.
+	LocationName = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{2,18})[a-zA-Z0-9]$`)
+
 	// Email is a light structural check. (Was registration.go emailRegex.)
 	Email = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
@@ -69,6 +83,7 @@ func IsSubServerName(s string) bool     { return SubServerName.MatchString(s) }
 func IsServerUUID(s string) bool        { return ServerUUID.MatchString(s) }
 func IsSlug(s string) bool              { return Slug.MatchString(s) }
 func IsLabel(s string) bool             { return Label.MatchString(s) }
+func IsLocationName(s string) bool      { return LocationName.MatchString(s) }
 func IsEmail(s string) bool             { return Email.MatchString(s) }
 func IsMcVersion(s string) bool         { return McVersion.MatchString(s) }
 func IsMinecraftUsername(s string) bool { return MinecraftUsername.MatchString(s) }

@@ -159,6 +159,9 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
                         onClick={() => { setOpen(false); onNewServer?.(); }}
                         onNavigate={navigate}
                     />
+                    {/* An explicit tab, not the bare page: /nodes opens on
+                        whichever tab the reader defaults to, and those two are
+                        not the same person's answer. */}
                     <MenuEntry
                         icon={<HardDrive size={15} />}
                         title={isAdmin ? 'Add a node' : 'Add your own machine'}
@@ -166,7 +169,7 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
                             ? 'How to join a machine to the fleet.'
                             : 'Run servers on your own hardware, connected through the overlay.'}
                         option={node}
-                        onClick={() => navigate('/nodes')}
+                        onClick={() => navigate(isAdmin ? '/nodes?tab=external' : '/nodes?tab=machines')}
                         onNavigate={navigate}
                     />
                     {/* Only where routing exists at all - otherwise the entry is

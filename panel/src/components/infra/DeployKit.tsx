@@ -28,6 +28,44 @@ export function CopyButton({ value, label, className }: { value: string; label?:
     );
 }
 
+/**
+ * A secret shown exactly once. Blurred until asked for, because it sits on a
+ * page someone may well have open while screen-sharing a deploy - and because
+ * it is not the thing they came for: both keys are already filled into the
+ * compose file below, so the normal path never reads them at all.
+ *
+ * Still fully retrievable in the moment: only a hash is stored, so this is the
+ * one chance to save it.
+ */
+export function SecretField({ label, value, note }: { label: string; value: string; note?: string }) {
+    const [shown, setShown] = useState(false);
+    return (
+        <div className="space-y-1">
+            <span className="mono-label">{label}</span>
+            <div className="flex items-center gap-2">
+                <button
+                    type="button"
+                    onClick={() => setShown(s => !s)}
+                    aria-label={shown ? `Hide ${label}` : `Reveal ${label}`}
+                    aria-pressed={shown}
+                    title={shown ? 'Hide' : 'Click to reveal'}
+                    className="group flex-1 min-w-0 text-left rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2 hover:border-(--base-04) transition-colors cursor-pointer"
+                >
+                    <code
+                        className={`input-mono block break-all text-xs text-(--base-08) transition-[filter] motion-reduce:transition-none ${
+                            shown ? 'select-all' : 'blur-[5px] select-none'
+                        }`}
+                    >
+                        {value}
+                    </code>
+                </button>
+                <CopyButton value={value} />
+            </div>
+            {note && <p className="text-xs text-(--base-07)">{note}</p>}
+        </div>
+    );
+}
+
 /** A copyable code block. Used for both the compose file and the CLI steps. */
 export function Snippet({ title, body }: { title: string; body: string }) {
     return (

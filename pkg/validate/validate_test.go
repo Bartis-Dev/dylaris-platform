@@ -222,3 +222,36 @@ func TestResourceBounds(t *testing.T) {
 		t.Error("hostCPU 0 should skip the CPU ceiling")
 	}
 }
+
+func TestLocationName(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"home-desktop", true},
+		{"pc01", true},
+		{"a1b2", true},
+		{"twenty-chars-exactly", true}, // 20
+		{"pc1", false},                 // 3, under the floor
+		{"", false},
+		{"twenty-one-chars-here", false}, // 21
+		{"-leading", false},              // becomes a flag once slugged into NODE_ID
+		{"trailing-", false},
+		{"-", false},
+		{"----", false},
+		{"has space", false},
+		{"under_score", false},
+		{"dot.name", false},
+		{"slash/name", false},
+		{"colon:name", false}, // would split a Redis key
+		{"emoji\U0001F600x", false},
+	}
+	for _, c := range cases {
+		if got := IsLocationName(c.in); got != c.want {
+			t.Errorf("IsLocationName(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+	if len("twenty-chars-exactly") != 20 {
+		t.Fatal("the boundary case is not actually 20 characters")
+	}
+}

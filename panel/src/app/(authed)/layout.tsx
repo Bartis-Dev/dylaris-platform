@@ -97,11 +97,14 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     // otherwise have no way in at all, now that protected addresses no longer
     // hang off the account dropdown.
     //
-    // Admins included, for the same reason: they reached protected addresses
-    // through that dropdown too, and the fleet-node instructions live on this
-    // page. Shown without an entitlement as well, since the page explains what
-    // is missing - more use than a link that silently is not there.
-    const canSeeMyInfra = featureFlags.byon || gatewayEnabled;
+    // Admins ALWAYS, and not only for that reason: the page's third tab is the
+    // operator's own external machines, which exist whether or not either
+    // feature is on. Gating an admin on featureFlags.byon || gatewayEnabled left
+    // that tab reachable only by typing the URL.
+    //
+    // Shown without an entitlement as well, since the page explains what is
+    // missing - more use than a link that silently is not there.
+    const canSeeMyInfra = user.isAdmin || featureFlags.byon || gatewayEnabled;
 
     return (
         <SidebarCollapseProvider>

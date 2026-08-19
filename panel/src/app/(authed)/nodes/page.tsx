@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-    HardDrive, Globe, Plus, Trash2, AlertTriangle, Clock,
+    HardDrive, Globe, Server, Plus, Trash2, AlertTriangle, Clock,
     ExternalLink, ShoppingCart,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -18,37 +18,42 @@ import type { NodeEnrollToken } from '@/lib/api/types';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeIdFromLabel } from '@/lib/warpDeploy';
+import { isLocationName } from '@/lib/validation';
 import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
 import { resolveInfraTab, showInfraTabBar, type InfraTab } from '@/lib/infraTab';
-import { DeployKit, NotIncluded, CopyButton, usageLabel } from '@/components/infra/DeployKit';
+import { DeployKit, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
-import AddNodeModal from '@/components/AddNodeModal';
+import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 
 // ---------------------------------------------------------------------------
-// "My infrastructure" - the TENANT side of bring-your-own-node and route-only.
+// "My infrastructure" - hardware that is not in the cluster, in three tabs.
 //
-// Two DIFFERENT products, one per tab:
-//
-//   Bring your own node - Dylaris runs Minecraft servers ON your machine.
-//   Route only          - you run the server; Dylaris gives it a protected
+//   External nodes      - the OPERATOR's own machines outside the swarm.
+//                         Admin only, and their default.
+//   Bring your own node - Dylaris runs Minecraft servers ON a customer's
+//                         machine.
+//   Protected addresses - the customer runs the server; Dylaris gives it an
 //                         address and absorbs the attack traffic.
 //
-// They were two PAGES until the split stopped following a seam in the product:
-// route-only was minted here AND on /routes, with the deploy snippet on one and
-// the address form on the other. The route-only half lives in RouteOnlyPanel
-// now and owns that whole sequence; this file keeps the machines.
+// The first two are different sets of machines with different owners, not two
+// views of one list, which is why they are separate tabs rather than a filter.
+// Before they were split, an admin opening "my machines" got the entire fleet -
+// every swarm host included - because the node list was only ever scoped for
+// non-admins. Core now scopes it with ?scope=, so the split is enforced where it
+// matters and not only where it is drawn.
 //
-// Both are per-LOCATION and both can be held several times over: a customer with
-// a box at home and one in a datacenter needs one of each. So neither tab is a
+// The last two were two PAGES until the split stopped following a seam in the
+// product: route-only was minted here AND on /routes, with the deploy snippet on
+// one and the address form on the other.
+//
+// Both customer-facing halves are per-LOCATION and can be held several times
+// over: a box at home and one in a datacenter needs one of each. So neither is a
 // yes/no - each shows how many are in use against the plan's cap, and the create
 // control disables on the cap rather than on the entitlement alone.
 //
 // The store link is ALWAYS present, entitled or not: someone who already has
 // BYON is exactly the person who buys a second one.
-//
-// Everything here uses already tenant-scoped endpoints (/api/nodes,
-// /api/nodes/enroll-token, /api/warp/link-kits), so no admin route is widened.
 // ---------------------------------------------------------------------------
 
 interface OwnNode {
@@ -61,27 +66,43 @@ interface OwnNode {
     region?: string;
 }
 
+const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
+
 function MyNodesInner() {
     const { featureFlags, entitlement, user, gatewayEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
 
-    // Which halves this PLATFORM has at all - separate from whether this ACCOUNT
-    // is entitled to them, which the panels below answer for themselves.
-    const have = { machines: featureFlags.byon, routes: gatewayEnabled };
+    const isAdmin = user?.isAdmin ?? false;
+
+    // What this reader HAS - separate from whether this ACCOUNT is entitled to
+    // it, which the panels below answer for themselves.
+    const have = { external: isAdmin, machines: featureFlags.byon, routes: gatewayEnabled };
 
     // The tab lives in the URL so Create can deep-link straight into the half it
-    // means, and so a reload or a shared link lands where it left off. It used
-    // to be two separate pages with a bar that navigated between them, which is
-    // what made one product feel like two.
-    const tab = resolveInfraTab(searchParams.get('tab'), have);
+    // means, and so a reload or a shared link lands where it left off.
+    const requestedTab = searchParams.get('tab');
+    const tab = resolveInfraTab(requestedTab, have);
     const selectTab = useCallback((next: InfraTab) => {
-        router.replace(next === 'routes' ? '/nodes?tab=routes' : '/nodes', { scroll: false });
+        router.replace(`/nodes?tab=${next}`, { scroll: false });
     }, [router]);
 
-    const [showAddFleetNode, setShowAddFleetNode] = useState(false);
+    // A tab that was asked for and not granted - a tenant typing ?tab=external -
+    // gets the URL corrected too, not just different content underneath it. An
+    // address bar that still says "external" while showing something else is the
+    // kind of thing someone reports as a bug in the wrong place.
+    useEffect(() => {
+        if (!tab || !requestedTab || requestedTab === tab) return;
+        router.replace(`/nodes?tab=${tab}`, { scroll: false });
+    }, [tab, requestedTab, router]);
 
     const [nodes, setNodes] = useState<OwnNode[]>([]);
+    // Its own fetch, so its own loading flag and its own read time. Sharing the
+    // BYON list's would have this panel claim "no external machine" the moment
+    // the OTHER request came back.
+    const [external, setExternal] = useState<{ nodes: OwnNode[]; loading: boolean; readAt: number }>(
+        () => ({ nodes: [], loading: true, readAt: Date.now() })
+    );
     const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
     // The node cap is a LIMIT, not an entitlement: entitlement answers "may
     // they", limits answer "how many". They live in different endpoints because
@@ -105,7 +126,6 @@ function MyNodesInner() {
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
 
-
     // Overlay addresses for the deploy snippets. Resolved by Core, which is on
     // that network; there is nowhere else a customer could look them up.
     const [deployAddrs, setDeployAddrs] = useState<WarpDeployAddrs | null>(null);
@@ -119,7 +139,6 @@ function MyNodesInner() {
     // reachable from outside - guessing it would be worse.
     const [enrollUrl, setEnrollUrl] = useState('<core-url>');
 
-    const isAdmin = user?.isAdmin ?? false;
     const suspended = entitlement?.source === 'suspended';
     // Admins bypass the entitlement gate: their own account may hold no plan at
     // all, and locking the operator out of their own infrastructure page is not a
@@ -131,7 +150,7 @@ function MyNodesInner() {
     const entitlementKnown = entitlement !== null || isAdmin;
 
     const load = useCallback(async () => {
-        const [n, t] = await Promise.all([getNodes(), listEnrollTokens()]);
+        const [n, t] = await Promise.all([getNodes('byon'), listEnrollTokens()]);
         if (n.success && Array.isArray(n.nodes)) setNodes(n.nodes as OwnNode[]);
         if (t.success && Array.isArray(t.tokens)) setTokens(t.tokens);
         setNodesReadAt(Date.now());
@@ -139,6 +158,24 @@ function MyNodesInner() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    // Only an admin may ask for this scope; Core answers 403 to anyone else, so
+    // there is no point spending the request.
+    useEffect(() => {
+        if (!isAdmin) {
+            setExternal({ nodes: [], loading: false, readAt: Date.now() });
+            return;
+        }
+        let cancelled = false;
+        getNodes('external').then(res => {
+            if (cancelled) return;
+            const list = res.success && Array.isArray(res.nodes) ? (res.nodes as OwnNode[]) : [];
+            setExternal({ nodes: list, loading: false, readAt: Date.now() });
+        }).catch(() => {
+            if (!cancelled) setExternal({ nodes: [], loading: false, readAt: Date.now() });
+        });
+        return () => { cancelled = true; };
+    }, [isAdmin]);
 
     useEffect(() => {
         if (typeof window !== 'undefined') {
@@ -180,26 +217,38 @@ function MyNodesInner() {
         }
     }, [gatewayEnabled]);
 
+    // Required and to a fixed shape. It used to default to "my machine" for
+    // everyone who left it blank, which made a list of machines unreadable the
+    // moment there was more than one - and the name is what the snippet slugs
+    // into NODE_ID, where a leading hyphen reads as a flag. Core rejects the same
+    // shapes; this is the version that says so before the round trip.
+    const draft = nodeLabelDraft.trim();
+    const nameValid = isLocationName(draft);
+    const nameError = draft !== '' && !nameValid;
+
     const handleMintNodeKey = async () => {
+        if (!nameValid) {
+            setError(`Name this location first — ${NAME_RULE}`);
+            return;
+        }
         setMinting(true);
         setError('');
-        const label = nodeLabelDraft.trim() || 'my machine';
         // Warp key first: it is the one with a cap, so a refusal happens before an
         // enroll token is created that nobody could use.
-        const warp = await mintNodeWarpKey(label);
+        const warp = await mintNodeWarpKey(draft);
         if (!warp.success || !warp.warp_key) {
             setMinting(false);
             setError(warp.message || 'Could not create the overlay key.');
             return;
         }
-        const res = await mintEnrollToken({ label, expiresDays: 7 });
+        const res = await mintEnrollToken({ label: draft, expiresDays: 7 });
         setMinting(false);
         if (!res.success || !res.token) {
             setError(res.message || 'The overlay key was created but the enrollment key failed. Revoke the key below and try again.');
             loadNodeKeys();
             return;
         }
-        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label });
+        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label: draft });
         setNodeLabelDraft('');
         load();
         loadNodeKeys();
@@ -225,9 +274,9 @@ function MyNodesInner() {
         load();
     };
 
-    // Only when NEITHER half exists. Returning on BYON alone stranded route-only
+    // Only when NOTHING is available. Returning on BYON alone stranded route-only
     // customers on a platform with BYON off: the top bar offers this page
-    // whenever either half exists, and they would land on "your own hardware is
+    // whenever any part exists, and they would land on "your own hardware is
     // turned off" with the routes tab unreachable behind it.
     if (tab === null) {
         return (
@@ -249,18 +298,19 @@ function MyNodesInner() {
     const nodesAtCap = typeof effectiveNodeLimit === 'number' && effectiveNodeLimit > 0 && nodesUsed >= effectiveNodeLimit;
 
     const TABS: { id: InfraTab; label: string; icon: typeof HardDrive }[] = [
-        { id: 'machines', label: 'My machines', icon: HardDrive },
+        { id: 'external', label: 'External nodes', icon: Server },
+        { id: 'machines', label: 'Bring your own node', icon: HardDrive },
         { id: 'routes', label: 'Protected addresses', icon: Globe },
-    ];
+    ].filter(t => have[t.id as keyof typeof have]) as { id: InfraTab; label: string; icon: typeof HardDrive }[];
 
     return (
-        <div className="p-6 max-w-4xl space-y-6 overflow-y-auto">
+        <div className="p-6 max-w-6xl space-y-6 overflow-y-auto">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h1 className="text-lg font-display font-bold text-(--base-09) mb-1">My infrastructure</h1>
                     <p className="text-sm text-(--base-07) max-w-2xl">
-                        Two ways to use hardware you already own. Both connect outwards through an
-                        encrypted tunnel, so neither needs a public IP or port forwarding — and you can
+                        Hardware that is not in the cluster. Everything here connects outwards through an
+                        encrypted tunnel, so nothing needs a public IP or port forwarding — and you can
                         hold several of each, one per location.
                     </p>
                 </div>
@@ -274,7 +324,7 @@ function MyNodesInner() {
             </div>
 
             {/* A bar with one tab is decoration. It appears only where the reader
-                actually has two halves to move between. */}
+                actually has somewhere else to go. */}
             {showInfraTabBar(have) && (
                 <div className="flex gap-1 border-b border-(--base-03)">
                     {TABS.map(t => {
@@ -313,7 +363,9 @@ function MyNodesInner() {
                 </div>
             )}
 
-            {tab === 'routes' ? (
+            {tab === 'external' ? (
+                <ExternalNodesPanel nodes={external.nodes} loading={external.loading} readAt={external.readAt} />
+            ) : tab === 'routes' ? (
                 <RouteOnlyPanel
                     enrollUrl={enrollUrl}
                     addrs={deployAddrs}
@@ -323,8 +375,10 @@ function MyNodesInner() {
                     suspended={suspended}
                 />
             ) : (
-            <>
-            {/* ── Bring your own node ─────────────────────────────────────── */}
+            /* The keys move into a column of their own once there are any, rather
+               than pushing the form and the machine list down the page. There is
+               room to the side, and the compose snippet is the widest thing here. */
+            <div className={revealedNode ? 'grid gap-6 lg:grid-cols-2 items-start' : ''}>
             <section className="card p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -345,21 +399,31 @@ function MyNodesInner() {
                     <NotIncluded what="bring your own node" storeUrl={storeUrl} suspended={suspended} />
                 ) : (
                     <>
-                        <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                        <div className="flex flex-col sm:flex-row gap-2 sm:items-start">
                             <div className="flex-1 flex flex-col gap-[5px]">
-                                <label className="input-label">Name this location</label>
+                                <label htmlFor="location-name" className="input-label">Name this location</label>
                                 <input
+                                    id="location-name"
                                     className="input-field w-full"
                                     value={nodeLabelDraft}
                                     onChange={e => setNodeLabelDraft(e.target.value)}
                                     placeholder="home-desktop"
+                                    maxLength={20}
+                                    aria-invalid={nameError || undefined}
+                                    aria-describedby="location-name-rule"
                                     disabled={nodesAtCap || suspended}
                                 />
+                                <p
+                                    id="location-name-rule"
+                                    className={`text-xs ${nameError ? 'text-(--error-light)' : 'text-(--base-06)'}`}
+                                >
+                                    {NAME_RULE}
+                                </p>
                             </div>
                             <button
                                 onClick={handleMintNodeKey}
-                                disabled={minting || nodesAtCap || suspended}
-                                className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                                disabled={minting || !nameValid || nodesAtCap || suspended}
+                                className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed sm:mt-[22px]"
                                 title={nodesAtCap ? 'You have used every node your plan includes' : undefined}
                             >
                                 <Plus size={14} /> {minting ? 'Creating…' : 'Add a machine'}
@@ -374,51 +438,6 @@ function MyNodesInner() {
                                     connect a second location.
                                 </span>
                             </p>
-                        )}
-
-                        {/* Shown once. The key is not retrievable afterwards, so the
-                            copy has to say so before the user closes it. */}
-                        {revealedNode && (
-                            <div className="rounded-md border border-(--accent-border) bg-(--accent-ghost) p-4 space-y-3">
-                                <div className="text-sm font-medium text-(--base-09)">
-                                    Your machine&apos;s two keys. Both are shown once.
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="mono-label">Overlay key (warp API_KEY)</label>
-                                    <div className="flex items-center gap-2">
-                                        <code className="input-mono flex-1 min-w-0 break-all bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) select-all">
-                                            {revealedNode.warpKey}
-                                        </code>
-                                        <CopyButton value={revealedNode.warpKey} />
-                                    </div>
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="mono-label">Enrollment key (NODE_ENROLL_TOKEN)</label>
-                                    <div className="flex items-center gap-2">
-                                        <code className="input-mono flex-1 min-w-0 break-all bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) select-all">
-                                            {revealedNode.token}
-                                        </code>
-                                        <CopyButton value={revealedNode.token} />
-                                    </div>
-                                    <p className="text-xs text-(--base-07)">
-                                        It expires in 7 days and can be used once.
-                                    </p>
-                                </div>
-                                {/* Both are already filled into the snippet below,
-                                    so the usual copy-paste needs neither of the
-                                    fields above - they are there for the record. */}
-                                <DeployKit
-                                    kind="node"
-                                    warpKey={revealedNode.warpKey}
-                                    enrollUrl={enrollUrl}
-                                    nodeEnrollToken={revealedNode.token}
-                                    nodeId={nodeIdFromLabel(revealedNode.label)}
-                                    addrs={deployAddrs}
-                                />
-                                <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
-                                    I saved them
-                                </button>
-                            </div>
                         )}
 
                         {nodeKeys.length > 0 && (
@@ -503,21 +522,40 @@ function MyNodesInner() {
                 )}
             </section>
 
-            {/* Joining a machine to the FLEET is an operator action and a
-                different flow from a tenant enrolling theirs. It used to hang
-                off the sidebar's Create menu, which is why one entry opened a
-                modal and its neighbour opened a page. */}
-            {isAdmin && (
-                <div className="flex justify-end">
-                    <button type="button" onClick={() => setShowAddFleetNode(true)} className="btn btn-secondary btn-sm">
-                        <Plus size={13} /> Add a fleet node
+            {/* Shown once. The keys are stored as hashes, so this is the only
+                moment they exist anywhere the reader can see them - the copy has
+                to say so before they close it. */}
+            {revealedNode && (
+                <aside className="card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) lg:sticky lg:top-6">
+                    <div className="text-sm font-medium text-(--base-09)">
+                        {revealedNode.label} — two keys, shown once.
+                    </div>
+                    <p className="text-xs text-(--base-07)">
+                        Both are already filled into the compose file below, so the normal path never
+                        needs them by hand. They are blurred because this page is one people have open
+                        while sharing a screen; click either to read it.
+                    </p>
+                    <SecretField label="Overlay key (warp API_KEY)" value={revealedNode.warpKey} />
+                    <SecretField
+                        label="Enrollment key (NODE_ENROLL_TOKEN)"
+                        value={revealedNode.token}
+                        note="It expires in 7 days and can be used once."
+                    />
+                    <DeployKit
+                        kind="node"
+                        warpKey={revealedNode.warpKey}
+                        enrollUrl={enrollUrl}
+                        nodeEnrollToken={revealedNode.token}
+                        nodeId={nodeIdFromLabel(revealedNode.label)}
+                        addrs={deployAddrs}
+                    />
+                    <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
+                        I saved them
                     </button>
-                </div>
+                </aside>
             )}
-            </>
+            </div>
             )}
-
-            {showAddFleetNode && <AddNodeModal onClose={() => setShowAddFleetNode(false)} />}
         </div>
     );
 }
@@ -529,7 +567,7 @@ function MyNodesInner() {
 export default function MyNodesPage() {
     return (
         <Suspense fallback={
-            <div className="p-6 max-w-4xl space-y-6">
+            <div className="p-6 max-w-6xl space-y-6">
                 <SkeletonCard height="h-10" />
                 <SkeletonCard height="h-64" />
             </div>

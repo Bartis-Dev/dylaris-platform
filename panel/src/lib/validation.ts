@@ -24,6 +24,12 @@ export const PACK_SLUG = /^[a-z0-9]([a-z0-9_-]{1,62}[a-z0-9])?$/;
 // Node label / tag item. Mirrors validate.Label.
 export const NODE_LABEL = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
+// The name a customer gives one of their own machines. Mirrors
+// validate.LocationName: 4-20 characters, letters / digits / hyphen, and no
+// hyphen at either end - a LEADING one would read as a flag once the name is
+// slugged into NODE_ID and pasted into a compose file.
+export const LOCATION_NAME = /^[a-zA-Z0-9]([a-zA-Z0-9-]{2,18})[a-zA-Z0-9]$/;
+
 // Semver-ish version (e.g. the beam minVersion): 1.2.3 with optional pre/build.
 export const SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
@@ -46,6 +52,7 @@ export const isServerName = (s: string) => SERVER_NAME.test(s);
 export const isPackSlug = (s: string) => PACK_SLUG.test(s);
 export const isSemver = (s: string) => SEMVER.test(s);
 export const isMcVersion = (s: string) => MC_VERSION.test(s);
+export const isLocationName = (s: string) => LOCATION_NAME.test(s);
 
 // sanitizeServerName coerces a raw name into the SERVER_NAME alphabet (the
 // create-time behaviour): strip invalid chars (spaces are kept), trim to 50,
