@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -44,6 +45,16 @@ func TestIsDemoAccountChecked(t *testing.T) {
 		{
 			name:     "no demo account configured",
 			state:    &AppState{StoreEnabled: true, Store: &demoFakeStore{value: ""}},
+			userID:   demoID,
+			wantDemo: false,
+		},
+		{
+			// The setting is never seeded, so this is what EVERY install looks
+			// like until someone nominates a demo account. Reporting it as an
+			// unknown made AuthMiddleware 503 every non-admin write on the whole
+			// hosted panel.
+			name:     "the setting row does not exist",
+			state:    &AppState{StoreEnabled: true, Store: &demoFakeStore{err: sql.ErrNoRows}},
 			userID:   demoID,
 			wantDemo: false,
 		},

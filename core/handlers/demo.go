@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,6 +54,15 @@ func isDemoAccountChecked(s *AppState, userID string) (bool, error) {
 	}
 	v, err := s.Store.GetSetting(demoAccountUUIDSetting)
 	if err != nil {
+		// A missing row is the answer "no demo account is designated", not a
+		// failed read. The setting is never seeded, so treating ErrNoRows as an
+		// error made AuthMiddleware refuse EVERY non-admin write on any hosted
+		// install where nobody had ever nominated a demo account - the whole
+		// tenant side of the panel, 503, until an unrelated feature was
+		// configured. Same convention as the node admission gate.
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
 		return false, err
 	}
 	return v != "" && v == userID, nil
