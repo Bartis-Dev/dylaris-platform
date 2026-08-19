@@ -7,6 +7,7 @@ import {
   getStatsHistory, getDiskUsage, getBackupConfig, getBackupUsage,
 } from '@/lib/api';
 import { createEventSource } from '@/lib/sse';
+import { latestValue } from '@/lib/statsSeries';
 
 import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive } from 'lucide-react';
 
@@ -152,7 +153,10 @@ export default function OverviewView({ server }: OverviewViewProps) {
   const ramKey: keyof ServerStats = chartData.some(d => typeof d.javaHeapUsed === 'number' && d.javaHeapUsed > 0)
     ? 'javaHeapUsed'
     : 'memUsed';
-  const latestRamMb = chartData.length > 0 ? ((chartData[chartData.length - 1] as any)[ramKey] ?? 0) : 0;
+  // The LAST sample that carries a value, not simply the last sample: the heap
+  // field is omitted on any tick where no fresh GC reading was available, so
+  // reading the final point alone showed a live server as using 0 MB.
+  const latestRamMb = latestValue(chartData, ramKey);
 
   const tooltipStyle = {
     backgroundColor: 'var(--base-02)',

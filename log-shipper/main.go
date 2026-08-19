@@ -45,11 +45,22 @@ const (
 	batchInterval = 200 * time.Millisecond
 	maxStreamLen  = 1000
 	lineChanSize  = 512
-	// Key TTL: long enough that a low-GC-frequency server (large heap, idle
-	// MC) still has a fresh-ish value when the node samples at 2s. If GC
-	// hasn't fired in 5min the value is effectively stale anyway, and the
-	// panel falls back to the container metric.
-	heapKeyTTL = 5 * time.Minute
+	// Key TTL.
+	//
+	// Long, because the FALLBACK is worse than a stale value. Once this key
+	// expires the panel shows the container metric instead, and that number is
+	// known to be wrong: the platform forces Xms=Xmx and Java never returns
+	// heap to the OS, so it sits at the limit for as long as the server runs.
+	// An idle MC server with a large heap can easily go minutes between young
+	// GCs, which is exactly when the reader is looking at a quiet server and
+	// being told it is out of memory.
+	//
+	// The post-GC live heap is also the slowest-changing number here: on an
+	// idle server it is nearly constant, so an old reading is close to right.
+	// A restart does NOT inherit the previous run's value - the key is deleted
+	// at startup - so the only thing this TTL still bounds is a server that
+	// stopped without the shipper getting to clean up.
+	heapKeyTTL = time.Hour
 
 	// How often the RCON-filter toggle is re-read. A console setting does not
 	// need to be instant, and this bounds the extra Redis load to one GET per
@@ -461,6 +472,12 @@ func main() {
 
 	rdb := connectRedis()
 	defer rdb.Close()
+
+	// Drop the previous run's heap reading. A new container can mean a new
+	// -Xmx, and the value only becomes right again at the first GC - which on a
+	// large heap is not immediate. Clearing it here is what makes the long
+	// heapKeyTTL safe: nothing inherits a value across a restart.
+	rdb.Del(context.Background(), heapKey)
 
 	rconFilter := &rconFilterFlag{}
 
