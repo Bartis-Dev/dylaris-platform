@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     HardDrive, Globe, Plus, Trash2, AlertTriangle, Clock,
@@ -59,7 +59,7 @@ interface OwnNode {
 
 type InfraTab = 'machines' | 'routes';
 
-export default function MyNodesPage() {
+function MyNodesInner() {
     const { featureFlags, entitlement, user, gatewayEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -508,5 +508,22 @@ export default function MyNodesPage() {
 
             {showAddFleetNode && <AddNodeModal onClose={() => setShowAddFleetNode(false)} />}
         </div>
+    );
+}
+
+// useSearchParams needs a Suspense boundary, the same as every other page here
+// that reads one. /nodes builds dynamic today so it slipped through, but the
+// boundary is what keeps that true: without it, a later change that makes the
+// route statically analyzable fails the build instead of the page.
+export default function MyNodesPage() {
+    return (
+        <Suspense fallback={
+            <div className="p-6 max-w-4xl space-y-6">
+                <SkeletonCard height="h-10" />
+                <SkeletonCard height="h-64" />
+            </div>
+        }>
+            <MyNodesInner />
+        </Suspense>
     );
 }
