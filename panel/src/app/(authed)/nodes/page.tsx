@@ -20,6 +20,7 @@ import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeIdFromLabel } from '@/lib/warpDeploy';
 import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
+import { resolveInfraTab, showInfraTabBar, type InfraTab } from '@/lib/infraTab';
 import { DeployKit, NotIncluded, CopyButton, usageLabel } from '@/components/infra/DeployKit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import AddNodeModal from '@/components/AddNodeModal';
@@ -60,23 +61,20 @@ interface OwnNode {
     region?: string;
 }
 
-type InfraTab = 'machines' | 'routes';
-
 function MyNodesInner() {
     const { featureFlags, entitlement, user, gatewayEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
 
+    // Which halves this PLATFORM has at all - separate from whether this ACCOUNT
+    // is entitled to them, which the panels below answer for themselves.
+    const have = { machines: featureFlags.byon, routes: gatewayEnabled };
+
     // The tab lives in the URL so Create can deep-link straight into the half it
     // means, and so a reload or a shared link lands where it left off. It used
     // to be two separate pages with a bar that navigated between them, which is
     // what made one product feel like two.
-    // Resolved against gatewayEnabled, not taken from the URL as given. Hiding
-    // the tab bar is not enough: a bookmark or an old link to ?tab=routes would
-    // still open a panel whose two endpoints 409 without gateway routing, so
-    // the reader gets failures instead of the product simply not being there.
-    const tab: InfraTab =
-        gatewayEnabled && searchParams.get('tab') === 'routes' ? 'routes' : 'machines';
+    const tab = resolveInfraTab(searchParams.get('tab'), have);
     const selectTab = useCallback((next: InfraTab) => {
         router.replace(next === 'routes' ? '/nodes?tab=routes' : '/nodes', { scroll: false });
     }, [router]);
@@ -227,12 +225,17 @@ function MyNodesInner() {
         load();
     };
 
-    if (!featureFlags.byon) {
+    // Only when NEITHER half exists. Returning on BYON alone stranded route-only
+    // customers on a platform with BYON off: the top bar offers this page
+    // whenever either half exists, and they would land on "your own hardware is
+    // turned off" with the routes tab unreachable behind it.
+    if (tab === null) {
         return (
             <div className="p-6 max-w-2xl">
-                <h1 className="text-lg font-display font-bold text-(--base-09) mb-2">My machines</h1>
+                <h1 className="text-lg font-display font-bold text-(--base-09) mb-2">My infrastructure</h1>
                 <p className="text-sm text-(--base-07)">
-                    Running Minecraft on your own hardware is turned off on this platform.
+                    Running Minecraft on your own hardware, and pointing protected addresses at your own
+                    server, are both turned off on this platform.
                 </p>
             </div>
         );
@@ -270,9 +273,9 @@ function MyNodesInner() {
                 )}
             </div>
 
-            {/* With gateway routing off there is no route-only product at all, so
-                a second tab would lead to a panel that can only refuse. */}
-            {gatewayEnabled && (
+            {/* A bar with one tab is decoration. It appears only where the reader
+                actually has two halves to move between. */}
+            {showInfraTabBar(have) && (
                 <div className="flex gap-1 border-b border-(--base-03)">
                     {TABS.map(t => {
                         const Icon = t.icon;
