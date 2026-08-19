@@ -14,19 +14,33 @@ import {
 } from '@/lib/api/serverTabs';
 import { useAppData } from '@/lib/AppDataContext';
 import { shareLinkUrl } from '@/lib/tabProxy';
-import { DynamicIcon } from '@/lib/icons';
+import { DynamicIcon, TAB_ICON_NAMES } from '@/lib/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 
-// Custom Tabs management. A tab is either "direct" (a browser-reachable URL,
-// iframe or popout) or "proxied" (Core reverse-proxies the server container
-// through the mesh; renders in-dashboard and/or as a standalone /c/<token>
-// page).
+// Custom Tabs management.
+//
+// The two modes differ in WHO fetches the page, which is the whole thing and
+// was nowhere on this screen:
+//
+//   direct   - the BROWSER fetches the URL. It therefore has to be reachable
+//              from wherever the reader is sitting, and the platform is not
+//              involved in serving it at all. The Dylaris edge carries raw
+//              Minecraft TCP only (its sole HTTP is a /healthz readiness
+//              port), so a direct URL can never point at something the edge
+//              publishes - it is for an address the operator or the customer
+//              already exposes themselves.
+//
+//   proxied  - CORE fetches it, streaming the container's HTTP/WebSocket over
+//              the existing gRPC mesh so the browser only ever talks to the
+//              panel origin. Nothing has to be exposed, and it works the same
+//              on every routing mode including gateway-only.
+//
+// So proxied is the right default for anything running IN the server
+// container, and direct stays valid for an external address. Neither is
+// invalid on a gateway-routed platform; direct simply cannot be fulfilled BY
+// the platform there.
 
-const ICON_OPTIONS = [
-    'layout-grid', 'map', 'globe', 'package', 'monitor', 'compass',
-    'gauge', 'activity', 'users', 'shield', 'wrench', 'server',
-];
 
 interface EditingTab extends Partial<ServerTab> {
     isNew?: boolean;
@@ -34,7 +48,7 @@ interface EditingTab extends Partial<ServerTab> {
 
 export default function ServerConfigTabsPage() {
     const params = useParams();
-    const { servers } = useAppData();
+    const { servers, gatewayEnabled } = useAppData();
     const serverId = Number(params?.id);
     const server = servers.find(s => s.id === serverId);
 
@@ -44,6 +58,7 @@ export default function ServerConfigTabsPage() {
     const [deletingTab, runDelete] = useBusy();
     const [editing, setEditing] = useState<EditingTab | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ServerTab | null>(null);
+    const [iconQuery, setIconQuery] = useState('');
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     const showToast = useCallback((msg: string, ok = true) => {
@@ -172,6 +187,17 @@ export default function ServerConfigTabsPage() {
     };
 
     if (!server) return null;
+    // Two tabs with the same icon are indistinguishable in the sidebar, which is
+    // the only place they are ever seen. Icons in use elsewhere are therefore
+    // withheld - except the one this tab already has, or editing it would drop
+    // its own icon out of the grid.
+    const takenIcons = new Set(
+        tabs.filter(t => t.id !== editing?.id).map(t => t.icon).filter(Boolean) as string[],
+    );
+    const availableIcons = TAB_ICON_NAMES.filter(
+        n => !takenIcons.has(n) && n.includes(iconQuery.trim().toLowerCase()),
+    );
+
     const editingMode = editing?.mode || 'direct';
     const editingSurfaceHasPage = editingMode === 'proxied' && (editing?.surface === 'page' || editing?.surface === 'both');
 
@@ -317,6 +343,11 @@ export default function ServerConfigTabsPage() {
                                         </button>
                                     ))}
                                 </div>
+                                <p className="text-xs text-(--base-06) mt-1.5 leading-snug">
+                                    {editingMode === 'proxied'
+                                        ? 'Dylaris fetches the page from the server container and streams it to the browser. Nothing has to be exposed, and it works on every routing mode.'
+                                        : 'The browser fetches the URL itself, so it has to be reachable from wherever the player is. Dylaris does not serve it.'}
+                                </p>
                             </div>
 
                             {editingMode === 'direct' ? (
@@ -326,6 +357,13 @@ export default function ServerConfigTabsPage() {
                                         onChange={e => setEditing({ ...editing, url: e.target.value })}
                                         className="input-field input-mono w-full" placeholder="https://map.example.com" />
                                     <p className="text-xs text-(--base-06) mt-1">Must be reachable from the user&apos;s browser.</p>
+                                    {gatewayEnabled && (
+                                        <p className="text-xs text-(--warning-light) mt-1 leading-snug">
+                                            The Dylaris edge carries Minecraft traffic only — it serves no web
+                                            pages. This has to be an address you publish yourself. For something
+                                            running inside the server container, use Proxied instead.
+                                        </p>
+                                    )}
                                 </div>
                             ) : (
                                 <>
@@ -384,12 +422,25 @@ export default function ServerConfigTabsPage() {
                             )}
 
                             <div>
-                                <label className="input-label">Icon</label>
-                                <div className="grid grid-cols-6 gap-1 mt-1">
-                                    {ICON_OPTIONS.map(icon => (
-                                        <button key={icon} type="button"
+                                <div className="flex items-baseline justify-between gap-2">
+                                    <label className="input-label" htmlFor="tab-icon-search">Icon</label>
+                                    <span className="text-xs text-(--base-06)">
+                                        {availableIcons.length} available
+                                    </span>
+                                </div>
+                                <input
+                                    id="tab-icon-search"
+                                    type="search"
+                                    value={iconQuery}
+                                    onChange={e => setIconQuery(e.target.value)}
+                                    placeholder="Search icons…"
+                                    className="input-field w-full mt-1"
+                                />
+                                <div className="grid grid-cols-8 gap-1 mt-2 max-h-44 overflow-y-auto p-1 rounded-md border border-(--base-04) bg-(--base-01)">
+                                    {availableIcons.map(icon => (
+                                        <button key={icon} type="button" title={icon}
                                             onClick={() => setEditing({ ...editing, icon })}
-                                            className={`w-10 h-10 rounded-md flex items-center justify-center transition-colors ${
+                                            className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
                                                 editing.icon === icon
                                                     ? 'bg-(--accent-ghost) text-(--accent-light) border border-(--accent)'
                                                     : 'bg-(--base-02) border border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
@@ -397,6 +448,13 @@ export default function ServerConfigTabsPage() {
                                             <DynamicIcon name={icon} size={14} />
                                         </button>
                                     ))}
+                                    {availableIcons.length === 0 && (
+                                        <p className="col-span-8 px-2 py-3 text-xs text-(--base-06)">
+                                            {iconQuery
+                                                ? `Nothing matches "${iconQuery}".`
+                                                : 'Every icon is already in use by another tab.'}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
 
