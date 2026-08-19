@@ -8,24 +8,23 @@ import (
 	"strings"
 )
 
-// A machine joining the overlay has to be told two addresses that only exist
-// inside it: Core's gRPC and Redis. Core knows both - it is talking to Redis
-// right now and it is itself on the same network - but until this endpoint the
-// panel handed out <core-grpc e.g. 10.20.0.4:25501> and left the customer to
-// find the real value. There is nowhere for them to look it up, so a BYON
-// deploy could not be completed from the panel alone.
+// Two addresses exist only inside the overlay: Core's gRPC and Redis. Core is
+// the only party that can name them - it is talking to Redis right now and it
+// is itself on the same network - and it hands them to the machine's warp,
+// which proxies both on fixed local ports. Nothing else on that machine ever
+// learns an overlay address, so an overlay that moves is a value Core changes
+// rather than a compose file every customer has to edit.
 //
 // Both are resolved to literal IPs on purpose. Core reaches Redis through a
-// Swarm service name; a warp spoke has no DNS into the cluster, so copying
-// "redis:6379" into a customer's compose file produces a node that starts,
-// never resolves, and reports nothing.
+// Swarm service name; a warp spoke has no DNS into the cluster, so handing it
+// "redis:6379" produces a proxy that never resolves anything.
 
-// DeployAddrs are the overlay addresses that go into a BYON or route-only
-// deploy snippet. An empty field means "could not be determined here" and the
-// panel keeps showing its placeholder rather than a plausible wrong value.
-type DeployAddrs struct {
-	CoreGRPCAddr  string `json:"coreGrpcAddr"`
-	RedisAddr     string `json:"redisAddr"`
+// DeployConfig is what a BYON or route-only deploy snippet still needs from
+// Core. Only the tunnel subnets: the two overlay addresses used to be here too,
+// and now go to the machine's warp instead, which proxies them. An empty field
+// means "could not be determined here" and the panel keeps showing its
+// placeholder rather than a plausible wrong value.
+type DeployConfig struct {
 	TunnelSubnets string `json:"tunnelSubnets"`
 }
 
@@ -69,13 +68,12 @@ func overlayCoreAddr(grpcPort string) string {
 // what DNS a machine happens to have. That is not hypothetical: CI runs behind a
 // resolver that answers NXDOMAIN with a public address of its own.
 //
-// Which is also why the result must be PRIVATE. This value is copied verbatim
-// into a customer's compose file, and Core reaches both Redis and its own
-// service over an overlay, which is RFC1918 by construction. A public answer
-// therefore did not name the overlay - it is a hijacked lookup or a
-// misconfiguration - and putting a stranger's address in front of a customer is
-// worse than a placeholder. Loopback is rejected for the same reason: it is
-// never reachable from the machine that will read this.
+// Which is also why the result must be PRIVATE. Core reaches both Redis and its
+// own service over an overlay, which is RFC1918 by construction, so a public
+// answer did not name the overlay - it is a hijacked lookup or a
+// misconfiguration. Handing it out would point every customer's proxy at a
+// stranger, which is worse than handing out nothing. Loopback is rejected for
+// the same reason: it is never reachable from the machine that will dial it.
 func resolveOverlayAddr(hostPort, defaultPort string, lookup func(string) ([]net.IP, error)) string {
 	hostPort = strings.TrimSpace(hostPort)
 	if hostPort == "" {
@@ -109,16 +107,26 @@ func resolveOverlayAddr(hostPort, defaultPort string, lookup func(string) ([]net
 	return ""
 }
 
-// deployAddrs answers with Core's overlay-side gRPC address, Redis, and the
-// tunnel subnets.
-func (s *AppState) deployAddrs(grpcPort string) DeployAddrs {
-	redisEnv := os.Getenv("REDIS_ADDR")
-
-	out := DeployAddrs{
-		RedisAddr:    overlayRedisAddr(redisEnv),
-		CoreGRPCAddr: overlayCoreAddr(grpcPort),
+// grpcPortFromEnv is the port half of every address Core hands out for its own
+// gRPC endpoint.
+func grpcPortFromEnv() string {
+	if p := strings.TrimSpace(os.Getenv("DYLARIS_GRPC_PORT")); p != "" {
+		return p
 	}
-	if out.CoreGRPCAddr == "" {
+	return "25501"
+}
+
+// overlayServiceAddrs resolves the two addresses a spoke's warp forwards to.
+//
+// This is the ONLY place that decides what "where is the overlay" means. If a
+// service VIP ever turns out not to be reachable from a spoke, the answer
+// changes here - to task IPs, or to whatever dnsrr resolves - and no machine on
+// anyone's hardware is reconfigured: they all pick it up on their next poll.
+func overlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
+	redisEnv := os.Getenv("REDIS_ADDR")
+	redisAddr = overlayRedisAddr(redisEnv)
+	coreAddr = overlayCoreAddr(grpcPort)
+	if coreAddr == "" {
 		// Fallback for a Core that does not answer to its own service name -
 		// a single-container install, or a stack that renamed the service
 		// without setting CORE_SERVICE_NAME. The local address the kernel picks
@@ -128,9 +136,15 @@ func (s *AppState) deployAddrs(grpcPort string) DeployAddrs {
 		// one is provably the overlay the spoke will be on. It is an instance
 		// address, so it is second choice, not first.
 		if local := localAddrToward(redisEnv); local != nil {
-			out.CoreGRPCAddr = net.JoinHostPort(local.String(), grpcPort)
+			coreAddr = net.JoinHostPort(local.String(), grpcPort)
 		}
 	}
+	return coreAddr, redisAddr
+}
+
+// deployConfig answers with the tunnel subnets for a deploy snippet.
+func (s *AppState) deployConfig() DeployConfig {
+	var out DeployConfig
 	if s != nil && s.Store != nil {
 		v, _ := s.Store.GetSetting("warp_tunnel_subnets")
 		out.TunnelSubnets = strings.TrimSpace(v)
@@ -145,20 +159,15 @@ func (s *AppState) deployAddrs(grpcPort string) DeployAddrs {
 	return out
 }
 
-// GetDeployAddrs GET /api/warp/deploy-config - any authenticated user.
+// GetDeployConfig GET /api/warp/deploy-config - any authenticated user.
 //
 // Deliberately not admin-only: the tenant who mints a BYON key on /nodes is the
-// one who needs these values, and withholding them would only mean handing them
-// over by email instead. They are RFC1918 addresses inside an overlay nobody
-// reaches without their own authenticated warp key, so they authorize nothing on
-// their own.
-func (h *WarpHandler) GetDeployAddrs(w http.ResponseWriter, r *http.Request) {
-	grpcPort := strings.TrimSpace(os.Getenv("DYLARIS_GRPC_PORT"))
-	if grpcPort == "" {
-		grpcPort = "25501"
-	}
+// one who needs this, and withholding it would only mean handing it over by
+// email instead. It is an RFC1918 CIDR for an overlay nobody reaches without
+// their own authenticated warp key, so it authorizes nothing on its own.
+func (h *WarpHandler) GetDeployConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"addrs":   h.state.deployAddrs(grpcPort),
+		"config":  h.state.deployConfig(),
 	})
 }

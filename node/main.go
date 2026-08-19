@@ -36,9 +36,16 @@ var (
 	redisAddr string
 	redisDB   int
 
-	// Redis address passed to MC containers (non-Swarm, can't resolve Swarm DNS)
+	// Redis address passed to MC containers (non-Swarm, can't resolve Swarm DNS).
+	// Empty when it can only be answered per network - see redisViaWarpProxy.
 	mcRedisAddr string
 	mcRedisDB   string
+
+	// redisViaWarpProxy: the node reached Redis through warp's LOCAL proxy
+	// rather than a configured address. Loopback is right for the node, which is
+	// host-networked, and wrong for anything in a container - those are resolved
+	// against the bridge gateway of the network they join instead.
+	redisViaWarpProxy bool
 
 	// tenantIsolationEnabled gates per-owner Docker-network isolation for this
 	// node. Set in parseConfig from the Redis-reachability guard; false keeps MC
@@ -280,6 +287,14 @@ func main() {
 	// no DNS-wildcard SSRF surface; the guard still runs on the result.
 	resolveMCContainerIP = dockerMgr.ResolveMCContainerIP
 
+	// The warp proxy listens in the HOST namespace. A node that is not host-net
+	// has its own loopback, so it would be dialling itself. The deploy snippet
+	// is host-net, but an operator who changed that gets connection-refused with
+	// no clue why, so say it once here instead.
+	if redisViaWarpProxy && !dockerMgr.selfHostNet {
+		log.Printf("WARNING: using the local warp proxy (%s) but this node is NOT host-networked; 127.0.0.1 is this container, not the host where warp listens. Set REDIS_ADDR/CORE_GRPC_ADDR explicitly or run the node with network_mode: host.", redisAddr)
+	}
+
 	// Tenant network isolation: build the per-owner network manager when the
 	// Redis guard allows it. The allocator persists beside .node_secret.
 	if tenantIsolationEnabled && !dockerMgr.selfHostNet {
@@ -442,7 +457,10 @@ func parseConfig() {
 	}
 
 	// 2. Node Redis
-	redisAddr = os.Getenv("REDIS_ADDR")
+	redisAddr, redisViaWarpProxy = resolveNodeAddr(os.Getenv("REDIS_ADDR"), nodeExternal, warpProxyRedisPort)
+	if redisViaWarpProxy {
+		log.Printf("REDIS_ADDR unset on an external node: using the local warp proxy at %s", redisAddr)
+	}
 	redisDB = 0
 	if dbStr := os.Getenv("REDIS_DB"); dbStr != "" {
 		if db, err := strconv.Atoi(dbStr); err == nil {
@@ -454,11 +472,11 @@ func parseConfig() {
 		log.Fatal("FATAL: REDIS_ADDR is missing!")
 	}
 
-	// 2b. MC Container Redis (non-Swarm containers can't resolve Swarm DNS)
-	mcRedisAddr = os.Getenv("SIDECAR_REDIS_ADDR")
-	if mcRedisAddr == "" {
-		mcRedisAddr = redisAddr // fallback: works if MC containers can reach Swarm DNS
-	}
+	// 2b. MC Container Redis (non-Swarm containers can't resolve Swarm DNS).
+	// Stays EMPTY when the node is on the warp proxy: loopback is the node's own
+	// answer and would be a container's own loopback, so the address has to be
+	// resolved per network against its bridge gateway at container-create time.
+	mcRedisAddr = resolveSidecarRedisAddr(os.Getenv("SIDECAR_REDIS_ADDR"), redisAddr, redisViaWarpProxy, "")
 	mcRedisDB = os.Getenv("SIDECAR_REDIS_DB")
 	if mcRedisDB == "" {
 		mcRedisDB = strconv.Itoa(redisDB)
@@ -466,6 +484,11 @@ func parseConfig() {
 
 	// Tenant isolation requires isolated containers to still reach Redis by host
 	// IP (they leave dylaris_net). Classify SIDECAR_REDIS_ADDR and fail safe.
+	//
+	// The proxy leaves mcRedisAddr empty, which lands on the safe side by
+	// construction: a per-network gateway address is exactly what an isolated
+	// container could NOT be given ahead of time, and a BYON node is host-net,
+	// where isolation is unavailable anyway.
 	tenantIsolationEnabled = redisAddrIsolationSafe(mcRedisAddr)
 	if tenantIsolationEnabled {
 		log.Printf("Tenant network isolation ENABLED (SIDECAR_REDIS_ADDR=%q is host-reachable)", mcRedisAddr)
@@ -510,7 +533,7 @@ func parseConfig() {
 
 	// Redis ACL bootstrap config. nodeEnrollToken is read here (mirrors the
 	// heartbeat's NODE_ENROLL_TOKEN) so the gRPC bootstrap can reuse it.
-	coreGRPCAddr = os.Getenv("CORE_GRPC_ADDR")
+	coreGRPCAddr, _ = resolveNodeAddr(os.Getenv("CORE_GRPC_ADDR"), nodeExternal, warpProxyCorePort)
 	nodeEnrollToken = os.Getenv("NODE_ENROLL_TOKEN")
 	nodeRecoveryToken = os.Getenv("NODE_RECOVERY_TOKEN")
 	// Cache the per-node secret on the first persisted storage path so it

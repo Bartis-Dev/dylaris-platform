@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink } from 'lucide-react';
 import { nodeCompose, routeOnlyCompose, deployCli } from '@/lib/warpDeploy';
-import type { WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
+import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Shared by both halves of "my infrastructure". They used to be two pages with
 // their own copies, which is how route-only ended up with a mint flow on each
@@ -89,13 +89,13 @@ export function Snippet({ title, body }: { title: string; body: string }) {
  * stored as a hash, so it is shown exactly once at mint time. The snippet then
  * carries an obvious placeholder instead of a plausible-looking wrong value.
  */
-export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, addrs }: {
+export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, config }: {
     kind: 'node' | 'route-only';
     warpKey: string | null;
     enrollUrl: string;
     nodeEnrollToken?: string;
     nodeId?: string;
-    addrs?: WarpDeployAddrs | null;
+    config?: WarpDeployConfig | null;
 }) {
     const input = {
         apiKey: warpKey ?? '<your-warp-key>',
@@ -105,9 +105,7 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, a
         // Undetermined values stay undefined so the snippet keeps its
         // placeholder: a blank tells the reader something is missing, an empty
         // string looks like a setting that was deliberately cleared.
-        coreGrpcAddr: addrs?.coreGrpcAddr || undefined,
-        redisAddr: addrs?.redisAddr || undefined,
-        tunnelSubnets: addrs?.tunnelSubnets || undefined,
+        tunnelSubnets: config?.tunnelSubnets || undefined,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 

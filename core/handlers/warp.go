@@ -101,8 +101,20 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	// The service now fills region subnet, region pubkey and the failover endpoint
 	// list, so an idempotent re-enroll can never disagree with a fresh one.
+	stampOverlayAddrs(&res)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+// stampOverlayAddrs tells the peer's warp where its two local proxy ports must
+// forward to. Same resolver as the panel's deploy snippet (warp_deploy_addrs.go),
+// so a machine that uses the proxy and a machine with hand-copied addresses can
+// never be pointed at different places.
+//
+// Here rather than in WarpService: the addresses come off AppState, which knows
+// Core's own networks, and the service has no view of them.
+func stampOverlayAddrs(res *services.EnrollResult) {
+	res.CoreGRPCAddr, res.RedisAddr = overlayServiceAddrs(grpcPortFromEnv())
 }
 
 // Assignment handles GET /api/warp/assignment?public_key=... - the client's
@@ -129,6 +141,10 @@ func (h *WarpHandler) Assignment(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Assignment failed", http.StatusInternalServerError)
 		return
 	}
+	// The 30s poll is also the cheap address-refresh channel: warp reads the two
+	// addresses off every assignment response, so an overlay that moved is picked
+	// up within a tick without a second endpoint or a push.
+	stampOverlayAddrs(&res)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
 }

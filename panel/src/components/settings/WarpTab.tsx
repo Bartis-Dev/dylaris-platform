@@ -11,7 +11,7 @@ import {
     type WarpRegionView, type WarpKeyView,
 } from '@/lib/api/types';
 import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
-import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
+import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { API_URL } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
@@ -57,7 +57,7 @@ export default function WarpTab() {
     const [savingFw, setSavingFw] = useState(false);
     // Core's overlay-side gRPC and Redis addresses, so the deploy snippet is a
     // copy-paste rather than two values the operator has to go and find.
-    const [deployAddrs, setDeployAddrs] = useState<WarpDeployAddrs | null>(null);
+    const [deployConfig, setDeployConfig] = useState<WarpDeployConfig | null>(null);
 
     const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
@@ -97,8 +97,8 @@ export default function WarpTab() {
 
     useEffect(() => {
         let cancelled = false;
-        getWarpDeployAddrs().then(res => {
-            if (!cancelled && res.success && res.addrs) setDeployAddrs(res.addrs);
+        getWarpDeployConfig().then(res => {
+            if (!cancelled && res.success && res.config) setDeployConfig(res.config);
         }).catch(() => { /* the snippet falls back to its placeholders */ });
         return () => { cancelled = true; };
     }, []);
@@ -516,7 +516,7 @@ export default function WarpTab() {
                     apiKey={revealed ? revealed.apiKey : null}
                     enrollUrl={enrollUrl}
                     tunnelSubnets={fwSubnets}
-                    addrs={deployAddrs}
+                    config={deployConfig}
                     onClose={() => { setRevealed(null); setShowDeploy(null); }}
                     showToast={showToast}
                 />
@@ -637,14 +637,14 @@ const DEPLOY_TARGETS: { id: DeployTarget; label: string }[] = [
     { id: 'route-only', label: 'Route-only — protected address' },
 ];
 
-function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, addrs, onClose, showToast }: {
+function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, showToast }: {
     name: string;
     apiKey: string | null;
     enrollUrl: string;
     /** From the Overlay Segmentation setting; "" leaves a placeholder in the snippet. */
     tunnelSubnets: string;
     /** Overlay addresses resolved by Core; null while loading or undetectable. */
-    addrs: WarpDeployAddrs | null;
+    config: WarpDeployConfig | null;
     onClose: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }) {
@@ -660,10 +660,8 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, addrs, onClose, s
         enrollUrl,
         // The saved setting wins; Core's detected value is the fallback, so a
         // snippet is complete even before anyone visits Overlay Segmentation.
-        tunnelSubnets: tunnelSubnets || addrs?.tunnelSubnets || '',
+        tunnelSubnets: tunnelSubnets || config?.tunnelSubnets || '',
         nodeId: nodeIdFromLabel(name),
-        coreGrpcAddr: addrs?.coreGrpcAddr || undefined,
-        redisAddr: addrs?.redisAddr || undefined,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
     const cli = deployCli(kind);

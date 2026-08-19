@@ -169,7 +169,8 @@ func TestEnroll_HappyPath_ReturnsConfigWithLeaderInfo(t *testing.T) {
 	}
 	var resp map[string]interface{}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp["wg_ip"] == "" || resp["leader_public_key"] == "" || resp["leader_endpoint"] != "vpn.example.com:51820" {
+	endpoints, _ := resp["endpoints"].([]interface{})
+	if resp["wg_ip"] == "" || resp["leader_public_key"] == "" || len(endpoints) == 0 || endpoints[0] != "vpn.example.com:51820" {
 		t.Fatalf("missing leader info in response: %+v", resp)
 	}
 }

@@ -24,9 +24,19 @@ describe('routeOnlyCompose', () => {
     });
 
     // Against a plain-TCP Redis a TLS client fails the handshake and the link
-    // never registers - the exact trap the repo example still carries.
+    // never registers - the exact trap the repo example still carries. With the
+    // local proxy it is doubly required: a TLS client would verify the
+    // certificate against 127.0.0.1. The path is inside WireGuard either way.
     it('defaults REDIS_USE_TLS to false', () => {
         expect(routeOnlyCompose(base)).toContain('REDIS_USE_TLS: "false"');
+    });
+
+    // Route-only runs the link with host networking, so warp's loopback
+    // listener is already in its namespace and no bridge binding is needed.
+    it('points the link at the local proxy and binds no bridges', () => {
+        const out = routeOnlyCompose(base);
+        expect(out).toContain('REDIS_ADDR: "127.0.0.1:25571"');
+        expect(out).not.toContain('PROXY_BIND_DOCKER_BRIDGES');
     });
 
     // LINK_ALLOWED_TARGETS is compared as an exact host string; a port never matches.
@@ -83,15 +93,27 @@ describe('nodeCompose', () => {
             ...base,
             tunnelSubnets: '10.20.0.0/16',
             nodeEnrollToken: 'TOK',
-            coreGrpcAddr: '10.20.0.4:25501',
-            redisAddr: '10.20.0.5:6379',
             nodeId: 'home-desktop',
         });
         expect(out).toContain('NODE_ENROLL_TOKEN: "TOK"');
-        expect(out).toContain('CORE_GRPC_ADDR: "10.20.0.4:25501"');
-        expect(out).toContain('REDIS_ADDR: "10.20.0.5:6379"');
         expect(out).toContain('NODE_ID: "home-desktop"');
         expect(out).not.toContain('<');
+    });
+
+    // The whole point of the local proxy: the file carries no overlay address,
+    // so a platform that moves does not send every customer back to the panel.
+    it('carries no overlay address at all', () => {
+        const out = nodeCompose({ ...base, tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', nodeId: 'n' });
+        // The names still appear in the comment that explains their absence,
+        // so assert on the assignment, which is what a reader would have to edit.
+        expect(out).not.toContain('CORE_GRPC_ADDR: "');
+        expect(out).not.toContain('REDIS_ADDR: "');
+    });
+
+    // The link sidecar and every MC server run on a Docker bridge, where
+    // 127.0.0.1 is their own loopback and not the host warp listens on.
+    it('lets warp serve the proxy to containers too', () => {
+        expect(nodeCompose(base)).toContain('PROXY_BIND_DOCKER_BRIDGES: "true"');
     });
 });
 

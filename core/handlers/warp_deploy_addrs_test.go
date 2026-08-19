@@ -4,11 +4,13 @@ import (
 	"errors"
 	"net"
 	"testing"
+
+	"dylaris-core/services"
 )
 
 // The whole point of resolving Redis here is that a warp spoke has no DNS into
-// the cluster: copying Core's own "redis:6379" into a customer's compose file
-// produces a node that starts, never resolves, and reports nothing.
+// the cluster: handing it Core's own "redis:6379" produces a proxy that opens,
+// never resolves anything, and reports nothing.
 //
 // The resolver is injected because the answer must not depend on the DNS of
 // whatever machine runs this - CI sits behind one that answers NXDOMAIN with a
@@ -59,7 +61,7 @@ func TestResolveOverlayRedisAddr(t *testing.T) {
 			want:   "10.20.0.5:6380",
 		},
 		{
-			// The case that used to be copied verbatim into the snippet.
+			// The name itself is useless to a spoke, so "" is the honest answer.
 			name:   "a name that does not resolve yields nothing, not the name",
 			in:     "redis:6379",
 			lookup: fails,
@@ -73,7 +75,7 @@ func TestResolveOverlayRedisAddr(t *testing.T) {
 		},
 		{
 			// A resolver that answers every name with a public landing address
-			// would otherwise put a stranger's IP into a customer's compose file.
+			// would otherwise point every customer's proxy at a stranger.
 			name:   "a hijacked NXDOMAIN answer is refused",
 			in:     "redis:6379",
 			lookup: answers("46.225.53.182"),
@@ -86,7 +88,7 @@ func TestResolveOverlayRedisAddr(t *testing.T) {
 			want:   "10.20.0.5:6379",
 		},
 		{
-			// Never reachable from the machine that will read this.
+			// Never reachable from the machine that will dial it.
 			name:   "loopback is refused",
 			in:     "127.0.0.1:6379",
 			lookup: noLookup,
@@ -153,7 +155,7 @@ func TestResolveOverlayAddrForCore(t *testing.T) {
 			want:        "10.20.0.3:25555",
 		},
 		{
-			// A single-container install where "core" means nothing. deployAddrs
+			// A single-container install where "core" means nothing. The caller
 			// falls back to the local address; here the honest answer is "".
 			name:        "a name that does not resolve yields nothing",
 			in:          "core",
@@ -162,7 +164,7 @@ func TestResolveOverlayAddrForCore(t *testing.T) {
 			want:        "",
 		},
 		{
-			// Same rule as Redis: this ends up in a customer's compose file.
+			// Same rule as Redis: this is what a customer's warp will dial.
 			name:        "a hijacked NXDOMAIN answer is refused",
 			in:          "core",
 			defaultPort: "25501",
@@ -186,5 +188,66 @@ func TestResolveOverlayAddrForCore(t *testing.T) {
 				t.Errorf("resolveOverlayAddr(%q, %q) = %q, want %q", tt.in, tt.defaultPort, got, tt.want)
 			}
 		})
+	}
+}
+
+// The warp assignment poll asks for these every 30s per peer, so they are
+// resolved without the store round trip that the full snippet needs. Literal
+// addresses on both sides keep DNS out of the test entirely.
+func TestOverlayServiceAddrs(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "10.20.0.5:6379")
+	t.Setenv("CORE_SERVICE_NAME", "10.20.0.4")
+
+	core, redis := overlayServiceAddrs("25501")
+	if core != "10.20.0.4:25501" {
+		t.Errorf("core addr = %q, want %q", core, "10.20.0.4:25501")
+	}
+	if redis != "10.20.0.5:6379" {
+		t.Errorf("redis addr = %q, want %q", redis, "10.20.0.5:6379")
+	}
+}
+
+// A peer whose Core cannot name its own overlay must be told nothing rather than
+// something plausible: warp keeps the addresses it already had, and a machine
+// with hand-set values is unaffected. Empty is the honest answer, not a bug.
+func TestOverlayServiceAddrsUnresolvableIsEmpty(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "")
+	t.Setenv("CORE_SERVICE_NAME", "127.0.0.1") // loopback is never the overlay
+
+	core, redis := overlayServiceAddrs("25501")
+	if core != "" || redis != "" {
+		t.Errorf("got (%q, %q), want both empty", core, redis)
+	}
+}
+
+func TestGrpcPortFromEnv(t *testing.T) {
+	t.Setenv("DYLARIS_GRPC_PORT", "")
+	if got := grpcPortFromEnv(); got != "25501" {
+		t.Errorf("default = %q, want 25501", got)
+	}
+	t.Setenv("DYLARIS_GRPC_PORT", " 9999 ")
+	if got := grpcPortFromEnv(); got != "9999" {
+		t.Errorf("override = %q, want 9999", got)
+	}
+}
+
+// The enroll and assignment handlers both go through this, so the panel snippet
+// and the warp client can never be handed different answers.
+func TestStampOverlayAddrs(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "10.20.0.5:6379")
+	t.Setenv("CORE_SERVICE_NAME", "10.20.0.4")
+	t.Setenv("DYLARIS_GRPC_PORT", "25501")
+
+	res := services.EnrollResult{WGIP: "10.0.99.7"}
+	stampOverlayAddrs(&res)
+
+	if res.CoreGRPCAddr != "10.20.0.4:25501" {
+		t.Errorf("CoreGRPCAddr = %q", res.CoreGRPCAddr)
+	}
+	if res.RedisAddr != "10.20.0.5:6379" {
+		t.Errorf("RedisAddr = %q", res.RedisAddr)
+	}
+	if res.WGIP != "10.0.99.7" {
+		t.Errorf("stamping must not disturb the rest of the response, WGIP = %q", res.WGIP)
 	}
 }

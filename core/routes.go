@@ -936,7 +936,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Overlay addresses for the deploy snippets. Authed but uncapped for the same
 	// reason as the kits above: the tenant minting the key is the one who needs
 	// them, and they are RFC1918 addresses that authorize nothing on their own.
-	api.HandleFunc("/warp/deploy-config", authHandler.AuthMiddleware(warpHandler.GetDeployAddrs)).Methods("GET")
+	api.HandleFunc("/warp/deploy-config", authHandler.AuthMiddleware(warpHandler.GetDeployConfig)).Methods("GET")
 
 	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
 

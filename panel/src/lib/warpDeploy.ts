@@ -27,10 +27,6 @@ export type WarpDeployInput = {
     tunnelSubnets?: string;
     /** Single-use node enroll token, when the operator has one. */
     nodeEnrollToken?: string;
-    /** core gRPC over the overlay, e.g. 10.20.0.4:25501. */
-    coreGrpcAddr?: string;
-    /** central Redis over the overlay, e.g. 10.20.0.5:6379. */
-    redisAddr?: string;
     /** Stable id for the machine. */
     nodeId?: string;
     /** Route-only: the local host the link may dial. Host only, no port. */
@@ -38,6 +34,16 @@ export type WarpDeployInput = {
 };
 
 const REG = 'ghcr.io/bartis-dev';
+
+/**
+ * Port warp binds locally for its Redis proxy.
+ *
+ * The same number is compiled in two other places - gateway/warp/proxy.go and
+ * platform/node/warp_proxy.go - because there is no channel between the three
+ * to negotiate a pair. A machine with a collision sets REDIS_ADDR explicitly,
+ * which bypasses the proxy entirely.
+ */
+const WARP_PROXY_REDIS_PORT = '25571';
 
 function or(value: string | undefined, placeholder: string): string {
     const v = (value ?? '').trim();
@@ -97,7 +103,12 @@ services:
       # The same warp key: the link exchanges it at boot for its own derived
       # token, so no second secret travels with the kit.
       LINK_BOOT_KEY: "${i.apiKey}"
-      REDIS_ADDR: "${or(i.redisAddr, '<redis e.g. 10.20.0.5:6379>')}"
+      # warp's local proxy. warp holds the real overlay address and refreshes
+      # it from Core, so this line never changes even if the platform moves.
+      REDIS_ADDR: "127.0.0.1:${WARP_PROXY_REDIS_PORT}"
+      # Must stay false: the proxy is dialled at 127.0.0.1, so a TLS client
+      # would verify the certificate against loopback and fail. The whole path
+      # is already inside WireGuard.
       REDIS_USE_TLS: "false"
       # Your own Minecraft server. Host only, NO port - compared as an exact
       # string, so "127.0.0.1:25565" never matches.
@@ -129,6 +140,9 @@ services:
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
       # Overlay CIDR(s) to route through the tunnel - NOT your home LAN.
       TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
+      # Also serve the local proxy to containers: the link sidecar and every
+      # Minecraft server sit on a Docker bridge and cannot reach loopback here.
+      PROXY_BIND_DOCKER_BRIDGES: "true"
     network_mode: host
     cap_add: [NET_ADMIN]
 
@@ -141,9 +155,9 @@ services:
       NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
       # Single-use, first boot only.
       NODE_ENROLL_TOKEN: "${or(i.nodeEnrollToken, '<enroll-token-from-panel>')}"
-      # Reachable ONLY over the overlay warp provides. Never publish them.
-      CORE_GRPC_ADDR: "${or(i.coreGrpcAddr, '<core-grpc e.g. 10.20.0.4:25501>')}"
-      REDIS_ADDR: "${or(i.redisAddr, '<redis e.g. 10.20.0.5:6379>')}"
+      # No CORE_GRPC_ADDR and no REDIS_ADDR: the node reaches both through
+      # warp's local proxy, and warp refreshes the real addresses from Core on
+      # its own. Nothing in this file has to change when the platform moves.
       # NO CLUSTER_SECRET and no static Redis password on purpose: the node
       # fetches a scoped Redis credential over gRPC once it has enrolled.
       # It also starts its own link sidecar - do not run link yourself.
@@ -166,7 +180,10 @@ volumes:
 /** CLI steps that go with either compose file. */
 export function deployCli(kind: 'route-only' | 'node'): string {
     const file = kind === 'route-only' ? 'route-only.yml' : 'byon-node.yml';
-    return `# 1. Save the compose file above, then start it:
+    return `# 1. Save the compose file above, then start it. Pull first: the
+#    tunnel agent is what supplies the internal addresses, so a stale
+#    cached image would leave the rest of the stack with nothing to talk to.
+docker compose -f ${file} pull
 docker compose -f ${file} up -d
 
 # 2. Watch the tunnel come up (peer + handshake within ~15s):

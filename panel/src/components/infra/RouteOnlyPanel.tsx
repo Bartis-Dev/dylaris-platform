@@ -11,7 +11,7 @@ import {
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, NotIncluded } from '@/components/infra/DeployKit';
-import type { WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
+import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
 // the ADMIN one (fleet routes across edges) and the two are easy to import by
@@ -27,9 +27,9 @@ import type { WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 // snippet on one page and the address form on the other. It is one tab now, and
 // the whole sequence - create a link, deploy it, point an address at it - reads
 // top to bottom in one place.
-export default function RouteOnlyPanel({ enrollUrl, addrs, storeUrl, allowed, entitlementKnown, suspended }: {
+export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, entitlementKnown, suspended }: {
     enrollUrl: string;
-    addrs: WarpDeployAddrs | null;
+    config: WarpDeployConfig | null;
     storeUrl: string | null;
     /**
      * Resolved route-only entitlement. The old /routes page never checked this
@@ -175,7 +175,7 @@ export default function RouteOnlyPanel({ enrollUrl, addrs, storeUrl, allowed, en
                         {/* Right here, not on another page. The key is shown once
                             and the compose file is what it goes into; splitting
                             those across two pages is what made this confusing. */}
-                        <DeployKit kind="route-only" warpKey={minted.warp_key} enrollUrl={enrollUrl} addrs={addrs} />
+                        <DeployKit kind="route-only" warpKey={minted.warp_key} enrollUrl={enrollUrl} config={config} />
                     </div>
                 )}
 
@@ -236,7 +236,7 @@ export default function RouteOnlyPanel({ enrollUrl, addrs, storeUrl, allowed, en
                                 saved where the snippet says <code className="font-mono">&lt;your-warp-key&gt;</code>,
                                 or revoke the link and create a new one.
                             </p>
-                            <DeployKit kind="route-only" warpKey={null} enrollUrl={enrollUrl} addrs={addrs} />
+                            <DeployKit kind="route-only" warpKey={null} enrollUrl={enrollUrl} config={config} />
                         </div>
                     </details>
                 )}

@@ -45,7 +45,7 @@ func TestBuildRedisEnv(t *testing.T) {
 	nodeSecret = []byte("unit-test-secret-value-buildredisenv")
 
 	t.Run("with sub-server: full 7-entry env, correctly scoped ACL user/pass", func(t *testing.T) {
-		got := buildRedisEnv("uuid-abc", "sub1")
+		got := buildRedisEnv("uuid-abc", "sub1", mcRedisAddr)
 		if len(got) != 7 {
 			t.Fatalf("got %d env entries, want 7: %v", len(got), got)
 		}
@@ -78,7 +78,7 @@ func TestBuildRedisEnv(t *testing.T) {
 	})
 
 	t.Run("without sub-server: SUB_SERVER omitted (6 entries)", func(t *testing.T) {
-		got := buildRedisEnv("uuid-abc", "")
+		got := buildRedisEnv("uuid-abc", "", mcRedisAddr)
 		if len(got) != 6 {
 			t.Fatalf("got %d env entries, want 6: %v", len(got), got)
 		}
@@ -107,7 +107,7 @@ func TestBuildLinkEnv(t *testing.T) {
 	// global inside the function body), so the package-global nodeID is
 	// deliberately left untouched by this test.
 	testNodeID := "nodeXYZ"
-	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1")
+	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1", mcRedisAddr)
 
 	if len(got) != 7 {
 		t.Fatalf("got %d env entries, want 7: %v", len(got), got)

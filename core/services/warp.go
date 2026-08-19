@@ -170,18 +170,24 @@ func ValidateFixedWGIP(ip, subnet string) error {
 }
 
 // EnrollResult mirrors the gateway client's enrollResponse JSON. Endpoints is the
-// full failover list for the assigned region (alive-first); LeaderEndpoint is the
-// primary (Endpoints[0]) kept for older clients.
+// full failover list for the assigned region, alive-first; Endpoints[0] is the
+// primary.
 type EnrollResult struct {
 	WGIP            string   `json:"wg_ip"`
 	WGSubnet        string   `json:"wg_subnet"`
 	Region          string   `json:"region"`
 	LeaderPublicKey string   `json:"leader_public_key"`
-	LeaderEndpoint  string   `json:"leader_endpoint"`
 	Endpoints       []string `json:"endpoints"`
 	Assigned        bool     `json:"assigned"` // true when the peer has an explicit pinned home leader
-	DNS             string   `json:"dns,omitempty"`
 	Keepalive       int      `json:"keepalive"`
+
+	// Where the peer's local proxy forwards to. Filled by the HANDLER, not
+	// here - resolving them means looking at Core's OWN networks, which is not
+	// something this service can see.
+	//
+	// Empty means Core could not determine it; warp keeps whatever it had.
+	CoreGRPCAddr string `json:"core_grpc_addr,omitempty"`
+	RedisAddr    string `json:"redis_addr,omitempty"`
 }
 
 // --- Redis keys (all per-leader; queue/events already existed) ---
@@ -373,16 +379,11 @@ func (s *WarpService) buildResult(ctx context.Context, region, wgIP, homeLeaderI
 	for _, c := range cands {
 		endpoints = append(endpoints, c.endpoint)
 	}
-	primary := ""
-	if len(endpoints) > 0 {
-		primary = endpoints[0]
-	}
 	return EnrollResult{
 		WGIP:            wgIP,
 		WGSubnet:        reg.Subnet,
 		Region:          region,
 		LeaderPublicKey: pub,
-		LeaderEndpoint:  primary,
 		Endpoints:       endpoints,
 		Assigned:        homeLeaderID != "",
 		Keepalive:       25,

@@ -19,7 +19,7 @@ import { nodeLabel } from '@/lib/nodeLabel';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeIdFromLabel } from '@/lib/warpDeploy';
 import { isLocationName } from '@/lib/validation';
-import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
+import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
 import { resolveInfraTab, showInfraTabBar, type InfraTab } from '@/lib/infraTab';
 import { DeployKit, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
@@ -128,7 +128,7 @@ function MyNodesInner() {
 
     // Overlay addresses for the deploy snippets. Resolved by Core, which is on
     // that network; there is nowhere else a customer could look them up.
-    const [deployAddrs, setDeployAddrs] = useState<WarpDeployAddrs | null>(null);
+    const [deployConfig, setDeployConfig] = useState<WarpDeployConfig | null>(null);
 
     // The real storefront origin, not a hardcoded dylaris.com: a self-host
     // install with the store wired points somewhere else, and a link that goes to
@@ -185,8 +185,8 @@ function MyNodesInner() {
 
     useEffect(() => {
         let cancelled = false;
-        getWarpDeployAddrs().then(res => {
-            if (!cancelled && res.success && res.addrs) setDeployAddrs(res.addrs);
+        getWarpDeployConfig().then(res => {
+            if (!cancelled && res.success && res.config) setDeployConfig(res.config);
         }).catch(() => { /* the snippet falls back to its placeholders */ });
         return () => { cancelled = true; };
     }, []);
@@ -368,7 +368,7 @@ function MyNodesInner() {
             ) : tab === 'routes' ? (
                 <RouteOnlyPanel
                     enrollUrl={enrollUrl}
-                    addrs={deployAddrs}
+                    config={deployConfig}
                     storeUrl={storeUrl}
                     allowed={routeOnlyAllowed}
                     entitlementKnown={entitlementKnown}
@@ -547,7 +547,7 @@ function MyNodesInner() {
                         enrollUrl={enrollUrl}
                         nodeEnrollToken={revealedNode.token}
                         nodeId={nodeIdFromLabel(revealedNode.label)}
-                        addrs={deployAddrs}
+                        config={deployConfig}
                     />
                     <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
                         I saved them
