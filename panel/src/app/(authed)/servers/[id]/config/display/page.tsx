@@ -8,6 +8,10 @@ import { getFileContent, saveFile, getEdgeMotd, setEdgeMotd, type EdgeMotdMode }
 import { uploadFiles } from '@/lib/api/files';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
+import {
+    parseMotd, motdVisibleLengths, insertMotdCode,
+    MOTD_COLORS, MOTD_STYLES, MOTD_MAX_LINES, MOTD_SOFT_LINE_LIMIT,
+} from '@/lib/motd';
 
 // Display sub-tab. Surgically edits motd= in server.properties so
 // the user gets a friendly multi-line editor without touching the rest of the
@@ -19,51 +23,6 @@ import { parseProperties, serializeProperties } from '@/lib/properties-codec';
 // gates without parallel routes to maintain.
 
 const ICON_PATH_NAME = 'server-icon.png';
-// Minecraft chat colour codes — preview the user's input the way the game
-// renders it so & codes don't look like literal & in the editor.
-const COLOR_MAP: Record<string, string> = {
-    '0': '#000000', '1': '#0000AA', '2': '#00AA00', '3': '#00AAAA',
-    '4': '#AA0000', '5': '#AA00AA', '6': '#FFAA00', '7': '#AAAAAA',
-    '8': '#555555', '9': '#5555FF', a: '#55FF55', b: '#55FFFF',
-    c: '#FF5555', d: '#FF55FF', e: '#FFFF55', f: '#FFFFFF',
-};
-
-interface ColoredSegment {
-    text: string;
-    color: string;
-    bold?: boolean;
-    italic?: boolean;
-    underline?: boolean;
-    strike?: boolean;
-}
-
-function renderMotdPreview(raw: string): ColoredSegment[][] {
-    const lines = raw.split('\n').slice(0, 2);
-    return lines.map(line => {
-        const segments: ColoredSegment[] = [];
-        let current: ColoredSegment = { text: '', color: '#FFFFFF' };
-        for (let i = 0; i < line.length; i++) {
-            const ch = line[i];
-            if ((ch === '&' || ch === '§') && i + 1 < line.length) {
-                const code = line[i + 1].toLowerCase();
-                if (code in COLOR_MAP) {
-                    if (current.text) { segments.push(current); }
-                    current = { text: '', color: COLOR_MAP[code] };
-                    i++;
-                    continue;
-                }
-                if (code === 'l') { if (current.text) segments.push(current); current = { ...current, text: '', bold: true }; i++; continue; }
-                if (code === 'o') { if (current.text) segments.push(current); current = { ...current, text: '', italic: true }; i++; continue; }
-                if (code === 'n') { if (current.text) segments.push(current); current = { ...current, text: '', underline: true }; i++; continue; }
-                if (code === 'm') { if (current.text) segments.push(current); current = { ...current, text: '', strike: true }; i++; continue; }
-                if (code === 'r') { if (current.text) segments.push(current); current = { text: '', color: '#FFFFFF' }; i++; continue; }
-            }
-            current.text += ch;
-        }
-        if (current.text) segments.push(current);
-        return segments;
-    });
-}
 
 export default function ServerConfigDisplayPage() {
     const params = useParams();
@@ -114,7 +73,27 @@ export default function ServerConfigDisplayPage() {
     }, [propertiesPath, serverUuid]);
 
     const motdDirty = motd !== motdInitial;
-    const previewLines = useMemo(() => renderMotdPreview(motd || 'A Minecraft Server'), [motd]);
+    const previewLines = useMemo(() => parseMotd(motd || 'A Minecraft Server'), [motd]);
+    const lineLengths = useMemo(() => motdVisibleLengths(motd), [motd]);
+    const tooLong = lineLengths.some(n => n > MOTD_SOFT_LINE_LIMIT);
+    const tooManyLines = motd.split('\n').length > MOTD_MAX_LINES;
+
+    // Inserting at the caret rather than appending: someone colouring the
+    // middle of a line should not have the code land at the end.
+    const motdRef = useRef<HTMLTextAreaElement>(null);
+    const applyCode = useCallback((code: string) => {
+        const el = motdRef.current;
+        const at = el ? el.selectionStart : motd.length;
+        const next = insertMotdCode(motd, at, code);
+        setMotd(next.value);
+        // After React re-renders the controlled value the caret would otherwise
+        // jump to the end, undoing the insert position we just computed.
+        requestAnimationFrame(() => {
+            if (!motdRef.current) return;
+            motdRef.current.focus();
+            motdRef.current.setSelectionRange(next.caret, next.caret);
+        });
+    }, [motd]);
 
     // Edge transitional MOTD (auto/custom/off) - what the gateway edge shows while
     // the server is down/starting/migrating. Server-level (not sub-server), loaded
@@ -254,21 +233,86 @@ export default function ServerConfigDisplayPage() {
                     <div className="min-w-0 flex-1">
                         <h2 className="text-base font-display font-semibold text-(--base-09)">MOTD</h2>
                         <p className="text-xs text-(--base-06) mt-0.5">
-                            Up to 2 lines, supports Minecraft colour codes (<code className="font-mono">&amp;a</code>, <code className="font-mono">&amp;l</code>, etc.).
-                            Requires a server restart to take effect.
+                            Two lines, shown in the multiplayer server list. Click a colour or a style to
+                            insert its code at the cursor; a colour also clears the styles before it, exactly
+                            as the game does. Requires a server restart to take effect.
                         </p>
                     </div>
                 </header>
 
+                {/* Toolbar. The codes are typeable by hand and always were -
+                    this is so nobody has to remember that &o is italic. */}
+                <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1">
+                        {MOTD_COLORS.map(c => (
+                            <button
+                                key={c.code}
+                                type="button"
+                                onClick={() => applyCode(c.code)}
+                                disabled={!propertiesLoaded}
+                                title={`${c.name} (&${c.code})`}
+                                aria-label={c.name}
+                                className="w-7 h-7 rounded-sm border border-(--base-04) hover:scale-110 focus-visible:scale-110 transition-transform disabled:opacity-40 disabled:hover:scale-100"
+                                style={{ backgroundColor: c.hex }}
+                            />
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                        {MOTD_STYLES.map(st => (
+                            <button
+                                key={st.code}
+                                type="button"
+                                onClick={() => applyCode(st.code)}
+                                disabled={!propertiesLoaded}
+                                title={`${st.name} (&${st.code}) — ${st.hint}`}
+                                className="px-2.5 py-1 rounded-md text-xs bg-(--base-02) border border-(--base-04) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09) transition-colors disabled:opacity-40"
+                            >
+                                <span
+                                    style={{
+                                        fontWeight: st.code === 'l' ? 700 : undefined,
+                                        fontStyle: st.code === 'o' ? 'italic' : undefined,
+                                        textDecoration: st.code === 'n' ? 'underline'
+                                            : st.code === 'm' ? 'line-through' : undefined,
+                                    }}
+                                >
+                                    {st.name}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 <textarea
+                    ref={motdRef}
                     value={motd}
                     onChange={e => setMotd(e.target.value)}
                     placeholder="A Minecraft Server"
                     rows={2}
-                    maxLength={120}
+                    maxLength={240}
                     disabled={!propertiesLoaded}
                     className="input-field font-mono text-sm resize-none w-full"
                 />
+
+                {/* Counted WITHOUT the codes: they are not drawn, so counting
+                    raw characters tells the owner a line is too long when it
+                    is not. */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    {lineLengths.map((n, i) => (
+                        <span key={i} className={n > MOTD_SOFT_LINE_LIMIT ? 'text-(--warning-light)' : 'text-(--base-06)'}>
+                            Line {i + 1}: {n}/{MOTD_SOFT_LINE_LIMIT}
+                        </span>
+                    ))}
+                    {tooLong && (
+                        <span className="text-(--warning-light)">
+                            The client measures pixels, so this is a guide — wide characters run out sooner.
+                        </span>
+                    )}
+                    {tooManyLines && (
+                        <span className="text-(--warning-light)">
+                            Only the first {MOTD_MAX_LINES} lines are shown in the server list.
+                        </span>
+                    )}
+                </div>
 
                 {/* Preview pane — emulates the multiplayer server-list MOTD slot */}
                 <div>
