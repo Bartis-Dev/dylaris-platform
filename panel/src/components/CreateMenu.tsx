@@ -5,7 +5,6 @@ import { Plus, Server, HardDrive, Globe, ArrowRight, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getNodes } from '@/lib/api';
 import { serverOption, nodeOption, routeOption, hasAnyCreateOption, type CreateOption, type CreateOptionsInput } from '@/lib/createOptions';
-import AddNodeModal from '@/components/AddNodeModal';
 
 // ---------------------------------------------------------------------------
 // The sidebar's "+" menu.
@@ -14,6 +13,11 @@ import AddNodeModal from '@/components/AddNodeModal';
 // including users who had nowhere to deploy: they could click it, fill in a
 // wizard, and only then be told "No node available". Now each entry states up
 // front whether it is usable and, when it is not, why and where to go.
+//
+// Every entry NAVIGATES. "Add a node" used to open an instructions modal for
+// admins while its neighbour opened a page, so the same menu behaved two ways
+// depending on who you were. The fleet-node instructions live on /nodes now,
+// where the rest of the machine handling already is.
 // ---------------------------------------------------------------------------
 
 function MenuEntry({
@@ -73,7 +77,6 @@ function MenuEntry({
 export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }) {
     const { user, featureFlags, entitlement, gatewayEnabled } = useAppData();
     const [open, setOpen] = useState(false);
-    const [showAddNode, setShowAddNode] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -126,16 +129,6 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
     // button that only ever says no.
     if (!hasAnyCreateOption(input) && !featureFlags.byon && !gatewayEnabled) return null;
 
-    // Admins get instructions, not a destination: adding a node happens on the
-    // host. The old entry navigated to /settings?tab=warp, a query shape the
-    // settings routes do not read, so it landed on the first tab in the list and
-    // left the admin somewhere unrelated.
-    const onNodeClick = () => {
-        setOpen(false);
-        if (isAdmin) { setShowAddNode(true); return; }
-        navigate(node.href || '/nodes');
-    };
-
     const navigate = (href: string) => {
         setOpen(false);
         if (typeof window !== 'undefined') window.location.href = href;
@@ -173,7 +166,7 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
                             ? 'How to join a machine to the fleet.'
                             : 'Run servers on your own hardware, connected through the overlay.'}
                         option={node}
-                        onClick={onNodeClick}
+                        onClick={() => navigate('/nodes')}
                         onNavigate={navigate}
                     />
                     {/* Only where routing exists at all - otherwise the entry is
@@ -184,14 +177,12 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
                             title="Add a route"
                             subtitle="A protected address for a Minecraft server you run yourself."
                             option={route}
-                            onClick={() => navigate('/routes')}
+                            onClick={() => navigate('/nodes?tab=routes')}
                             onNavigate={navigate}
                         />
                     )}
                 </div>
             )}
-
-            {showAddNode && <AddNodeModal onClose={() => setShowAddNode(false)} />}
         </div>
     );
 }

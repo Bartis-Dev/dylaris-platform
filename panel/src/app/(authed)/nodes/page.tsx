@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
-    HardDrive, Globe, Plus, Copy, Check, Trash2, AlertTriangle, Clock,
-    ExternalLink, Terminal, ShoppingCart, Lock,
+    HardDrive, Globe, Plus, Trash2, AlertTriangle, Clock,
+    ExternalLink, ShoppingCart,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
-    getNodes, listLinkKits, mintLinkKit, revokeLinkKit, type LinkKit,
+    getNodes,
     listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, type NodeWarpKey,
 } from '@/lib/api';
 import { getStoreStatus } from '@/lib/api/store';
@@ -16,10 +17,12 @@ import { mintEnrollToken, listEnrollTokens, revokeEnrollToken } from '@/lib/api/
 import type { NodeEnrollToken } from '@/lib/api/types';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
-import { nodeCompose, routeOnlyCompose, deployCli, nodeIdFromLabel } from '@/lib/warpDeploy';
+import { nodeIdFromLabel } from '@/lib/warpDeploy';
 import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
-import MyInfraTabs from '@/components/MyInfraTabs';
+import { DeployKit, NotIncluded, CopyButton, usageLabel } from '@/components/infra/DeployKit';
+import RoutesPanel from '@/components/infra/RoutesPanel';
+import AddNodeModal from '@/components/AddNodeModal';
 
 // ---------------------------------------------------------------------------
 // "My machines" - the TENANT side of bring-your-own-node and route-only.
@@ -54,121 +57,26 @@ interface OwnNode {
     region?: string;
 }
 
-function CopyButton({ value, label, className }: { value: string; label?: string; className?: string }) {
-    const [copied, setCopied] = useState(false);
-    return (
-        <button
-            type="button"
-            onClick={async () => {
-                try {
-                    await navigator.clipboard.writeText(value);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1800);
-                } catch { /* clipboard blocked (insecure context); the text is selectable anyway */ }
-            }}
-            className={className || 'btn btn-secondary btn-sm shrink-0'}
-        >
-            {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> {label || 'Copy'}</>}
-        </button>
-    );
-}
-
-/** "3 of 5 in use", or "3 in use" when the plan sets no cap (limit <= 0). */
-function usageLabel(used: number, limit: number | undefined): string {
-    if (limit === undefined || limit <= 0) return `${used} in use`;
-    return `${used} of ${limit} in use`;
-}
-
-/** A copyable code block. Used for both the compose file and the CLI steps. */
-function Snippet({ title, body }: { title: string; body: string }) {
-    return (
-        <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-                <span className="mono-label">{title}</span>
-                <CopyButton value={body} />
-            </div>
-            <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-03) font-mono text-[11px] leading-relaxed overflow-x-auto text-(--base-08)">
-                {body}
-            </pre>
-        </div>
-    );
-}
-
-/**
- * The deploy instructions for one machine: what to run, in what order, and what
- * to check afterwards.
- *
- * `warpKey` is null whenever the secret is not (or no longer) available - it is
- * stored as a hash, so it is shown exactly once at mint time. The snippet then
- * carries an obvious placeholder instead of a plausible-looking wrong value.
- */
-function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, addrs }: {
-    kind: 'node' | 'route-only';
-    warpKey: string | null;
-    enrollUrl: string;
-    nodeEnrollToken?: string;
-    nodeId?: string;
-    addrs?: WarpDeployAddrs | null;
-}) {
-    const input = {
-        apiKey: warpKey ?? '<your-warp-key>',
-        enrollUrl,
-        nodeEnrollToken,
-        nodeId,
-        // Undetermined values stay undefined so the snippet keeps its
-        // placeholder: a blank tells the reader something is missing, an empty
-        // string looks like a setting that was deliberately cleared.
-        coreGrpcAddr: addrs?.coreGrpcAddr || undefined,
-        redisAddr: addrs?.redisAddr || undefined,
-        tunnelSubnets: addrs?.tunnelSubnets || undefined,
-    };
-    const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
-
-    return (
-        <div className="space-y-3 rounded-md border border-(--base-03) bg-(--base-01) p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-(--base-09)">
-                <Terminal size={15} className="text-(--accent-light)" />
-                Deploy it on your machine
-            </div>
-            <p className="text-xs text-(--base-06)">
-                Linux only: the tunnel uses kernel WireGuard, which needs host networking and
-                NET_ADMIN. There is no Windows or macOS path for the machine itself.
-            </p>
-            <Snippet title={kind === 'node' ? 'byon-node.yml' : 'route-only.yml'} body={compose} />
-            <Snippet title="Commands" body={deployCli(kind)} />
-        </div>
-    );
-}
-
-/** Shown in place of a card's controls when the account does not include it. */
-function NotIncluded({ what, storeUrl, suspended }: { what: string; storeUrl: string | null; suspended: boolean }) {
-    return (
-        <div className="rounded-md border border-(--base-03) bg-(--base-02) p-4 space-y-2.5">
-            <div className="flex items-center gap-2 text-sm font-medium text-(--base-08)">
-                <Lock size={14} className="text-(--base-06)" />
-                Not on your account
-            </div>
-            <p className="text-sm text-(--base-07)">
-                {suspended
-                    ? 'Your account is suspended, which pauses this until it is reactivated.'
-                    : `Add ${what} to your plan, or ask an admin to enable it for you.`}
-            </p>
-            {!suspended && storeUrl && (
-                <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm inline-flex w-fit">
-                    <ShoppingCart size={13} /> Get {what} <ExternalLink size={11} />
-                </a>
-            )}
-        </div>
-    );
-}
+type InfraTab = 'machines' | 'routes';
 
 export default function MyNodesPage() {
     const { featureFlags, entitlement, user, gatewayEnabled } = useAppData();
+    const router = useRouter();
+    const searchParams = useSearchParams();
+
+    // The tab lives in the URL so Create can deep-link straight into the half it
+    // means, and so a reload or a shared link lands where it left off. It used
+    // to be two separate pages with a bar that navigated between them, which is
+    // what made one product feel like two.
+    const tab: InfraTab = searchParams.get('tab') === 'routes' ? 'routes' : 'machines';
+    const selectTab = useCallback((next: InfraTab) => {
+        router.replace(next === 'routes' ? '/nodes?tab=routes' : '/nodes', { scroll: false });
+    }, [router]);
+
+    const [showAddFleetNode, setShowAddFleetNode] = useState(false);
 
     const [nodes, setNodes] = useState<OwnNode[]>([]);
     const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
-    const [kits, setKits] = useState<LinkKit[]>([]);
-    const [kitUsage, setKitUsage] = useState<{ used: number; limit?: number }>({ used: 0 });
     // The node cap is a LIMIT, not an entitlement: entitlement answers "may
     // they", limits answer "how many". They live in different endpoints because
     // they are set in different places (plan kind vs plan caps).
@@ -191,9 +99,6 @@ export default function MyNodesPage() {
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
 
-    const [kitNameDraft, setKitNameDraft] = useState('');
-    const [kitBusy, setKitBusy] = useState(false);
-    const [revealedKit, setRevealedKit] = useState<{ name: string; warpKey: string } | null>(null);
 
     // Overlay addresses for the deploy snippets. Resolved by Core, which is on
     // that network; there is nowhere else a customer could look them up.
@@ -227,19 +132,7 @@ export default function MyNodesPage() {
         setLoading(false);
     }, []);
 
-    const loadKits = useCallback(async () => {
-        // Route-only lives on the overlay, which only exists in gateway routing
-        // mode - the endpoint 409s otherwise, so don't call it.
-        if (!gatewayEnabled) return;
-        const res = await listLinkKits();
-        if (res.success) {
-            setKits(res.kits || []);
-            setKitUsage({ used: res.used ?? (res.kits?.length ?? 0), limit: res.limit });
-        }
-    }, [gatewayEnabled]);
-
     useEffect(() => { load(); }, [load]);
-    useEffect(() => { loadKits(); }, [loadKits]);
 
     useEffect(() => {
         if (typeof window !== 'undefined') {
@@ -326,32 +219,6 @@ export default function MyNodesPage() {
         load();
     };
 
-    const handleMintKit = async () => {
-        setKitBusy(true);
-        setError('');
-        const name = kitNameDraft.trim() || 'My location';
-        const res = await mintLinkKit(name);
-        setKitBusy(false);
-        if (!res.success || !res.warp_key) {
-            setError((res as { message?: string }).message || 'Could not create the connection.');
-            return;
-        }
-        setRevealedKit({ name, warpKey: res.warp_key });
-        setKitNameDraft('');
-        loadKits();
-    };
-
-    const handleRevokeKit = async (linkId: string) => {
-        setKitBusy(true);
-        const res = await revokeLinkKit(linkId);
-        setKitBusy(false);
-        if (!res.success) {
-            setError('Could not remove that connection.');
-            return;
-        }
-        loadKits();
-    };
-
     if (!featureFlags.byon) {
         return (
             <div className="p-6 max-w-2xl">
@@ -369,15 +236,17 @@ export default function MyNodesPage() {
     const nodesUsed = nodeUsage?.used ?? nodes.length;
     const effectiveNodeLimit = nodeUsage?.limit ?? nodeLimit;
     const nodesAtCap = typeof effectiveNodeLimit === 'number' && effectiveNodeLimit > 0 && nodesUsed >= effectiveNodeLimit;
-    const kitsAtCap = typeof kitUsage.limit === 'number' && kitUsage.limit > 0 && kitUsage.used >= kitUsage.limit;
+
+    const TABS: { id: InfraTab; label: string; icon: typeof HardDrive }[] = [
+        { id: 'machines', label: 'My machines', icon: HardDrive },
+        { id: 'routes', label: 'Protected addresses', icon: Globe },
+    ];
 
     return (
         <div className="p-6 max-w-4xl space-y-6 overflow-y-auto">
-            <MyInfraTabs showRoutes={gatewayEnabled} />
-
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <h1 className="text-lg font-display font-bold text-(--base-09) mb-1">My machines</h1>
+                    <h1 className="text-lg font-display font-bold text-(--base-09) mb-1">My infrastructure</h1>
                     <p className="text-sm text-(--base-07) max-w-2xl">
                         Two ways to use hardware you already own. Both connect outwards through an
                         encrypted tunnel, so neither needs a public IP or port forwarding — and you can
@@ -393,6 +262,32 @@ export default function MyNodesPage() {
                 )}
             </div>
 
+            {/* With gateway routing off there is no route-only product at all, so
+                a second tab would lead to a panel that can only refuse. */}
+            {gatewayEnabled && (
+                <div className="flex gap-1 border-b border-(--base-03)">
+                    {TABS.map(t => {
+                        const Icon = t.icon;
+                        return (
+                            <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => selectTab(t.id)}
+                                aria-current={tab === t.id ? 'page' : undefined}
+                                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                                    tab === t.id
+                                        ? 'border-(--accent) text-(--accent-light)'
+                                        : 'border-transparent text-(--base-06) hover:text-(--base-08)'
+                                }`}
+                            >
+                                <Icon size={14} />
+                                {t.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+
             {error && (
                 <div className="alert alert-error">
                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
@@ -407,6 +302,17 @@ export default function MyNodesPage() {
                 </div>
             )}
 
+            {tab === 'routes' ? (
+                <RoutesPanel
+                    enrollUrl={enrollUrl}
+                    addrs={deployAddrs}
+                    storeUrl={storeUrl}
+                    allowed={routeOnlyAllowed}
+                    entitlementKnown={entitlementKnown}
+                    suspended={suspended}
+                />
+            ) : (
+            <>
             {/* ── Bring your own node ─────────────────────────────────────── */}
             <section className="card p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
@@ -586,132 +492,21 @@ export default function MyNodesPage() {
                 )}
             </section>
 
-            {/* ── Route only ──────────────────────────────────────────────── */}
-            <section className="card p-5 space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                        <h2 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2">
-                            <Globe size={15} /> Route only
-                        </h2>
-                        <p className="text-sm text-(--base-07) mt-1 max-w-2xl">
-                            <strong>You</strong> run the Minecraft server, on your own panel or none at all.
-                            Dylaris gives it a protected address and takes the attack traffic. Your machine
-                            makes outbound connections only — nothing is exposed.
-                        </p>
-                    </div>
-                    <span className="mono-label shrink-0 pt-0.5">{usageLabel(kitUsage.used, kitUsage.limit)}</span>
+            {/* Joining a machine to the FLEET is an operator action and a
+                different flow from a tenant enrolling theirs. It used to hang
+                off the sidebar's Create menu, which is why one entry opened a
+                modal and its neighbour opened a page. */}
+            {isAdmin && (
+                <div className="flex justify-end">
+                    <button type="button" onClick={() => setShowAddFleetNode(true)} className="btn btn-secondary btn-sm">
+                        <Plus size={13} /> Add a fleet node
+                    </button>
                 </div>
+            )}
+            </>
+            )}
 
-                {!gatewayEnabled ? (
-                    <p className="text-sm text-(--base-06)">
-                        Protected addresses need gateway routing, which is off on this platform.
-                    </p>
-                ) : !entitlementKnown ? (
-                    <SkeletonCard height="h-16" />
-                ) : !routeOnlyAllowed ? (
-                    <NotIncluded what="route only" storeUrl={storeUrl} suspended={suspended} />
-                ) : (
-                    <>
-                        <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
-                            <div className="flex-1 flex flex-col gap-[5px]">
-                                <label className="input-label">Name this location</label>
-                                <input
-                                    className="input-field w-full"
-                                    value={kitNameDraft}
-                                    onChange={e => setKitNameDraft(e.target.value)}
-                                    placeholder="home"
-                                    disabled={kitsAtCap || suspended}
-                                />
-                            </div>
-                            <button
-                                onClick={handleMintKit}
-                                disabled={kitBusy || kitsAtCap || suspended}
-                                className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-                                title={kitsAtCap ? 'You have used every protected address your plan includes' : undefined}
-                            >
-                                <Plus size={14} /> {kitBusy ? 'Working…' : 'Add a location'}
-                            </button>
-                        </div>
-
-                        {kitsAtCap && (
-                            <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
-                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                                <span>
-                                    Every protected address your plan includes is in use. Add another in the
-                                    store to connect a second location.
-                                </span>
-                            </p>
-                        )}
-
-                        {revealedKit && (
-                            <div className="rounded-md border border-(--accent-border) bg-(--accent-ghost) p-4 space-y-3">
-                                <div className="text-sm font-medium text-(--base-09)">
-                                    {revealedKit.name} — your connection key. It is shown once.
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <code className="input-mono flex-1 min-w-0 break-all bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) select-all">
-                                        {revealedKit.warpKey}
-                                    </code>
-                                    <CopyButton value={revealedKit.warpKey} />
-                                </div>
-                                <DeployKit kind="route-only" warpKey={revealedKit.warpKey} enrollUrl={enrollUrl} addrs={deployAddrs} />
-                                <p className="text-xs text-(--base-07)">
-                                    Once it is up, create the address itself under{' '}
-                                    <a href="/routes" className="text-(--accent-light) hover:underline">Protected addresses</a>.
-                                </p>
-                                <button type="button" onClick={() => setRevealedKit(null)} className="btn btn-secondary btn-sm">
-                                    I saved it
-                                </button>
-                            </div>
-                        )}
-
-                        <div className="border-t border-(--base-03) pt-3 space-y-2">
-                            <div className="mono-label">Your locations</div>
-                            {kits.length === 0 ? (
-                                <p className="text-sm text-(--base-06)">
-                                    No location connected yet. Add one above to get its deploy steps.
-                                </p>
-                            ) : (
-                                kits.map(k => (
-                                    <div key={k.id} className="flex items-center justify-between gap-3 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2.5">
-                                        <div className="min-w-0">
-                                            <div className="text-sm text-(--base-09) truncate">{k.name}</div>
-                                            <div className="mono-label truncate">{k.link_id}</div>
-                                        </div>
-                                        <button
-                                            onClick={() => handleRevokeKit(k.link_id)}
-                                            disabled={kitBusy}
-                                            className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors disabled:opacity-40"
-                                            title="Remove this location"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-
-                        {/* Reachable without a fresh key too: everything except the
-                            secret is reproducible, and someone who saved their key
-                            still needs the compose file the next time they rebuild. */}
-                        {kits.length > 0 && !revealedKit && (
-                            <details className="group">
-                                <summary className="cursor-pointer text-xs text-(--base-06) hover:text-(--base-08) transition-colors select-none">
-                                    Show the deploy steps again
-                                </summary>
-                                <div className="pt-3">
-                                    <p className="text-xs text-(--base-06) mb-2">
-                                        The key itself cannot be shown again — only its hash is stored. Paste the one
-                                        you saved where the snippet says <code className="font-mono">&lt;your-warp-key&gt;</code>,
-                                        or remove the location and add it again for a fresh key.
-                                    </p>
-                                    <DeployKit kind="route-only" warpKey={null} enrollUrl={enrollUrl} addrs={deployAddrs} />
-                                </div>
-                            </details>
-                        )}
-                    </>
-                )}
-            </section>
+            {showAddFleetNode && <AddNodeModal onClose={() => setShowAddFleetNode(false)} />}
         </div>
     );
 }
