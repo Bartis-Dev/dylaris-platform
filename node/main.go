@@ -21,6 +21,7 @@ import (
 
 	agent "dylaris-agent"
 	"dylaris-pkg/queue"
+	"dylaris-pkg/retry"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/joho/godotenv"
@@ -202,10 +203,11 @@ func main() {
 		DB:       redisDB,
 	})
 
-	// Non-fatal: retry. On auth failure re-confirm with Core (which re-applies
-	// the ACL) and rebuild the client if the secret changed. MC containers keep
-	// running throughout, so a slow Core/Valkey never takes the node down.
-	backoff := time.Second
+	// Non-fatal: retry on the platform's shared schedule (12x5s, then every
+	// 30s). On auth failure re-confirm with Core (which re-applies the ACL) and
+	// rebuild the client if the secret changed. MC containers keep running
+	// throughout, so a slow Core/Valkey never takes the node down.
+	var bo retry.Backoff
 	for {
 		if err := rdb.Ping(ctx).Err(); err == nil {
 			break
@@ -230,10 +232,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			log.Fatal("redisacl: shutdown during Redis bootstrap")
-		case <-time.After(backoff):
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
+		case <-time.After(bo.Next()):
 		}
 	}
 	log.Println("Connected to Redis (ACL mode)")

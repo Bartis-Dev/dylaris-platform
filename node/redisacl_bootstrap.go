@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-pkg/retry"
 	pb "dylaris-proto/node"
 
 	"github.com/redis/go-redis/v9"
@@ -134,7 +135,9 @@ func ensureNodeSecret(ctx context.Context) []byte {
 			"with NODE_RECOVERY_TOKEN set to re-pair under this identity.", nodeID)
 		return nil // caller (main.go) log.Fatal's on a nil secret -> process stops.
 	}
-	backoff := time.Second
+	// Shared reconnect schedule: 12x5s, then every 30s. Never gives up - a node
+	// whose Core is briefly away has to come back on its own.
+	var bo retry.Backoff
 	for {
 		s, err := bootstrapSecretViaGRPC(ctx)
 		if err == nil && len(s) == 32 {
@@ -142,14 +145,12 @@ func ensureNodeSecret(ctx context.Context) []byte {
 			log.Println("redisacl: obtained node secret via gRPC bootstrap")
 			return s
 		}
-		log.Printf("redisacl: secret bootstrap failed (retry in %s): %v", backoff, err)
+		wait := bo.Next()
+		log.Printf("redisacl: secret bootstrap failed (retry in %s): %v", wait, err)
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(backoff):
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
+		case <-time.After(wait):
 		}
 	}
 }
@@ -252,6 +253,11 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 // identical user + password, and the existing client re-auths transparently on its
 // next command. This also breaks the mesh discovery chicken-and-egg (Cores are read
 // from a now-authenticated Redis). Backoff-capped, throttled logs, never falls open.
+//
+// Deliberately NOT on the shared retry schedule (dylaris-pkg/retry): the base
+// interval here is a health PROBE against a Redis this node is already connected
+// to, not a reconnect, and the 5-minute ceiling exists so a node cannot hammer a
+// Core that is already down. Do not "align" it with the reconnect loops.
 func redisACLWatchdog(ctx context.Context, rdb *redis.Client) {
 	const (
 		probeEvery = 15 * time.Second

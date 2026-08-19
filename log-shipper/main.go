@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dylaris-pkg/retry"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -268,8 +270,11 @@ func connectRedis() *redis.Client {
 		DB:       db,
 	})
 
-	// Retry-Loop mit Exponential Backoff bis max 30s
-	backoff := 1 * time.Second
+	// Reconnect on the platform's shared schedule (12x5s, then every 30s). Never
+	// gives up: the Minecraft server is already running by the time this returns
+	// on a restart, so a Redis that is merely slow to come back must not take
+	// the container down with it.
+	var bo retry.Backoff
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := rdb.Ping(ctx).Err()
@@ -278,11 +283,9 @@ func connectRedis() *redis.Client {
 			log.Printf("log-shipper: connected to Redis at %s", addr)
 			return rdb
 		}
-		log.Printf("log-shipper: Redis not reachable (%v), retrying in %s...", err, backoff)
-		time.Sleep(backoff)
-		if backoff < 30*time.Second {
-			backoff *= 2
-		}
+		wait := bo.Next()
+		log.Printf("log-shipper: Redis not reachable (%v), retrying in %s...", err, wait)
+		time.Sleep(wait)
 	}
 }
 
@@ -320,6 +323,74 @@ func scanLines(r io.Reader, ch chan<- string) {
 	}
 }
 
+// lossMarker is written into the console once, ahead of the replayed lines, when
+// an outage lasted longer than the buffer could cover. Losing console output is
+// survivable; losing it SILENTLY is the actual bug - a reader who sees a gap
+// with no explanation assumes the server went quiet.
+const lossMarker = "[dylaris] %d console lines were lost while the log service was unreachable"
+
+const (
+	// replayMaxLines caps the buffer at what the destination can actually hold.
+	// The stream is trimmed to maxStreamLen and the panel reads at most that
+	// many back, so buffering more only hands Redis lines it trims on arrival.
+	// The newest lines are the ones kept, which is what a reader wants after an
+	// outage.
+	replayMaxLines = maxStreamLen
+
+	// replayMaxBytes is the second cap, and the one that matters for safety.
+	// This process is PID 1 INSIDE the Minecraft container and shares the
+	// container's memory limit with the JVM - container RAM is
+	// "requested + 512MB" and the heap is pinned by Xms=Xmx, so there is no
+	// slack to borrow. A single line may be up to 1MB (the scanner's cap), so
+	// the line cap alone would allow a gigabyte. An unbounded buffer here does
+	// not merely waste memory: it can get the customer's server OOM-killed, and
+	// it grows exactly when something is already wrong.
+	//
+	// 8MB is far above normal console output for replayMaxLines lines (~120
+	// bytes each) and far below anything that threatens the JVM.
+	replayMaxBytes = 8 << 20
+)
+
+// replayBuffer holds console lines Redis has refused, oldest first, so a blip in
+// the log service delays output instead of discarding it. On overflow the OLDEST
+// lines go and are counted, because after an outage the newest output is what
+// tells the reader what state the server is in now.
+type replayBuffer struct {
+	lines   []string
+	bytes   int
+	dropped int
+}
+
+// add appends a batch and evicts from the front until both caps hold.
+func (r *replayBuffer) add(lines []string) {
+	for _, l := range lines {
+		r.lines = append(r.lines, l)
+		r.bytes += len(l)
+	}
+	for len(r.lines) > 0 && (len(r.lines) > replayMaxLines || r.bytes > replayMaxBytes) {
+		r.bytes -= len(r.lines[0])
+		r.lines[0] = "" // release the string; the slice header keeps the array alive
+		r.lines = r.lines[1:]
+		r.dropped++
+	}
+}
+
+func (r *replayBuffer) empty() bool { return len(r.lines) == 0 && r.dropped == 0 }
+
+// pending returns what should be written next, with the loss marker prepended
+// when lines were evicted. It does NOT clear the buffer - the caller clears only
+// after Redis has accepted the write, so a failed attempt loses nothing.
+func (r *replayBuffer) pending() []string {
+	if r.dropped == 0 {
+		return r.lines
+	}
+	out := make([]string, 0, len(r.lines)+1)
+	out = append(out, fmt.Sprintf(lossMarker, r.dropped))
+	return append(out, r.lines...)
+}
+
+func (r *replayBuffer) clear() { r.lines, r.bytes, r.dropped = nil, 0, 0 }
+
 // shipLogs batches log lines and writes them to the Redis Stream.
 // Flushes every 200ms or when 50 lines accumulate, whichever comes first.
 // Side effect: also scans each line for JVM GC summaries and updates a
@@ -329,15 +400,36 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 	ticker := time.NewTicker(batchInterval)
 	defer ticker.Stop()
 
-	var buf []string
+	var (
+		buf      []string
+		replay   replayBuffer
+		bo       retry.Backoff
+		nextTry  time.Time // zero = attempt immediately
+		degraded bool      // true between the first failed write and the recovery
+	)
 
-	flush := func() {
-		if len(buf) == 0 {
+	// flush moves whatever has accumulated into the replay buffer and tries to
+	// write the buffer out. While Redis is unreachable the attempt is spaced by
+	// the shared retry schedule rather than repeated on every 200ms tick, so an
+	// outage does not put a failing round-trip in front of every batch.
+	//
+	// force ignores that spacing; used on shutdown, where there is no later
+	// attempt to defer to.
+	flush := func(now time.Time, force bool) {
+		if len(buf) > 0 {
+			replay.add(buf)
+			buf = buf[:0]
+		}
+		if replay.empty() || (!force && now.Before(nextTry)) {
 			return
 		}
-		buildPipe := func() redis.Pipeliner {
+		lines := replay.pending()
+		write := func() error {
+			// Always a FRESH pipeline: go-redis resets a pipeline after Exec, so
+			// re-running the same object would send nothing and look like a
+			// silent success.
 			pipe := rdb.Pipeline()
-			for _, line := range buf {
+			for _, line := range lines {
 				pipe.XAdd(ctx, &redis.XAddArgs{
 					Stream: streamKey,
 					MaxLen: maxStreamLen,
@@ -345,25 +437,51 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 					Values: map[string]interface{}{"line": line},
 				})
 			}
-			return pipe
+			_, err := pipe.Exec(ctx)
+			return err
 		}
-		_, err := buildPipe().Exec(ctx)
+		err := write()
 		if err != nil && ctx.Err() == nil {
-			// 1x Retry on a fresh pipeline: go-redis resets a pipeline after
-			// Exec, so re-running the same object would send nothing and
-			// silently drop the batch.
-			if _, retryErr := buildPipe().Exec(ctx); retryErr != nil {
-				log.Printf("log-shipper: Redis write failed (dropping %d lines): %v", len(buf), retryErr)
-			}
+			// One immediate retry before falling back to the schedule. The
+			// common failure is a pooled connection Redis has already closed,
+			// where the second attempt succeeds at once - without this, that
+			// costs the console a full retry interval for nothing.
+			err = write()
 		}
-		buf = buf[:0]
+		if err != nil {
+			if ctx.Err() != nil {
+				return // shutting down; the buffer dies with the process
+			}
+			wait := bo.Next()
+			nextTry = now.Add(wait)
+			// Logged once per outage, not once per failed attempt: this file is
+			// PID 1 of the container, so its own log is the only place an
+			// operator can see this, and a line every 200ms would bury it.
+			if !degraded {
+				degraded = true
+				log.Printf("log-shipper: Redis write failed, buffering console output (retry in %s): %v", wait, err)
+			}
+			return
+		}
+		if degraded {
+			log.Printf("log-shipper: Redis reachable again, replayed %d buffered lines", len(lines))
+			degraded = false
+		}
+		// Reset on success, not only at startup: a Redis that flaps gets the
+		// dense retry schedule again each time it drops out.
+		bo.Reset()
+		nextTry = time.Time{}
+		replay.clear()
 	}
 
 	for {
 		select {
 		case line, ok := <-lineCh:
 			if !ok {
-				flush()
+				// The process has exited and the scanners have drained. This is
+				// the last chance to get the crash output out, so ignore the
+				// retry spacing.
+				flush(time.Now(), true)
 				return
 			}
 			// JVM heap accounting: pulls "100M->50M(2048M)" out of GC
@@ -395,12 +513,12 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 			}
 			buf = append(buf, line)
 			if len(buf) >= batchSize {
-				flush()
+				flush(time.Now(), false)
 			}
-		case <-ticker.C:
-			flush()
+		case now := <-ticker.C:
+			flush(now, false)
 		case <-ctx.Done():
-			flush()
+			flush(time.Now(), true)
 			return
 		}
 	}
