@@ -14,6 +14,7 @@ var ticketRowCols = []string{
 	"id", "region", "category_id", "category_name",
 	"user_id", "user_name",
 	"server_uuid", "server_region",
+	"subject_kind", "subject_ref",
 	"title", "status", "priority",
 	"assigned_user_id", "assigned_name", "assigned_team",
 	"created_at", "updated_at", "closed_at",
@@ -98,7 +99,7 @@ func TestListTickets_AssignedTeamPriorityCategory(t *testing.T) {
 	now := time.Now()
 	rows := sqlmock.NewRows(ticketRowCols).
 		AddRow(5, "eu", 7, "Billing", "user-1", "alice",
-			"", "", "Cannot pay", "open", "high",
+			"", "", "", "", "Cannot pay", "open", "high",
 			nil, "", "", now, now, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(wantQuery)).

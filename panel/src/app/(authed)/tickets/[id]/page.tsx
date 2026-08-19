@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import {
     ArrowLeft, Send, Loader2, LifeBuoy, Lock, UserPlus, X as XIcon, History, CircleAlert, CircleCheckBig,
     Paperclip, Download, Trash2, MessageSquareQuote, Server as ServerIcon, ExternalLink,
+    HardDrive, Globe,
 } from 'lucide-react';
 import {
     getTicket, addTicketReply, setTicketStatus, setTicketAssignment,
@@ -271,6 +272,15 @@ export default function TicketDetailPage() {
                                     {ticket.serverName} (deleted)
                                 </span>
                             )
+                        )}
+                        {/* A machine or an address is not a server and has no
+                            page to open - naming it is the whole point, so
+                            support does not have to infer it from the prose. */}
+                        {(ticket.subjectKind === 'node' || ticket.subjectKind === 'route') && ticket.subjectRef && (
+                            <span className="inline-flex items-center gap-1.5 mt-2 px-2 py-1 rounded-md bg-(--base-03) border border-(--base-04) text-xs text-(--base-07)">
+                                {ticket.subjectKind === 'node' ? <HardDrive size={12} /> : <Globe size={12} />}
+                                {ticket.subjectRef}
+                            </span>
                         )}
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">

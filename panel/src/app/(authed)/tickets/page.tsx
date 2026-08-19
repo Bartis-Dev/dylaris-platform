@@ -105,7 +105,7 @@ function TicketRow({ ticket }: { ticket: Ticket }) {
                 <div className="min-w-0">
                     <p className="text-sm font-medium text-(--base-09) truncate">{ticket.title}</p>
                     <p className="text-xs text-(--base-06) mt-0.5 font-mono">
-                        #{ticket.id} · {ticket.categoryName || 'No category'}{ticket.serverName ? ` · ${ticket.serverName}` : ''}
+                        #{ticket.id} · {ticket.categoryName || 'No category'}{ticket.serverName ? ` · ${ticket.serverName}` : (ticket.subjectRef ? ` · ${ticket.subjectRef}` : '')}
                     </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

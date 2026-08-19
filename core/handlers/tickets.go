@@ -101,12 +101,39 @@ func canMutate(perms EffectivePermissions) bool {
 // ── Create ───────────────────────────────────────────────────────────
 
 type createTicketRequest struct {
-	CategoryID    int    `json:"categoryId"`
-	ServerUUID    string `json:"serverUuid,omitempty"`
-	ServerRegion  string `json:"serverRegion,omitempty"`
-	Title         string `json:"title"`
-	FirstMessage  string `json:"firstMessage"`
-	Priority      string `json:"priority,omitempty"`
+	CategoryID   int    `json:"categoryId"`
+	ServerUUID   string `json:"serverUuid,omitempty"`
+	ServerRegion string `json:"serverRegion,omitempty"`
+	// What the ticket is about: "server" | "node" | "route" | "" (nothing
+	// specific). SubjectRef names the node or route.
+	SubjectKind  string `json:"subjectKind,omitempty"`
+	SubjectRef   string `json:"subjectRef,omitempty"`
+	Title        string `json:"title"`
+	FirstMessage string `json:"firstMessage"`
+	Priority     string `json:"priority,omitempty"`
+}
+
+// normalizeTicketSubject validates the subject pair and reduces it to a stored
+// form. Anything unrecognised collapses to "nothing specific" rather than 400:
+// the subject is context for whoever reads the ticket, and refusing to file a
+// support request over it would block someone who is already stuck.
+//
+// A "server" subject carries no ref - the id lives in ServerUUID, so recording
+// it twice would create two places to disagree.
+func normalizeTicketSubject(kind, ref string) (string, string) {
+	kind = strings.TrimSpace(strings.ToLower(kind))
+	ref = strings.TrimSpace(ref)
+	switch kind {
+	case "server":
+		return "server", ""
+	case "node", "route":
+		if ref == "" || len(ref) > 128 {
+			return "", ""
+		}
+		return kind, ref
+	default:
+		return "", ""
+	}
 }
 
 // CreateTicket POST /api/tickets
@@ -153,12 +180,16 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	// future cross-region support. For now everyone is in 'default'.
 	region := "default"
 
+	subjectKind, subjectRef := normalizeTicketSubject(req.SubjectKind, req.SubjectRef)
+
 	t := &models.Ticket{
 		Region:       region,
 		CategoryID:   cat.ID,
 		UserID:       userID,
 		ServerUUID:   strings.TrimSpace(req.ServerUUID),
 		ServerRegion: strings.TrimSpace(req.ServerRegion),
+		SubjectKind:  subjectKind,
+		SubjectRef:   subjectRef,
 		Title:        title,
 		Status:       "open",
 		Priority:     priority,
@@ -190,9 +221,11 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		EventType:   TicketEventCreated,
 		ActorUserID: &actor,
 		Metadata: map[string]interface{}{
-			"category":   cat.Name,
-			"priority":   priority,
-			"server_uuid": t.ServerUUID,
+			"category":     cat.Name,
+			"priority":     priority,
+			"server_uuid":  t.ServerUUID,
+			"subject_kind": subjectKind,
+			"subject_ref":  subjectRef,
 		},
 	})
 
@@ -605,7 +638,7 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 
 type assignRequest struct {
 	AssignedUserID *string `json:"assignedUserId"`
-	AssignedTeam   string `json:"assignedTeam"`
+	AssignedTeam   string  `json:"assignedTeam"`
 }
 
 // UpdateAssignment PATCH /api/tickets/{id}/assignment — support/admin only.

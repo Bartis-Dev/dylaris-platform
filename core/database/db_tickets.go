@@ -191,6 +191,16 @@ func createTicketTables(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ticket_deletions_deleted_at ON ticket_deletions (deleted_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_ticket_deletions_deleted_by ON ticket_deletions (deleted_by)`,
+
+		// What the ticket is ABOUT. server_uuid only ever covered servers, so a
+		// customer whose BYON machine or protected address was the problem had
+		// nowhere to say so and support had to work it out from the prose.
+		//
+		// subject_kind is 'server' | 'node' | 'route' | '' (nothing specific).
+		// subject_ref names the node or the route; for a server the authority
+		// stays server_uuid, so there is one place a server id lives.
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS subject_kind VARCHAR(16) NOT NULL DEFAULT ''`,
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS subject_ref VARCHAR(128) NOT NULL DEFAULT ''`,
 	}
 	for _, q := range tables {
 		if _, err := db.Exec(q); err != nil {

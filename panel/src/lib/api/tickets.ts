@@ -28,6 +28,10 @@ export interface Ticket {
     serverName?: string;
     /** Numeric id for the /servers/<id> link. Detail reads only. */
     serverId?: number;
+    /** What the ticket is about when it is not a server. */
+    subjectKind?: 'server' | 'node' | 'route' | '';
+    /** Names the node or route; empty for a server (serverUuid holds that). */
+    subjectRef?: string;
     title: string;
     status: TicketStatus;
     priority: TicketPriority;
@@ -220,6 +224,8 @@ export interface CreateTicketPayload {
     categoryId: number;
     serverUuid?: string;
     serverRegion?: string;
+    subjectKind?: 'server' | 'node' | 'route' | '';
+    subjectRef?: string;
     title: string;
     firstMessage: string;
     priority?: TicketPriority;

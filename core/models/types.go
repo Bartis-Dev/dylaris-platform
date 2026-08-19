@@ -115,7 +115,12 @@ type Ticket struct {
 	// stores the UUID, but every panel link needs the id, so the detail read
 	// resolves it alongside the name. Populated by GetTicket only — list views
 	// show the name and do not link.
-	ServerID       int        `json:"serverId,omitempty"`
+	ServerID int `json:"serverId,omitempty"`
+	// What the ticket is about, when it is not a server: "server" | "node" |
+	// "route" | "" (nothing specific). SubjectRef names the node or route;
+	// for a server the id stays in ServerUUID so there is one place it lives.
+	SubjectKind    string     `json:"subjectKind,omitempty"`
+	SubjectRef     string     `json:"subjectRef,omitempty"`
 	Title          string     `json:"title"`
 	Status         string     `json:"status"`
 	Priority       string     `json:"priority"`

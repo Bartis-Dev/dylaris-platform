@@ -7,14 +7,21 @@ import { ArrowLeft, LifeBuoy, Loader2, CircleAlert } from 'lucide-react';
 import { listTicketCategories, createTicket, TicketCategory, TicketPriority } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
 import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
+import { getNodes, getLinkRoutes } from '@/lib/api';
 
 export default function NewTicketPage() {
     const router = useRouter();
-    const { servers, featureFlags } = useAppData();
+    const { servers, featureFlags, gatewayEnabled } = useAppData();
     const [categories, setCategories] = useState<TicketCategory[]>([]);
     const [loading, setLoading] = useState(true);
     const [categoryId, setCategoryId] = useState<number | ''>('');
     const [serverUuid, setServerUuid] = useState('');
+    // One field for "what is this about". server_uuid only ever covered
+    // servers, so someone whose own machine or protected address was the
+    // problem had nowhere to say so and support had to infer it from the prose.
+    const [subject, setSubject] = useState('');
+    const [ownNodes, setOwnNodes] = useState<{ id: string; label: string }[]>([]);
+    const [ownRoutes, setOwnRoutes] = useState<string[]>([]);
     const [title, setTitle] = useState('');
     const [firstMessage, setFirstMessage] = useState('');
     const [priority, setPriority] = useState<TicketPriority | ''>('');
@@ -28,6 +35,25 @@ export default function NewTicketPage() {
             setLoading(false);
         });
     }, [featureFlags.tickets]);
+
+    // Best-effort: a reader who has neither simply gets fewer options. Failing
+    // the form over an unreachable side list would block someone from asking
+    // for help with the very thing that is broken.
+    useEffect(() => {
+        if (!featureFlags.tickets) return;
+        let cancelled = false;
+        getNodes().then(res => {
+            if (cancelled || !res.success || !Array.isArray(res.nodes)) return;
+            setOwnNodes((res.nodes as { name: string; displayName?: string }[])
+                .map(n => ({ id: n.name, label: n.displayName || n.name })));
+        }).catch(() => {});
+        if (gatewayEnabled) {
+            getLinkRoutes().then(routes => {
+                if (!cancelled && Array.isArray(routes)) setOwnRoutes(routes.map(r => r.domain));
+            }).catch(() => {});
+        }
+        return () => { cancelled = true; };
+    }, [featureFlags.tickets, gatewayEnabled]);
 
     if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 
@@ -64,9 +90,17 @@ export default function NewTicketPage() {
             return;
         }
         setSubmitting(true);
+        // One select, three shapes on the wire. A server keeps using serverUuid
+        // (the category gate and every existing filter read that), so the
+        // subject only has to name the machine or address cases.
+        const [kind, ref] = subject ? subject.split(':') : ['', ''];
+        const subjectServerUuid = kind === 'server' ? ref : '';
+
         const res = await createTicket({
             categoryId: Number(categoryId),
-            serverUuid: serverUuid || undefined,
+            serverUuid: serverUuid || subjectServerUuid || undefined,
+            subjectKind: (kind || undefined) as 'server' | 'node' | 'route' | undefined,
+            subjectRef: kind === 'node' || kind === 'route' ? ref : undefined,
             title: trimmedTitle,
             firstMessage: trimmedBody,
             priority: (priority || undefined) as TicketPriority | undefined,
@@ -90,7 +124,7 @@ export default function NewTicketPage() {
                     New ticket
                 </h1>
                 <p className="text-sm text-(--base-06) mb-6">
-                    Pick a category, optionally attach a server, and describe what&apos;s going on.
+                    Pick a category, say which of your services it concerns, and describe what&apos;s going on.
                 </p>
 
                 {error && (
@@ -118,6 +152,47 @@ export default function NewTicketPage() {
                         {selectedCategory?.description && (
                             <p className="text-xs text-(--base-06) leading-snug mt-1">{selectedCategory.description}</p>
                         )}
+                    </div>
+
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label" htmlFor="ticket-subject">What is this about?</label>
+                        <select
+                            id="ticket-subject"
+                            value={subject}
+                            onChange={e => setSubject(e.target.value)}
+                            disabled={submitting}
+                            className="input-field w-full"
+                        >
+                            {/* Deliberately first and always available: someone
+                                with nothing yet, or a question about billing,
+                                still has to be able to file a ticket. */}
+                            <option value="">Nothing specific — a general question</option>
+                            {servers.length > 0 && (
+                                <optgroup label="Servers">
+                                    {servers.map(sv => (
+                                        <option key={sv.uuid} value={`server:${sv.uuid}`}>{sv.name}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+                            {ownNodes.length > 0 && (
+                                <optgroup label="My machines">
+                                    {ownNodes.map(n => (
+                                        <option key={n.id} value={`node:${n.id}`}>{n.label}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+                            {ownRoutes.length > 0 && (
+                                <optgroup label="Protected addresses">
+                                    {ownRoutes.map(d => (
+                                        <option key={d} value={`route:${d}`}>{d}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+                        </select>
+                        <p className="text-xs text-(--base-06) leading-snug">
+                            Optional, and it saves a round trip: support sees straight away which of your
+                            services the ticket is about.
+                        </p>
                     </div>
 
                     {requiresServer && (

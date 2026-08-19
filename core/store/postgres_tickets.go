@@ -113,6 +113,7 @@ func (s *PostgresStore) DeleteTicketCategory(id int) error {
 const ticketSelectCols = `t.id, t.region, t.category_id, c.name AS category_name,
 	t.user_id, u.username AS user_name,
 	COALESCE(t.server_uuid, ''), COALESCE(t.server_region, ''),
+	COALESCE(t.subject_kind, ''), COALESCE(t.subject_ref, ''),
 	t.title, t.status, t.priority,
 	t.assigned_user_id, COALESCE(au.username, ''), COALESCE(t.assigned_team, ''),
 	t.created_at, t.updated_at, t.closed_at`
@@ -124,14 +125,15 @@ const ticketBaseFrom = `FROM tickets t
 
 func scanTicket(scan func(dest ...interface{}) error) (*models.Ticket, error) {
 	var (
-		t                                                         models.Ticket
-		assignedID                                                sql.NullString
-		serverUUID, serverRegion, assignedName, assignedTeam      string
-		closedAt                                                  sql.NullTime
+		t                                                    models.Ticket
+		assignedID                                           sql.NullString
+		serverUUID, serverRegion, assignedName, assignedTeam string
+		closedAt                                             sql.NullTime
 	)
 	err := scan(&t.ID, &t.Region, &t.CategoryID, &t.CategoryName,
 		&t.UserID, &t.Username,
 		&serverUUID, &serverRegion,
+		&t.SubjectKind, &t.SubjectRef,
 		&t.Title, &t.Status, &t.Priority,
 		&assignedID, &assignedName, &assignedTeam,
 		&t.CreatedAt, &t.UpdatedAt, &closedAt)
@@ -158,11 +160,14 @@ func (s *PostgresStore) CreateTicket(t *models.Ticket) (int, error) {
 	err := s.db.QueryRow(
 		`INSERT INTO tickets
 			(region, category_id, user_id, server_uuid, server_region,
+			 subject_kind, subject_ref,
 			 title, status, priority, assigned_user_id, assigned_team)
 		 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''),
-		         $6, $7, $8, $9, NULLIF($10,''))
+		         $6, $7,
+		         $8, $9, $10, $11, NULLIF($12,''))
 		 RETURNING id`,
 		t.Region, t.CategoryID, t.UserID, t.ServerUUID, t.ServerRegion,
+		t.SubjectKind, t.SubjectRef,
 		t.Title, t.Status, t.Priority, t.AssignedUserID, t.AssignedTeam,
 	).Scan(&id)
 	return id, err
@@ -1076,6 +1081,7 @@ func (s *PostgresStore) PurgeServerAuditOlderThan(cutoff time.Time) (int, error)
 //   - the ticket creator
 //   - the assigned supporter (if any)
 //   - all watchers
+//
 // excludeUserID is used to skip the actor (you don't get notified for your
 // own reply). Returns deduplicated, sorted IDs.
 func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUserID string) ([]string, error) {
