@@ -152,6 +152,22 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// otherAdminExists reports whether any admin other than excludeID exists. The
+// error is kept rather than collapsed: "we could not count them" and "there are
+// none" call for opposite decisions at the one place this is asked.
+func (h *UserHandler) otherAdminExists(excludeID string) (bool, error) {
+	users, err := h.state.Store.ListUsers()
+	if err != nil {
+		return false, err
+	}
+	for _, u := range users {
+		if u.IsAdmin && u.ID != excludeID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -169,6 +185,24 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err == nil && userToDelete.Username == currentUser {
 		sendJSONError(w, "You cannot delete yourself", 403)
 		return
+	}
+
+	// Never let the platform reach zero admins. "You cannot delete yourself"
+	// does not cover it: users.delete is a delegatable capability, so a
+	// non-admin holding it could remove every admin and lock the owner out of
+	// their own panel with no way back in short of the database.
+	if err == nil && userToDelete != nil && userToDelete.IsAdmin {
+		others, cerr := h.otherAdminExists(userToDelete.ID)
+		if cerr != nil {
+			// Refuse when the answer is unknown. Guessing "yes" here is the one
+			// direction that is unrecoverable.
+			sendJSONError(w, "Could not verify how many admins remain", 503)
+			return
+		}
+		if !others {
+			sendJSONError(w, "This is the last admin. Make someone else an admin first.", 409)
+			return
+		}
 	}
 
 	if err := h.state.Store.DeleteUser(id); err != nil {

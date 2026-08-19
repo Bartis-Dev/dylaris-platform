@@ -33,11 +33,46 @@ interface UsersTabProps {
 
 type RouteMode = 'default' | 'custom' | 'disabled';
 
+type UserSort = 'role' | 'name' | 'created';
+
+// Role order for the default sort. Admins first: the question this list is
+// usually opened to answer is "who can do what here", and that answer was
+// previously buried in creation order.
+const ROLE_RANK: Record<string, number> = { admin: 0, support: 1, user: 2 };
+
+function roleOf(u: User): string {
+    return u.role || (u.isAdmin ? 'admin' : 'user');
+}
+
+/**
+ * Sorted copy of the list. Every mode falls back to the username so the order
+ * is total - without it, two accounts created in the same second (a seeded
+ * install) swap places between renders.
+ */
+export function sortUsers(users: User[], sort: UserSort): User[] {
+    const byName = (a: User, b: User) => a.username.localeCompare(b.username);
+    return [...users].sort((a, b) => {
+        if (sort === 'name') return byName(a, b);
+        if (sort === 'created') {
+            const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return tb - ta || byName(a, b);
+        }
+        const ra = ROLE_RANK[roleOf(a)] ?? 99;
+        const rb = ROLE_RANK[roleOf(b)] ?? 99;
+        return ra - rb || byName(a, b);
+    });
+}
+
 export default function UsersTab({ currentUser }: UsersTabProps) {
     const [users, setUsers] = useState<User[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [error, setError] = useState("");
     const [userForm, setUserForm] = useState<Partial<User>>({ username: "", password: "", isAdmin: false });
+    const [sort, setSort] = useState<UserSort>('role');
+    // Drives the last-admin tooltip. Core refuses the delete either way; this
+    // only decides whether the button is offered at all.
+    const adminCount = users.filter(u => u.isAdmin).length;
 
     // Settings modal
     const [settingsUser, setSettingsUser] = useState<User | null>(null);
@@ -320,7 +355,20 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         <div>
             <AccountPolicyCard />
 
-            <div className="flex justify-end mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                    <label htmlFor="user-sort" className="mono-label">Sort by</label>
+                    <select
+                        id="user-sort"
+                        value={sort}
+                        onChange={e => setSort(e.target.value as UserSort)}
+                        className="input-field py-1.5 text-sm"
+                    >
+                        <option value="role">Role</option>
+                        <option value="name">Name</option>
+                        <option value="created">Newest first</option>
+                    </select>
+                </div>
                 <button onClick={() => {setUserForm({ username: "", password: "", isAdmin: false }); setError(""); setIsModalOpen(true);}} className="btn btn-primary">
                     <UserPlus size={14} />
                     Create User
@@ -338,7 +386,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                         </tr>
                     </thead>
                     <tbody>
-                        {users.map(u => (
+                        {sortUsers(users, sort).map(u => (
                             <tr key={u.id} className="table-tr table-tr-hover">
                                 <td className="table-td font-mono font-medium text-(--base-09)">
                                     {u.username}
@@ -392,9 +440,30 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         >
                                             <Settings size={13} />
                                         </button>
-                                        {currentUser?.username !== u.username && (
-                                            <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger btn-sm">Delete</button>
-                                        )}
+                                        {(() => {
+                                            /* The button is always PRESENT, and
+                                               says why when it is off. A button
+                                               that simply vanishes reads as a
+                                               missing feature, and the reader
+                                               never learns the rule. */
+                                            const isSelf = currentUser?.username === u.username;
+                                            const isLastAdmin = u.isAdmin && adminCount <= 1;
+                                            const reason = isSelf
+                                                ? 'You cannot delete your own account'
+                                                : isLastAdmin
+                                                    ? 'This is the last admin. Make someone else an admin first.'
+                                                    : undefined;
+                                            return (
+                                                <button
+                                                    onClick={() => handleDeleteUser(u.id)}
+                                                    disabled={!!reason}
+                                                    title={reason || `Delete ${u.username}`}
+                                                    className="btn btn-danger btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                                >
+                                                    Delete
+                                                </button>
+                                            );
+                                        })()}
                                     </div>
                                 </td>
                             </tr>

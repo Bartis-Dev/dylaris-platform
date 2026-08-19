@@ -580,7 +580,11 @@ input[type="number"] {
   letter-spacing: 0.12em;
   color: var(--base-05);
   border-bottom: 1px solid var(--base-03);
-  text-align: left;
+  /* No text-align here on purpose. This file is unlayered, and unlayered CSS
+     beats anything in a layer no matter how specific - so a `text-right`
+     utility on a <th> lost to this rule, and every right-aligned column in the
+     panel had a left-aligned header sitting over right-aligned cells. Each
+     .table-th carries its own text-left/right/center utility instead. */
 }
 .table-tr {
   background: var(--base-01);
