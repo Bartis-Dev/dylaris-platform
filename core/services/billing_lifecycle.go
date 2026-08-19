@@ -102,10 +102,22 @@ type BillingLifecycleService struct {
 	provisioner   *redisacl.Provisioner
 	clusterSecret string
 
+	// warpPeers drops a tenant's warp tunnels at the hard cutoff. Wired after the
+	// warp service exists (SetWarpPeers); nil where there is no overlay, in which
+	// case there is no tunnel to drop either.
+	warpPeers warpPeerDisconnector
+
 	// suspendGrace defers the hard cutoff until suspended_at + suspendGrace has
 	// elapsed (see enforceSuspensions). Threaded from cfg.SuspendGrace at
 	// construction, like frontendURL.
 	suspendGrace time.Duration
+}
+
+// warpPeerDisconnector is the narrow slice of WarpService the lifecycle needs:
+// remove every WireGuard peer enrolled under one key, at every leader of its
+// region, and delete the rows.
+type warpPeerDisconnector interface {
+	DisconnectKeyPeers(ctx context.Context, keyID int) int
 }
 
 func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegrpc.Registry, frontendURL string, suspendGrace time.Duration) *BillingLifecycleService {
@@ -113,6 +125,11 @@ func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegr
 }
 
 func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
+
+// SetWarpPeers wires the tunnel teardown used at the hard cutoff. Called once at
+// startup after the warp service exists. Without it, enforcement still stops
+// servers and drops link credentials - it just leaves the tunnel up.
+func (s *BillingLifecycleService) SetWarpPeers(w warpPeerDisconnector) { s.warpPeers = w }
 
 // SetLinkACL wires the route-only link teardown/restore hooks. Called once at
 // startup after the ACL provisioner and gateway exist. When any dependency is nil
@@ -199,6 +216,42 @@ func (s *BillingLifecycleService) enforceSuspensions(ctx context.Context) {
 			b.UserID, b.SuspendedAt.UTC().Format(time.RFC3339), s.suspendGrace)
 		s.stopTenantServers(ctx, b.UserID)
 		s.suspendTenantLinks(ctx, b.UserID)
+		s.suspendTenantWarpPeers(ctx, b.UserID)
+	}
+}
+
+// suspendTenantWarpPeers drops the tenant's warp tunnels once the grace has
+// elapsed. Until this ran, a hard-suspended tenant kept a live overlay tunnel
+// indefinitely: suspendTenantLinks takes away what the tunnel CARRIES, and
+// stopTenantServers stops the servers, but neither touches the tunnel itself,
+// and the warp client happily keeps a working peer forever.
+//
+// The peer is removed at every leader of its region and its row deleted, so the
+// tunnel drops within a handshake interval rather than at the client's next
+// re-enroll. The enroll gate in handlers/warp.go is what keeps it down - without
+// it the client would re-enroll within minutes and this pass would fight it
+// every hour.
+//
+// Idempotent: a key with no peers removes nothing, so the hourly repeat is a
+// no-op once the tenant is cut off. Reactivation needs no counterpart - the
+// client re-enrolls on its own once the gate opens (its handshake goes stale
+// within ~3 minutes of losing the peer, and it re-enrolls on the 10 minute
+// timer regardless).
+func (s *BillingLifecycleService) suspendTenantWarpPeers(ctx context.Context, userID string) {
+	if s.warpPeers == nil {
+		return
+	}
+	keys, err := s.store.ListWarpAPIKeysByOwner(userID)
+	if err != nil {
+		log.Printf("billing lifecycle: list warp keys for %s: %v", userID, err)
+		return
+	}
+	removed := 0
+	for _, k := range keys {
+		removed += s.warpPeers.DisconnectKeyPeers(ctx, k.ID)
+	}
+	if removed > 0 {
+		log.Printf("billing lifecycle: dropped %d warp peer(s) for %s at the suspension cutoff", removed, userID)
 	}
 }
 

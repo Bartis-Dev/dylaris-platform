@@ -45,6 +45,10 @@ type billingFakeStore struct {
 
 	listBackupsCalls []string
 	backupRuns       map[string][]store.BackupRunRef
+
+	warpKeys      []store.WarpAPIKey
+	warpKeysErr   error
+	warpKeyOwners []string
 }
 
 type statusCall struct {
@@ -57,9 +61,9 @@ type statusCall struct {
 func (f *billingFakeStore) GetUserBilling(string) (*store.UserBilling, error) {
 	return f.billing, f.billingErr
 }
-func (f *billingFakeStore) GetUserPlanID(string) (*int, error)  { return f.planID, f.planIDErr }
-func (f *billingFakeStore) GetPlan(int) (*store.Plan, error)    { return f.plan, f.planErr }
-func (f *billingFakeStore) GetDefaultPlan() (*store.Plan, error) { return f.def, nil }
+func (f *billingFakeStore) GetUserPlanID(string) (*int, error)    { return f.planID, f.planIDErr }
+func (f *billingFakeStore) GetPlan(int) (*store.Plan, error)      { return f.plan, f.planErr }
+func (f *billingFakeStore) GetDefaultPlan() (*store.Plan, error)  { return f.def, nil }
 func (f *billingFakeStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
 func (f *billingFakeStore) BackupBytesByOwner(string) (int64, error) {
 	return f.backupBytes, f.backupErr
@@ -475,5 +479,91 @@ func TestRunOnce_PastDueGraceBoundary(t *testing.T) {
 				t.Errorf("suspended = %v, want %v (statusCalls=%+v)", gotSuspended, tc.wantSuspended, fs.statusCalls)
 			}
 		})
+	}
+}
+
+// --- warp tunnel teardown at the hard cutoff ---
+
+type fakeWarpDisconnector struct {
+	calls   []int
+	removed int
+}
+
+func (f *fakeWarpDisconnector) DisconnectKeyPeers(_ context.Context, keyID int) int {
+	f.calls = append(f.calls, keyID)
+	return f.removed
+}
+
+func (f *billingFakeStore) ListWarpAPIKeysByOwner(owner string) ([]store.WarpAPIKey, error) {
+	f.warpKeyOwners = append(f.warpKeyOwners, owner)
+	return f.warpKeys, f.warpKeysErr
+}
+
+// Taking away what the tunnel carries is not the same as taking away the
+// tunnel: before this, a hard-suspended tenant kept a working overlay peer
+// indefinitely, because nothing on the enforcement path touched warp.
+func TestEnforceSuspensions_DropsWarpPeersPastGrace(t *testing.T) {
+	const grace = time.Hour
+	cases := []struct {
+		name        string
+		suspendedAt *time.Time
+		wantKeys    []int
+	}{
+		{"within the grace the tunnel stays up", timePtr(time.Now().Add(-10 * time.Minute)), nil},
+		{"past the grace every key of the tenant is disconnected", timePtr(time.Now().Add(-grace - time.Minute)), []int{7, 9}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &billingFakeStore{
+				suspended: []store.UserBilling{{UserID: "u1", SuspendedAt: tc.suspendedAt}},
+				warpKeys:  []store.WarpAPIKey{{ID: 7}, {ID: 9}},
+			}
+			warp := &fakeWarpDisconnector{removed: 1}
+			svc := &BillingLifecycleService{store: fs, suspendGrace: grace, warpPeers: warp}
+
+			svc.enforceSuspensions(context.Background())
+
+			if len(warp.calls) != len(tc.wantKeys) {
+				t.Fatalf("disconnected keys %v, want %v", warp.calls, tc.wantKeys)
+			}
+			for i, want := range tc.wantKeys {
+				if warp.calls[i] != want {
+					t.Errorf("call %d = key %d, want %d", i, warp.calls[i], want)
+				}
+			}
+		})
+	}
+}
+
+// A deployment with no overlay has no tunnel to drop, and must not panic trying.
+func TestEnforceSuspensions_WithoutWarpWiring(t *testing.T) {
+	fs := &billingFakeStore{
+		suspended: []store.UserBilling{{UserID: "u1", SuspendedAt: timePtr(time.Now().Add(-24 * time.Hour))}},
+		warpKeys:  []store.WarpAPIKey{{ID: 1}},
+	}
+	svc := &BillingLifecycleService{store: fs, suspendGrace: time.Hour}
+
+	svc.enforceSuspensions(context.Background())
+
+	if len(fs.warpKeyOwners) != 0 {
+		t.Errorf("looked up warp keys with no disconnector wired: %v", fs.warpKeyOwners)
+	}
+}
+
+// The pass runs hourly and a cut-off tenant stays cut off, so it re-runs against
+// the same tenant forever. It has to stay a no-op rather than log or act again.
+func TestEnforceSuspensions_WarpTeardownIsIdempotent(t *testing.T) {
+	fs := &billingFakeStore{
+		suspended: []store.UserBilling{{UserID: "u1", SuspendedAt: timePtr(time.Now().Add(-24 * time.Hour))}},
+		warpKeys:  []store.WarpAPIKey{{ID: 3}},
+	}
+	warp := &fakeWarpDisconnector{removed: 0} // already disconnected: nothing left to remove
+	svc := &BillingLifecycleService{store: fs, suspendGrace: time.Hour, warpPeers: warp}
+
+	svc.enforceSuspensions(context.Background())
+	svc.enforceSuspensions(context.Background())
+
+	if len(warp.calls) != 2 {
+		t.Fatalf("expected one call per pass, got %v", warp.calls)
 	}
 }

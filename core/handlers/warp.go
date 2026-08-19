@@ -82,6 +82,25 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A tenant whose suspension has outlived the grace loses the tunnel itself,
+	// not only what it carries. The hourly enforcement pass drops their peers at
+	// the leader; without this gate the client's own re-enroll would put them
+	// straight back within minutes and the two would fight hourly, forever.
+	//
+	// Owner-scoped keys only: a platform key has no billing row, and suspension
+	// is a tenant concept. Same fail-open-but-loud posture as LinkBoot - a DB
+	// fault must not lock out paying tenants on reconnect, but it has to be
+	// visible that the gate was skipped. Within the grace a suspended tenant
+	// still enrolls, which is the whole point of the grace.
+	if key.OwnerID != "" {
+		if b, berr := h.state.Store.GetUserBilling(key.OwnerID); berr != nil {
+			log.Printf("warp enroll: billing lookup for owner of key %d failed, suspension gate skipped: %v", key.ID, berr)
+		} else if ownerHardSuspended(b, h.state.SuspendGrace, time.Now()) {
+			sendJSONError(w, "Account suspended", http.StatusForbidden)
+			return
+		}
+	}
+
 	res, err := h.svc.Enroll(r.Context(), key, req.PublicKey, req.TunnelSubnets)
 	if err != nil {
 		// 409 only for a genuine connection-limit conflict; everything else is
@@ -433,13 +452,13 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// linkHardSuspended reports whether a tenant's suspension has persisted past the
+// ownerHardSuspended reports whether a tenant's suspension has persisted past the
 // enforcement grace, i.e. the point at which route-only links are actually cut
 // off. A nil billing row, an active/past_due status, or a suspension still inside
 // the grace window all return false (the link may boot). MUST stay equivalent to
 // the SQL predicate in store.ListLinkKitsForACLReconcile (suspended AND
 // suspended_at + grace <= now) so LinkBoot and the reconciler agree.
-func linkHardSuspended(b *store.UserBilling, grace time.Duration, now time.Time) bool {
+func ownerHardSuspended(b *store.UserBilling, grace time.Duration, now time.Time) bool {
 	return b != nil && b.Status == "suspended" &&
 		b.SuspendedAt != nil && !now.Before(b.SuspendedAt.Add(grace))
 }
@@ -472,7 +491,7 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	b, berr := h.state.Store.GetUserBilling(key.OwnerID)
 	if berr != nil {
 		log.Printf("link-boot: billing lookup for %s failed, suspension gate skipped: %v", key.NodeID, berr)
-	} else if linkHardSuspended(b, h.state.SuspendGrace, time.Now()) {
+	} else if ownerHardSuspended(b, h.state.SuspendGrace, time.Now()) {
 		sendJSONError(w, "Account suspended", http.StatusForbidden)
 		return
 	}

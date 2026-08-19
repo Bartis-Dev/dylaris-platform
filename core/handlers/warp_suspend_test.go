@@ -7,11 +7,14 @@ import (
 	"dylaris-core/store"
 )
 
-// TestLinkHardSuspended pins linkHardSuspended (warp.go), which MUST stay
+// TestOwnerHardSuspended pins ownerHardSuspended (warp.go), which MUST stay
 // equivalent to the SQL reconcile predicate (suspended AND
-// suspended_at + grace <= now) so LinkBoot and the ACL reconciler agree on
-// when a route-only link is actually cut off.
-func TestLinkHardSuspended(t *testing.T) {
+// suspended_at + grace <= now) so LinkBoot, the warp enroll gate, the billing
+// enforcement pass and the ACL reconciler all agree on when a tenant is
+// actually cut off. They cut different things - the link's credential, the
+// tunnel itself, the servers - and a disagreement between them is a tenant who
+// is half suspended.
+func TestOwnerHardSuspended(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	const grace = 48 * time.Hour
 
@@ -51,8 +54,8 @@ func TestLinkHardSuspended(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := linkHardSuspended(c.b, grace, now); got != c.want {
-				t.Errorf("linkHardSuspended() = %v, want %v", got, c.want)
+			if got := ownerHardSuspended(c.b, grace, now); got != c.want {
+				t.Errorf("ownerHardSuspended() = %v, want %v", got, c.want)
 			}
 		})
 	}

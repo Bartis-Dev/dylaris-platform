@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -23,6 +25,15 @@ type warpFakeStore struct {
 	settings map[string]string
 	peers    map[string]store.WarpPeer
 	nextID   int
+
+	billing        *store.UserBilling
+	billingErr     error
+	billingLookups []string
+}
+
+func (f *warpFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	f.billingLookups = append(f.billingLookups, userID)
+	return f.billing, f.billingErr
 }
 
 func (f *warpFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
@@ -172,5 +183,77 @@ func TestEnroll_HappyPath_ReturnsConfigWithLeaderInfo(t *testing.T) {
 	endpoints, _ := resp["endpoints"].([]interface{})
 	if resp["wg_ip"] == "" || resp["leader_public_key"] == "" || len(endpoints) == 0 || endpoints[0] != "vpn.example.com:51820" {
 		t.Fatalf("missing leader info in response: %+v", resp)
+	}
+}
+
+// enrollWithOwner drives Enroll with a tenant-owned key, the only kind a
+// suspension can apply to.
+func enrollWithOwner(t *testing.T, h *WarpHandler) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]interface{}{"public_key": "ownedPubKey"})
+	req := httptest.NewRequest("POST", "/api/warp/enroll", bytes.NewReader(body))
+	key := store.WarpAPIKey{ID: 2, Policy: "general", MaxConns: 5, OnNewConn: "block", OwnerID: "u1"}
+	rec := httptest.NewRecorder()
+	h.Enroll(rec, req.WithContext(context.WithValue(req.Context(), warpKeyCtx, key)))
+	return rec
+}
+
+// The tunnel is what the tenant keeps for the grace period and loses after it.
+// The enforcement pass drops their peers; without this gate the client would
+// re-enroll within minutes and put them straight back.
+func TestEnroll_HardSuspendedOwnerIsRefused(t *testing.T) {
+	h := newWarpTestHandler(t)
+	fs := h.state.Store.(*warpFakeStore)
+	h.state.SuspendGrace = 48 * time.Hour
+	at := time.Now().Add(-49 * time.Hour)
+	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &at}
+
+	if rec := enrollWithOwner(t, h); rec.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Within the grace the tunnel stays up - that is the entire point of a grace,
+// and it matches how LinkBoot and the ACL reconciler treat the same window.
+func TestEnroll_SuspendedWithinGraceStillEnrolls(t *testing.T) {
+	h := newWarpTestHandler(t)
+	fs := h.state.Store.(*warpFakeStore)
+	h.state.SuspendGrace = 48 * time.Hour
+	at := time.Now().Add(-1 * time.Hour)
+	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &at}
+
+	if rec := enrollWithOwner(t, h); rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A DB fault must not lock out paying tenants on reconnect. It fails OPEN, and
+// the log line is what makes the degraded gate visible.
+func TestEnroll_BillingLookupFailureFailsOpen(t *testing.T) {
+	h := newWarpTestHandler(t)
+	fs := h.state.Store.(*warpFakeStore)
+	fs.billingErr = errors.New("db down")
+
+	if rec := enrollWithOwner(t, h); rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A platform key has no billing row at all; suspension is a tenant concept, so
+// the gate must not even look.
+func TestEnroll_PlatformKeySkipsTheSuspensionGate(t *testing.T) {
+	h := newWarpTestHandler(t)
+	fs := h.state.Store.(*warpFakeStore)
+
+	body, _ := json.Marshal(map[string]interface{}{"public_key": "platformPubKey"})
+	req := httptest.NewRequest("POST", "/api/warp/enroll", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Enroll(rec, withTestWarpKey(req))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.billingLookups) != 0 {
+		t.Errorf("looked up billing for an unowned key: %v", fs.billingLookups)
 	}
 }

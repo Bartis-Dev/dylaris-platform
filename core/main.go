@@ -557,6 +557,10 @@ func main() {
 	// The billing lifecycle drops/restores route-only link tunnels on
 	// suspend/reactivate; give it the same provisioner, gateway and cluster secret.
 	appState.Billing.SetLinkACL(appState.Gateway, redisClient, aclProvisioner, cfg.ClusterSecret)
+	// ...and the warp service, so the hard cutoff can drop the tenant's overlay
+	// tunnel itself. Taking away what the tunnel carries is not the same as
+	// taking away the tunnel, and only this drops the WireGuard peer.
+	appState.Billing.SetWarpPeers(extras.warpService)
 	appState.Billing.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
