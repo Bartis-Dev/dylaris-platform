@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serverOption, nodeOption, hasAnyCreateOption, type CreateOptionsInput } from './createOptions';
+import { serverOption, nodeOption, routeOption, hasAnyCreateOption, type CreateOptionsInput } from './createOptions';
 
 const base: CreateOptionsInput = {
     isAdmin: false,
@@ -7,6 +7,8 @@ const base: CreateOptionsInput = {
     entitledByon: false,
     deployableNodes: 0,
     storeEnabled: false,
+    gatewayEnabled: false,
+    entitledRouteOnly: false,
 };
 const w = (o: Partial<CreateOptionsInput>): CreateOptionsInput => ({ ...base, ...o });
 
@@ -95,5 +97,44 @@ describe('hasAnyCreateOption', () => {
 
     it('is true as soon as BYON is granted', () => {
         expect(hasAnyCreateOption(w({ byonEnabled: true, entitledByon: true }))).toBe(true);
+    });
+});
+
+describe('routeOption', () => {
+    // Route-only is a product of its own - the customer runs the server, we
+    // give it an address - and it had no entry in the create menu at all; its
+    // page hung off the account dropdown, where nobody looks for a product.
+    it('is offered to an entitled tenant', () => {
+        const o = routeOption(w({ gatewayEnabled: true, entitledRouteOnly: true }));
+        expect(o.enabled).toBe(true);
+        expect(o.href).toBe('/routes');
+    });
+
+    it('is offered to an admin without an entitlement of their own', () => {
+        expect(routeOption(w({ gatewayEnabled: true, isAdmin: true })).enabled).toBe(true);
+    });
+
+    // An admin is NOT exempt from this one: with routing off there is no edge
+    // to point an address at, so the entry would be an offer nothing can fill.
+    it('is refused for everyone when gateway routing is off', () => {
+        expect(routeOption(w({ isAdmin: true })).enabled).toBe(false);
+        expect(routeOption(w({ isAdmin: true })).reason).toContain('Gateway routing');
+        expect(routeOption(w({ entitledRouteOnly: true })).enabled).toBe(false);
+    });
+
+    it('sends an unentitled tenant to the store only when there is one', () => {
+        const withStore = routeOption(w({ gatewayEnabled: true, storeEnabled: true }));
+        expect(withStore.enabled).toBe(false);
+        expect(withStore.href).toBe('/nodes');
+
+        const noStore = routeOption(w({ gatewayEnabled: true }));
+        expect(noStore.href).toBeUndefined();
+        expect(noStore.reason).toContain('Ask an admin');
+    });
+
+    // The "+" hides itself when nothing is on offer; route-only has to count,
+    // or a gateway-only install with no BYON would lose the button entirely.
+    it('counts towards the menu having something to show', () => {
+        expect(hasAnyCreateOption(w({ gatewayEnabled: true, entitledRouteOnly: true, byonEnabled: true }))).toBe(true);
     });
 });

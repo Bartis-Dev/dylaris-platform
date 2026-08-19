@@ -11,6 +11,7 @@ import {
     listLinkKits, mintLinkKit, revokeLinkKit,
 } from '@/lib/api';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import MyInfraTabs from '@/components/MyInfraTabs';
 
 // Route-only ("via Link"): a DDoS-protected address pointed at a server the user
 // runs on their OWN machine, reached through their own outbound Link tunnel. No
@@ -136,6 +137,8 @@ export default function RoutesPage() {
 
     return (
         <div className="max-w-3xl mx-auto p-6 space-y-8">
+            <MyInfraTabs showRoutes />
+
             <header className="flex items-center gap-3">
                 <Globe size={22} className="text-(--accent-light)" />
                 <div>

@@ -20,11 +20,11 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, Globe, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, apiUnreachable, retryBoot, featureFlags, gatewayEnabled, servers } = useAppData();
+    const { user, ready, apiUnreachable, retryBoot, featureFlags, servers } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -219,15 +219,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 >
                                     <Package size={20} className="mr-3" /> Modrinth
                                 </GuardedLink>
-                                {/* Route-only ("protected addresses") — gateway-gated. */}
-                                {gatewayEnabled && (
-                                    <GuardedLink
-                                        href="/routes"
-                                        className="dropdown-item"
-                                    >
-                                        <Globe size={20} className="mr-3" /> Protected Addresses
-                                    </GuardedLink>
-                                )}
                                 {/* Connect-store entry only on the hosted build. */}
                                 {featureFlags.store && (
                                     <GuardedLink

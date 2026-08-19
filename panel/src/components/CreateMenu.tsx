@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Server, HardDrive, ArrowRight, Lock } from 'lucide-react';
+import { Plus, Server, HardDrive, Globe, ArrowRight, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getNodes } from '@/lib/api';
-import { serverOption, nodeOption, hasAnyCreateOption, type CreateOption, type CreateOptionsInput } from '@/lib/createOptions';
+import { serverOption, nodeOption, routeOption, hasAnyCreateOption, type CreateOption, type CreateOptionsInput } from '@/lib/createOptions';
 import AddNodeModal from '@/components/AddNodeModal';
 
 // ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ function MenuEntry({
 }
 
 export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }) {
-    const { user, featureFlags, entitlement } = useAppData();
+    const { user, featureFlags, entitlement, gatewayEnabled } = useAppData();
     const [open, setOpen] = useState(false);
     const [showAddNode, setShowAddNode] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
@@ -114,14 +114,17 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
         entitledByon: entitlement?.byon ?? false,
         deployableNodes: deployableNodes ?? 0,
         storeEnabled: featureFlags.store,
+        gatewayEnabled,
+        entitledRouteOnly: entitlement?.routeOnly ?? false,
     };
 
     const srv = serverOption(input);
     const node = nodeOption(input);
+    const route = routeOption(input);
 
     // Nothing usable and nothing to explain: hide the control rather than offer a
     // button that only ever says no.
-    if (!hasAnyCreateOption(input) && !featureFlags.byon) return null;
+    if (!hasAnyCreateOption(input) && !featureFlags.byon && !gatewayEnabled) return null;
 
     // Admins get instructions, not a destination: adding a node happens on the
     // host. The old entry navigated to /settings?tab=warp, a query shape the
@@ -173,6 +176,18 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
                         onClick={onNodeClick}
                         onNavigate={navigate}
                     />
+                    {/* Only where routing exists at all - otherwise the entry is
+                        an offer nothing on this platform can fulfil. */}
+                    {gatewayEnabled && (
+                        <MenuEntry
+                            icon={<Globe size={15} />}
+                            title="Add a route"
+                            subtitle="A protected address for a Minecraft server you run yourself."
+                            option={route}
+                            onClick={() => navigate('/routes')}
+                            onNavigate={navigate}
+                        />
+                    )}
                 </div>
             )}
 

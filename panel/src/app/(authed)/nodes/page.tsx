@@ -19,6 +19,7 @@ import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeCompose, routeOnlyCompose, deployCli, nodeIdFromLabel } from '@/lib/warpDeploy';
 import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
+import MyInfraTabs from '@/components/MyInfraTabs';
 
 // ---------------------------------------------------------------------------
 // "My machines" - the TENANT side of bring-your-own-node and route-only.
@@ -372,6 +373,8 @@ export default function MyNodesPage() {
 
     return (
         <div className="p-6 max-w-4xl space-y-6 overflow-y-auto">
+            <MyInfraTabs showRoutes={gatewayEnabled} />
+
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h1 className="text-lg font-display font-bold text-(--base-09) mb-1">My machines</h1>

@@ -15,6 +15,10 @@ export interface CreateOptionsInput {
     deployableNodes: number;
     /** features.store: a storefront is configured, so "get a plan" can link somewhere. */
     storeEnabled: boolean;
+    /** Gateway routing is on. Route-only does not exist without it. */
+    gatewayEnabled: boolean;
+    /** The caller may create protected addresses (resolved entitlement). */
+    entitledRouteOnly: boolean;
 }
 
 export interface CreateOption {
@@ -84,7 +88,37 @@ export function nodeOption(i: CreateOptionsInput): CreateOption {
     };
 }
 
+/**
+ * Whether the caller can create a protected address, and why not.
+ *
+ * Route-only is a product in its own right - the customer runs the Minecraft
+ * server themselves and Dylaris only gives it an address - so it belongs beside
+ * the other two things a tenant can create. It had no entry here at all, and
+ * its page hung off the account dropdown, where nobody looks for a product.
+ *
+ * An admin is not exempt from the gateway check the way they are from the
+ * entitlement one: with routing off there is no edge to point an address at, so
+ * the entry would be an offer nothing can fulfil.
+ */
+export function routeOption(i: CreateOptionsInput): CreateOption {
+    if (!i.gatewayEnabled) {
+        return {
+            enabled: false,
+            reason: 'Gateway routing is turned off on this platform.',
+        };
+    }
+    if (i.isAdmin) return { enabled: true, href: '/routes' };
+    if (i.entitledRouteOnly) return { enabled: true, href: '/routes' };
+    return {
+        enabled: false,
+        reason: 'Your account does not include protected addresses yet.',
+        ...(i.storeEnabled
+            ? { href: '/nodes', hrefLabel: 'How to get it' }
+            : { reason: 'Your account does not include protected addresses. Ask an admin to enable it.' }),
+    };
+}
+
 /** True when the "+" has nothing usable at all, so it can be hidden entirely. */
 export function hasAnyCreateOption(i: CreateOptionsInput): boolean {
-    return serverOption(i).enabled || nodeOption(i).enabled;
+    return serverOption(i).enabled || nodeOption(i).enabled || routeOption(i).enabled;
 }
