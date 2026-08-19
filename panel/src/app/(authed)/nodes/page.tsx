@@ -68,7 +68,12 @@ function MyNodesInner() {
     // means, and so a reload or a shared link lands where it left off. It used
     // to be two separate pages with a bar that navigated between them, which is
     // what made one product feel like two.
-    const tab: InfraTab = searchParams.get('tab') === 'routes' ? 'routes' : 'machines';
+    // Resolved against gatewayEnabled, not taken from the URL as given. Hiding
+    // the tab bar is not enough: a bookmark or an old link to ?tab=routes would
+    // still open a panel whose two endpoints 409 without gateway routing, so
+    // the reader gets failures instead of the product simply not being there.
+    const tab: InfraTab =
+        gatewayEnabled && searchParams.get('tab') === 'routes' ? 'routes' : 'machines';
     const selectTab = useCallback((next: InfraTab) => {
         router.replace(next === 'routes' ? '/nodes?tab=routes' : '/nodes', { scroll: false });
     }, [router]);
