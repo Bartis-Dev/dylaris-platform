@@ -13,6 +13,10 @@ import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, NotIncluded } from '@/components/infra/DeployKit';
 import type { WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 
+// Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
+// the ADMIN one (fleet routes across edges) and the two are easy to import by
+// mistake for each other.
+//
 // Route-only ("via Link"): a DDoS-protected address pointed at a server the user
 // runs on their OWN machine, reached through their own outbound Link tunnel. No
 // managed node, no open ports - the customer runs warp + link with a "link kit"
@@ -23,7 +27,7 @@ import type { WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 // snippet on one page and the address form on the other. It is one tab now, and
 // the whole sequence - create a link, deploy it, point an address at it - reads
 // top to bottom in one place.
-export default function RoutesPanel({ enrollUrl, addrs, storeUrl, allowed, entitlementKnown, suspended }: {
+export default function RouteOnlyPanel({ enrollUrl, addrs, storeUrl, allowed, entitlementKnown, suspended }: {
     enrollUrl: string;
     addrs: WarpDeployAddrs | null;
     storeUrl: string | null;

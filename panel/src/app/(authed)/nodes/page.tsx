@@ -21,22 +21,25 @@ import { nodeIdFromLabel } from '@/lib/warpDeploy';
 import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, NotIncluded, CopyButton, usageLabel } from '@/components/infra/DeployKit';
-import RoutesPanel from '@/components/infra/RoutesPanel';
+import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import AddNodeModal from '@/components/AddNodeModal';
 
 // ---------------------------------------------------------------------------
-// "My machines" - the TENANT side of bring-your-own-node and route-only.
+// "My infrastructure" - the TENANT side of bring-your-own-node and route-only.
 //
-// These are two DIFFERENT products and the page now says so structurally, one
-// card each, rather than mixing an entitlement summary with a single enrollment
-// form and leaving the reader to work out which half applied to them:
+// Two DIFFERENT products, one per tab:
 //
 //   Bring your own node - Dylaris runs Minecraft servers ON your machine.
 //   Route only          - you run the server; Dylaris gives it a protected
 //                         address and absorbs the attack traffic.
 //
+// They were two PAGES until the split stopped following a seam in the product:
+// route-only was minted here AND on /routes, with the deploy snippet on one and
+// the address form on the other. The route-only half lives in RouteOnlyPanel
+// now and owns that whole sequence; this file keeps the machines.
+//
 // Both are per-LOCATION and both can be held several times over: a customer with
-// a box at home and one in a datacenter needs one of each. So neither card is a
+// a box at home and one in a datacenter needs one of each. So neither tab is a
 // yes/no - each shows how many are in use against the plan's cap, and the create
 // control disables on the cap rather than on the entitlement alone.
 //
@@ -308,7 +311,7 @@ function MyNodesInner() {
             )}
 
             {tab === 'routes' ? (
-                <RoutesPanel
+                <RouteOnlyPanel
                     enrollUrl={enrollUrl}
                     addrs={deployAddrs}
                     storeUrl={storeUrl}
