@@ -24,7 +24,7 @@ import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck,
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, apiUnreachable, retryBoot, featureFlags, servers } = useAppData();
+    const { user, ready, apiUnreachable, retryBoot, featureFlags, gatewayEnabled, servers } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -91,11 +91,17 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     // Access manages SERVER grants, so it stays tied to owning a server: with no
     // server there is nothing to share, and showing it would open an empty page.
     const canAccess = user.isAdmin || servers.some(s => s.role === 'owner');
-    // "My nodes" is the tenant half of BYON. Shown to non-admins whenever BYON is
-    // on, including those without an entitlement yet - the page explains what is
-    // missing, which is more use than a link that silently is not there. Admins
-    // manage the fleet in Settings instead, so they do not need it twice.
-    const canSeeMyNodes = featureFlags.byon && !user.isAdmin;
+    // The page behind this holds BOTH halves of "hardware you own": machines and
+    // protected addresses. So it is offered whenever EITHER exists, not just
+    // when BYON does - a route-only customer on a platform with BYON off would
+    // otherwise have no way in at all, now that protected addresses no longer
+    // hang off the account dropdown.
+    //
+    // Admins included, for the same reason: they reached protected addresses
+    // through that dropdown too, and the fleet-node instructions live on this
+    // page. Shown without an entitlement as well, since the page explains what
+    // is missing - more use than a link that silently is not there.
+    const canSeeMyInfra = featureFlags.byon || gatewayEnabled;
 
     return (
         <SidebarCollapseProvider>
@@ -127,7 +133,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
                         regular users see only their inbox. */}
-                    {canSeeMyNodes && (
+                    {canSeeMyInfra && (
                         <GuardedLink
                             href="/nodes"
                             className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
@@ -137,7 +143,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                             }`}
                         >
                             <HardDrive size={20} />
-                            <span className="text-sm hidden md:block">My nodes</span>
+                            <span className="text-sm hidden md:block">My infrastructure</span>
                         </GuardedLink>
                     )}
 
