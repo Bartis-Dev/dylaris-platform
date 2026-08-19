@@ -30,9 +30,26 @@ type DeployAddrs struct {
 }
 
 // overlayRedisAddr resolves Core's own REDIS_ADDR to host:port with a literal
-// IPv4 host. Returns "" when the name does not resolve - which is the honest
-// answer from a Core that reaches Redis some other way.
+// private IPv4 host. Returns "" when it cannot - which is the honest answer
+// from a Core that reaches Redis some other way, and leaves the snippet's
+// placeholder in place.
 func overlayRedisAddr(redisEnv string) string {
+	return resolveOverlayRedisAddr(redisEnv, net.LookupIP)
+}
+
+// resolveOverlayRedisAddr is overlayRedisAddr with the resolver injected, so
+// the behaviour can be pinned without depending on what DNS a machine happens
+// to have. That is not hypothetical: CI runs behind a resolver that answers
+// NXDOMAIN with a public address of its own.
+//
+// Which is also why the result must be PRIVATE. This value is copied verbatim
+// into a customer's compose file, and Core reaches Redis over an overlay, which
+// is RFC1918 by construction. A public answer therefore did not name the
+// overlay - it is a hijacked lookup or a misconfiguration - and putting a
+// stranger's address in front of a customer is worse than a placeholder.
+// Loopback is rejected for the same reason: it is never reachable from the
+// machine that will read this.
+func resolveOverlayRedisAddr(redisEnv string, lookup func(string) ([]net.IP, error)) string {
 	redisEnv = strings.TrimSpace(redisEnv)
 	if redisEnv == "" {
 		return ""
@@ -41,19 +58,25 @@ func overlayRedisAddr(redisEnv string) string {
 	if err != nil {
 		host, port = redisEnv, "6379"
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		if v4 := ip.To4(); v4 != nil {
-			return net.JoinHostPort(v4.String(), port)
+
+	usable := func(ip net.IP) string {
+		v4 := ip.To4()
+		if v4 == nil || !v4.IsPrivate() {
+			return ""
 		}
-		return ""
+		return net.JoinHostPort(v4.String(), port)
 	}
-	ips, err := net.LookupIP(host)
+
+	if ip := net.ParseIP(host); ip != nil {
+		return usable(ip)
+	}
+	ips, err := lookup(host)
 	if err != nil {
 		return ""
 	}
 	for _, ip := range ips {
-		if v4 := ip.To4(); v4 != nil {
-			return net.JoinHostPort(v4.String(), port)
+		if addr := usable(ip); addr != "" {
+			return addr
 		}
 	}
 	return ""

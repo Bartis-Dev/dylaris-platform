@@ -1,61 +1,111 @@
 package handlers
 
-import "testing"
+import (
+	"errors"
+	"net"
+	"testing"
+)
 
 // The whole point of resolving Redis here is that a warp spoke has no DNS into
 // the cluster: copying Core's own "redis:6379" into a customer's compose file
-// produces a node that starts, never resolves, and reports nothing. So a
-// service name that cannot be resolved must come back EMPTY - the snippet then
-// keeps its placeholder, which at least tells the reader something is missing.
-func TestOverlayRedisAddr(t *testing.T) {
+// produces a node that starts, never resolves, and reports nothing.
+//
+// The resolver is injected because the answer must not depend on the DNS of
+// whatever machine runs this - CI sits behind one that answers NXDOMAIN with a
+// public address of its own, which is exactly the case the private-only rule
+// below exists to reject.
+func TestResolveOverlayRedisAddr(t *testing.T) {
+	noLookup := func(string) ([]net.IP, error) {
+		t.Helper()
+		t.Error("a literal address must not be resolved")
+		return nil, nil
+	}
+	fails := func(string) ([]net.IP, error) { return nil, errors.New("no such host") }
+	answers := func(ips ...string) func(string) ([]net.IP, error) {
+		return func(string) ([]net.IP, error) {
+			out := make([]net.IP, 0, len(ips))
+			for _, s := range ips {
+				out = append(out, net.ParseIP(s))
+			}
+			return out, nil
+		}
+	}
+
 	tests := []struct {
-		name string
-		in   string
-		want string
+		name   string
+		in     string
+		lookup func(string) ([]net.IP, error)
+		want   string
 	}{
-		{name: "unset", in: "", want: ""},
-		{name: "whitespace only", in: "   ", want: ""},
+		{name: "unset", in: "", lookup: noLookup, want: ""},
+		{name: "whitespace only", in: "   ", lookup: noLookup, want: ""},
 		{
-			name: "literal ip keeps its port",
-			in:   "10.20.0.5:6379",
-			want: "10.20.0.5:6379",
+			name:   "literal private ip keeps its port",
+			in:     "10.20.0.5:6379",
+			lookup: noLookup,
+			want:   "10.20.0.5:6379",
 		},
 		{
 			// Core's REDIS_ADDR is allowed to omit the port; the node needs one.
-			name: "bare ip gets the default port",
-			in:   "10.20.0.5",
-			want: "10.20.0.5:6379",
+			name:   "bare ip gets the default port",
+			in:     "10.20.0.5",
+			lookup: noLookup,
+			want:   "10.20.0.5:6379",
 		},
 		{
-			name: "a non-default port survives",
-			in:   "10.20.0.5:6380",
-			want: "10.20.0.5:6380",
+			name:   "a non-default port survives",
+			in:     "10.20.0.5:6380",
+			lookup: noLookup,
+			want:   "10.20.0.5:6380",
 		},
 		{
-			// A name that resolves nowhere is the case that used to be copied
-			// verbatim into the snippet.
-			name: "an unresolvable name yields nothing, not the name",
-			in:   "redis-that-does-not-exist.invalid:6379",
-			want: "",
+			// The case that used to be copied verbatim into the snippet.
+			name:   "a name that does not resolve yields nothing, not the name",
+			in:     "redis:6379",
+			lookup: fails,
+			want:   "",
+		},
+		{
+			name:   "a service name resolves to its overlay address",
+			in:     "redis:6379",
+			lookup: answers("10.20.0.5"),
+			want:   "10.20.0.5:6379",
+		},
+		{
+			// A resolver that answers every name with a public landing address
+			// would otherwise put a stranger's IP into a customer's compose file.
+			name:   "a hijacked NXDOMAIN answer is refused",
+			in:     "redis:6379",
+			lookup: answers("46.225.53.182"),
+			want:   "",
+		},
+		{
+			name:   "the private answer is preferred over a public one",
+			in:     "redis:6379",
+			lookup: answers("46.225.53.182", "10.20.0.5"),
+			want:   "10.20.0.5:6379",
+		},
+		{
+			// Never reachable from the machine that will read this.
+			name:   "loopback is refused",
+			in:     "127.0.0.1:6379",
+			lookup: noLookup,
+			want:   "",
 		},
 		{
 			// IPv6 has no path through the overlay snippets today; answering
 			// with one would be a value the node cannot use.
-			name: "ipv6 is not offered",
-			in:   "[::1]:6379",
-			want: "",
-		},
-		{
-			name: "localhost resolves to its v4 form",
-			in:   "127.0.0.1:6379",
-			want: "127.0.0.1:6379",
+			name:   "ipv6 is not offered",
+			in:     "[fd00::1]:6379",
+			lookup: noLookup,
+			want:   "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := overlayRedisAddr(tt.in); got != tt.want {
-				t.Errorf("overlayRedisAddr(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := resolveOverlayRedisAddr(tt.in, tt.lookup); got != tt.want {
+				t.Errorf("resolveOverlayRedisAddr(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
