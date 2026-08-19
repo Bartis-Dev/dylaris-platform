@@ -503,10 +503,14 @@ func parseConfig() {
 		log.Println("WARNING: CORE_GRPC_ADDR is empty. A first-boot node cannot bootstrap its per-node secret without a reachable Core gRPC endpoint; a node with a cached secret can still run.")
 	}
 
-	linkImage = os.Getenv("LINK_IMAGE")
-	nodeManagesLink = resolveNodeManagesLink(os.Getenv("NODE_MANAGES_LINK"), linkImage)
-	if nodeManagesLink && linkImage == "" {
-		log.Println("NODE_MANAGES_LINK is on but LINK_IMAGE is empty — the node will not spawn a Link sidecar.")
+	linkImageEnv := os.Getenv("LINK_IMAGE")
+	// The RAW env decides whether this node manages a Link; the resolved value
+	// only decides WHICH image it runs. Feeding the resolved (never-empty) value
+	// back in would turn every node in the fleet into a Link manager.
+	nodeManagesLink = resolveNodeManagesLink(os.Getenv("NODE_MANAGES_LINK"), linkImageEnv, nodeExternal)
+	linkImage = resolveLinkImage(linkImageEnv)
+	if nodeManagesLink && linkImageEnv == "" {
+		log.Printf("LINK_IMAGE is unset; the node-managed Link sidecar uses the built-in default %s", linkImage)
 	}
 
 	grpcTLSEnabled = os.Getenv("GRPC_TLS_ENABLED") == "true"

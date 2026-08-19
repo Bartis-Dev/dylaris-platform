@@ -16,7 +16,8 @@ import { mintEnrollToken, listEnrollTokens, revokeEnrollToken } from '@/lib/api/
 import type { NodeEnrollToken } from '@/lib/api/types';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
-import { nodeCompose, routeOnlyCompose, deployCli } from '@/lib/warpDeploy';
+import { nodeCompose, routeOnlyCompose, deployCli, nodeIdFromLabel } from '@/lib/warpDeploy';
+import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
 
 // ---------------------------------------------------------------------------
@@ -100,16 +101,25 @@ function Snippet({ title, body }: { title: string; body: string }) {
  * stored as a hash, so it is shown exactly once at mint time. The snippet then
  * carries an obvious placeholder instead of a plausible-looking wrong value.
  */
-function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken }: {
+function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, nodeId, addrs }: {
     kind: 'node' | 'route-only';
     warpKey: string | null;
     enrollUrl: string;
     nodeEnrollToken?: string;
+    nodeId?: string;
+    addrs?: WarpDeployAddrs | null;
 }) {
     const input = {
         apiKey: warpKey ?? '<your-warp-key>',
         enrollUrl,
         nodeEnrollToken,
+        nodeId,
+        // Undetermined values stay undefined so the snippet keeps its
+        // placeholder: a blank tells the reader something is missing, an empty
+        // string looks like a setting that was deliberately cleared.
+        coreGrpcAddr: addrs?.coreGrpcAddr || undefined,
+        redisAddr: addrs?.redisAddr || undefined,
+        tunnelSubnets: addrs?.tunnelSubnets || undefined,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 
@@ -176,13 +186,17 @@ export default function MyNodesPage() {
     // enroll token to become a node. They are minted together here so the deploy
     // snippet is complete - handing over one and a placeholder for the other was
     // the gap this closes.
-    const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string } | null>(null);
+    const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string; label: string } | null>(null);
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
 
     const [kitNameDraft, setKitNameDraft] = useState('');
     const [kitBusy, setKitBusy] = useState(false);
     const [revealedKit, setRevealedKit] = useState<{ name: string; warpKey: string } | null>(null);
+
+    // Overlay addresses for the deploy snippets. Resolved by Core, which is on
+    // that network; there is nowhere else a customer could look them up.
+    const [deployAddrs, setDeployAddrs] = useState<WarpDeployAddrs | null>(null);
 
     // The real storefront origin, not a hardcoded dylaris.com: a self-host
     // install with the store wired points somewhere else, and a link that goes to
@@ -234,6 +248,14 @@ export default function MyNodesPage() {
 
     useEffect(() => {
         let cancelled = false;
+        getWarpDeployAddrs().then(res => {
+            if (!cancelled && res.success && res.addrs) setDeployAddrs(res.addrs);
+        }).catch(() => { /* the snippet falls back to its placeholders */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
         getMyUsage().then(res => {
             if (!cancelled && res.success && res.usage?.limits) setNodeLimit(res.usage.limits.maxNodes);
         }).catch(() => { /* the cap is a hint here; the backend enforces it anyway */ });
@@ -277,7 +299,7 @@ export default function MyNodesPage() {
             loadNodeKeys();
             return;
         }
-        setRevealedNode({ token: res.token, warpKey: warp.warp_key });
+        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label });
         setNodeLabelDraft('');
         load();
         loadNodeKeys();
@@ -470,6 +492,8 @@ export default function MyNodesPage() {
                                     warpKey={revealedNode.warpKey}
                                     enrollUrl={enrollUrl}
                                     nodeEnrollToken={revealedNode.token}
+                                    nodeId={nodeIdFromLabel(revealedNode.label)}
+                                    addrs={deployAddrs}
                                 />
                                 <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
                                     I saved them
@@ -627,7 +651,7 @@ export default function MyNodesPage() {
                                     </code>
                                     <CopyButton value={revealedKit.warpKey} />
                                 </div>
-                                <DeployKit kind="route-only" warpKey={revealedKit.warpKey} enrollUrl={enrollUrl} />
+                                <DeployKit kind="route-only" warpKey={revealedKit.warpKey} enrollUrl={enrollUrl} addrs={deployAddrs} />
                                 <p className="text-xs text-(--base-07)">
                                     Once it is up, create the address itself under{' '}
                                     <a href="/routes" className="text-(--accent-light) hover:underline">Protected addresses</a>.
@@ -678,7 +702,7 @@ export default function MyNodesPage() {
                                         you saved where the snippet says <code className="font-mono">&lt;your-warp-key&gt;</code>,
                                         or remove the location and add it again for a fresh key.
                                     </p>
-                                    <DeployKit kind="route-only" warpKey={null} enrollUrl={enrollUrl} />
+                                    <DeployKit kind="route-only" warpKey={null} enrollUrl={enrollUrl} addrs={deployAddrs} />
                                 </div>
                             </details>
                         )}

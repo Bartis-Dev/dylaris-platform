@@ -10,7 +10,8 @@ import {
     listWarpKeys, revokeWarpKey, deleteWarpKey,
     type WarpRegionView, type WarpKeyView,
 } from '@/lib/api/types';
-import { routeOnlyCompose, nodeCompose, deployCli, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
+import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
+import { getWarpDeployAddrs, type WarpDeployAddrs } from '@/lib/api/warpDeployConfig';
 import { API_URL } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
@@ -54,6 +55,9 @@ export default function WarpTab() {
     const [subnetHint, setSubnetHint] = useState<{ suggested: string; candidates: string[]; source: string } | null>(null);
     const [fwLoaded, setFwLoaded] = useState(false);
     const [savingFw, setSavingFw] = useState(false);
+    // Core's overlay-side gRPC and Redis addresses, so the deploy snippet is a
+    // copy-paste rather than two values the operator has to go and find.
+    const [deployAddrs, setDeployAddrs] = useState<WarpDeployAddrs | null>(null);
 
     const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
@@ -90,6 +94,14 @@ export default function WarpTab() {
     }, []);
 
     useEffect(() => { load(); loadKeys(); }, [load, loadKeys]);
+
+    useEffect(() => {
+        let cancelled = false;
+        getWarpDeployAddrs().then(res => {
+            if (!cancelled && res.success && res.addrs) setDeployAddrs(res.addrs);
+        }).catch(() => { /* the snippet falls back to its placeholders */ });
+        return () => { cancelled = true; };
+    }, []);
 
     const handleRevokeKey = async (k: WarpKeyView) => {
         const live = k.peers.length;
@@ -504,6 +516,7 @@ export default function WarpTab() {
                     apiKey={revealed ? revealed.apiKey : null}
                     enrollUrl={enrollUrl}
                     tunnelSubnets={fwSubnets}
+                    addrs={deployAddrs}
                     onClose={() => { setRevealed(null); setShowDeploy(null); }}
                     showToast={showToast}
                 />
@@ -610,19 +623,48 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
  * goes - which is far more useful than the old modal, which was only reachable
  * at mint time and stopped at four ENV lines.
  */
-function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, onClose, showToast }: {
+/**
+ * The three things an operator mints a key FOR. External node and BYON deploy
+ * the same stack - the difference is whose machine it is, and therefore whether
+ * a customer has to be entitled to it - so they are two targets rather than one
+ * ambiguous "node".
+ */
+type DeployTarget = 'external' | 'byon' | 'route-only';
+
+const DEPLOY_TARGETS: { id: DeployTarget; label: string }[] = [
+    { id: 'external', label: 'External node' },
+    { id: 'byon', label: 'BYON — customer machine' },
+    { id: 'route-only', label: 'Route-only — protected address' },
+];
+
+function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, addrs, onClose, showToast }: {
     name: string;
     apiKey: string | null;
     enrollUrl: string;
     /** From the Overlay Segmentation setting; "" leaves a placeholder in the snippet. */
     tunnelSubnets: string;
+    /** Overlay addresses resolved by Core; null while loading or undetectable. */
+    addrs: WarpDeployAddrs | null;
     onClose: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }) {
-    const [kind, setKind] = useState<'node' | 'route-only'>('node');
+    // External node is the default because it is what THIS screen mints: an
+    // admin-owned key. A BYON machine is normally enrolled by the customer on
+    // their own /nodes page.
+    const [target, setTarget] = useState<DeployTarget>('external');
     const [copied, setCopied] = useState<string | null>(null);
 
-    const input = { apiKey: apiKey ?? '<your-warp-key>', enrollUrl, tunnelSubnets };
+    const kind: 'node' | 'route-only' = target === 'route-only' ? 'route-only' : 'node';
+    const input = {
+        apiKey: apiKey ?? '<your-warp-key>',
+        enrollUrl,
+        // The saved setting wins; Core's detected value is the fallback, so a
+        // snippet is complete even before anyone visits Overlay Segmentation.
+        tunnelSubnets: tunnelSubnets || addrs?.tunnelSubnets || '',
+        nodeId: nodeIdFromLabel(name),
+        coreGrpcAddr: addrs?.coreGrpcAddr || undefined,
+        redisAddr: addrs?.redisAddr || undefined,
+    };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
     const cli = deployCli(kind);
 
@@ -662,24 +704,37 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, onClose, showToas
                         </p>
                     )}
 
-                    <div className="flex gap-2">
-                        {(['node', 'route-only'] as const).map(k => (
+                    <div className="flex flex-wrap gap-2">
+                        {DEPLOY_TARGETS.map(t => (
                             <button
-                                key={k}
-                                onClick={() => setKind(k)}
-                                className={`btn btn-sm ${kind === k ? 'btn-primary' : 'btn-secondary'}`}
+                                key={t.id}
+                                onClick={() => setTarget(t.id)}
+                                className={`btn btn-sm ${target === t.id ? 'btn-primary' : 'btn-secondary'}`}
                             >
-                                {k === 'node' ? 'BYON — bring your own node' : 'Route-only — protected address'}
+                                {t.label}
                             </button>
                         ))}
                     </div>
                     <div className="text-xs text-(--base-06) space-y-1.5">
-                        {kind === 'node' ? (
+                        {target === 'external' ? (
                             <p>
-                                Dylaris runs Minecraft servers ON this machine. warp joins the overlay first; the node
-                                then reaches Redis and Core over it and starts its OWN link sidecar
-                                (<span className="font-mono">NODE_MANAGES_LINK</span>) - do not run link yourself.
+                                Your own machine outside the datacenter. warp joins the overlay first; the node then
+                                reaches Redis and Core over it and starts its own link sidecar - do not run link
+                                yourself.
                             </p>
+                        ) : target === 'byon' ? (
+                            <>
+                                <p>
+                                    The same stack on a CUSTOMER machine. Identical compose file; what differs is that
+                                    the customer has to be entitled to it, which is a billing decision and not this
+                                    dialog: grant it under Settings -&gt; Users -&gt; the user -&gt; Billing.
+                                </p>
+                                <p>
+                                    An entitled customer can also enrol the machine themselves under My machines,
+                                    which mints their own keys and is the normal path. Use this one when you are
+                                    setting the machine up on their behalf.
+                                </p>
+                            </>
                         ) : (
                             <>
                                 <p>

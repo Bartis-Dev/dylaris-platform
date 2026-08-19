@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { routeOnlyCompose, nodeCompose, deployCli, EXTERNAL_NODE_PORTS } from './warpDeploy';
+import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
 
@@ -59,8 +59,23 @@ describe('nodeCompose', () => {
         expect(out).toContain('depends_on: [warp]');
     });
 
-    it('sets NODE_MANAGES_LINK so nobody runs a second link sidecar by hand', () => {
-        expect(nodeCompose(base)).toContain('NODE_MANAGES_LINK: "true"');
+    // Both are image defaults now (an external node manages its own Link with
+    // the built-in image), so carrying them here is noise the reader has to
+    // evaluate. Keep them out - if they come back, the reason has to be new.
+    it('omits settings that equal the image default', () => {
+        const out = nodeCompose(base);
+        expect(out).not.toContain('NODE_MANAGES_LINK');
+        expect(out).not.toContain('LINK_IMAGE');
+        expect(out).not.toContain('LEADER:');
+    });
+
+    // Named volumes live where Docker decides; someone running servers on their
+    // own box wants to know where the files are.
+    it('shows how to bind the data directory to a real path', () => {
+        const out = nodeCompose(base);
+        expect(out).toContain('/app/dylaris_data');
+        expect(out).toContain('/srv/dylaris:/app/dylaris_data');
+        expect(out).toContain('C:\\dylaris:/app/dylaris_data');
     });
 
     it('fills in every operator value when known', () => {
@@ -77,6 +92,31 @@ describe('nodeCompose', () => {
         expect(out).toContain('REDIS_ADDR: "10.20.0.5:6379"');
         expect(out).toContain('NODE_ID: "home-desktop"');
         expect(out).not.toContain('<');
+    });
+});
+
+describe('nodeIdFromLabel', () => {
+    // NODE_ID lands in Redis keys, the mesh identity and every container's
+    // environment, so the free-text location name cannot go in verbatim.
+    it('reduces a typed location name to a safe id', () => {
+        expect(nodeIdFromLabel('My Home PC')).toBe('my-home-pc');
+        expect(nodeIdFromLabel('  Rack #3 / EU  ')).toBe('rack-3-eu');
+        expect(nodeIdFromLabel('home-desktop')).toBe('home-desktop');
+    });
+
+    // undefined leaves the snippet's placeholder in place; an empty string
+    // would render as NODE_ID: "" and read like a deliberate setting.
+    it('returns undefined when nothing usable is left', () => {
+        expect(nodeIdFromLabel('')).toBeUndefined();
+        expect(nodeIdFromLabel('   ')).toBeUndefined();
+        expect(nodeIdFromLabel('###')).toBeUndefined();
+        expect(nodeIdFromLabel(undefined)).toBeUndefined();
+    });
+
+    // The slice that caps the length must not leave a trailing separator.
+    it('never ends in a separator after truncation', () => {
+        const out = nodeIdFromLabel('a'.repeat(39) + ' tail');
+        expect(out).not.toMatch(/-$/);
     });
 });
 

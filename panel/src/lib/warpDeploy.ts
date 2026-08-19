@@ -9,7 +9,13 @@
  *
  * Values the operator must fill in are left as obvious <placeholders> rather
  * than guessed: an address that merely looks plausible is worse than a blank,
- * because it fails later and somewhere else.
+ * because it fails later and somewhere else. Everything the panel CAN answer
+ * (the two keys, the node id, the overlay addresses) is filled in, so a
+ * complete deploy is a copy-paste rather than a scavenger hunt.
+ *
+ * Lines whose value equals the image default are deliberately absent: LEADER is
+ * false unless set, and an external node manages its own Link with the built-in
+ * image. Every line left here is one the reader has to be able to justify.
  */
 
 export type WarpDeployInput = {
@@ -39,6 +45,24 @@ function or(value: string | undefined, placeholder: string): string {
 }
 
 /**
+ * Turns the location name a customer typed into a usable NODE_ID.
+ *
+ * NODE_ID ends up in Redis keys, the mesh identity and the environment of every
+ * container the node starts, so "My Home PC" cannot be pre-filled verbatim.
+ * Returns undefined when nothing usable is left, which leaves the snippet's
+ * placeholder in place rather than a value that is silently wrong.
+ */
+export function nodeIdFromLabel(label: string | undefined): string | undefined {
+    const slug = (label ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40)
+        .replace(/-+$/, '');
+    return slug === '' ? undefined : slug;
+}
+
+/**
  * routeOnlyCompose is warp + link: the customer runs the Minecraft server
  * themselves and gets a protected Dylaris address for it. No node, no swarm
  * join, no published ports - the machine only makes OUTBOUND connections.
@@ -51,16 +75,15 @@ function or(value: string | undefined, placeholder: string): string {
  */
 export function routeOnlyCompose(i: WarpDeployInput): string {
     return `# route-only.yml  ->  docker compose -f route-only.yml up -d
-# Linux only: the kit uses kernel WireGuard (host networking + NET_ADMIN).
+# Linux only: kernel WireGuard needs host networking and NET_ADMIN.
 services:
   warp:
     image: ${REG}/dylaris-gateway-warp:latest
     restart: unless-stopped
     environment:
-      LEADER: "false"
       API_KEY: "${i.apiKey}"
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
-      # Overlay CIDR(s) where Redis and the edges live - NOT your home LAN.
+      # Overlay CIDR(s) to route through the tunnel - NOT your home LAN.
       TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
     network_mode: host
     cap_add: [NET_ADMIN]
@@ -70,16 +93,14 @@ services:
     restart: unless-stopped
     depends_on: [warp]
     environment:
-      # Both are the SAME warp key: the link exchanges it at boot for its own
-      # derived token, so the token never travels with the kit.
       CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
+      # The same warp key: the link exchanges it at boot for its own derived
+      # token, so no second secret travels with the kit.
       LINK_BOOT_KEY: "${i.apiKey}"
       REDIS_ADDR: "${or(i.redisAddr, '<redis e.g. 10.20.0.5:6379>')}"
-      # false unless your operator terminates TLS on Redis. Against a plain-TCP
-      # Redis a TLS client fails the handshake and the link never registers.
       REDIS_USE_TLS: "false"
-      # The LOCAL address the link may dial - your own server. Host only, NO
-      # port: this is compared as an exact host string.
+      # Your own Minecraft server. Host only, NO port - compared as an exact
+      # string, so "127.0.0.1:25565" never matches.
       LINK_ALLOWED_TARGETS: "${or(i.localTarget, '127.0.0.1')}"
       LOCAL_HOST: "${or(i.localTarget, '127.0.0.1')}"
     network_mode: host
@@ -104,10 +125,9 @@ services:
     image: ${REG}/dylaris-gateway-warp:latest
     restart: unless-stopped
     environment:
-      LEADER: "false"
       API_KEY: "${i.apiKey}"
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
-      # Overlay CIDR(s) where Redis and core live - NOT your home LAN.
+      # Overlay CIDR(s) to route through the tunnel - NOT your home LAN.
       TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
     network_mode: host
     cap_add: [NET_ADMIN]
@@ -121,17 +141,19 @@ services:
       NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
       # Single-use, first boot only.
       NODE_ENROLL_TOKEN: "${or(i.nodeEnrollToken, '<enroll-token-from-panel>')}"
-      # Both reachable ONLY over the overlay warp provides. Never publish them.
+      # Reachable ONLY over the overlay warp provides. Never publish them.
       CORE_GRPC_ADDR: "${or(i.coreGrpcAddr, '<core-grpc e.g. 10.20.0.4:25501>')}"
       REDIS_ADDR: "${or(i.redisAddr, '<redis e.g. 10.20.0.5:6379>')}"
-      # The node spawns its own link sidecar - do not run link yourself.
-      NODE_MANAGES_LINK: "true"
-      LINK_IMAGE: "${REG}/dylaris-gateway-link:latest"
       # NO CLUSTER_SECRET and no static Redis password on purpose: the node
       # fetches a scoped Redis credential over gRPC once it has enrolled.
+      # It also starts its own link sidecar - do not run link yourself.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /dev:/dev:ro
+      # Server files. Replace the named volume with a path of your own to keep
+      # them somewhere you can see:
+      #   Linux           - /srv/dylaris:/app/dylaris_data
+      #   Docker Desktop  - C:\\dylaris:/app/dylaris_data
       - byon_data:/app/dylaris_data
     network_mode: host
     cap_add: [SYS_ADMIN]
