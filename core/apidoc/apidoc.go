@@ -313,7 +313,17 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 			case "AuthMiddleware":
 				r.Auth = "session"
 			case "APIKeyMiddleware":
+				// Its argument is a capability too, checked against the same
+				// catalog - just resolved from the key's scope rather than from
+				// the caller's identity. The Auth column carries that
+				// difference, so the capability belongs in the capability
+				// column rather than being dropped.
 				r.Auth = "user API key"
+				if len(x.Args) == 1 {
+					if c, isStr := strLit(x.Args[0]); isStr {
+						r.Cap = c
+					}
+				}
 			case "WarpAPIKeyMiddleware":
 				r.Auth = "warp key"
 			case "RequireCap":
@@ -423,7 +433,7 @@ func receiverType(e ast.Expr) string {
 }
 
 var (
-	spaceRE    = regexp.MustCompile(`\s+`)
+	spaceRE = regexp.MustCompile(`\s+`)
 	// The path must start with a slash. Without that, prose like
 	// "DELETE removes the row" parses as a verb followed by a path and loses
 	// its first two words.

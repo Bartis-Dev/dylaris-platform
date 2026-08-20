@@ -137,7 +137,7 @@ can still show what exists.
 
 - **461 routes** in 50 sections: 203 GET, 133 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **37** accept no credential at all; read the Gates column before assuming any of them is open.
-- **312** declare a capability at the route and **18** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **37** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **313** declare a capability at the route and **18** enforce authorization inside the handler. Of the rest, **88** need a credential but no capability, **37** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -389,7 +389,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/external/rcon/{uuid}/exec` | user API key | _no capability_ | - | `RconHandler.ExecExternal` | automation entry. |
+| POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
 
 ## /api/files
 

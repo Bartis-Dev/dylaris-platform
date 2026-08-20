@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/apidoc"
+	"dylaris-core/authz"
 
 	"github.com/gorilla/mux"
 )
@@ -75,6 +76,37 @@ func TestAPIDocCoversEveryRegisteredRoute(t *testing.T) {
 		if !served[k] {
 			t.Errorf("route %q is in the reference but the router does not serve it", k)
 		}
+	}
+}
+
+// TestEveryRouteCapabilityIsInTheCatalog closes a gap the coverage tests leave
+// open. TestRequiredCapsIntegrity validates the values in the requiredCaps map,
+// but that map holds one REPRESENTATIVE capability per path template - the
+// per-method capability that actually gates a route is the string passed to
+// RequireCap at the registration, and nothing checked those.
+//
+// A typo there compiles and boots. RequireCap looks the id up per request and
+// answers 500 "unknown capability" when it is unknown, and it does so BEFORE
+// the admin short-circuit, so the route is dead for everyone including an
+// admin, and only once someone calls it.
+func TestEveryRouteCapabilityIsInTheCatalog(t *testing.T) {
+	routes, err := apidoc.Parse("routes.go", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, r := range routes {
+		if r.Cap == "" {
+			continue
+		}
+		checked++
+		if !authz.Has(r.Cap) {
+			t.Errorf("%v %s gates on %q, which is not a catalog capability: every request answers 500",
+				r.Methods, r.Path, r.Cap)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no capabilities found; the parser is out of step with the source")
 	}
 }
 
