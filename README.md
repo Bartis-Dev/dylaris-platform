@@ -35,6 +35,7 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Ports](#ports)
 - [Scalability](#scalability)
 - [Operations](#operations)
+- [HTTP API](#http-api)
 - [Beam desktop client](#beam-desktop-client)
 - [Development](#development)
 - [Tech stack](#tech-stack)
@@ -682,6 +683,24 @@ docker compose exec timescaledb pg_dump -U "$DB_USER" "$DB_NAME" > dylaris-backu
 ```
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
+
+## HTTP API
+
+Every route Core serves is listed in **[API.md](API.md)**: path,
+methods, the credential it accepts, the capability that gates it, the middleware
+in front of it and the handler behind it.
+
+That file is generated from the router, not maintained by hand. Regenerate it
+after touching a route:
+
+```bash
+cd core && go run ./cmd/apidocs
+```
+
+A route's description comes from its handler's doc comment, so that is where to
+write one. `TestAPIDocIsCurrent` fails the build if the checked-in file no
+longer matches the router, and `TestAPIDocCoversEveryRegisteredRoute` fails if a
+registration exists that the generator did not recognise.
 
 ## Custom-tab reverse proxy
 
