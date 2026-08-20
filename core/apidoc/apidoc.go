@@ -93,7 +93,21 @@ func Parse(routesFile string, handlerDirs []string) ([]Route, error) {
 			case authz.InHandlerAuthzRoutes[r.Path]:
 				r.Authz = "in-handler"
 			case authz.ExemptRoutes[r.Path]:
-				r.Authz = "exempt"
+				// ExemptRoutes holds two different things, and calling both
+				// "exempt" would tell a reader that anyone at all can read
+				// another user's billing or 2FA status. Most of that map is
+				// AUTHED-EXEMPT: a credential IS required, no capability
+				// applies, and the handler scopes the answer to the caller.
+				//
+				// The split is drawn on the credential rather than on the map's
+				// own section headings, because those file the warp and
+				// API-key routes under "PUBLIC (no session auth)" - true as
+				// written, and not what a reader would take from it.
+				if r.Auth == "" {
+					r.Authz = "public"
+				} else {
+					r.Authz = "no capability"
+				}
 			case required[r.Path] != "":
 				r.Authz = "uncapped method"
 			}
@@ -410,7 +424,10 @@ func receiverType(e ast.Expr) string {
 
 var (
 	spaceRE    = regexp.MustCompile(`\s+`)
-	verbPathRE = regexp.MustCompile(`^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)(?:\s*[+/,]\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*\s+\S+\s*`)
+	// The path must start with a slash. Without that, prose like
+	// "DELETE removes the row" parses as a verb followed by a path and loses
+	// its first two words.
+	verbPathRE = regexp.MustCompile(`^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)(?:\s*[+/,]\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*\s+/\S*\s*`)
 	// The comments separate the path from the prose with a plain hyphen or with
 	// one of the Unicode dashes (U+2010..U+2015); spelled by code point so the
 	// source stays ASCII.
@@ -425,19 +442,30 @@ var (
 func cleanDoc(name, doc string) string {
 	s := spaceRE.ReplaceAllString(strings.TrimSpace(doc), " ")
 	s = strings.TrimSpace(strings.TrimPrefix(s, name))
-	// "Info is GET /solder/api/ - the root probe." and "Assignment handles GET
-	// /api/warp/assignment?public_key=...". Only drop the linking verb when a
-	// verb and path really follow it: "GetFileContent handles requests to read
-	// the content of a file" needs the word to stay a sentence.
-	for _, lead := range []string{"is ", "handles ", "serves "} {
-		if rest := strings.TrimPrefix(s, lead); rest != s && verbPathRE.MatchString(rest) {
-			s = rest
+
+	// The preamble comes in several orders: "Name VERB /path - prose",
+	// "Name - VERB /path prose", "Name is GET /solder/api/ - the root probe".
+	// Strip whichever piece is at the front and go round again, rather than
+	// assuming one fixed sequence - a single pass leaves "GET /api/... " behind
+	// whenever a dash separates the name from the verb.
+	for {
+		before := s
+		s = strings.TrimSpace(separatorRE.ReplaceAllString(s, ""))
+		// Only drop a linking verb when a verb and path really follow it:
+		// "GetFileContent handles requests to read the content of a file" needs
+		// the word to stay a sentence.
+		for _, lead := range []string{"is ", "handles ", "serves "} {
+			if rest := strings.TrimPrefix(s, lead); rest != s && verbPathRE.MatchString(rest) {
+				s = rest
+				break
+			}
+		}
+		s = strings.TrimSpace(verbPathRE.ReplaceAllString(s, ""))
+		if s == before {
 			break
 		}
 	}
-	s = verbPathRE.ReplaceAllString(s, "")
-	s = separatorRE.ReplaceAllString(s, "")
-	return firstSentence(strings.TrimSpace(s))
+	return firstSentence(s)
 }
 
 // firstSentence cuts at the first sentence end, stepping over the abbreviations

@@ -1020,7 +1020,8 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// UpdateServerName: PATCH /api/servers/{id}/name
+// UpdateServerName PATCH /api/servers/{id}/name - renames a server and records
+// the old and new name in its audit trail.
 func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -1073,7 +1074,10 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// UpdateServerResources: PATCH /api/servers/{id}/resources
+// UpdateServerResources PATCH /api/servers/{id}/resources - changes RAM, CPU
+// and disk limits. Beyond the route's capability an admin must have set the
+// caller's can_change_resources flag; without it the answer is 403, because
+// resources are what a plan is sold on.
 func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)

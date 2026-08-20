@@ -64,11 +64,20 @@ every capability check** in the resolver, so an admin passes regardless.
 
 The italic values say why a route declares none:
 
-- **_in-handler_** - authorization happens inside the handler, usually because
-  the decision depends on the request body. `POST /api/servers/{id}/power` is
-  the archetype: the action lives in the body, so the route cannot know whether
-  it needs `power.start` or `power.kill`.
-- **_exempt_** - deliberately un-gated.
+- **_in-handler_** - a capability does apply, but which one depends on the
+  request body, so the check moved inside. `POST /api/servers/{id}/power` is the
+  archetype: the action lives in the body, so the route cannot know whether it
+  needs `power.start` or `power.kill`.
+- **_no capability_** - a credential is required (see the Auth column) and no
+  capability gates the route. This is **not** the same as open. Most of these
+  are scoped to the caller inside the handler - your own profile, your own
+  billing, your own route-only entries - and the rest are reference data or
+  helpers that any authenticated caller may use. Which one it is, is in the
+  Notes.
+- **_public_** - no credential and no capability. These are the login,
+  registration and reset endpoints, the health probe, the Solder API the
+  Technic launcher calls, share links, and the tab proxy, which authenticates
+  itself with a ticket cookie inside the handler.
 - **_uncapped method_** - this method carries no capability, but its path
   template does, guarding a different method on the same path. Five `GET`s sit
   beside a capped write that way, each one an explicit decision recorded next to
@@ -76,7 +85,11 @@ The italic values say why a route declares none:
   is keyed by template and never sees methods.
 
 Every route lands in exactly one of capability / in-handler / exempt, and
-`TestEveryRouteIsClassified` fails the build if one lands in none.
+`TestEveryRouteIsClassified` fails the build if one lands in none. The exempt
+bucket is the one split above: the source keeps its two halves apart under
+`PUBLIC` and `AUTHED-EXEMPT` headings in `authz/coverage.go`, but files the warp
+and API-key routes under `PUBLIC` because they need no *session*. The table
+splits on the credential instead, which is what a reader is actually asking.
 
 ## What wraps every /api route
 
@@ -124,7 +137,7 @@ can still show what exists.
 
 - **461 routes** in 50 sections: 203 GET, 133 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **37** accept no credential at all; read the Gates column before assuming any of them is open.
-- **312** declare a capability at the route, **18** enforce authorization inside the handler, **126** are deliberately exempt, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **312** declare a capability at the route and **18** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **37** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -293,39 +306,39 @@ can still show what exists.
 | POST | `/api/admin/warp/keys` | session | `topology.write` | - | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}` | session | `topology.write` | - | `WarpHandler.RevokeAPIKey` | revoke an enrollment key AND disconnect whatever it already enrolled. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}/purge` | session | `topology.write` | - | `WarpHandler.DeleteAPIKey` | remove the key row entirely, after disconnecting whatever it enrolled. |
-| GET | `/api/admin/xdp/config` | session | `settings.read` | - | `XDPHandler.GetConfig` | GET /api/admin/xdp/config - PANEL settings.read (RequireCap at the route). |
-| PUT | `/api/admin/xdp/config` | session | `settings.write` | - | `XDPHandler.UpdateConfig` | PUT /api/admin/xdp/config - PANEL settings.write (RequireCap at the route). |
+| GET | `/api/admin/xdp/config` | session | `settings.read` | - | `XDPHandler.GetConfig` | PANEL settings.read (RequireCap at the route). |
+| PUT | `/api/admin/xdp/config` | session | `settings.write` | - | `XDPHandler.UpdateConfig` | PANEL settings.write (RequireCap at the route). |
 
 ## /api/auth
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/auth/2fa/disable` | session | _exempt_ | - | `AuthHandler.DisableTOTPHandler` | POST /api/auth/2fa/disable User-initiated 2FA disable. |
-| POST | `/api/auth/2fa/regenerate-backup-codes` | session | _exempt_ | - | `AuthHandler.RegenerateBackupCodesHandler` | POST /api/auth/2fa/regenerate-backup-codes Issues a fresh set of 10 backup codes for a user who has 2FA already enabled. |
-| POST | `/api/auth/2fa/setup` | session | _exempt_ | - | `AuthHandler.SetupTOTPHandler` | POST /api/auth/2fa/setup Generates a fresh TOTP secret + otpauth URI for the authenticated user. |
-| GET | `/api/auth/2fa/status` | session | _exempt_ | - | `AuthHandler.Get2FAStatusHandler` | GET /api/auth/2fa/status Returns whether 2FA is enabled and the count of unconsumed backup codes. |
-| POST | `/api/auth/2fa/verify` | session | _exempt_ | - | `AuthHandler.VerifyTOTPHandler` | POST /api/auth/2fa/verify Validates the user's 6-digit code against the freshly-generated secret. |
-| GET | `/api/auth/demo-login` | **none** | _exempt_ | Limit | `AuthHandler.DemoStatus` | public, rate-limited. |
-| POST | `/api/auth/demo-login` | **none** | _exempt_ | Limit, LimitBody | `AuthHandler.DemoLogin` | public, rate-limited. |
-| POST | `/api/auth/forgot-password` | **none** | _exempt_ | Limit, LimitBody | `PasswordResetHandler.ForgotPassword` | public. |
-| POST | `/api/auth/login` | **none** | _exempt_ | Limit, LimitBody | `AuthHandler.LoginHandler` | issues the session JWT. |
-| GET | `/api/auth/profile` | session | _exempt_ | - | `AuthHandler.GetProfileHandler` | the calling user's own row, with the password hash cleared before it is written out. |
-| PUT | `/api/auth/profile` | session | _exempt_ | - | `AuthHandler.UpdateProfileHandler` | updates the calling user's own profile. |
-| POST | `/api/auth/register` | **none** | _exempt_ | Limit, LimitBody | `RegistrationHandler.Register` | public, gated on auth.registration_enabled. |
-| GET | `/api/auth/registration-status` | **none** | _exempt_ | - | `RegistrationHandler.RegistrationStatus` | public. |
-| POST | `/api/auth/resend-verification` | **none** | _exempt_ | Limit, LimitBody | `RegistrationHandler.ResendVerification` | public. |
-| POST | `/api/auth/reset-password` | **none** | _exempt_ | Limit, LimitBody | `PasswordResetHandler.ResetPassword` | public. |
-| GET | `/api/auth/security-questions/pool` | **none** | _exempt_ | - | `SecurityQuestionsHandler.GetPool` | public. |
-| POST | `/api/auth/validate-reset-token` | **none** | _exempt_ | Limit, LimitBody | `PasswordResetHandler.ValidateResetToken` | public. |
-| POST | `/api/auth/verify-email` | **none** | _exempt_ | Limit, LimitBody | `RegistrationHandler.VerifyEmail` | public. |
+| POST | `/api/auth/2fa/disable` | session | _no capability_ | - | `AuthHandler.DisableTOTPHandler` | User-initiated 2FA disable. |
+| POST | `/api/auth/2fa/regenerate-backup-codes` | session | _no capability_ | - | `AuthHandler.RegenerateBackupCodesHandler` | Issues a fresh set of 10 backup codes for a user who has 2FA already enabled. |
+| POST | `/api/auth/2fa/setup` | session | _no capability_ | - | `AuthHandler.SetupTOTPHandler` | Generates a fresh TOTP secret + otpauth URI for the authenticated user. |
+| GET | `/api/auth/2fa/status` | session | _no capability_ | - | `AuthHandler.Get2FAStatusHandler` | Returns whether 2FA is enabled and the count of unconsumed backup codes. |
+| POST | `/api/auth/2fa/verify` | session | _no capability_ | - | `AuthHandler.VerifyTOTPHandler` | Validates the user's 6-digit code against the freshly-generated secret. |
+| GET | `/api/auth/demo-login` | **none** | _public_ | Limit | `AuthHandler.DemoStatus` | public, rate-limited. |
+| POST | `/api/auth/demo-login` | **none** | _public_ | Limit, LimitBody | `AuthHandler.DemoLogin` | public, rate-limited. |
+| POST | `/api/auth/forgot-password` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ForgotPassword` | public. |
+| POST | `/api/auth/login` | **none** | _public_ | Limit, LimitBody | `AuthHandler.LoginHandler` | issues the session JWT. |
+| GET | `/api/auth/profile` | session | _no capability_ | - | `AuthHandler.GetProfileHandler` | the calling user's own row, with the password hash cleared before it is written out. |
+| PUT | `/api/auth/profile` | session | _no capability_ | - | `AuthHandler.UpdateProfileHandler` | updates the calling user's own profile. |
+| POST | `/api/auth/register` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.Register` | public, gated on auth.registration_enabled. |
+| GET | `/api/auth/registration-status` | **none** | _public_ | - | `RegistrationHandler.RegistrationStatus` | public. |
+| POST | `/api/auth/resend-verification` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.ResendVerification` | public. |
+| POST | `/api/auth/reset-password` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ResetPassword` | public. |
+| GET | `/api/auth/security-questions/pool` | **none** | _public_ | - | `SecurityQuestionsHandler.GetPool` | public. |
+| POST | `/api/auth/validate-reset-token` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ValidateResetToken` | public. |
+| POST | `/api/auth/verify-email` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.VerifyEmail` | public. |
 
 ## /api/authz
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/authz/catalog` | session | _exempt_ | - | `AuthzHandler.Catalog` | returns the capability catalog grouped by scope then category, so the panel role editor and simple/advanced UI render entirely from the backend list (no hard-coded frontend permission arrays). |
-| GET | `/api/authz/mode` | session | _exempt_ | - | `PermissionsModeHandler.GetMode` | > {"success":true,"mode":"off\|simple\|advanced"}. |
-| GET | `/api/authz/presets` | session | _exempt_ | - | `AuthzHandler.Presets` | the simple-mode preset bundles, so the assign-only UI renders from the backend (no hard-coded frontend presets). |
+| GET | `/api/authz/catalog` | session | _no capability_ | - | `AuthzHandler.Catalog` | returns the capability catalog grouped by scope then category, so the panel role editor and simple/advanced UI render entirely from the backend list (no hard-coded frontend permission arrays). |
+| GET | `/api/authz/mode` | session | _no capability_ | - | `PermissionsModeHandler.GetMode` | > {"success":true,"mode":"off\|simple\|advanced"}. |
+| GET | `/api/authz/presets` | session | _no capability_ | - | `AuthzHandler.Presets` | the simple-mode preset bundles, so the assign-only UI renders from the backend (no hard-coded frontend presets). |
 
 ## /api/backup-jobs
 
@@ -358,10 +371,10 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/beam/config` | session | _exempt_ | - | `BeamHandler.GetBeamConfig` | returns the Beam relay address and branding info. |
-| GET | `/api/beam/download` | **none** | _exempt_ | Limit | `BeamHandler.GetBeamDownload` | streams a Beam binary through Core. |
-| GET | `/api/beam/servers` | session | _exempt_ | - | `BeamHandler.GetBeamServers` | returns the server list with node_id for Beam clients. |
-| GET, POST | `/api/beam/ticket` | session | _exempt_ | - | `BeamHandler.GetBeamTicket` | signs a JWT ticket for a specific server. |
+| GET | `/api/beam/config` | session | _no capability_ | - | `BeamHandler.GetBeamConfig` | returns the Beam relay address and branding info. |
+| GET | `/api/beam/download` | **none** | _public_ | Limit | `BeamHandler.GetBeamDownload` | streams a Beam binary through Core. |
+| GET | `/api/beam/servers` | session | _no capability_ | - | `BeamHandler.GetBeamServers` | returns the server list with node_id for Beam clients. |
+| GET, POST | `/api/beam/ticket` | session | _no capability_ | - | `BeamHandler.GetBeamTicket` | signs a JWT ticket for a specific server. |
 
 ## /api/disk
 
@@ -376,7 +389,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/external/rcon/{uuid}/exec` | user API key | _exempt_ | - | `RconHandler.ExecExternal` | automation entry. |
+| POST | `/api/external/rcon/{uuid}/exec` | user API key | _no capability_ | - | `RconHandler.ExecExternal` | automation entry. |
 
 ## /api/files
 
@@ -397,16 +410,16 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/gateway/check-domain` | session | _exempt_ | - | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
+| GET | `/api/gateway/check-domain` | session | _no capability_ | - | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
 | GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
 | GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |
-| GET | `/api/gateway/link-routes` | session | _exempt_ | - | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
-| POST | `/api/gateway/link-routes` | session | _exempt_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
-| DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _exempt_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
+| GET | `/api/gateway/link-routes` | session | _no capability_ | - | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
+| POST | `/api/gateway/link-routes` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
+| DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _no capability_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
 | GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
 | GET | `/api/gateway/logs` | session | `topology.read` | - | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
-| GET | `/api/gateway/route-options` | session | _exempt_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
+| GET | `/api/gateway/route-options` | session | _no capability_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
 | GET | `/api/gateway/routes` | session | `topology.read` | - | `GatewayHandler.GetAllRoutes` | every gateway route across the whole fleet, read from Redis. |
 | POST | `/api/gateway/routes/bulk-delete` | session | `topology.write` | - | `GatewayHandler.BulkDeleteRoutesBySuffix` | deletes every route whose domain equals OR ends with `.<suffix>`. |
 | GET | `/api/gateway/routes/suffixes` | session | `topology.read` | - | `GatewayHandler.GetRouteSuffixes` | returns the unique apex (1-dot) and parent (2-dot) suffixes across every route currently registered. |
@@ -442,9 +455,9 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/library` | session | _exempt_ | RequireCoreStorageReachable | `LibraryHandler.GetLibraryHandler` | Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle. |
+| GET | `/api/library` | session | _no capability_ | RequireCoreStorageReachable | `LibraryHandler.GetLibraryHandler` | Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle. |
 | POST | `/api/library/delete` | session | `settings.write` | RequireCoreStorageReachable | `LibraryHandler.DeleteLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| GET | `/api/library/download` | session | _exempt_ | RequireCoreStorageReachable | `LibraryHandler.DownloadLibraryHandler` | streams the library file named by ?path. |
+| GET | `/api/library/download` | session | _no capability_ | RequireCoreStorageReachable | `LibraryHandler.DownloadLibraryHandler` | streams the library file named by ?path. |
 | POST | `/api/library/mkdir` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable | `LibraryHandler.MkdirLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
 | POST | `/api/library/toggle` | session | `settings.write` | - | `LibraryHandler.ToggleLibraryPathHandler` | Body: { "path": "...", "enabled": false } Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
 | POST | `/api/library/upload` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable | `LibraryHandler.UploadLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
@@ -453,7 +466,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/maintenance` | **none** | _exempt_ | - | `MaintenanceHandler.GetState` | public. |
+| GET | `/api/maintenance` | **none** | _public_ | - | `MaintenanceHandler.GetState` | public. |
 
 ## /api/me
 
@@ -462,8 +475,8 @@ can still show what exists.
 | GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys. |
 | POST | `/api/me/api-keys` | session | `apikeys.write` | - | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
 | DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | revokes one of the caller's own keys. |
-| GET | `/api/me/billing` | session | _exempt_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
-| GET | `/api/me/entitlement` | session | _exempt_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
+| GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
+| GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
 | GET | `/api/me/modrinth-pat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `ModrinthPATHandler.Status` | returns whether the user has a PAT configured + (if so) the username + last_validated timestamp. |
 | PUT | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
 | DELETE | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Clear` | wipes the PAT entirely. |
@@ -471,23 +484,23 @@ can still show what exists.
 | POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
 | POST | `/api/me/packs/import-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolder` | imports one modpack (all its builds) from an external Solder instance into a new draft pack owned by the caller. |
 | POST | `/api/me/packs/import-solder/preview` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolderPreview` | reads the pack index of an external Solder instance so the UI can list what is importable. |
-| GET | `/api/me/regions` | session | _exempt_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |
-| GET | `/api/me/security-questions` | session | _exempt_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
-| PUT | `/api/me/security-questions` | session | _exempt_ | - | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
-| GET | `/api/me/servers/via-tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
-| PUT | `/api/me/updates-seen` | session | _exempt_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge the current feeds so the caller's navbar badge clears. |
-| GET | `/api/me/usage` | session | _exempt_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
-| GET | `/api/me/username-history` | session | _exempt_ | - | `UsernameHistoryHandler.Me` | the calling user's own past usernames. |
+| GET | `/api/me/regions` | session | _no capability_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |
+| GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
+| PUT | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
+| GET | `/api/me/servers/via-tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
+| PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge the current feeds so the caller's navbar badge clears. |
+| GET | `/api/me/usage` | session | _no capability_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
+| GET | `/api/me/username-history` | session | _no capability_ | - | `UsernameHistoryHandler.Me` | the calling user's own past usernames. |
 
 ## /api/modrinth
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/modrinth/categories` | session | _exempt_ | Limit | `ModrinthHandler.Categories` | the Modrinth category tag list (each entry: name, project_type, header, icon SVG). |
-| GET | `/api/modrinth/project/{slug}` | session | _exempt_ | Limit | `ModrinthHandler.Project` | full project metadata. |
-| GET | `/api/modrinth/project/{slug}/versions` | session | _exempt_ | Limit | `ModrinthHandler.ProjectVersions` | a cached proxy to Modrinth's version list. |
-| GET | `/api/modrinth/search` | session | _exempt_ | Limit | `ModrinthHandler.Search` | Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type. |
-| GET | `/api/modrinth/version/{id}` | session | _exempt_ | Limit | `ModrinthHandler.Version` | single version metadata. |
+| GET | `/api/modrinth/categories` | session | _no capability_ | Limit | `ModrinthHandler.Categories` | the Modrinth category tag list (each entry: name, project_type, header, icon SVG). |
+| GET | `/api/modrinth/project/{slug}` | session | _no capability_ | Limit | `ModrinthHandler.Project` | full project metadata. |
+| GET | `/api/modrinth/project/{slug}/versions` | session | _no capability_ | Limit | `ModrinthHandler.ProjectVersions` | a cached proxy to Modrinth's version list. |
+| GET | `/api/modrinth/search` | session | _no capability_ | Limit | `ModrinthHandler.Search` | Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type. |
+| GET | `/api/modrinth/version/{id}` | session | _no capability_ | Limit | `ModrinthHandler.Version` | single version metadata. |
 
 ## /api/modules
 
@@ -504,7 +517,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET, POST | `/api/node/connect` | **none** | _exempt_ | - | `NodeGRPCHandler.NodeConnectHandler` | (Legacy / Status Check) Since the Node now uses Redis, this endpoint is optional. |
+| GET, POST | `/api/node/connect` | **none** | _public_ | - | `NodeGRPCHandler.NodeConnectHandler` | (Legacy / Status Check) Since the Node now uses Redis, this endpoint is optional. |
 
 ## /api/nodes
 
@@ -512,30 +525,30 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/nodes` | session | _uncapped method_ | - | `NodeHandler.GetNodes` | the machine list. |
 | POST | `/api/nodes` | session | `nodes.write` | - | `NodeHandler.CreateNode` | registers a node and mints its token. |
-| GET | `/api/nodes/enroll-token` | session | _exempt_ | - | `NodeEnrollHandler.ListTokens` | the caller's tokens (metadata only). |
-| POST | `/api/nodes/enroll-token` | session | _exempt_ | - | `NodeEnrollHandler.MintToken` | generate a new enroll token for the calling user. |
-| DELETE | `/api/nodes/enroll-token/{id}` | session | _exempt_ | - | `NodeEnrollHandler.RevokeToken` | revoke one of the caller's tokens (scoped to owner). |
+| GET | `/api/nodes/enroll-token` | session | _no capability_ | - | `NodeEnrollHandler.ListTokens` | the caller's tokens (metadata only). |
+| POST | `/api/nodes/enroll-token` | session | _no capability_ | - | `NodeEnrollHandler.MintToken` | generate a new enroll token for the calling user. |
+| DELETE | `/api/nodes/enroll-token/{id}` | session | _no capability_ | - | `NodeEnrollHandler.RevokeToken` | revoke one of the caller's tokens (scoped to owner). |
 | GET | `/api/nodes/link-updates` | session | `nodes.read` | - | `NodeHandler.GetLinkUpdateStates` | returns the per-node Link image status published by the discovery sweep. |
 | POST | `/api/nodes/link-updates` | session | `nodes.write` | - | `NodeHandler.TriggerLinkUpdate` | queues the node-level "link_update" command. |
 | PUT | `/api/nodes/{id:[0-9]+}` | session | `nodes.write` | - | `NodeHandler.UpdateNode` | edits a node. |
 | DELETE | `/api/nodes/{id:[0-9]+}` | session | `nodes.delete` | - | `NodeHandler.DeleteNode` | removes a node, then cleans up the Redis ACL user and keys that belong to it. |
 | PATCH | `/api/nodes/{id:[0-9]+}/config` | session | `nodes.write` | - | `NodeHandler.ConfigureNode` | adopts an auto-discovered node: an admin sets its name, region and tags, which are persisted to the DB and marked configured=true so the heartbeat env stops overwriting them. |
-| GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _exempt_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
-| GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _exempt_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it). |
+| GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _no capability_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
+| GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it). |
 | DELETE | `/api/nodes/{id:[0-9]+}/force` | session | `nodes.delete` | - | `NodeHandler.ForceDeleteNode` | deletes an offline node and all its servers |
 | PUT | `/api/nodes/{id:[0-9]+}/placement` | session | `nodes.write` | - | `PlacementHandler.SetNodePlacement` | PANEL nodes.write. |
-| GET | `/api/nodes/{id:[0-9]+}/servers` | session | _exempt_ | - | `NodeHandler.GetNodeServers` | returns all servers assigned to a node |
-| GET | `/api/nodes/{id:[0-9]+}/storage` | session | _exempt_ | - | `NodeHandler.GetNodeStorage` | returns storage path info from the node's Redis heartbeat. |
+| GET | `/api/nodes/{id:[0-9]+}/servers` | session | _no capability_ | - | `NodeHandler.GetNodeServers` | returns all servers assigned to a node |
+| GET | `/api/nodes/{id:[0-9]+}/storage` | session | _no capability_ | - | `NodeHandler.GetNodeStorage` | returns storage path info from the node's Redis heartbeat. |
 | PUT | `/api/nodes/{id:[0-9]+}/storage-placement` | session | `nodes.write` | - | `NodeHandler.SetNodeStoragePlacement` | Sets how the node places NEW servers across its storage paths. |
 
 ## /api/notifications
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/notifications` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.List` | the caller's own notifications plus the unread count. |
-| POST | `/api/notifications/read-all` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.MarkAllRead` | marks every one of the caller's notifications read. |
-| GET | `/api/notifications/unread-count` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.UnreadCount` | cheap polling endpoint for the bell badge. |
-| POST | `/api/notifications/{id:[0-9]+}/read` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.MarkRead` | marks one notification read. |
+| GET | `/api/notifications` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.List` | the caller's own notifications plus the unread count. |
+| POST | `/api/notifications/read-all` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.MarkAllRead` | marks every one of the caller's notifications read. |
+| GET | `/api/notifications/unread-count` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.UnreadCount` | cheap polling endpoint for the bell badge. |
+| POST | `/api/notifications/{id:[0-9]+}/read` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.MarkRead` | marks one notification read. |
 
 ## /api/packs
 
@@ -573,21 +586,21 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/placement/pick` | session | _exempt_ | - | `PlacementHandler.PickNode` | any authed user (helper). |
-| GET | `/api/placement/regions` | session | _exempt_ | - | `PlacementHandler.AvailableRegionsHandler` | returns the union of region keys currently advertised by online nodes. |
-| GET | `/api/placement/tags` | session | _exempt_ | - | `PlacementHandler.AvailableTagsHandler` | returns the union of all tags currently advertised by online nodes, optionally scoped to a single region. |
+| POST | `/api/placement/pick` | session | _no capability_ | - | `PlacementHandler.PickNode` | any authed user (helper). |
+| GET | `/api/placement/regions` | session | _no capability_ | - | `PlacementHandler.AvailableRegionsHandler` | returns the union of region keys currently advertised by online nodes. |
+| GET | `/api/placement/tags` | session | _no capability_ | - | `PlacementHandler.AvailableTagsHandler` | returns the union of all tags currently advertised by online nodes, optionally scoped to a single region. |
 
 ## /api/regions
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/regions` | session | _exempt_ | - | `RegionsHandler.ListRegions` | available to all authenticated users. |
+| GET | `/api/regions` | session | _no capability_ | - | `RegionsHandler.ListRegions` | available to all authenticated users. |
 
 ## /api/scheduled-tasks
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/scheduled-tasks/validate` | session | _exempt_ | - | `ScheduledTasksHandler.ValidateCron` | used by the panel to preview the next-run timestamp for a cron string before the user saves. |
+| POST | `/api/scheduled-tasks/validate` | session | _no capability_ | - | `ScheduledTasksHandler.ValidateCron` | used by the panel to preview the next-run timestamp for a cron string before the user saves. |
 
 ## /api/server-roles
 
@@ -602,8 +615,8 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/servers` | session | _exempt_ | - | `ServerHandler.GetServers` | the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin. |
-| POST | `/api/servers` | session | _exempt_ | - | `ServerHandler.CreateServer` | (Step 1): Creates container with resources, status=pending_setup |
+| GET | `/api/servers` | session | _no capability_ | - | `ServerHandler.GetServers` | the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin. |
+| POST | `/api/servers` | session | _no capability_ | - | `ServerHandler.CreateServer` | (Step 1): Creates container with resources, status=pending_setup |
 | DELETE | `/api/servers/{id:[0-9]+}` | session | `server.delete` | - | `ServerHandler.DeleteServer` | Completely delete a server |
 | GET | `/api/servers/{id:[0-9]+}/audit` | session | `server.audit.read` | - | `ServerAuditHandler.ListAudit` | the server's audit trail, paged with ?limit and ?offset and filterable by ?eventType. |
 | PUT | `/api/servers/{id:[0-9]+}/audit/force` | session | `server.settings.write` | - | `ServerAuditHandler.SetForce` | gated by the route (RequireCap(server.settings.write)): the owner, or a role-holder granted that cap, can force their own server's audit on regardless of member state. |
@@ -631,7 +644,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/mods` | session | `mods.read` | - | `ServerModsHandler.List` | the mods installed on the server's ACTIVE sub-server, not on every sub-server it has. |
 | POST | `/api/servers/{id:[0-9]+}/mods` | session | `mods.write` | - | `ServerModsHandler.Install` | queues a mod install onto the active sub-server. |
 | DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |
-| PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | PATCH /api/servers/{id}/name |
+| PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | renames a server and records the old and new name in its audit trail. |
 | POST | `/api/servers/{id:[0-9]+}/power` | session | _in-handler_ | - | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |
 | DELETE | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.UnlinkServerFromProxy` | Remove a server's proxy link |
@@ -640,7 +653,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/rcon/config` | session | `config.read` | - | `RconHandler.GetConfig` | returns enabled/port + whether a password is set. |
 | PUT | `/api/servers/{id:[0-9]+}/rcon/config` | session | `config.write` | - | `RconHandler.SetConfig` | enable/disable, set port + password. |
 | POST | `/api/servers/{id:[0-9]+}/reinstall` | session | `server.settings.write` | - | `ServerHandler.ReinstallServer` | Reinstalls the active sub-server (version update) |
-| PATCH | `/api/servers/{id:[0-9]+}/resources` | session | `server.settings.write` | - | `ServerHandler.UpdateServerResources` | PATCH /api/servers/{id}/resources |
+| PATCH | `/api/servers/{id:[0-9]+}/resources` | session | `server.settings.write` | - | `ServerHandler.UpdateServerResources` | changes RAM, CPU and disk limits. |
 | GET | `/api/servers/{id:[0-9]+}/routes` | session | `network.read` | - | `GatewayHandler.GetServerRoutes` | the gateway routes belonging to one server, filtered out of the full Redis set by server UUID. |
 | POST | `/api/servers/{id:[0-9]+}/routes` | session | `network.write` | RequireGatewayEnabled | `GatewayHandler.CreateServerRoute` | queues a route for one server. |
 | DELETE | `/api/servers/{id:[0-9]+}/routes/{domain:.+}` | session | `network.write` | - | `GatewayHandler.DeleteServerRoute` | queues removal of one of this server's routes. |
@@ -663,9 +676,9 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.write` | - | `ServerTabsHandler.Create` | adds a custom tab. |
 | PATCH | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Update` | edits a custom tab, applying the same proxied-tab gates as creation. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Delete` | removes a custom tab from the server in the path. |
-| (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy` | **none** | _exempt_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
-| GET | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth` | session | `tabs.read` | - | `ProxyHandler.MintProxyAuth` | GET /api/servers/{id}/tabs/{tabId}/proxy-auth, registered on the NORMAL /api subrouter behind AuthMiddleware and the router's tabs.read RequireCap - this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access enforcement for free instead of re-implementing it here. |
-| (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}` | **none** | _exempt_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
+| (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy` | **none** | _public_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
+| GET | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth` | session | `tabs.read` | - | `ProxyHandler.MintProxyAuth` | registered on the NORMAL /api subrouter behind AuthMiddleware and the router's tabs.read RequireCap - this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access enforcement for free instead of re-implementing it here. |
+| (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}` | **none** | _public_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
 | POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RotateShareLink` | (re)generate the unguessable slug for a proxied page tab. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RevokeShareLink` | null the slug so the standalone page 404s. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
@@ -688,7 +701,7 @@ can still show what exists.
 | POST | `/api/settings/features` | session | `settings.write` | - | `SettingsHandler.SaveFeatureSettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/filemanager` | session | `settings.read` | - | `SettingsHandler.GetFileManagerSettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/filemanager` | session | `settings.write` | - | `SettingsHandler.SaveFileManagerSettings` | PANEL settings.write (RequireCap at the route). |
-| GET | `/api/settings/filemanager/limits` | session | _exempt_ | - | `SettingsHandler.GetUserLimits` | available to ALL authenticated users |
+| GET | `/api/settings/filemanager/limits` | session | _no capability_ | - | `SettingsHandler.GetUserLimits` | available to ALL authenticated users |
 | GET | `/api/settings/gateway` | session | `settings.read` | - | `SettingsHandler.GetGatewaySettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/gateway` | session | `settings.write` | - | `SettingsHandler.SaveGatewaySettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/gateway/hub-redis-admin` | session | `settings.read` | - | `HubRedisAdminHandler.GetStatus` | non-secret status only. |
@@ -710,14 +723,14 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/setup/admin` | **none** | _exempt_ | Limit, LimitBody | `SetupHandler.CreateAdmin` | open route (rate-limited). |
-| GET | `/api/setup/status` | **none** | _exempt_ | - | `SetupHandler.Status` | open route. |
+| POST | `/api/setup/admin` | **none** | _public_ | Limit, LimitBody | `SetupHandler.CreateAdmin` | open route (rate-limited). |
+| GET | `/api/setup/status` | **none** | _public_ | - | `SetupHandler.Status` | open route. |
 
 ## /api/share
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/share/{token}` | **none** | _exempt_ | Limit | `PacksHandler.ServeShare` | is PUBLIC, unauthenticated. |
+| GET | `/api/share/{token}` | **none** | _public_ | Limit | `PacksHandler.ServeShare` | is PUBLIC, unauthenticated. |
 
 ## /api/solder
 
@@ -734,19 +747,19 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/sse-ticket` | session | _exempt_ | - | `AuthHandler.MintSSETicket` | issues a short-lived, single-purpose ticket that an EventSource can carry in the URL (?ticket=) instead of the long-lived session JWT. |
+| POST | `/api/sse-ticket` | session | _no capability_ | - | `AuthHandler.MintSSETicket` | issues a short-lived, single-purpose ticket that an EventSource can carry in the URL (?ticket=) instead of the long-lived session JWT. |
 
 ## /api/status
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/status` | **none** | _exempt_ | - | `AuthHandler.StatusHandler` | liveness for the login page. |
+| GET | `/api/status` | **none** | _public_ | - | `AuthHandler.StatusHandler` | liveness for the login page. |
 
 ## /api/storage
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/storage/connection` | session | _exempt_ | - | `StorageConnectionHandler.GetConnection` | This exists because the SSE channel has no replay and its hello frame carries no state: a panel that connects DURING an outage would otherwise wait for the recovery event without ever having been told there was something to recover from. |
+| GET | `/api/storage/connection` | session | _no capability_ | - | `StorageConnectionHandler.GetConnection` | This exists because the SSE channel has no replay and its hello frame carries no state: a panel that connects DURING an outage would otherwise wait for the recovery event without ever having been told there was something to recover from. |
 
 ## /api/storage-connections
 
@@ -762,73 +775,73 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/store/link/start` | session | _exempt_ | - | `StoreHandler.LinkStart` | authed panel user. |
-| POST | `/api/store/link/verify` | **none** | _exempt_ | Limit, LimitBody | `StoreHandler.LinkVerify` | store-key. |
-| POST | `/api/store/provision` | **none** | _exempt_ | Limit, LimitBody | `StoreHandler.Provision` | store-key. |
-| GET | `/api/store/status` | session | _exempt_ | - | `StoreHandler.Status` | authed panel user. |
-| GET | `/api/store/usage` | **none** | _exempt_ | Limit | `StoreHandler.GetUsage` | store-key. |
-| GET | `/api/store/verify-user` | **none** | _exempt_ | Limit | `StoreHandler.VerifyUser` | store-key. |
+| POST | `/api/store/link/start` | session | _no capability_ | - | `StoreHandler.LinkStart` | authed panel user. |
+| POST | `/api/store/link/verify` | **none** | _public_ | Limit, LimitBody | `StoreHandler.LinkVerify` | store-key. |
+| POST | `/api/store/provision` | **none** | _public_ | Limit, LimitBody | `StoreHandler.Provision` | store-key. |
+| GET | `/api/store/status` | session | _no capability_ | - | `StoreHandler.Status` | authed panel user. |
+| GET | `/api/store/usage` | **none** | _public_ | Limit | `StoreHandler.GetUsage` | store-key. |
+| GET | `/api/store/verify-user` | **none** | _public_ | Limit | `StoreHandler.VerifyUser` | store-key. |
 
 ## /api/system
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/system/capabilities` | **none** | _exempt_ | - | `SystemHandler.GetCapabilities` | returns the system capabilities |
-| GET | `/api/system/core-info` | **none** | _exempt_ | - | `SystemHandler.GetCoreInfo` | returns the region + id of the Core instance that handled the request. |
-| GET | `/api/system/events` | session | _exempt_ | - | `SystemEventsHandler.StreamEvents` | SSE stream subscribed to Redis Pub/Sub channel `dylaris:system:events`. |
-| GET | `/api/system/features` | session | _exempt_ | - | `SystemFeaturesHandler.Get` | Returns the platform-wide feature toggles the panel needs to gate UI without hitting per-resource endpoints first. |
+| GET | `/api/system/capabilities` | **none** | _public_ | - | `SystemHandler.GetCapabilities` | returns the system capabilities |
+| GET | `/api/system/core-info` | **none** | _public_ | - | `SystemHandler.GetCoreInfo` | returns the region + id of the Core instance that handled the request. |
+| GET | `/api/system/events` | session | _no capability_ | - | `SystemEventsHandler.StreamEvents` | SSE stream subscribed to Redis Pub/Sub channel `dylaris:system:events`. |
+| GET | `/api/system/features` | session | _no capability_ | - | `SystemFeaturesHandler.Get` | Returns the platform-wide feature toggles the panel needs to gate UI without hitting per-resource endpoints first. |
 
 ## /api/tabproxy
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| (any) | `/api/tabproxy/{token}` | **none** | _exempt_ | - | `ProxyHandler.Public` | ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} - resolves the share token, applies the visibility gate, and dispatches to the same mesh serve() path InDashboard uses. |
-| GET | `/api/tabproxy/{token}/auth` | session | _exempt_ | - | `ProxyHandler.MintPublicProxyAuth` | GET /api/tabproxy/{token}/auth, registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it. |
-| (any) | `/api/tabproxy/{token}/{rest:.*}` | **none** | _exempt_ | - | `ProxyHandler.Public` | ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} - resolves the share token, applies the visibility gate, and dispatches to the same mesh serve() path InDashboard uses. |
+| (any) | `/api/tabproxy/{token}` | **none** | _public_ | - | `ProxyHandler.Public` | ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} - resolves the share token, applies the visibility gate, and dispatches to the same mesh serve() path InDashboard uses. |
+| GET | `/api/tabproxy/{token}/auth` | session | _no capability_ | - | `ProxyHandler.MintPublicProxyAuth` | registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it. |
+| (any) | `/api/tabproxy/{token}/{rest:.*}` | **none** | _public_ | - | `ProxyHandler.Public` | ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} - resolves the share token, applies the visibility gate, and dispatches to the same mesh serve() path InDashboard uses. |
 
 ## /api/ticket-canned-responses
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/ticket-canned-responses` | session | _exempt_ | RequireTicketsEnabled | `CannedResponsesHandler.ListForSupport` | Available to support+admin. |
+| GET | `/api/ticket-canned-responses` | session | _no capability_ | RequireTicketsEnabled | `CannedResponsesHandler.ListForSupport` | Available to support+admin. |
 
 ## /api/ticket-categories
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/ticket-categories` | session | _exempt_ | RequireTicketsEnabled | `TicketCategoriesHandler.ListCategories` | any auth. |
+| GET | `/api/ticket-categories` | session | _no capability_ | RequireTicketsEnabled | `TicketCategoriesHandler.ListCategories` | any auth. |
 
 ## /api/tickets
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.ListMyTickets` | ListTickets GET /api/tickets — user's own tickets (with watcher includes). |
-| POST | `/api/tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.CreateTicket` | opens a ticket and records its creation in the ticket audit trail. |
+| GET | `/api/tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyTickets` | ListTickets GET /api/tickets — user's own tickets (with watcher includes). |
+| POST | `/api/tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.CreateTicket` | opens a ticket and records its creation in the ticket audit trail. |
 | GET | `/api/tickets/inbox` | session | `tickets.read` | RequireTicketsEnabled | `TicketsHandler.ListInboxTickets` | support inbox view, gated by RequireCap("tickets.read") at the route (Phase 4 Task 15; the former in-handler "support or admin" pure gate was removed since the route now supersedes it). |
-| GET | `/api/tickets/{id:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.GetTicket` | one ticket with its messages, watchers and audit trail. |
-| DELETE | `/api/tickets/{id:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled | `TicketDeletionsHandler.DeleteTicket` | admin only, gated by tickets.deletion_enabled. |
-| PATCH | `/api/tickets/{id:[0-9]+}/assignment` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdateAssignment` | support/admin only. |
-| GET | `/api/tickets/{id:[0-9]+}/attachments` | session | _exempt_ | RequireTicketsEnabled | `TicketAttachmentsHandler.ListAttachments` | the files on one ticket, once the caller passes the same visibility check the ticket itself uses: author, watcher, or staff whose support team matches. |
-| POST | `/api/tickets/{id:[0-9]+}/attachments` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageConfigured, RequireCoreStorageReachable | `TicketAttachmentsHandler.UploadAttachment` | attaches a file to a ticket. |
-| DELETE | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DeleteAttachment` | Uploader OR support/admin OR ticket owner can delete. |
-| GET | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DownloadAttachment` | streams one attachment. |
-| POST | `/api/tickets/{id:[0-9]+}/messages` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.AddReply` | adds a reply and notifies the other participants. |
-| PATCH | `/api/tickets/{id:[0-9]+}/priority` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdatePriority` | support/admin only. |
-| PATCH | `/api/tickets/{id:[0-9]+}/status` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdateStatus` | changes a ticket's status and records the transition, from and to, in the audit trail. |
-| POST | `/api/tickets/{id:[0-9]+}/watchers` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.AddWatcher` | Users may add watchers when tickets.allow_users_to_add_watchers=TRUE. |
-| DELETE | `/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.RemoveWatcher` | removes a watcher and records it in the audit trail. |
+| GET | `/api/tickets/{id:[0-9]+}` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.GetTicket` | one ticket with its messages, watchers and audit trail. |
+| DELETE | `/api/tickets/{id:[0-9]+}` | session | _no capability_ | RequireTicketsEnabled | `TicketDeletionsHandler.DeleteTicket` | admin only, gated by tickets.deletion_enabled. |
+| PATCH | `/api/tickets/{id:[0-9]+}/assignment` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.UpdateAssignment` | support/admin only. |
+| GET | `/api/tickets/{id:[0-9]+}/attachments` | session | _no capability_ | RequireTicketsEnabled | `TicketAttachmentsHandler.ListAttachments` | the files on one ticket, once the caller passes the same visibility check the ticket itself uses: author, watcher, or staff whose support team matches. |
+| POST | `/api/tickets/{id:[0-9]+}/attachments` | session | _no capability_ | RequireTicketsEnabled, RequireCoreStorageConfigured, RequireCoreStorageReachable | `TicketAttachmentsHandler.UploadAttachment` | attaches a file to a ticket. |
+| DELETE | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}` | session | _no capability_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DeleteAttachment` | Uploader OR support/admin OR ticket owner can delete. |
+| GET | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download` | session | _no capability_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DownloadAttachment` | streams one attachment. |
+| POST | `/api/tickets/{id:[0-9]+}/messages` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.AddReply` | adds a reply and notifies the other participants. |
+| PATCH | `/api/tickets/{id:[0-9]+}/priority` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.UpdatePriority` | support/admin only. |
+| PATCH | `/api/tickets/{id:[0-9]+}/status` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.UpdateStatus` | changes a ticket's status and records the transition, from and to, in the audit trail. |
+| POST | `/api/tickets/{id:[0-9]+}/watchers` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.AddWatcher` | Users may add watchers when tickets.allow_users_to_add_watchers=TRUE. |
+| DELETE | `/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.RemoveWatcher` | removes a watcher and records it in the audit trail. |
 
 ## /api/tools
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/tools/beam` | **none** | _exempt_ | - | `beamToolsRedirect` | the public, session-less "download Beam" link. |
+| GET | `/api/tools/beam` | **none** | _public_ | - | `beamToolsRedirect` | the public, session-less "download Beam" link. |
 
 ## /api/updates
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/updates` | session | _exempt_ | - | `UpdatesHandler.GetUpdates` | ADMIN ONLY. |
+| GET | `/api/updates` | session | _no capability_ | - | `UpdatesHandler.GetUpdates` | ADMIN ONLY. |
 
 ## /api/users
 
@@ -837,7 +850,7 @@ can still show what exists.
 | GET | `/api/users` | session | `users.read` | - | `UserHandler.GetAllUsers` | every account. |
 | POST | `/api/users` | session | `users.write` | - | `UserHandler.CreateUser` | creates an account and assigns its regions. |
 | DELETE | `/api/users/{id:[0-9a-f-]{36}}` | session | `users.delete` | - | `UserHandler.DeleteUser` | deletes an account. |
-| DELETE | `/api/users/{id:[0-9a-f-]{36}}/2fa` | session | `users.write` | - | `AuthHandler.AdminResetTOTPHandler` | DELETE /api/users/{id}/2fa (admin-only) Wipes a user's 2FA without their password — for the case when the user has lost both their authenticator AND their backup codes. |
+| DELETE | `/api/users/{id:[0-9a-f-]{36}}/2fa` | session | `users.write` | - | `AuthHandler.AdminResetTOTPHandler` | (admin-only) Wipes a user's 2FA without their password — for the case when the user has lost both their authenticator AND their backup codes. |
 | PUT | `/api/users/{id:[0-9a-f-]{36}}/password` | session | `users.write` | - | `UserHandler.ResetUserPassword` | sets a new password for an account, hashed before it is stored. |
 | GET | `/api/users/{id:[0-9a-f-]{36}}/route-limit` | session | `users.read` | - | `UserHandler.GetUserRouteLimit` | one user's gateway route allowance: default when no override exists, otherwise custom or disabled. |
 | PUT | `/api/users/{id:[0-9a-f-]{36}}/route-limit` | session | `users.write` | - | `UserHandler.SetUserRouteLimit` | sets a user's gateway route allowance to default, custom with a count, or disabled. |
@@ -846,25 +859,25 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/versions` | session | _exempt_ | - | `VersionHandler.GetVersions` | the available versions for one server software, chosen with ?software=. |
-| GET | `/api/versions/software` | **none** | _exempt_ | - | `VersionHandler.GetSoftwareList` | (public) |
+| GET | `/api/versions` | session | _no capability_ | - | `VersionHandler.GetVersions` | the available versions for one server software, chosen with ?software=. |
+| GET | `/api/versions/software` | **none** | _public_ | - | `VersionHandler.GetSoftwareList` | (public) |
 
 ## /api/warp
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/warp/assignment` | warp key | _exempt_ | - | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
-| GET | `/api/warp/deploy-config` | session | _exempt_ | - | `WarpHandler.GetDeployConfig` | any authenticated user. |
-| POST | `/api/warp/enroll` | warp key | _exempt_ | - | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
+| GET | `/api/warp/assignment` | warp key | _no capability_ | - | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
+| GET | `/api/warp/deploy-config` | session | _no capability_ | - | `WarpHandler.GetDeployConfig` | any authenticated user. |
+| POST | `/api/warp/enroll` | warp key | _no capability_ | - | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
 | POST | `/api/warp/leaders` | session | `topology.write` | - | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
 | DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | - | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
-| POST | `/api/warp/link-boot` | warp key | _exempt_ | Limit | `WarpHandler.LinkBoot` | a route-only link presents its warp key and receives its derived tunnel token plus a Redis credential scoped to its own keys. |
-| GET | `/api/warp/link-kits` | session | _exempt_ | - | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
-| POST | `/api/warp/link-kits` | session | _exempt_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id). |
-| DELETE | `/api/warp/link-kits/{linkID}` | session | _exempt_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
-| GET | `/api/warp/node-keys` | session | _exempt_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
-| POST | `/api/warp/node-keys` | session | _exempt_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
-| DELETE | `/api/warp/node-keys/{nodeID}` | session | _exempt_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |
+| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a route-only link presents its warp key and receives its derived tunnel token plus a Redis credential scoped to its own keys. |
+| GET | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
+| POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id). |
+| DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
+| GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
+| POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
+| DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |
 | GET | `/api/warp/regions` | session | `topology.read` | - | `WarpHandler.ListRegions` | returns the full warp registry (regions + leaders + liveness + peer counts) for the admin panel. |
 | POST | `/api/warp/regions` | session | `topology.write` | - | `WarpHandler.UpsertRegion` | (admin) creates or updates a region's subnet + enabled flag. |
 | DELETE | `/api/warp/regions/{region}` | session | `topology.write` | - | `WarpHandler.DeleteRegion` | (admin) removes a region (cascades its leaders). |
@@ -873,21 +886,21 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/healthz` | **none** | _exempt_ | - | `HealthHandler.Healthz` | Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load balancers). |
+| GET | `/healthz` | **none** | _public_ | - | `HealthHandler.Healthz` | Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load balancers). |
 
 ## /solder/api
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/solder/api/` | **none** | _exempt_ | - | `SolderHandler.Info` | the root probe. |
-| GET | `/solder/api/modpack` | **none** | _exempt_ | - | `SolderHandler.ListModpacks` | Default: {modpacks:{slug:displayName}, mirror_url}. |
-| GET | `/solder/api/modpack/{slug}` | **none** | _exempt_ | - | `SolderHandler.GetModpack` | 404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth. |
-| GET | `/solder/api/modpack/{slug}/{build}` | **none** | _exempt_ | - | `SolderHandler.GetBuild` | the differential-update payload. |
-| GET | `/solder/api/verify/{key}` | **none** | _exempt_ | - | `SolderHandler.VerifyKey` | Validates a Solder API key by hash lookup. |
+| GET | `/solder/api/` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
+| GET | `/solder/api/modpack` | **none** | _public_ | - | `SolderHandler.ListModpacks` | Default: {modpacks:{slug:displayName}, mirror_url}. |
+| GET | `/solder/api/modpack/{slug}` | **none** | _public_ | - | `SolderHandler.GetModpack` | 404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth. |
+| GET | `/solder/api/modpack/{slug}/{build}` | **none** | _public_ | - | `SolderHandler.GetBuild` | the differential-update payload. |
+| GET | `/solder/api/verify/{key}` | **none** | _public_ | - | `SolderHandler.VerifyKey` | Validates a Solder API key by hash lookup. |
 
 ## /solder/mirror
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/solder/mirror/{rest:.*}` | **none** | _exempt_ | Limit | `SolderHandler.SolderMirror` | streams a stored public artifact (a Solder mod zip, a loader zip, or a rendered pack .mrpack). |
+| GET | `/solder/mirror/{rest:.*}` | **none** | _public_ | Limit | `SolderHandler.SolderMirror` | streams a stored public artifact (a Solder mod zip, a loader zip, or a rendered pack .mrpack). |
 

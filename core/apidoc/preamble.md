@@ -59,11 +59,20 @@ every capability check** in the resolver, so an admin passes regardless.
 
 The italic values say why a route declares none:
 
-- **_in-handler_** - authorization happens inside the handler, usually because
-  the decision depends on the request body. `POST /api/servers/{id}/power` is
-  the archetype: the action lives in the body, so the route cannot know whether
-  it needs `power.start` or `power.kill`.
-- **_exempt_** - deliberately un-gated.
+- **_in-handler_** - a capability does apply, but which one depends on the
+  request body, so the check moved inside. `POST /api/servers/{id}/power` is the
+  archetype: the action lives in the body, so the route cannot know whether it
+  needs `power.start` or `power.kill`.
+- **_no capability_** - a credential is required (see the Auth column) and no
+  capability gates the route. This is **not** the same as open. Most of these
+  are scoped to the caller inside the handler - your own profile, your own
+  billing, your own route-only entries - and the rest are reference data or
+  helpers that any authenticated caller may use. Which one it is, is in the
+  Notes.
+- **_public_** - no credential and no capability. These are the login,
+  registration and reset endpoints, the health probe, the Solder API the
+  Technic launcher calls, share links, and the tab proxy, which authenticates
+  itself with a ticket cookie inside the handler.
 - **_uncapped method_** - this method carries no capability, but its path
   template does, guarding a different method on the same path. Five `GET`s sit
   beside a capped write that way, each one an explicit decision recorded next to
@@ -71,7 +80,11 @@ The italic values say why a route declares none:
   is keyed by template and never sees methods.
 
 Every route lands in exactly one of capability / in-handler / exempt, and
-`TestEveryRouteIsClassified` fails the build if one lands in none.
+`TestEveryRouteIsClassified` fails the build if one lands in none. The exempt
+bucket is the one split above: the source keeps its two halves apart under
+`PUBLIC` and `AUTHED-EXEMPT` headings in `authz/coverage.go`, but files the warp
+and API-key routes under `PUBLIC` because they need no *session*. The table
+splits on the credential instead, which is what a reader is actually asking.
 
 ## What wraps every /api route
 

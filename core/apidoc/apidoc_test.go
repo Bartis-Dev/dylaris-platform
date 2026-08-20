@@ -37,6 +37,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/legacy", packsHandler.Legacy).Methods("GET", "POST")
 	api.HandleFunc("/nowhere", packsHandler.Nowhere).Methods("GET")
 	api.HandleFunc("/plain", plainHandler).Methods("GET")
+	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 
 	return r, nil
 }
@@ -96,8 +97,8 @@ func find(t *testing.T, routes []Route, method, path string) Route {
 
 func TestParseRoutes(t *testing.T) {
 	routes := parseFixture(t)
-	if len(routes) != 9 {
-		t.Fatalf("parsed %d routes, want 9", len(routes))
+	if len(routes) != 10 {
+		t.Fatalf("parsed %d routes, want 10", len(routes))
 	}
 
 	tests := []struct {
@@ -213,6 +214,21 @@ func TestPlainFunctionHandlerIsNamedAndDocumented(t *testing.T) {
 	}
 }
 
+// The exempt bucket carries two very different things and must not render as
+// one label: /healthz needs nothing at all, while an AUTHED-EXEMPT route needs
+// a credential and is scoped to the caller inside the handler. Calling both
+// "exempt" would read as "anyone may call this".
+func TestExemptSplitsOnTheCredential(t *testing.T) {
+	routes := parseFixture(t)
+	if r := find(t, routes, "GET", "/healthz"); r.Authz != "public" {
+		t.Errorf("/healthz authz = %q, want %q", r.Authz, "public")
+	}
+	// /api/auth/profile is AUTHED-EXEMPT in the real map: session, no capability.
+	if r := find(t, routes, "GET", "/api/auth/profile"); r.Authz != "no capability" {
+		t.Errorf("/api/auth/profile authz = %q, want %q", r.Authz, "no capability")
+	}
+}
+
 // A path in neither requiredCaps nor either authz map gets no classification at
 // all - saying "exempt" there would invent a decision nobody made.
 //
@@ -297,6 +313,19 @@ func TestCleanDoc(t *testing.T) {
 			name: "a linking verb without a path stays",
 			fn:   "GetFileContent", doc: "GetFileContent handles requests to read the content of a file\n",
 			want: "handles requests to read the content of a file",
+		},
+		{
+			// The dash sits BEFORE the verb here, so a single strip pass in a
+			// fixed order leaves the whole "GET /path" behind in the table.
+			name: "a dash between the name and the verb",
+			fn:   "Get2FAStatus", doc: "Get2FAStatus — GET /api/auth/2fa/status\nReturns whether 2FA is enabled.\n",
+			want: "Returns whether 2FA is enabled.",
+		},
+		{
+			// "DELETE removes ..." is prose, not a verb and a path.
+			name: "a verb word in prose is not a route line",
+			fn:   "Purge", doc: "Purge - DELETE removes the row and its archive.\n",
+			want: "DELETE removes the row and its archive.",
 		},
 		{
 			name: "a plain prose comment is left alone",

@@ -148,8 +148,8 @@ func writeSummary(b *strings.Builder, routes []Route, sections []section) {
 	b.WriteString("## At a glance\n\n")
 	fmt.Fprintf(b, "- **%d routes** in %d sections: %s.\n", len(routes), len(sections), strings.Join(parts, ", "))
 	fmt.Fprintf(b, "- **%d** accept no credential at all; read the Gates column before assuming any of them is open.\n", public)
-	fmt.Fprintf(b, "- **%d** declare a capability at the route, **%d** enforce authorization inside the handler, **%d** are deliberately exempt, and **%d** carry no capability of their own because the one registered for their path template guards a different method on it.\n",
-		capped, byAuthz["in-handler"], byAuthz["exempt"], byAuthz["uncapped method"])
+	fmt.Fprintf(b, "- **%d** declare a capability at the route and **%d** enforce authorization inside the handler. Of the rest, **%d** need a credential but no capability, **%d** are fully public, and **%d** carry no capability of their own because the one registered for their path template guards a different method on it.\n",
+		capped, byAuthz["in-handler"], byAuthz["no capability"], byAuthz["public"], byAuthz["uncapped method"])
 	fmt.Fprintf(b, "- **%d** have no usable description yet. Fix one by writing the handler's doc comment, not this file.\n\n", undocumented)
 }
 
