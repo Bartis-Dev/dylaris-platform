@@ -325,6 +325,9 @@ func validateInstallerRequest(typ, version, loader, url, path string) string {
 	return ""
 }
 
+// SetupServer POST /api/servers/{id}/setup - queues first-time provisioning of
+// a created server: image, loader and version. The reply means queued; the
+// node reports progress separately.
 func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)

@@ -85,7 +85,8 @@ func (h *StorageConnectionsHandler) ListConnections(w http.ResponseWriter, r *ht
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "connections": conns})
 }
 
-// CreateConnection POST /api/storage-connections.
+// CreateConnection POST /api/storage-connections - adds a reusable storage
+// connection. Only the s3 provider exists today, and a duplicate name is 409.
 func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *http.Request) {
 	var req storageConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -173,7 +174,8 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// DeleteConnection DELETE /api/storage-connections/{id}.
+// DeleteConnection DELETE /api/storage-connections/{id} - removes a storage
+// connection.
 func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {

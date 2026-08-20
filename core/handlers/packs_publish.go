@@ -72,6 +72,10 @@ func (h *PacksHandler) createModrinthProject(r *http.Request, mc *services.Modri
 	})
 }
 
+// PublishModrinth POST /api/packs/{id}/builds/{buildId}/publish - publishes a
+// build to Modrinth under the caller's own personal access token. Without a
+// stored PAT the answer is 428, which says the account is not set up rather
+// than that the request was wrong.
 func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	if h.pat == nil {
 		sendJSONError(w, "Publishing not available", http.StatusServiceUnavailable)

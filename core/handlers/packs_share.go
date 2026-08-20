@@ -20,7 +20,8 @@ type createShareLinkRequest struct {
 	ExpiresInDays int    `json:"expiresInDays,omitempty"`
 }
 
-// CreateShareLink POST /api/packs/{id}/builds/{buildId}/share-link
+// CreateShareLink POST /api/packs/{id}/builds/{buildId}/share-link - mints a
+// share token for one build, so it can be downloaded without a session.
 func (h *PacksHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok {
@@ -61,7 +62,8 @@ func (h *PacksHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "link": link})
 }
 
-// ListShareLinks GET /api/packs/{id}/builds/{buildId}/share-links
+// ListShareLinks GET /api/packs/{id}/builds/{buildId}/share-links - the share
+// links issued for one build.
 func (h *PacksHandler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok {
@@ -77,6 +79,9 @@ func (h *PacksHandler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokeShareLink DELETE /api/packs/{id}/builds/{buildId}/share-links/{linkId}
+// - revokes one share link. Owning the pack and build is proven first, and the
+// revoke itself is additionally scoped by creator, so one owner cannot revoke
+// another's link.
 func (h *PacksHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	// loadOwnedBuild proves the caller owns the pack+build in the path; the store
 	// revoke is additionally created_by-scoped, so cross-user revoke is blocked.

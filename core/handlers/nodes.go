@@ -79,6 +79,11 @@ func filterNodes(nodes []models.Node, keep func(models.Node) bool) []models.Node
 	return out
 }
 
+// GetNodes GET /api/nodes - the machine list. Admin-only except in BYON mode,
+// where a tenant sees only the nodes they own. ?scope=external|byon narrows it
+// to one kind of machine, and that is enforced here rather than in the panel:
+// a tab a non-admin can reach by editing the URL is not admin-only in any
+// sense that matters.
 func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
@@ -162,6 +167,8 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CreateNode POST /api/nodes - registers a node and mints its token. An
+// omitted address defaults to 0.0.0.0.
 func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
@@ -188,6 +195,8 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateNode PUT /api/nodes/{id} - edits a node. Today that is cpusetCpus
+// alone, the CPU pinning mask.
 func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
@@ -295,6 +304,10 @@ func (h *NodeHandler) ConfigureNode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DeleteNode DELETE /api/nodes/{id} - removes a node, then cleans up the Redis
+// ACL user and keys that belong to it. Those are all keyed by the node token,
+// which is why the row is read before it is deleted; if that read fails the
+// row still goes and the leftovers are logged rather than silently abandoned.
 func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
@@ -631,7 +644,9 @@ func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// SetFleetStoragePlacement PUT /api/settings/storage-placement
+// SetFleetStoragePlacement PUT /api/settings/storage-placement - sets fleet-
+// wide storage placement to auto or manual, manual carrying an explicit node
+// order. Stored in Redis, not in the database.
 func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
 		sendJSONError(w, "Redis unavailable", 503)

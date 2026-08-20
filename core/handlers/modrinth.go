@@ -168,7 +168,9 @@ func (h *ModrinthHandler) Project(w http.ResponseWriter, r *http.Request) {
 	h.proxyJSON(r.Context(), modrinthProjectTTL, upstream, w)
 }
 
-// ProjectVersions GET /api/modrinth/project/{slug}/versions?loaders=&versions=
+// ProjectVersions GET /api/modrinth/project/{slug}/versions - a cached proxy
+// to Modrinth's version list. The slug may arrive in the path or as ?slug=,
+// and the ?loaders and ?versions filters are passed upstream.
 func (h *ModrinthHandler) ProjectVersions(w http.ResponseWriter, r *http.Request) {
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
 	if slug == "" {

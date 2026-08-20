@@ -156,7 +156,9 @@ type FeatureSettings struct {
 	ProxyEnabled bool `json:"proxyEnabled"`
 }
 
-// GetFeatureSettings GET /api/settings/features
+// GetFeatureSettings GET /api/settings/features - which optional features are
+// switched on. Readable by any authenticated user because the panel needs it
+// to decide what to render at all.
 func (h *SettingsHandler) GetFeatureSettings(w http.ResponseWriter, r *http.Request) {
 	settings := h.LoadFeatureSettings()
 	json.NewEncoder(w).Encode(map[string]interface{}{

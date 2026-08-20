@@ -116,7 +116,8 @@ func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "cidr": netw.String()})
 }
 
-// DeleteCIDR DELETE /api/admin/settings/node-admission/cidrs/{id}.
+// DeleteCIDR DELETE /api/admin/settings/node-admission/cidrs/{id} - drops one
+// entry from the node admission allowlist.
 func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if err := h.state.Store.DeleteAdmissionCIDR(id); err != nil {

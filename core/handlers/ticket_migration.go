@@ -321,7 +321,8 @@ func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// DownloadBackup GET /api/admin/tickets/backups/{name}/download
+// DownloadBackup GET /api/admin/tickets/backups/{name}/download - streams one
+// ticket backup, with the same name sanitising as the delete.
 func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	name := safeBackupName(mux.Vars(r)["name"])
 	if name == "" {
@@ -356,7 +357,8 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 	io.Copy(w, rc)
 }
 
-// DeleteBackup DELETE /api/admin/tickets/backups/{name}
+// DeleteBackup DELETE /api/admin/tickets/backups/{name} - deletes one ticket
+// backup. The name is sanitised first, so it cannot escape the backup prefix.
 func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
 	name := safeBackupName(mux.Vars(r)["name"])
 	if name == "" {

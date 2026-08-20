@@ -154,7 +154,9 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SendCommand POST /api/servers/{id}/console/command
+// SendCommand POST /api/servers/{id}/console/command - pushes one line onto
+// the server's Redis input queue. Success means the node has been handed the
+// command, not that the server has run it.
 func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)

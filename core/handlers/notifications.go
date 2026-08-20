@@ -31,7 +31,8 @@ const (
 
 // ── Endpoints ────────────────────────────────────────────────────────
 
-// List GET /api/notifications?unread_only=1&limit=50
+// List GET /api/notifications - the caller's own notifications plus the unread
+// count. ?unread_only=1 drops the read ones and ?limit caps the list.
 func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -71,7 +72,8 @@ func (h *NotificationsHandler) UnreadCount(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// MarkRead POST /api/notifications/{id}/read
+// MarkRead POST /api/notifications/{id}/read - marks one notification read.
+// The update is scoped by user id, so it cannot mark someone else's.
 func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
@@ -86,7 +88,8 @@ func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// MarkAllRead POST /api/notifications/read-all
+// MarkAllRead POST /api/notifications/read-all - marks every one of the
+// caller's notifications read.
 func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.MarkAllNotificationsRead(userID); err != nil {

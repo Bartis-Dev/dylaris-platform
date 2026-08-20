@@ -50,6 +50,7 @@ type packRequest struct {
 	SolderSlug        string `json:"solderSlug"`
 }
 
+// List GET /api/me/packs - the modpacks the calling user owns.
 func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -64,6 +65,8 @@ func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "packs": packs})
 }
 
+// Create POST /api/me/packs - creates a modpack owned by the caller. A
+// duplicate slug is 409.
 func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -117,6 +120,8 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
+// Get GET /api/packs/{id} - one modpack. A pack the caller does not own is
+// 403, not 404.
 func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	p, ok := h.ownsPack(r, packID)
@@ -127,6 +132,7 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
+// Update PATCH /api/packs/{id} - edits a modpack the caller owns.
 func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	userID, _ := r.Context().Value("userID").(string)
@@ -156,6 +162,7 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
+// Delete DELETE /api/packs/{id} - deletes a modpack the caller owns.
 func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	userID, _ := r.Context().Value("userID").(string)
@@ -180,6 +187,7 @@ type buildRequest struct {
 	Changelog     string `json:"changelog"`
 }
 
+// ListBuilds GET /api/packs/{id}/builds - the builds of one modpack.
 func (h *PacksHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if _, ok := h.ownsPack(r, packID); !ok {
@@ -194,6 +202,9 @@ func (h *PacksHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "builds": builds})
 }
 
+// CreateBuild POST /api/packs/{id}/builds - adds a build. A duplicate version
+// is 409. The matching loader is built in the background afterwards, so a
+// build is usable before that finishes.
 func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	userID, _ := r.Context().Value("userID").(string)
@@ -237,6 +248,9 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
+// UpdateBuild PATCH /api/packs/{id}/builds/{buildId} - edits a build. The
+// build must belong to the pack in the path (404 otherwise), and a loader
+// change kicks a background loader build.
 func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
@@ -281,6 +295,8 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
+// DeleteBuild DELETE /api/packs/{id}/builds/{buildId} - deletes a build that
+// belongs to the pack in the path.
 func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])

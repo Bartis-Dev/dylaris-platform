@@ -283,6 +283,7 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 		return true
 	})
 
+	identHandler := ""
 	ast.Inspect(e, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
@@ -321,9 +322,19 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 			if t, known := varTypes[id.Name]; known {
 				r.Handler = t + "." + x.Sel.Name
 			}
+		case *ast.Ident:
+			// A plain function serves a few routes (beamToolsRedirect). Only a
+			// fallback: an identifier is far weaker evidence than a selector on
+			// a known handler variable, so it must never outrank one.
+			if !callees[x] && !receivers[x] && identHandler == "" {
+				identHandler = x.Name
+			}
 		}
 		return true
 	})
+	if r.Handler == "" {
+		r.Handler = identHandler
+	}
 }
 
 func strLit(e ast.Expr) (string, bool) {
@@ -361,15 +372,25 @@ func handlerDocs(dirs []string) (map[string]string, error) {
 			}
 			for _, d := range f.Decls {
 				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Recv == nil || fn.Doc == nil || len(fn.Recv.List) == 0 {
+				if !ok || fn.Doc == nil {
 					continue
 				}
-				recv := receiverType(fn.Recv.List[0].Type)
-				if recv == "" {
-					continue
+				// A handler is usually a method, but a few routes are served by
+				// a plain function; those are keyed by bare name, matching what
+				// analyzeChain records for them.
+				key := fn.Name.Name
+				if fn.Recv != nil {
+					if len(fn.Recv.List) == 0 {
+						continue
+					}
+					recv := receiverType(fn.Recv.List[0].Type)
+					if recv == "" {
+						continue
+					}
+					key = recv + "." + fn.Name.Name
 				}
 				if doc := cleanDoc(fn.Name.Name, fn.Doc.Text()); doc != "" {
-					out[recv+"."+fn.Name.Name] = doc
+					out[key] = doc
 				}
 			}
 		}

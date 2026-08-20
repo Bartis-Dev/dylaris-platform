@@ -125,7 +125,7 @@ can still show what exists.
 - **461 routes** in 50 sections: 203 GET, 133 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **37** accept no credential at all; read the Gates column before assuming any of them is open.
 - **312** declare a capability at the route, **18** enforce authorization inside the handler, **126** are deliberately exempt, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **125** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -195,10 +195,10 @@ can still show what exists.
 | GET | `/api/admin/nodes/{id:[0-9]+}/disk-analysis` | session | `nodes.read` | - | `NodeHandler.GetDiskAnalysis` | cross-references disk folders on a node with DB servers. |
 | DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node via gRPC. |
 | POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE + RECOVER: clear the node's secret, hard-cut its live Redis ACL, and mint a single-use recovery token bound to its identity. |
-| GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | - |
-| POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | - |
-| PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | - |
-| DELETE | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.delete` | - | `PanelRolesHandler.DeletePanelRole` | - |
+| GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | the level-1 staff roles and their capabilities. |
+| POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | adds a staff role. |
+| PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | renames a staff role and replaces its capability set. |
+| DELETE | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.delete` | - | `PanelRolesHandler.DeletePanelRole` | deletes a staff role. |
 | GET | `/api/admin/plans` | session | `plans.read` | RequireBYONEnabled | `PlansHandler.List` | RequireCap("plans.read") |
 | POST | `/api/admin/plans` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.Create` | RequireCap("plans.write") |
 | PUT | `/api/admin/plans/{id:[0-9]+}` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.Update` | RequireCap("plans.write") |
@@ -230,7 +230,7 @@ can still show what exists.
 | GET | `/api/admin/settings/node-admission` | session | `nodes.read` | - | `NodeAdmissionHandler.GetAdmission` | current modes + CIDRs. |
 | PUT | `/api/admin/settings/node-admission` | session | `nodes.write` | - | `NodeAdmissionHandler.SetAdmission` | write join + IP mode. |
 | POST | `/api/admin/settings/node-admission/cidrs` | session | `nodes.write` | - | `NodeAdmissionHandler.AddCIDR` | add one allowlist CIDR. |
-| DELETE | `/api/admin/settings/node-admission/cidrs/{id}` | session | `nodes.delete` | - | `NodeAdmissionHandler.DeleteCIDR` | - |
+| DELETE | `/api/admin/settings/node-admission/cidrs/{id}` | session | `nodes.delete` | - | `NodeAdmissionHandler.DeleteCIDR` | drops one entry from the node admission allowlist. |
 | PUT | `/api/admin/settings/permissions-mode` | session | `settings.write` | - | `PermissionsModeHandler.SetMode` | <- {"mode":"..."}. |
 | GET | `/api/admin/settings/security-questions-pool` | session | `settings.read` | - | `SecurityQuestionsHandler.GetAdminPool` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/security-questions-pool` | session | `settings.write` | - | `SecurityQuestionsHandler.SetAdminPool` | admin only. |
@@ -260,8 +260,8 @@ can still show what exists.
 | DELETE | `/api/admin/ticket-categories/{id:[0-9]+}` | session | `tickets.delete` | RequireTicketsEnabled | `TicketCategoriesHandler.DeleteCategory` | RequireCap("tickets.delete") at the route. |
 | POST | `/api/admin/tickets/backup` | session | `tickets.write` | RequireTicketsEnabled, RequireCoreStorageConfigured, RequireCoreStorageReachable | `TicketMigrationHandler.CreateBackup` | Dumps every ticket table to one JSON file under the configured Core file storage backend, scoped to CoreStoragePrefixBackups. |
 | GET | `/api/admin/tickets/backups` | session | `tickets.read` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.ListBackups` | CreatedAt is intentionally left zero-valued here: object stores expose no cheap per-key mtime through ListFiles, so per-file creation time is not available on the provider path. |
-| DELETE | `/api/admin/tickets/backups/{name}` | session | `tickets.write` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.DeleteBackup` | - |
-| GET | `/api/admin/tickets/backups/{name}/download` | session | `tickets.read` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.DownloadBackup` | - |
+| DELETE | `/api/admin/tickets/backups/{name}` | session | `tickets.write` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.DeleteBackup` | deletes one ticket backup. |
+| GET | `/api/admin/tickets/backups/{name}/download` | session | `tickets.read` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.DownloadBackup` | streams one ticket backup, with the same name sanitising as the delete. |
 | GET | `/api/admin/tickets/deletion-log` | session | `tickets.read` | RequireTicketsEnabled | `TicketDeletionsHandler.ListDeletions` | RequireCap("tickets.read") at the route. |
 | POST | `/api/admin/tickets/migration/dry-run` | session | `tickets.write` | RequireTicketsEnabled | `TicketMigrationHandler.DryRunMigration` | Counts source rows + (best-effort) target rows so admins see the gap before they pull the trigger. |
 | POST | `/api/admin/tickets/migration/execute` | session | `tickets.write` | RequireTicketsEnabled | `TicketMigrationHandler.ExecuteMigration` | Copies every ticket row from main → external. |
@@ -308,9 +308,9 @@ can still show what exists.
 | GET | `/api/auth/demo-login` | **none** | _exempt_ | Limit | `AuthHandler.DemoStatus` | public, rate-limited. |
 | POST | `/api/auth/demo-login` | **none** | _exempt_ | Limit, LimitBody | `AuthHandler.DemoLogin` | public, rate-limited. |
 | POST | `/api/auth/forgot-password` | **none** | _exempt_ | Limit, LimitBody | `PasswordResetHandler.ForgotPassword` | public. |
-| POST | `/api/auth/login` | **none** | _exempt_ | Limit, LimitBody | `AuthHandler.LoginHandler` | - |
-| GET | `/api/auth/profile` | session | _exempt_ | - | `AuthHandler.GetProfileHandler` | - |
-| PUT | `/api/auth/profile` | session | _exempt_ | - | `AuthHandler.UpdateProfileHandler` | - |
+| POST | `/api/auth/login` | **none** | _exempt_ | Limit, LimitBody | `AuthHandler.LoginHandler` | issues the session JWT. |
+| GET | `/api/auth/profile` | session | _exempt_ | - | `AuthHandler.GetProfileHandler` | the calling user's own row, with the password hash cleared before it is written out. |
+| PUT | `/api/auth/profile` | session | _exempt_ | - | `AuthHandler.UpdateProfileHandler` | updates the calling user's own profile. |
 | POST | `/api/auth/register` | **none** | _exempt_ | Limit, LimitBody | `RegistrationHandler.Register` | public, gated on auth.registration_enabled. |
 | GET | `/api/auth/registration-status` | **none** | _exempt_ | - | `RegistrationHandler.RegistrationStatus` | public. |
 | POST | `/api/auth/resend-verification` | **none** | _exempt_ | Limit, LimitBody | `RegistrationHandler.ResendVerification` | public. |
@@ -331,16 +331,16 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| PATCH | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.UpdateJob` | - |
-| DELETE | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteJob` | - |
-| GET | `/api/backup-jobs/{jobId:[0-9]+}/runs` | session | _in-handler_ | - | `BackupHandler.ListRuns` | - |
-| POST | `/api/backup-jobs/{jobId:[0-9]+}/trigger` | session | _in-handler_ | - | `BackupHandler.TriggerJob` | - |
+| PATCH | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.UpdateJob` | edits a schedule and recomputes its next run. |
+| DELETE | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteJob` | removes a schedule, gated on backups.delete for the job's server. |
+| GET | `/api/backup-jobs/{jobId:[0-9]+}/runs` | session | _in-handler_ | - | `BackupHandler.ListRuns` | the 50 most recent runs of one schedule. |
+| POST | `/api/backup-jobs/{jobId:[0-9]+}/trigger` | session | _in-handler_ | - | `BackupHandler.TriggerJob` | starts a run immediately. |
 
 ## /api/backup-runs
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| DELETE | `/api/backup-runs/{runId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteRun` | - |
+| DELETE | `/api/backup-runs/{runId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteRun` | deletes the stored archive and then the run row. |
 | GET | `/api/backup-runs/{runId:[0-9]+}/download` | session | _in-handler_ | - | `BackupHandler.DownloadRun` | For S3-backed storage returns 302 to a pre-signed URL. |
 | POST | `/api/backup-runs/{runId:[0-9]+}/restore` | session | _in-handler_ | - | `BackupHandler.RestoreRun` | Dispatches a restore command to the node. |
 
@@ -348,10 +348,10 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/backup-storages` | session | `settings.read` | - | `BackupHandler.ListStorages` | - |
-| POST | `/api/backup-storages` | session | `settings.write` | - | `BackupHandler.CreateStorage` | - |
-| PATCH | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.UpdateStorage` | - |
-| DELETE | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.DeleteStorage` | - |
+| GET | `/api/backup-storages` | session | `settings.read` | - | `BackupHandler.ListStorages` | every configured backup target, with the S3 secret stripped from each row so a settings.read holder cannot harvest backup credentials out of a list. |
+| POST | `/api/backup-storages` | session | `settings.write` | - | `BackupHandler.CreateStorage` | adds a backup target. |
+| PATCH | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.UpdateStorage` | edits a backup target; an unknown id is 404. |
+| DELETE | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.DeleteStorage` | removes a backup target. |
 | POST | `/api/backup-storages/{id:[0-9]+}/test` | session | `settings.write` | - | `BackupHandler.TestStorage` | round-trip put/get/delete a tiny object to confirm credentials and bucket access. |
 
 ## /api/beam
@@ -399,20 +399,20 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/gateway/check-domain` | session | _exempt_ | - | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
-| GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | - |
-| GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | - |
+| GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
+| GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |
 | GET | `/api/gateway/link-routes` | session | _exempt_ | - | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
 | POST | `/api/gateway/link-routes` | session | _exempt_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
 | DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _exempt_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
-| GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | - |
-| GET | `/api/gateway/logs` | session | `topology.read` | - | `GatewayHandler.GetLogs` | - |
+| GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
+| GET | `/api/gateway/logs` | session | `topology.read` | - | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
 | GET | `/api/gateway/route-options` | session | _exempt_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
-| GET | `/api/gateway/routes` | session | `topology.read` | - | `GatewayHandler.GetAllRoutes` | - |
+| GET | `/api/gateway/routes` | session | `topology.read` | - | `GatewayHandler.GetAllRoutes` | every gateway route across the whole fleet, read from Redis. |
 | POST | `/api/gateway/routes/bulk-delete` | session | `topology.write` | - | `GatewayHandler.BulkDeleteRoutesBySuffix` | deletes every route whose domain equals OR ends with `.<suffix>`. |
 | GET | `/api/gateway/routes/suffixes` | session | `topology.read` | - | `GatewayHandler.GetRouteSuffixes` | returns the unique apex (1-dot) and parent (2-dot) suffixes across every route currently registered. |
-| DELETE | `/api/gateway/routes/{domain:.+}` | session | `topology.write` | - | `GatewayHandler.AdminDeleteRoute` | - |
-| GET | `/api/gateway/stats` | session | `topology.read` | - | `GatewayHandler.GetStats` | - |
-| POST | `/api/gateway/sync` | session | `topology.write` | - | `GatewayHandler.TriggerSync` | - |
+| DELETE | `/api/gateway/routes/{domain:.+}` | session | `topology.write` | - | `GatewayHandler.AdminDeleteRoute` | removes any route by domain, without the per-server ownership check its /api/servers twin applies. |
+| GET | `/api/gateway/stats` | session | `topology.read` | - | `GatewayHandler.GetStats` | counts only: links and edges, how many of each are online, and the route total. |
+| POST | `/api/gateway/sync` | session | `topology.write` | - | `GatewayHandler.TriggerSync` | a no-op kept for the panel button. |
 
 ## /api/gateway-bandwidth
 
@@ -435,8 +435,8 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/infrastructure/overview` | session | `topology.read` | - | `InfrastructureHandler.GetOverview` | - |
-| GET | `/api/infrastructure/routing-migration` | session | `topology.read` | - | `InfrastructureHandler.GetRoutingMigrationStatus` | - |
+| GET | `/api/infrastructure/overview` | session | `topology.read` | - | `InfrastructureHandler.GetOverview` | one payload for the infrastructure page: edges, links and nodes with their live heartbeat stats, plus route, tunnel and online counts and the recent service errors. |
+| GET | `/api/infrastructure/routing-migration` | session | `topology.read` | - | `InfrastructureHandler.GetRoutingMigrationStatus` | progress of the routing migration job. |
 
 ## /api/library
 
@@ -444,7 +444,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/library` | session | _exempt_ | RequireCoreStorageReachable | `LibraryHandler.GetLibraryHandler` | Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle. |
 | POST | `/api/library/delete` | session | `settings.write` | RequireCoreStorageReachable | `LibraryHandler.DeleteLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| GET | `/api/library/download` | session | _exempt_ | RequireCoreStorageReachable | `LibraryHandler.DownloadLibraryHandler` | - |
+| GET | `/api/library/download` | session | _exempt_ | RequireCoreStorageReachable | `LibraryHandler.DownloadLibraryHandler` | streams the library file named by ?path. |
 | POST | `/api/library/mkdir` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable | `LibraryHandler.MkdirLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
 | POST | `/api/library/toggle` | session | `settings.write` | - | `LibraryHandler.ToggleLibraryPathHandler` | Body: { "path": "...", "enabled": false } Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
 | POST | `/api/library/upload` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable | `LibraryHandler.UploadLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
@@ -459,16 +459,16 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | - |
-| POST | `/api/me/api-keys` | session | `apikeys.write` | - | `APIKeysHandler.Create` | - |
-| DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | - |
+| GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys. |
+| POST | `/api/me/api-keys` | session | `apikeys.write` | - | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
+| DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | revokes one of the caller's own keys. |
 | GET | `/api/me/billing` | session | _exempt_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _exempt_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
 | GET | `/api/me/modrinth-pat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `ModrinthPATHandler.Status` | returns whether the user has a PAT configured + (if so) the username + last_validated timestamp. |
 | PUT | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
 | DELETE | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Clear` | wipes the PAT entirely. |
-| GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | - |
-| POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | - |
+| GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns. |
+| POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
 | POST | `/api/me/packs/import-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolder` | imports one modpack (all its builds) from an external Solder instance into a new draft pack owned by the caller. |
 | POST | `/api/me/packs/import-solder/preview` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolderPreview` | reads the pack index of an external Solder instance so the UI can list what is importable. |
 | GET | `/api/me/regions` | session | _exempt_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |
@@ -477,7 +477,7 @@ can still show what exists.
 | GET | `/api/me/servers/via-tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
 | PUT | `/api/me/updates-seen` | session | _exempt_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge the current feeds so the caller's navbar badge clears. |
 | GET | `/api/me/usage` | session | _exempt_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
-| GET | `/api/me/username-history` | session | _exempt_ | - | `UsernameHistoryHandler.Me` | - |
+| GET | `/api/me/username-history` | session | _exempt_ | - | `UsernameHistoryHandler.Me` | the calling user's own past usernames. |
 
 ## /api/modrinth
 
@@ -485,7 +485,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/modrinth/categories` | session | _exempt_ | Limit | `ModrinthHandler.Categories` | the Modrinth category tag list (each entry: name, project_type, header, icon SVG). |
 | GET | `/api/modrinth/project/{slug}` | session | _exempt_ | Limit | `ModrinthHandler.Project` | full project metadata. |
-| GET | `/api/modrinth/project/{slug}/versions` | session | _exempt_ | Limit | `ModrinthHandler.ProjectVersions` | - |
+| GET | `/api/modrinth/project/{slug}/versions` | session | _exempt_ | Limit | `ModrinthHandler.ProjectVersions` | a cached proxy to Modrinth's version list. |
 | GET | `/api/modrinth/search` | session | _exempt_ | Limit | `ModrinthHandler.Search` | Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type. |
 | GET | `/api/modrinth/version/{id}` | session | _exempt_ | Limit | `ModrinthHandler.Version` | single version metadata. |
 
@@ -493,7 +493,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/modules` | session | _uncapped method_ | - | `ModuleHandler.GetModulesHandler` | - |
+| GET | `/api/modules` | session | _uncapped method_ | - | `ModuleHandler.GetModulesHandler` | the navbar module rows. |
 | POST | `/api/modules` | session | `settings.write` | - | `ModuleHandler.CreateModuleHandler` | RequireCap("settings.write") at the route (Phase 4 Task 19). |
 | DELETE | `/api/modules/{id:[0-9]+}` | session | `settings.write` | - | `ModuleHandler.DeleteModuleHandler` | RequireCap("settings.write") at the route (Phase 4 Task 19). |
 | PATCH | `/api/modules/{id:[0-9]+}/position` | session | `settings.write` | - | `ModuleHandler.UpdateModulePositionHandler` | RequireCap( "settings.write") at the route (Phase 4 Task 19). |
@@ -510,15 +510,15 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/nodes` | session | _uncapped method_ | - | `NodeHandler.GetNodes` | - |
-| POST | `/api/nodes` | session | `nodes.write` | - | `NodeHandler.CreateNode` | - |
+| GET | `/api/nodes` | session | _uncapped method_ | - | `NodeHandler.GetNodes` | the machine list. |
+| POST | `/api/nodes` | session | `nodes.write` | - | `NodeHandler.CreateNode` | registers a node and mints its token. |
 | GET | `/api/nodes/enroll-token` | session | _exempt_ | - | `NodeEnrollHandler.ListTokens` | the caller's tokens (metadata only). |
 | POST | `/api/nodes/enroll-token` | session | _exempt_ | - | `NodeEnrollHandler.MintToken` | generate a new enroll token for the calling user. |
 | DELETE | `/api/nodes/enroll-token/{id}` | session | _exempt_ | - | `NodeEnrollHandler.RevokeToken` | revoke one of the caller's tokens (scoped to owner). |
 | GET | `/api/nodes/link-updates` | session | `nodes.read` | - | `NodeHandler.GetLinkUpdateStates` | returns the per-node Link image status published by the discovery sweep. |
 | POST | `/api/nodes/link-updates` | session | `nodes.write` | - | `NodeHandler.TriggerLinkUpdate` | queues the node-level "link_update" command. |
-| PUT | `/api/nodes/{id:[0-9]+}` | session | `nodes.write` | - | `NodeHandler.UpdateNode` | - |
-| DELETE | `/api/nodes/{id:[0-9]+}` | session | `nodes.delete` | - | `NodeHandler.DeleteNode` | - |
+| PUT | `/api/nodes/{id:[0-9]+}` | session | `nodes.write` | - | `NodeHandler.UpdateNode` | edits a node. |
+| DELETE | `/api/nodes/{id:[0-9]+}` | session | `nodes.delete` | - | `NodeHandler.DeleteNode` | removes a node, then cleans up the Redis ACL user and keys that belong to it. |
 | PATCH | `/api/nodes/{id:[0-9]+}/config` | session | `nodes.write` | - | `NodeHandler.ConfigureNode` | adopts an auto-discovered node: an admin sets its name, region and tags, which are persisted to the DB and marked configured=true so the heartbeat env stops overwriting them. |
 | GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _exempt_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
 | GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _exempt_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it). |
@@ -532,41 +532,41 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/notifications` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.List` | - |
-| POST | `/api/notifications/read-all` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.MarkAllRead` | - |
+| GET | `/api/notifications` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.List` | the caller's own notifications plus the unread count. |
+| POST | `/api/notifications/read-all` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.MarkAllRead` | marks every one of the caller's notifications read. |
 | GET | `/api/notifications/unread-count` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.UnreadCount` | cheap polling endpoint for the bell badge. |
-| POST | `/api/notifications/{id:[0-9]+}/read` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.MarkRead` | - |
+| POST | `/api/notifications/{id:[0-9]+}/read` | session | _exempt_ | RequireTicketsEnabled | `NotificationsHandler.MarkRead` | marks one notification read. |
 
 ## /api/packs
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/packs/{id:[0-9]+}` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.Get` | - |
-| PATCH | `/api/packs/{id:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Update` | - |
-| DELETE | `/api/packs/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Delete` | - |
-| GET | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListBuilds` | - |
-| POST | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateBuild` | - |
-| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateBuild` | - |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.DeleteBuild` | - |
-| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListContent` | - |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.AddModrinth` | - |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UploadContent` | - |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RemoveContent` | - |
+| GET | `/api/packs/{id:[0-9]+}` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.Get` | one modpack. |
+| PATCH | `/api/packs/{id:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Update` | edits a modpack the caller owns. |
+| DELETE | `/api/packs/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Delete` | deletes a modpack the caller owns. |
+| GET | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListBuilds` | the builds of one modpack. |
+| POST | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateBuild` | adds a build. |
+| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateBuild` | edits a build. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.DeleteBuild` | deletes a build that belongs to the pack in the path. |
+| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListContent` | the mods and files in one build. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.AddModrinth` | adds a Modrinth version to a build and, on request, its dependencies. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UploadContent` | uploads a file into a build. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RemoveContent` | detaches one entry from a build. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ReplaceWithModrinth` | swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible). |
-| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetSide` | - |
+| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetSide` | sets whether an entry ships to the client, the server or both. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetContentText` | returns the UTF-8 text of a single stored content entry (e.g. a config file) so the panel can edit it in place. |
 | PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the Solder zip at the same key and re-hashing. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ExportMrpack` | streams the .mrpack for a build (self-distributed download). |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetBuildLoader` | returns the cached loader row for a build's (minecraft, loader, loader_version) triple, so the panel / hand-test can see build status + md5. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishModrinth` | - |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishSolder` | renders + publishes a build to the public Solder API. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateShareLink` | - |
-| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | - |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RevokeShareLink` | - |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
+| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RevokeShareLink` | revokes one share link. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
-| GET | `/api/packs/{id:[0-9]+}/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListPackClientsHandler` | - |
-| POST | `/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.AddPackClient` | - |
-| DELETE | `/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.RemovePackClient` | - |
+| GET | `/api/packs/{id:[0-9]+}/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListPackClientsHandler` | the Technic clients whitelisted for one pack. |
+| POST | `/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.AddPackClient` | whitelists one client for a private pack. |
+| DELETE | `/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.RemovePackClient` | drops a client from a pack's whitelist. |
 | PATCH | `/api/packs/{id:[0-9]+}/solder-config` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetSolderConfig` | sets the pack's public Solder identity + visibility. |
 
 ## /api/placement
@@ -593,44 +593,44 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/server-roles` | session | `roles.read` | - | `ServerRolesHandler.ListServerRoles` | - |
-| POST | `/api/server-roles` | session | `roles.write` | - | `ServerRolesHandler.CreateServerRole` | - |
-| PATCH | `/api/server-roles/{id:[0-9]+}` | session | `roles.write` | - | `ServerRolesHandler.UpdateServerRole` | - |
-| DELETE | `/api/server-roles/{id:[0-9]+}` | session | `roles.delete` | - | `ServerRolesHandler.DeleteServerRole` | - |
+| GET | `/api/server-roles` | session | `roles.read` | - | `ServerRolesHandler.ListServerRoles` | the custom roles in the acting owner's realm. |
+| POST | `/api/server-roles` | session | `roles.write` | - | `ServerRolesHandler.CreateServerRole` | adds a custom role to the acting owner's realm. |
+| PATCH | `/api/server-roles/{id:[0-9]+}` | session | `roles.write` | - | `ServerRolesHandler.UpdateServerRole` | renames a role and replaces its capabilities. |
+| DELETE | `/api/server-roles/{id:[0-9]+}` | session | `roles.delete` | - | `ServerRolesHandler.DeleteServerRole` | deletes a role in the acting owner's realm; another realm's role is 404. |
 
 ## /api/servers
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/servers` | session | _exempt_ | - | `ServerHandler.GetServers` | - |
+| GET | `/api/servers` | session | _exempt_ | - | `ServerHandler.GetServers` | the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin. |
 | POST | `/api/servers` | session | _exempt_ | - | `ServerHandler.CreateServer` | (Step 1): Creates container with resources, status=pending_setup |
 | DELETE | `/api/servers/{id:[0-9]+}` | session | `server.delete` | - | `ServerHandler.DeleteServer` | Completely delete a server |
-| GET | `/api/servers/{id:[0-9]+}/audit` | session | `server.audit.read` | - | `ServerAuditHandler.ListAudit` | - |
+| GET | `/api/servers/{id:[0-9]+}/audit` | session | `server.audit.read` | - | `ServerAuditHandler.ListAudit` | the server's audit trail, paged with ?limit and ?offset and filterable by ?eventType. |
 | PUT | `/api/servers/{id:[0-9]+}/audit/force` | session | `server.settings.write` | - | `ServerAuditHandler.SetForce` | gated by the route (RequireCap(server.settings.write)): the owner, or a role-holder granted that cap, can force their own server's audit on regardless of member state. |
-| GET | `/api/servers/{id:[0-9]+}/audit/status` | session | `server.audit.read` | - | `ServerAuditHandler.GetStatus` | - |
+| GET | `/api/servers/{id:[0-9]+}/audit/status` | session | `server.audit.read` | - | `ServerAuditHandler.GetStatus` | whether auditing is on for this server, whether an admin forced it on, and how many events are stored. |
 | PATCH | `/api/servers/{id:[0-9]+}/automove` | session | `server.settings.write` | RequireAutoMoveEnabled | `ServerHandler.SetServerAutoMove` | Flips the auto-move opt-in flag. |
-| GET | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.read` | - | `BackupHandler.ListJobs` | - |
-| POST | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.create` | - | `BackupHandler.CreateJob` | - |
+| GET | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.read` | - | `BackupHandler.ListJobs` | the backup schedules configured for one server. |
+| POST | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.create` | - | `BackupHandler.CreateJob` | adds a backup schedule and computes its first run from the cron expression. |
 | GET | `/api/servers/{id:[0-9]+}/backup-restores` | session | `backups.read` | - | `BackupHandler.ListRestores` | Recent restore history for a server, newest first. |
 | GET | `/api/servers/{id:[0-9]+}/backup-usage` | session | `backups.read` | - | `BackupHandler.BackupUsage` | Returns the on-disk bytes used by node-local backups for the given server, plus archive count. |
-| POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | - |
+| POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns the last 1000 log lines from the Redis Stream for this server. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
 | GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | - | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |
 | PATCH | `/api/servers/{id:[0-9]+}/edge-motd` | session | `server.settings.write` | - | `ServerHandler.SetServerEdgeMotd` | Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus). |
 | GET | `/api/servers/{id:[0-9]+}/install-cooldown` | session | `overview.read` | - | `ServerHandler.GetInstallCooldown` | returns how many seconds remain on the post-install cooldown for a server, so the UI can disable power actions and show a countdown instead of letting the user click and get a 429. |
 | PATCH | `/api/servers/{id:[0-9]+}/loader-metadata` | session | `server.settings.write` | - | `ServerHandler.DeclareServerLoaderMetadata` | persists a server's InstallerType (loader) + MinecraftVersion (and optional BuildNumber) WITHOUT reinstalling or wiping the server. |
-| GET | `/api/servers/{id:[0-9]+}/members` | session | `members.read` | - | `MemberHandler.GetMembers` | - |
-| POST | `/api/servers/{id:[0-9]+}/members` | session | `members.write` | - | `MemberHandler.InviteMember` | - |
+| GET | `/api/servers/{id:[0-9]+}/members` | session | `members.read` | - | `MemberHandler.GetMembers` | the member invites on one server. |
+| POST | `/api/servers/{id:[0-9]+}/members` | session | `members.write` | - | `MemberHandler.InviteMember` | invites a user onto the server with a permission set. |
 | GET | `/api/servers/{id:[0-9]+}/members/inherited` | session | `members.read` | - | `MemberHandler.GetInheritedMembers` | Returns users who have access via proxy inheritance (read-only view). |
-| PATCH | `/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}` | session | `members.write` | - | `MemberHandler.UpdateMemberPermissions` | - |
-| DELETE | `/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}` | session | `members.delete` | - | `MemberHandler.RemoveMember` | - |
+| PATCH | `/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}` | session | `members.write` | - | `MemberHandler.UpdateMemberPermissions` | replaces one member's permission set and records the change in the server audit trail. |
+| DELETE | `/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}` | session | `members.delete` | - | `MemberHandler.RemoveMember` | revokes a member's access and records it in the server audit trail. |
 | POST | `/api/servers/{id:[0-9]+}/migrate-storage` | session | `server.settings.write` | - | `ServerHandler.MigrateServerStorage` | queues a migrate_storage command on the server's node. |
 | GET | `/api/servers/{id:[0-9]+}/migration-status` | session | `overview.read` | - | `ServerHandler.GetMigrationStatus` | Returns the orchestrator-owned progress record the migration worker writes to dylaris:migration:<uuid>:orchestration, so the panel can poll it while a move is in flight. |
 | GET | `/api/servers/{id:[0-9]+}/modpack-contents` | session | `mods.read` | - | `ServerModsHandler.ModpackContents` | returns the modpack snapshot for the active sub-server: the Modrinth-identified members of the pack this server was installed from. |
-| GET | `/api/servers/{id:[0-9]+}/mods` | session | `mods.read` | - | `ServerModsHandler.List` | - |
-| POST | `/api/servers/{id:[0-9]+}/mods` | session | `mods.write` | - | `ServerModsHandler.Install` | - |
-| DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | - |
+| GET | `/api/servers/{id:[0-9]+}/mods` | session | `mods.read` | - | `ServerModsHandler.List` | the mods installed on the server's ACTIVE sub-server, not on every sub-server it has. |
+| POST | `/api/servers/{id:[0-9]+}/mods` | session | `mods.write` | - | `ServerModsHandler.Install` | queues a mod install onto the active sub-server. |
+| DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |
 | PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | PATCH /api/servers/{id}/name |
 | POST | `/api/servers/{id:[0-9]+}/power` | session | _in-handler_ | - | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |
@@ -641,28 +641,28 @@ can still show what exists.
 | PUT | `/api/servers/{id:[0-9]+}/rcon/config` | session | `config.write` | - | `RconHandler.SetConfig` | enable/disable, set port + password. |
 | POST | `/api/servers/{id:[0-9]+}/reinstall` | session | `server.settings.write` | - | `ServerHandler.ReinstallServer` | Reinstalls the active sub-server (version update) |
 | PATCH | `/api/servers/{id:[0-9]+}/resources` | session | `server.settings.write` | - | `ServerHandler.UpdateServerResources` | PATCH /api/servers/{id}/resources |
-| GET | `/api/servers/{id:[0-9]+}/routes` | session | `network.read` | - | `GatewayHandler.GetServerRoutes` | - |
-| POST | `/api/servers/{id:[0-9]+}/routes` | session | `network.write` | RequireGatewayEnabled | `GatewayHandler.CreateServerRoute` | - |
-| DELETE | `/api/servers/{id:[0-9]+}/routes/{domain:.+}` | session | `network.write` | - | `GatewayHandler.DeleteServerRoute` | - |
-| GET | `/api/servers/{id:[0-9]+}/scheduled-tasks` | session | `schedule.read` | - | `ScheduledTasksHandler.List` | - |
-| POST | `/api/servers/{id:[0-9]+}/scheduled-tasks` | session | `schedule.write` | - | `ScheduledTasksHandler.Create` | - |
-| PATCH | `/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}` | session | `schedule.write` | - | `ScheduledTasksHandler.Update` | - |
-| DELETE | `/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}` | session | `schedule.delete` | - | `ScheduledTasksHandler.Delete` | - |
-| POST | `/api/servers/{id:[0-9]+}/setup` | session | `server.settings.write` | - | `ServerHandler.SetupServer` | - |
+| GET | `/api/servers/{id:[0-9]+}/routes` | session | `network.read` | - | `GatewayHandler.GetServerRoutes` | the gateway routes belonging to one server, filtered out of the full Redis set by server UUID. |
+| POST | `/api/servers/{id:[0-9]+}/routes` | session | `network.write` | RequireGatewayEnabled | `GatewayHandler.CreateServerRoute` | queues a route for one server. |
+| DELETE | `/api/servers/{id:[0-9]+}/routes/{domain:.+}` | session | `network.write` | - | `GatewayHandler.DeleteServerRoute` | queues removal of one of this server's routes. |
+| GET | `/api/servers/{id:[0-9]+}/scheduled-tasks` | session | `schedule.read` | - | `ScheduledTasksHandler.List` | the cron tasks configured on one server. |
+| POST | `/api/servers/{id:[0-9]+}/scheduled-tasks` | session | `schedule.write` | - | `ScheduledTasksHandler.Create` | adds a cron task. |
+| PATCH | `/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}` | session | `schedule.write` | - | `ScheduledTasksHandler.Update` | edits a cron task belonging to the server in the path. |
+| DELETE | `/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}` | session | `schedule.delete` | - | `ScheduledTasksHandler.Delete` | removes a cron task belonging to the server in the path. |
+| POST | `/api/servers/{id:[0-9]+}/setup` | session | `server.settings.write` | - | `ServerHandler.SetupServer` | queues first-time provisioning of a created server: image, loader and version. |
 | GET | `/api/servers/{id:[0-9]+}/sftp-credentials` | session | `sftp.access` | - | `ServerHandler.GetSftpCredentials` | Returns SFTP connection info. |
-| GET | `/api/servers/{id:[0-9]+}/spark/profiles` | session | `spark.use` | - | `SparkHandler.List` | - |
-| POST | `/api/servers/{id:[0-9]+}/spark/profiles` | session | `spark.use` | - | `SparkHandler.Record` | - |
-| DELETE | `/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}` | session | `spark.use` | - | `SparkHandler.Delete` | - |
+| GET | `/api/servers/{id:[0-9]+}/spark/profiles` | session | `spark.use` | - | `SparkHandler.List` | the 50 most recent spark profiles for one server, newest first. |
+| POST | `/api/servers/{id:[0-9]+}/spark/profiles` | session | `spark.use` | - | `SparkHandler.Record` | records a finished spark profile. |
+| DELETE | `/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}` | session | `spark.use` | - | `SparkHandler.Delete` | removes one profile reference. |
 | GET | `/api/servers/{id:[0-9]+}/stats/disk` | session | `stats.read` | - | `StatsHandler.GetDisk` | Returns disk usage data for the server. |
 | GET | `/api/servers/{id:[0-9]+}/stats/history` | session | `stats.read` | - | `StatsHandler.GetHistory` | Returns historical stats data points from PostgreSQL. |
 | GET | `/api/servers/{id:[0-9]+}/stats/stream` | session | `stats.read` | - | `StatsHandler.StreamStats` | SSE endpoint: sends buffered data from Redis Stream first, then live pub/sub updates. |
 | GET | `/api/servers/{id:[0-9]+}/storage-path` | session | `server.settings.write` | - | `ServerHandler.GetServerStoragePath` | returns the current storage path for a server and all available storage paths on its node (from the node's Redis heartbeat). |
 | DELETE | `/api/servers/{id:[0-9]+}/sub-servers/{subServerName}` | session | `server.delete` | - | `ServerHandler.DeleteSubServer` | Delete a single sub-server |
 | POST | `/api/servers/{id:[0-9]+}/switch` | session | `server.settings.write` | - | `ServerHandler.SwitchSubServer` | Switches the active MC server in the container |
-| GET | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.read` | - | `ServerTabsHandler.List` | - |
-| POST | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.write` | - | `ServerTabsHandler.Create` | - |
-| PATCH | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Update` | - |
-| DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Delete` | - |
+| GET | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.read` | - | `ServerTabsHandler.List` | the custom tabs configured on one server, including share slug and expiry where a proxied tab has them. |
+| POST | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.write` | - | `ServerTabsHandler.Create` | adds a custom tab. |
+| PATCH | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Update` | edits a custom tab, applying the same proxied-tab gates as creation. |
+| DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Delete` | removes a custom tab from the server in the path. |
 | (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy` | **none** | _exempt_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
 | GET | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth` | session | `tabs.read` | - | `ProxyHandler.MintProxyAuth` | GET /api/servers/{id}/tabs/{tabId}/proxy-auth, registered on the NORMAL /api subrouter behind AuthMiddleware and the router's tabs.read RequireCap - this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access enforcement for free instead of re-implementing it here. |
 | (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}` | **none** | _exempt_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
@@ -681,10 +681,10 @@ can still show what exists.
 | GET | `/api/settings/core-storage` | session | `settings.read` | - | `CoreStorageHandler.GetConfig` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/core-storage` | session | `settings.write` | - | `CoreStorageHandler.SaveConfig` | PANEL settings.write (RequireCap at the route). |
 | POST | `/api/settings/core-storage/test` | session | `settings.write` | - | `CoreStorageHandler.TestConnection` | PANEL settings.write (RequireCap at the route). |
-| GET | `/api/settings/dns` | session | `settings.read` | - | `DNSSettingsHandler.Get` | - |
+| GET | `/api/settings/dns` | session | `settings.read` | - | `DNSSettingsHandler.Get` | the effective DNS configuration: provider, zones, per-region names, orphan grace and the names Core currently manages. |
 | POST | `/api/settings/dns` | session | `settings.write` | - | `DNSSettingsHandler.Save` | settings.write. |
 | GET | `/api/settings/dns/zones` | session | `settings.read` | - | `DNSSettingsHandler.Zones` | lists the zones the credential can see. |
-| GET | `/api/settings/features` | session | _uncapped method_ | - | `SettingsHandler.GetFeatureSettings` | - |
+| GET | `/api/settings/features` | session | _uncapped method_ | - | `SettingsHandler.GetFeatureSettings` | which optional features are switched on. |
 | POST | `/api/settings/features` | session | `settings.write` | - | `SettingsHandler.SaveFeatureSettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/filemanager` | session | `settings.read` | - | `SettingsHandler.GetFileManagerSettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/filemanager` | session | `settings.write` | - | `SettingsHandler.SaveFileManagerSettings` | PANEL settings.write (RequireCap at the route). |
@@ -701,7 +701,7 @@ can still show what exists.
 | GET | `/api/settings/servers` | session | `settings.read` | - | `SettingsHandler.GetServerSettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/servers` | session | `settings.write` | - | `SettingsHandler.SaveServerSettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/storage-placement` | session | `settings.read` | - | `NodeHandler.GetFleetStoragePlacement` | The fleet-wide default a node uses when it has no policy of its own, plus every storage path any node currently reports (no single node's list describes the fleet). |
-| PUT | `/api/settings/storage-placement` | session | `settings.write` | - | `NodeHandler.SetFleetStoragePlacement` | - |
+| PUT | `/api/settings/storage-placement` | session | `settings.write` | - | `NodeHandler.SetFleetStoragePlacement` | sets fleet- wide storage placement to auto or manual, manual carrying an explicit node order. |
 | GET | `/api/settings/storage-reach` | session | `settings.read` | - | `CoreStorageHandler.StorageReachStatus` | PANEL settings.read. |
 | GET | `/api/settings/warp-firewall` | session | `settings.read` | - | `SettingsHandler.GetWarpFirewallSettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/warp-firewall` | session | `settings.write` | - | `SettingsHandler.SaveWarpFirewallSettings` | PANEL settings.write (RequireCap at the route). |
@@ -723,12 +723,12 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/solder/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListClients` | - |
-| POST | `/api/solder/clients` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateClient` | - |
-| DELETE | `/api/solder/clients/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteClient` | - |
-| GET | `/api/solder/keys` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListKeys` | - |
-| POST | `/api/solder/keys` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateKey` | - |
-| DELETE | `/api/solder/keys/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteKey` | - |
+| GET | `/api/solder/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListClients` | the Technic launcher clients the caller has registered. |
+| POST | `/api/solder/clients` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateClient` | registers a Technic launcher client under the caller. |
+| DELETE | `/api/solder/clients/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteClient` | removes one of the caller's clients; the delete is owner-scoped. |
+| GET | `/api/solder/keys` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListKeys` | the caller's Solder API keys, hashes only. |
+| POST | `/api/solder/keys` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateKey` | mints a 64-character Solder API key. |
+| DELETE | `/api/solder/keys/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteKey` | revokes one of the caller's Solder keys. |
 
 ## /api/sse-ticket
 
@@ -740,7 +740,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/status` | **none** | _exempt_ | - | `AuthHandler.StatusHandler` | - |
+| GET | `/api/status` | **none** | _exempt_ | - | `AuthHandler.StatusHandler` | liveness for the login page. |
 
 ## /api/storage
 
@@ -753,9 +753,9 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/storage-connections` | session | `settings.read` | - | `StorageConnectionsHandler.ListConnections` | The secret never appears in the response: SecretAccessKey is json:"-" and the store does not decrypt on the list path, so only the SecretSet flag reports that one is stored. |
-| POST | `/api/storage-connections` | session | `settings.write` | - | `StorageConnectionsHandler.CreateConnection` | - |
+| POST | `/api/storage-connections` | session | `settings.write` | - | `StorageConnectionsHandler.CreateConnection` | adds a reusable storage connection. |
 | PATCH | `/api/storage-connections/{id:[0-9]+}` | session | `settings.write` | - | `StorageConnectionsHandler.UpdateConnection` | The secret is write-only: the metadata update never touches secret_enc, and the secret is rotated only when a non-blank value was submitted. |
-| DELETE | `/api/storage-connections/{id:[0-9]+}` | session | `settings.write` | - | `StorageConnectionsHandler.DeleteConnection` | - |
+| DELETE | `/api/storage-connections/{id:[0-9]+}` | session | `settings.write` | - | `StorageConnectionsHandler.DeleteConnection` | removes a storage connection. |
 | POST | `/api/storage-connections/{id:[0-9]+}/test` | session | `settings.write` | - | `StorageConnectionsHandler.TestConnection` | Loads the saved connection (which decrypts the secret), builds a provider and runs the write/read-back/delete probe. |
 
 ## /api/store
@@ -803,26 +803,26 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.ListMyTickets` | ListTickets GET /api/tickets — user's own tickets (with watcher includes). |
-| POST | `/api/tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.CreateTicket` | - |
+| POST | `/api/tickets` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.CreateTicket` | opens a ticket and records its creation in the ticket audit trail. |
 | GET | `/api/tickets/inbox` | session | `tickets.read` | RequireTicketsEnabled | `TicketsHandler.ListInboxTickets` | support inbox view, gated by RequireCap("tickets.read") at the route (Phase 4 Task 15; the former in-handler "support or admin" pure gate was removed since the route now supersedes it). |
-| GET | `/api/tickets/{id:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.GetTicket` | - |
+| GET | `/api/tickets/{id:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.GetTicket` | one ticket with its messages, watchers and audit trail. |
 | DELETE | `/api/tickets/{id:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled | `TicketDeletionsHandler.DeleteTicket` | admin only, gated by tickets.deletion_enabled. |
 | PATCH | `/api/tickets/{id:[0-9]+}/assignment` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdateAssignment` | support/admin only. |
-| GET | `/api/tickets/{id:[0-9]+}/attachments` | session | _exempt_ | RequireTicketsEnabled | `TicketAttachmentsHandler.ListAttachments` | - |
-| POST | `/api/tickets/{id:[0-9]+}/attachments` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageConfigured, RequireCoreStorageReachable | `TicketAttachmentsHandler.UploadAttachment` | - |
+| GET | `/api/tickets/{id:[0-9]+}/attachments` | session | _exempt_ | RequireTicketsEnabled | `TicketAttachmentsHandler.ListAttachments` | the files on one ticket, once the caller passes the same visibility check the ticket itself uses: author, watcher, or staff whose support team matches. |
+| POST | `/api/tickets/{id:[0-9]+}/attachments` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageConfigured, RequireCoreStorageReachable | `TicketAttachmentsHandler.UploadAttachment` | attaches a file to a ticket. |
 | DELETE | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DeleteAttachment` | Uploader OR support/admin OR ticket owner can delete. |
-| GET | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DownloadAttachment` | - |
-| POST | `/api/tickets/{id:[0-9]+}/messages` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.AddReply` | - |
+| GET | `/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download` | session | _exempt_ | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketAttachmentsHandler.DownloadAttachment` | streams one attachment. |
+| POST | `/api/tickets/{id:[0-9]+}/messages` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.AddReply` | adds a reply and notifies the other participants. |
 | PATCH | `/api/tickets/{id:[0-9]+}/priority` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdatePriority` | support/admin only. |
-| PATCH | `/api/tickets/{id:[0-9]+}/status` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdateStatus` | - |
+| PATCH | `/api/tickets/{id:[0-9]+}/status` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.UpdateStatus` | changes a ticket's status and records the transition, from and to, in the audit trail. |
 | POST | `/api/tickets/{id:[0-9]+}/watchers` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.AddWatcher` | Users may add watchers when tickets.allow_users_to_add_watchers=TRUE. |
-| DELETE | `/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.RemoveWatcher` | - |
+| DELETE | `/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}` | session | _exempt_ | RequireTicketsEnabled | `TicketsHandler.RemoveWatcher` | removes a watcher and records it in the audit trail. |
 
 ## /api/tools
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/tools/beam` | **none** | _exempt_ | - | `(inline)` | - |
+| GET | `/api/tools/beam` | **none** | _exempt_ | - | `beamToolsRedirect` | the public, session-less "download Beam" link. |
 
 ## /api/updates
 
@@ -834,19 +834,19 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/users` | session | `users.read` | - | `UserHandler.GetAllUsers` | - |
-| POST | `/api/users` | session | `users.write` | - | `UserHandler.CreateUser` | - |
-| DELETE | `/api/users/{id:[0-9a-f-]{36}}` | session | `users.delete` | - | `UserHandler.DeleteUser` | - |
+| GET | `/api/users` | session | `users.read` | - | `UserHandler.GetAllUsers` | every account. |
+| POST | `/api/users` | session | `users.write` | - | `UserHandler.CreateUser` | creates an account and assigns its regions. |
+| DELETE | `/api/users/{id:[0-9a-f-]{36}}` | session | `users.delete` | - | `UserHandler.DeleteUser` | deletes an account. |
 | DELETE | `/api/users/{id:[0-9a-f-]{36}}/2fa` | session | `users.write` | - | `AuthHandler.AdminResetTOTPHandler` | DELETE /api/users/{id}/2fa (admin-only) Wipes a user's 2FA without their password — for the case when the user has lost both their authenticator AND their backup codes. |
-| PUT | `/api/users/{id:[0-9a-f-]{36}}/password` | session | `users.write` | - | `UserHandler.ResetUserPassword` | - |
-| GET | `/api/users/{id:[0-9a-f-]{36}}/route-limit` | session | `users.read` | - | `UserHandler.GetUserRouteLimit` | - |
-| PUT | `/api/users/{id:[0-9a-f-]{36}}/route-limit` | session | `users.write` | - | `UserHandler.SetUserRouteLimit` | - |
+| PUT | `/api/users/{id:[0-9a-f-]{36}}/password` | session | `users.write` | - | `UserHandler.ResetUserPassword` | sets a new password for an account, hashed before it is stored. |
+| GET | `/api/users/{id:[0-9a-f-]{36}}/route-limit` | session | `users.read` | - | `UserHandler.GetUserRouteLimit` | one user's gateway route allowance: default when no override exists, otherwise custom or disabled. |
+| PUT | `/api/users/{id:[0-9a-f-]{36}}/route-limit` | session | `users.write` | - | `UserHandler.SetUserRouteLimit` | sets a user's gateway route allowance to default, custom with a count, or disabled. |
 
 ## /api/versions
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/versions` | session | _exempt_ | - | `VersionHandler.GetVersions` | - |
+| GET | `/api/versions` | session | _exempt_ | - | `VersionHandler.GetVersions` | the available versions for one server software, chosen with ?software=. |
 | GET | `/api/versions/software` | **none** | _exempt_ | - | `VersionHandler.GetSoftwareList` | (public) |
 
 ## /api/warp
@@ -855,7 +855,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/warp/assignment` | warp key | _exempt_ | - | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
 | GET | `/api/warp/deploy-config` | session | _exempt_ | - | `WarpHandler.GetDeployConfig` | any authenticated user. |
-| POST | `/api/warp/enroll` | warp key | _exempt_ | - | `WarpHandler.Enroll` | - |
+| POST | `/api/warp/enroll` | warp key | _exempt_ | - | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
 | POST | `/api/warp/leaders` | session | `topology.write` | - | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
 | DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | - | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
 | POST | `/api/warp/link-boot` | warp key | _exempt_ | Limit | `WarpHandler.LinkBoot` | a route-only link presents its warp key and receives its derived tunnel token plus a Redis credential scoped to its own keys. |

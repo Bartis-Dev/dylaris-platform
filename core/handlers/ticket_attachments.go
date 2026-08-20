@@ -374,6 +374,9 @@ func ticketUploadBodyLimit(maxFileMB int) int64 {
 	return mb*1024*1024 + ticketUploadEnvelopeSlack
 }
 
+// UploadAttachment POST /api/tickets/{id}/attachments - attaches a file to a
+// ticket. A watcher needs the reply flag to upload. The type is decided by
+// sniffing the content, not by what the client declared.
 func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	t, perms, userID, ok := h.loadTicketAndGate(w, r)
 	if !ok {
@@ -591,7 +594,9 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	})
 }
 
-// ListAttachments GET /api/tickets/{id}/attachments
+// ListAttachments GET /api/tickets/{id}/attachments - the files on one ticket,
+// once the caller passes the same visibility check the ticket itself uses:
+// author, watcher, or staff whose support team matches.
 func (h *TicketAttachmentsHandler) ListAttachments(w http.ResponseWriter, r *http.Request) {
 	t, perms, userID, ok := h.loadTicketAndGate(w, r)
 	if !ok {
@@ -621,7 +626,10 @@ func (h *TicketAttachmentsHandler) ListAttachments(w http.ResponseWriter, r *htt
 	})
 }
 
-// DownloadAttachment GET /api/tickets/{id}/attachments/{aid}/download
+// DownloadAttachment GET /api/tickets/{id}/attachments/{aid}/download -
+// streams one attachment. The stored MIME type is clamped and sent with
+// nosniff and an attachment disposition, so an old row holding a client-
+// declared text/html cannot render in the browser.
 func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	t, perms, userID, ok := h.loadTicketAndGate(w, r)
 	if !ok {

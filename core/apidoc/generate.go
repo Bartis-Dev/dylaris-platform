@@ -27,7 +27,12 @@ const PreamblePath = "apidoc/preamble.md"
 // different document on each platform and break the freshness test for reasons
 // that have nothing to do with the routes.
 func Generate(coreDir string) (string, error) {
-	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{filepath.Join(coreDir, "handlers")})
+	// coreDir itself is a source of doc comments too: a handful of routes are
+	// served by a plain function in package main rather than by a handler method.
+	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
+		filepath.Join(coreDir, "handlers"),
+		coreDir,
+	})
 	if err != nil {
 		return "", err
 	}

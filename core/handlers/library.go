@@ -319,7 +319,10 @@ func (h *LibraryHandler) UploadLibraryHandler(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// DownloadLibraryHandler GET /api/library/download?path=
+// DownloadLibraryHandler GET /api/library/download - streams the library file
+// named by ?path. Any path containing .. is refused, and the access model
+// mirrors the browse handler so a non-admin cannot download what they cannot
+// list.
 func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {

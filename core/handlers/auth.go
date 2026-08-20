@@ -355,6 +355,10 @@ func (h *AuthHandler) IsAdminToken(r *http.Request) bool {
 // password, so a failed login says nothing about which of the two it was.
 const invalidLoginMessage = "Invalid username or password"
 
+// LoginHandler POST /api/auth/login - issues the session JWT. A wrong password
+// and an unknown username answer identically, so the form cannot be turned
+// into a username oracle, and a database outage answers 503 rather than 401 so
+// it does not read as bad credentials.
 func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
@@ -515,6 +519,8 @@ func dbUnavailable(err error) bool {
 	return false
 }
 
+// GetProfileHandler GET /api/auth/profile - the calling user's own row, with
+// the password hash cleared before it is written out.
 func (h *AuthHandler) GetProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		return
@@ -533,6 +539,10 @@ func (h *AuthHandler) GetProfileHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "user": user})
 }
 
+// UpdateProfileHandler PUT /api/auth/profile - updates the calling user's own
+// profile. A password change requires the current one (401). A username change
+// is the expensive path: it honours the admin-set toggle (403), the rename
+// cooldown (429) and uniqueness (409), and records a history row.
 func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		return
@@ -640,6 +650,9 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]string{"success": "true", "message": "Profile updated!"})
 }
 
+// StatusHandler GET /api/status - liveness for the login page. needsSetup is
+// always false and the panel ignores it; the first-run wizard is gated by
+// /api/setup instead.
 func (h *AuthHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	// Setup is removed. If the API is reachable, the system is "Ready".
 	json.NewEncoder(w).Encode(map[string]interface{}{

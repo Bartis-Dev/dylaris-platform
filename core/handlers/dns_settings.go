@@ -82,7 +82,10 @@ type managedNameView struct {
 	Routable bool   `json:"routable"`
 }
 
-// Get GET /api/settings/dns
+// Get GET /api/settings/dns - the effective DNS configuration: provider,
+// zones, per-region names, orphan grace and the names Core currently manages.
+// The API token itself is never returned, only a tokenSet flag saying whether
+// one is stored.
 func (h *DNSSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resolver := h.state.DNSConfig
 	if resolver == nil {

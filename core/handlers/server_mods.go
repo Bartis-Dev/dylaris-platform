@@ -56,6 +56,8 @@ func (h *ServerModsHandler) getServer(serverID int) (*models.Server, bool) {
 	return srv, true
 }
 
+// List GET /api/servers/{id}/mods - the mods installed on the server's ACTIVE
+// sub-server, not on every sub-server it has.
 func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
@@ -96,6 +98,9 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// Install POST /api/servers/{id}/mods - queues a mod install onto the active
+// sub-server. The reply says queued, and the mod only takes effect after a
+// restart.
 func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
@@ -201,6 +206,8 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Uninstall DELETE /api/servers/{id}/mods/{modId} - queues removal of one mod
+// from the active sub-server.
 func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)

@@ -36,6 +36,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	r.HandleFunc("/api/tabproxy/{token}", proxyHandler.Public)
 	api.HandleFunc("/legacy", packsHandler.Legacy).Methods("GET", "POST")
 	api.HandleFunc("/nowhere", packsHandler.Nowhere).Methods("GET")
+	api.HandleFunc("/plain", plainHandler).Methods("GET")
 
 	return r, nil
 }
@@ -50,6 +51,9 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {}
 func (h *PacksHandler) ListModpacks(w http.ResponseWriter, r *http.Request) {}
 
 func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {}
+
+// plainHandler GET /api/plain - served by a function with no receiver.
+func plainHandler(w http.ResponseWriter, r *http.Request) {}
 `
 
 func parseFixture(t *testing.T) []Route {
@@ -92,8 +96,8 @@ func find(t *testing.T, routes []Route, method, path string) Route {
 
 func TestParseRoutes(t *testing.T) {
 	routes := parseFixture(t)
-	if len(routes) != 8 {
-		t.Fatalf("parsed %d routes, want 8", len(routes))
+	if len(routes) != 9 {
+		t.Fatalf("parsed %d routes, want 9", len(routes))
 	}
 
 	tests := []struct {
@@ -193,6 +197,19 @@ func TestUncappedMethodOnACappedTemplate(t *testing.T) {
 	}
 	if r.Authz != "uncapped method" {
 		t.Errorf("authz = %q, want %q", r.Authz, "uncapped method")
+	}
+}
+
+// Not every route is served by a method on a handler struct; a few are plain
+// functions. Recording those as "(inline)" would hide a real, documented
+// function behind a label that means "there is nothing to point at".
+func TestPlainFunctionHandlerIsNamedAndDocumented(t *testing.T) {
+	r := find(t, parseFixture(t), "GET", "/api/plain")
+	if r.Handler != "plainHandler" {
+		t.Errorf("handler = %q, want %q", r.Handler, "plainHandler")
+	}
+	if r.Doc != "served by a function with no receiver." {
+		t.Errorf("doc = %q", r.Doc)
 	}
 }
 

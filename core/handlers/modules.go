@@ -17,6 +17,9 @@ func NewModuleHandler(state *AppState) *ModuleHandler {
 	return &ModuleHandler{state: state}
 }
 
+// GetModulesHandler GET /api/modules - the navbar module rows. Seeds the four
+// defaults when the table is empty, and filters out the legacy Gateway row,
+// whose UI moved into the Infrastructure module's Routes tab.
 func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)

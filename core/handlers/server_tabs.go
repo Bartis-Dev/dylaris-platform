@@ -78,6 +78,8 @@ func (h *ServerTabsHandler) db() *sql.DB {
 	return provider.RawDB()
 }
 
+// List GET /api/servers/{id}/tabs - the custom tabs configured on one server,
+// including share slug and expiry where a proxied tab has them.
 func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
@@ -122,6 +124,10 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Create POST /api/servers/{id}/tabs - adds a custom tab. A proxied tab is the
+// gated path: it needs the reverse-proxy feature on (403), public sharing on
+// for a public one (403), and it counts against the server's proxied-tab limit
+// (409). A proxied page tab is given an unguessable share slug at once.
 func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
@@ -258,6 +264,8 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Update PATCH /api/servers/{id}/tabs/{tabId} - edits a custom tab, applying
+// the same proxied-tab gates as creation.
 func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
@@ -374,6 +382,8 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// Delete DELETE /api/servers/{id}/tabs/{tabId} - removes a custom tab from the
+// server in the path.
 func (h *ServerTabsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {

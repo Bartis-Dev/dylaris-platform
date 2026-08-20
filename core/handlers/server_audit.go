@@ -121,7 +121,9 @@ func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*
 	return srv, userID, true
 }
 
-// ListAudit GET /api/servers/{id}/audit?eventType=…&limit=…&offset=…
+// ListAudit GET /api/servers/{id}/audit - the server's audit trail, paged with
+// ?limit and ?offset and filterable by ?eventType. The reply carries the
+// unpaged total alongside the page.
 func (h *ServerAuditHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	srv, _, ok := h.gateView(w, r)
 	if !ok {
@@ -148,7 +150,8 @@ func (h *ServerAuditHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetStatus GET /api/servers/{id}/audit/status
+// GetStatus GET /api/servers/{id}/audit/status - whether auditing is on for
+// this server, whether an admin forced it on, and how many events are stored.
 func (h *ServerAuditHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	srv, _, ok := h.gateView(w, r)
 	if !ok {

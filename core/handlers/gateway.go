@@ -58,6 +58,8 @@ func (h *GatewayHandler) ctx() context.Context {
 // ADMIN: Links
 // ==========================================
 
+// GetLinks GET /api/gateway/links - every link registered in Redis, each with
+// its online flag.
 func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
 	if links == nil {
@@ -70,6 +72,9 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 // ADMIN: Edges
 // ==========================================
 
+// GetEdges GET /api/gateway/edges - every edge currently registered in Redis.
+// Edges are auto-discovered from their own heartbeats, never configured in
+// Core.
 func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
 	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
 	if edges == nil {
@@ -82,6 +87,8 @@ func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
 // ADMIN: Routes (all routes overview)
 // ==========================================
 
+// GetAllRoutes GET /api/gateway/routes - every gateway route across the whole
+// fleet, read from Redis.
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
 	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	if routes == nil {
@@ -90,6 +97,9 @@ func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(routes)
 }
 
+// AdminDeleteRoute DELETE /api/gateway/routes/{domain} - removes any route by
+// domain, without the per-server ownership check its /api/servers twin
+// applies.
 func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	domain := mux.Vars(r)["domain"]
 	if domain == "" {
@@ -195,12 +205,16 @@ func (h *GatewayHandler) GetRouteSuffixes(w http.ResponseWriter, r *http.Request
 // ADMIN: Stats, Sync
 // ==========================================
 
+// GetLogs GET /api/gateway/logs - hub logs are not shipped to Redis, so this
+// answers with the last 100 service error entries instead.
 func (h *GatewayHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	// Hub logs are not in Redis; return service error logs instead
 	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 100)
 	json.NewEncoder(w).Encode(errors)
 }
 
+// GetStats GET /api/gateway/stats - counts only: links and edges, how many of
+// each are online, and the route total.
 func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
 	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
@@ -228,6 +242,8 @@ func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// TriggerSync POST /api/gateway/sync - a no-op kept for the panel button. The
+// hub syncs autonomously, so Core has nothing to trigger.
 func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 	// Sync is managed by Hub autonomously; no-op from Core side
 	w.WriteHeader(http.StatusOK)
@@ -238,6 +254,8 @@ func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 // ADMIN: Errors
 // ==========================================
 
+// GetErrors GET /api/gateway/errors - the 50 most recent gateway service
+// errors; ?service= narrows them to one component.
 func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	if service != "" {
@@ -293,6 +311,8 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 // USER: Server Routes
 // ==========================================
 
+// GetServerRoutes GET /api/servers/{id}/routes - the gateway routes belonging
+// to one server, filtered out of the full Redis set by server UUID.
 func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request) {
 	serverID := mux.Vars(r)["id"]
 
@@ -315,6 +335,11 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(routes)
 }
 
+// CreateServerRoute POST /api/servers/{id}/routes - queues a route for one
+// server. Three input shapes are accepted in priority order: {subdomain,
+// hosterDomain} picked from the admin's hoster list, {customDomain} for a
+// domain the user owns via CNAME, and a raw {domain} for scripts. 201 means
+// queued, not live.
 func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	userID := r.Context().Value("userID").(string)
@@ -501,6 +526,10 @@ func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
 	return m
 }
 
+// DeleteServerRoute DELETE /api/servers/{id}/routes/{domain} - queues removal
+// of one of this server's routes. Ownership is enforced at the route by
+// network.write; this only verifies the domain really belongs to the server
+// named in the path.
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	domain := mux.Vars(r)["domain"]

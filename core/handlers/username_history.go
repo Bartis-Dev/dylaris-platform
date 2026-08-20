@@ -16,7 +16,7 @@ func NewUsernameHistoryHandler(state *AppState) *UsernameHistoryHandler {
 	return &UsernameHistoryHandler{state: state}
 }
 
-// Me GET /api/me/username-history
+// Me GET /api/me/username-history - the calling user's own past usernames.
 func (h *UsernameHistoryHandler) Me(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {

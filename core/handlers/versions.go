@@ -330,7 +330,9 @@ func NewVersionHandler(state *AppState) *VersionHandler {
 	return &VersionHandler{state: state}
 }
 
-// GetVersions GET /api/versions?software=paper
+// GetVersions GET /api/versions - the available versions for one server
+// software, chosen with ?software=. An unknown value is 400 rather than an
+// empty list.
 func (h *VersionHandler) GetVersions(w http.ResponseWriter, r *http.Request) {
 	software := r.URL.Query().Get("software")
 	provider, ok := softwareProviders[software]

@@ -57,7 +57,11 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 	}
 }
 
-// Enroll handles POST /api/warp/enroll.
+// Enroll POST /api/warp/enroll - registers a warp client's public key and
+// answers with its overlay address, the region's leader endpoints and the Core
+// and Redis addresses it should proxy to. Refused with 409 while platform
+// routing is not in gateway mode, since there is no overlay to enroll into,
+// and with 403 once a tenant's suspension has outlived the grace period.
 func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {

@@ -39,7 +39,9 @@ type sparkProfileRequest struct {
 	StartedAt string `json:"startedAt,omitempty"`
 }
 
-// Record POST /api/servers/{id}/spark/profiles
+// Record POST /api/servers/{id}/spark/profiles - records a finished spark
+// profile. The URL must be a spark.lucko.me share link; Core stores the
+// reference, never the profile data.
 func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	var req sparkProfileRequest
@@ -93,7 +95,8 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// List GET /api/servers/{id}/spark/profiles
+// List GET /api/servers/{id}/spark/profiles - the 50 most recent spark
+// profiles for one server, newest first.
 func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	db := h.dbFromState()
@@ -146,7 +149,9 @@ func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Delete DELETE /api/servers/{id}/spark/profiles/{profileId}
+// Delete DELETE /api/servers/{id}/spark/profiles/{profileId} - removes one
+// profile reference. The delete is scoped to the server in the path, so a
+// profile id from another server is 404.
 func (h *SparkHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	profileID, _ := strconv.Atoi(mux.Vars(r)["profileId"])

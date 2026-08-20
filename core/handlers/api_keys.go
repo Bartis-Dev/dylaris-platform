@@ -50,6 +50,11 @@ type createAPIKeyResponse struct {
 	Message   string        `json:"message"`
 }
 
+// Create POST /api/me/api-keys - mints a key and returns its plaintext exactly
+// once. A caller cannot hand a key more access than they hold themselves:
+// every requested capability is checked against their own access to each
+// server in scope, so an over-broad scope is refused with 403 rather than
+// quietly narrowed.
 func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -154,6 +159,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// List GET /api/me/api-keys - the calling user's own API keys.
 func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -171,6 +177,9 @@ func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Revoke DELETE /api/me/api-keys/{id} - revokes one of the caller's own keys.
+// Another user's key answers 404, because the delete is scoped by user id in
+// the same statement and a wrong owner is indistinguishable from a wrong id.
 func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {

@@ -106,6 +106,8 @@ func NewServerHandler(state *AppState) *ServerHandler {
 	return &ServerHandler{state: state}
 }
 
+// GetServers GET /api/servers - the servers the caller may see: their own plus
+// any they were invited to, or the whole fleet for an admin.
 func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)

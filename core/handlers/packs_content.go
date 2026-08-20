@@ -44,6 +44,11 @@ func (h *PacksHandler) loadOwnedBuild(r *http.Request) (*models.PackBuild, bool)
 	return b, true
 }
 
+// ListContent GET /api/packs/{id}/builds/{buildId}/content - the mods and
+// files in one build. Owning the pack in the path says nothing about the build
+// in it, so the build is bound to the pack here too: without that a caller
+// could pair their own packId with another tenant's buildId and read that
+// build's content, storage keys included.
 func (h *PacksHandler) ListContent(w http.ResponseWriter, r *http.Request) {
 	packID := atoiVar(r, "id")
 	if _, ok := h.ownsPack(r, packID); !ok {
@@ -77,6 +82,10 @@ type addModrinthRequest struct {
 	ContentType string `json:"contentType"` // mod|resourcepack|shaderpack
 }
 
+// AddModrinth POST /api/packs/{id}/builds/{buildId}/content/modrinth - adds a
+// Modrinth version to a build and, on request, its dependencies. A frozen
+// build is 409, and the reply counts what was actually added, since a
+// dependency that fails is skipped rather than aborting the whole call.
 func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok {
@@ -180,6 +189,10 @@ func validateStoredModZip(ra io.ReaderAt, size int64) error {
 	return nil
 }
 
+// UploadContent POST /api/packs/{id}/builds/{buildId}/content/upload - uploads
+// a file into a build. The body is bounded before parsing: the multipart
+// memory budget only decides how much is held in RAM, not how much is
+// accepted, and nothing further down this path checks a size at all.
 func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok || b.Frozen {
@@ -291,6 +304,8 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "modversionId": mvID, "linked": mv.ModrinthProjectID != ""})
 }
 
+// RemoveContent DELETE /api/packs/{id}/builds/{buildId}/content/{modversionId}
+// - detaches one entry from a build. A frozen build is refused.
 func (h *PacksHandler) RemoveContent(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok || b.Frozen {
@@ -310,6 +325,9 @@ type setSideRequest struct {
 	Side string `json:"side"`
 }
 
+// SetSide PATCH /api/packs/{id}/builds/{buildId}/content/{modversionId}/side -
+// sets whether an entry ships to the client, the server or both. A frozen
+// build is refused.
 func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.loadOwnedBuild(r)
 	if !ok || b.Frozen {

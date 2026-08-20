@@ -66,7 +66,9 @@ func NewBackupHandler(state *AppState) *BackupHandler {
 // (routes.go), not in-handler. Admin still passes via the resolver's admin
 // short-circuit; a panel-role holder of settings.* also passes.
 
-// ListStorages GET /api/backup-storages
+// ListStorages GET /api/backup-storages - every configured backup target, with
+// the S3 secret stripped from each row so a settings.read holder cannot
+// harvest backup credentials out of a list.
 func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
 	storages, err := h.state.Store.ListBackupStorages()
 	if err != nil {
@@ -102,7 +104,9 @@ func validBackupProvider(p string) bool {
 	return false
 }
 
-// CreateStorage POST /api/backup-storages
+// CreateStorage POST /api/backup-storages - adds a backup target. The provider
+// must be one of shared, s3, node-local, core-storage or connection, and a
+// duplicate name is 409.
 func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -129,7 +133,8 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
 }
 
-// UpdateStorage PATCH /api/backup-storages/{id}
+// UpdateStorage PATCH /api/backup-storages/{id} - edits a backup target; an
+// unknown id is 404.
 func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
@@ -166,7 +171,7 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// DeleteStorage DELETE /api/backup-storages/{id}
+// DeleteStorage DELETE /api/backup-storages/{id} - removes a backup target.
 func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
@@ -217,7 +222,8 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 
 // ───────────── Jobs ─────────────
 
-// ListJobs GET /api/servers/{id}/backup-jobs
+// ListJobs GET /api/servers/{id}/backup-jobs - the backup schedules configured
+// for one server.
 func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	serverID, srv, ok := h.resolveServer(w, r)
 	if !ok {
@@ -235,7 +241,8 @@ func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "jobs": jobs})
 }
 
-// CreateJob POST /api/servers/{id}/backup-jobs
+// CreateJob POST /api/servers/{id}/backup-jobs - adds a backup schedule and
+// computes its first run from the cron expression.
 func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	serverID, _, ok := h.resolveServer(w, r)
 	if !ok {
@@ -265,7 +272,9 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
 }
 
-// UpdateJob PATCH /api/backup-jobs/{jobId}
+// UpdateJob PATCH /api/backup-jobs/{jobId} - edits a schedule and recomputes
+// its next run. Gated on backups.create for the job's own server, not on the
+// caller's access to some other one.
 func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	jobID, job, ok := h.resolveJobWithAccess(w, r, "backups.create")
 	if !ok {
@@ -295,7 +304,8 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// DeleteJob DELETE /api/backup-jobs/{jobId}
+// DeleteJob DELETE /api/backup-jobs/{jobId} - removes a schedule, gated on
+// backups.delete for the job's server.
 func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	jobID, _, ok := h.resolveJobWithAccess(w, r, "backups.delete")
 	if !ok {
@@ -308,7 +318,10 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// TriggerJob POST /api/backup-jobs/{jobId}/trigger
+// TriggerJob POST /api/backup-jobs/{jobId}/trigger - starts a run immediately.
+// Hitting the backup quota answers 409, not 500: that is the system working
+// rather than failing, and both operator alerting and API clients key off the
+// difference.
 func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 	_, job, ok := h.resolveJobWithAccess(w, r, "backups.create")
 	if !ok {
@@ -331,7 +344,8 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 
 // ───────────── Runs ─────────────
 
-// ListRuns GET /api/backup-jobs/{jobId}/runs
+// ListRuns GET /api/backup-jobs/{jobId}/runs - the 50 most recent runs of one
+// schedule.
 func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	jobID, _, ok := h.resolveJobWithAccess(w, r, "backups.read")
 	if !ok {
@@ -535,7 +549,10 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restores": restores})
 }
 
-// DeleteRun DELETE /api/backup-runs/{runId}
+// DeleteRun DELETE /api/backup-runs/{runId} - deletes the stored archive and
+// then the run row. The object delete is best effort: if the storage is
+// unreachable the row goes anyway, so the UI keeps no phantom entry, and the
+// orphaned archive is logged.
 func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(mux.Vars(r)["runId"])
 	if err != nil {

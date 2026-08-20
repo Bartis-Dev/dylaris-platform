@@ -73,7 +73,8 @@ type panelRoleRequest struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-// ListPanelRoles GET /api/admin/panel-roles
+// ListPanelRoles GET /api/admin/panel-roles - the level-1 staff roles and
+// their capabilities.
 func (h *PanelRolesHandler) ListPanelRoles(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -91,7 +92,8 @@ func (h *PanelRolesHandler) ListPanelRoles(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "roles": views})
 }
 
-// CreatePanelRole POST /api/admin/panel-roles
+// CreatePanelRole POST /api/admin/panel-roles - adds a staff role. A duplicate
+// name answers 409 with that reason rather than a bare 500.
 func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -128,7 +130,8 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// UpdatePanelRole PATCH /api/admin/panel-roles/{id}
+// UpdatePanelRole PATCH /api/admin/panel-roles/{id} - renames a staff role and
+// replaces its capability set.
 func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -170,7 +173,8 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// DeletePanelRole DELETE /api/admin/panel-roles/{id}
+// DeletePanelRole DELETE /api/admin/panel-roles/{id} - deletes a staff role.
+// System roles are refused with 403; an unknown id is 404.
 func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)

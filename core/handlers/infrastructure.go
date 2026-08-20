@@ -32,7 +32,9 @@ type nodeHeartbeatStats struct {
 	SharedStorage []models.SharedStorageConflict `json:"sharedStorage"`
 }
 
-// GetOverview GET /api/infrastructure/overview
+// GetOverview GET /api/infrastructure/overview - one payload for the
+// infrastructure page: edges, links and nodes with their live heartbeat stats,
+// plus route, tunnel and online counts and the recent service errors.
 func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -104,7 +106,10 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// GetRoutingMigrationStatus GET /api/infrastructure/routing-migration
+// GetRoutingMigrationStatus GET /api/infrastructure/routing-migration -
+// progress of the routing migration job. With no job wired it answers
+// running:false instead of failing, so the page still renders on an instance
+// that never ran one.
 func (h *InfrastructureHandler) GetRoutingMigrationStatus(w http.ResponseWriter, r *http.Request) {
 	if h.state.RoutingMigration == nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "running": false})

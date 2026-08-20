@@ -136,7 +136,8 @@ func normalizeTicketSubject(kind, ref string) (string, string) {
 	}
 }
 
-// CreateTicket POST /api/tickets
+// CreateTicket POST /api/tickets - opens a ticket and records its creation in
+// the ticket audit trail.
 func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -353,7 +354,9 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 
 // ── Detail + reply + watchers ────────────────────────────────────────
 
-// GetTicket GET /api/tickets/{id}
+// GetTicket GET /api/tickets/{id} - one ticket with its messages, watchers and
+// audit trail. Visibility is author, watcher, or staff whose support team
+// matches; anything else is 403.
 func (h *TicketsHandler) GetTicket(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
@@ -417,7 +420,8 @@ type replyRequest struct {
 	IsInternal bool   `json:"isInternal,omitempty"`
 }
 
-// AddReply POST /api/tickets/{id}/messages
+// AddReply POST /api/tickets/{id}/messages - adds a reply and notifies the
+// other participants.
 func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
@@ -519,7 +523,8 @@ type statusRequest struct {
 	Status string `json:"status"`
 }
 
-// UpdateStatus PATCH /api/tickets/{id}/status
+// UpdateStatus PATCH /api/tickets/{id}/status - changes a ticket's status and
+// records the transition, from and to, in the audit trail.
 func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -805,7 +810,8 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// RemoveWatcher DELETE /api/tickets/{id}/watchers/{userId}
+// RemoveWatcher DELETE /api/tickets/{id}/watchers/{userId} - removes a watcher
+// and records it in the audit trail.
 func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {

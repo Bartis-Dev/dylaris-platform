@@ -83,6 +83,8 @@ func validateTaskFields(name, taskType, payload string) string {
 	return ""
 }
 
+// List GET /api/servers/{id}/scheduled-tasks - the cron tasks configured on
+// one server.
 func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	tasks, err := h.state.Store.ListScheduledTasksByServer(serverID)
@@ -96,6 +98,9 @@ func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Create POST /api/servers/{id}/scheduled-tasks - adds a cron task. The server
+// is resolved first so an unknown id is 404: left to the insert, the server_id
+// foreign key would surface as a 500 for what is plainly a missing server.
 func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	// Without this the INSERT is what rejects an unknown server, via the
@@ -165,6 +170,8 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Update PATCH /api/servers/{id}/scheduled-tasks/{taskId} - edits a cron task
+// belonging to the server in the path.
 func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
@@ -231,6 +238,8 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Delete DELETE /api/servers/{id}/scheduled-tasks/{taskId} - removes a cron
+// task belonging to the server in the path.
 func (h *ScheduledTasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])

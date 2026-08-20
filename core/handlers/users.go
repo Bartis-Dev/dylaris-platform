@@ -23,6 +23,7 @@ func NewUserHandler(state *AppState) *UserHandler {
 	return &UserHandler{state: state}
 }
 
+// GetAllUsers GET /api/users - every account.
 func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -63,6 +64,9 @@ type createUserRequest struct {
 	RegionsExplicit []string `json:"regionsExplicit,omitempty"`
 }
 
+// CreateUser POST /api/users - creates an account and assigns its regions. A
+// region assignment that fails is logged but does not fail the creation, so
+// the account still exists afterwards.
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -168,6 +172,9 @@ func (h *UserHandler) otherAdminExists(excludeID string) (bool, error) {
 	return false, nil
 }
 
+// DeleteUser DELETE /api/users/{id} - deletes an account. A user still
+// referenced elsewhere, for instance by server invites they issued, answers
+// 409 with that reason rather than a bare 500.
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -225,7 +232,9 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// ResetUserPassword PUT /api/users/{id}/password
+// ResetUserPassword PUT /api/users/{id}/password - sets a new password for an
+// account, hashed before it is stored. No current password is asked for; this
+// is the admin path, not the self-service one.
 func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUserID(w, r)
 	if !ok {
@@ -258,7 +267,8 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Password updated"})
 }
 
-// GetUserRouteLimit GET /api/users/{id}/route-limit
+// GetUserRouteLimit GET /api/users/{id}/route-limit - one user's gateway route
+// allowance: default when no override exists, otherwise custom or disabled.
 func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
@@ -287,7 +297,8 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// SetUserRouteLimit PUT /api/users/{id}/route-limit
+// SetUserRouteLimit PUT /api/users/{id}/route-limit - sets a user's gateway
+// route allowance to default, custom with a count, or disabled.
 func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]

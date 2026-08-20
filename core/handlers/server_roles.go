@@ -62,7 +62,8 @@ func actingUserID(r *http.Request) string {
 	return id
 }
 
-// ListServerRoles GET /api/server-roles
+// ListServerRoles GET /api/server-roles - the custom roles in the acting
+// owner's realm.
 func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -85,7 +86,9 @@ func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "roles": views})
 }
 
-// CreateServerRole POST /api/server-roles
+// CreateServerRole POST /api/server-roles - adds a custom role to the acting
+// owner's realm. Outside advanced permissions mode a non-admin is refused with
+// 403, and a duplicate name is 409.
 func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -125,7 +128,9 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// UpdateServerRole PATCH /api/server-roles/{id}
+// UpdateServerRole PATCH /api/server-roles/{id} - renames a role and replaces
+// its capabilities. Scoped to the acting owner, so another realm's role is
+// 404.
 func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
@@ -169,7 +174,8 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// DeleteServerRole DELETE /api/server-roles/{id}
+// DeleteServerRole DELETE /api/server-roles/{id} - deletes a role in the
+// acting owner's realm; another realm's role is 404.
 func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)

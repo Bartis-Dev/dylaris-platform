@@ -64,7 +64,7 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 	return capped
 }
 
-// GetMembers GET /api/servers/{id}/members
+// GetMembers GET /api/servers/{id}/members - the member invites on one server.
 func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
@@ -90,7 +90,10 @@ func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// InviteMember POST /api/servers/{id}/members
+// InviteMember POST /api/servers/{id}/members - invites a user onto the server
+// with a permission set. Server auditing is switched on first if it was off,
+// so the invite itself is the first thing the audit trail records. An existing
+// member is 409.
 func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
@@ -168,7 +171,9 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// UpdateMemberPermissions PATCH /api/servers/{id}/members/{userId}
+// UpdateMemberPermissions PATCH /api/servers/{id}/members/{userId} - replaces
+// one member's permission set and records the change in the server audit
+// trail.
 func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
@@ -210,7 +215,8 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// RemoveMember DELETE /api/servers/{id}/members/{userId}
+// RemoveMember DELETE /api/servers/{id}/members/{userId} - revokes a member's
+// access and records it in the server audit trail.
 func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
