@@ -11,3 +11,6 @@
 {"date":"2026-08-19","service":"edge","type":"fix","summary":"Edge restarts no longer disconnect players: the handover was miscounting the connection handshake, so it rejected every resume as damaged even when nothing was lost"}
 {"date":"2026-08-19","service":"edge","type":"change","summary":"Edge logs stay readable during a failover on a busy server: per-player lines are now grouped into one line per event with a count, instead of one line per player"}
 {"date":"2026-08-19","service":"edge","type":"fix","summary":"After an edge goes down the splice no longer moves players back to it too early, which caused a second unnecessary handover per restart"}
+{"date":"2026-08-19","service":"warp","type":"feature","summary":"The tunnel agent now offers Core and Redis on two local ports and keeps the real addresses up to date itself, so a machine on your hardware survives a platform address change with a few retries instead of a manual edit"}
+{"date":"2026-08-19","service":"warp","type":"fix","summary":"Tunnel agent status lines (applied commands, rejected settings, bad input) now appear in the container log instead of only in a place nothing reads"}
+{"date":"2026-08-19","service":"warp","type":"fix","summary":"An unreachable platform address no longer makes the tunnel agent ask the platform for a new one back to back; it now waits between attempts"}
