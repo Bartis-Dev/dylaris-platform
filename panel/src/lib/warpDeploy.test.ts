@@ -189,4 +189,13 @@ describe('EXTERNAL_NODE_PORTS', () => {
         const sftp = EXTERNAL_NODE_PORTS.find(p => p.port === 25520);
         expect(sftp?.note).toContain('NODE_EXTERNAL');
     });
+
+    // The note tells the operator to set an env var. A var that is absent from
+    // the compose file's environment: block cannot be set from .env at all, so
+    // the advice only works while the snippet actually writes the line out.
+    it('only names an env var the generated compose forwards', () => {
+        const fastpath = EXTERNAL_NODE_PORTS.find(p => p.port === 25523);
+        expect(fastpath?.note).toContain('BEAM_LAN_FASTPATH=false');
+        expect(nodeCompose(base)).toContain('BEAM_LAN_FASTPATH: "true"');
+    });
 });

@@ -191,6 +191,12 @@ services:
       NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
       # Single-use, first boot only.
       NODE_ENROLL_TOKEN: "${or(i.nodeEnrollToken, '<enroll-token-from-panel>')}"
+      # The Beam LAN fast-path listener on :25523. This node is host-networked,
+      # so that TLS listener sits on your LAN; set false to drop it and let beam
+      # transfers go through the relay instead. Written out rather than left to
+      # the code default because the ports list tells you to set it, and an env
+      # var that is not in this block cannot be set from a .env file at all.
+      BEAM_LAN_FASTPATH: "true"
 ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR and no REDIS_ADDR: the node reaches both through
       # warp's local proxy, and warp refreshes the real addresses from Core on
       # its own. Nothing in this file has to change when the platform moves.
