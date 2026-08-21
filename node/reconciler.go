@@ -158,6 +158,14 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 			if isNodeBusy(ctx, rdb, uuid) {
 				continue
 			}
+			// Same reason the crash-restart pass below checks it: the status key
+			// that "disk_full" would arrive on is drained by Core every 5s, so
+			// the protectedStatuses check above cannot be relied on to see the
+			// hold. Recreating here would put a server that is over its limit
+			// straight back over it.
+			if isDiskFull(ctx, rdb, uuid) {
+				continue
+			}
 
 			// Only recreate if desired_state is "online".
 			desiredKey := fmt.Sprintf("dylaris:server:%s:desired_state", uuid)

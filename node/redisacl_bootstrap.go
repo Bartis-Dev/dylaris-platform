@@ -157,11 +157,11 @@ func ensureNodeSecret(ctx context.Context) []byte {
 	}
 }
 
-// bootstrapSecretViaGRPC does a one-shot NodeConnect to CORE_GRPC_ADDR. With a
-// cached secret it sends a proof (Core re-applies the ACL, returns no new secret)
-// and we return the cached secret; without one it sends the enroll token and Core
-// mints + returns a fresh secret. Always contacts Core (used for first boot AND
-// for re-confirm after a Redis auth failure).
+// bootstrapSecretViaGRPC does a one-shot NodeConnect to CORE_GRPC_ADDR. It
+// presents whatever bootstrapCreds says it holds - a proof of the cached secret,
+// a recovery/enroll token, or both - and Core answers with the existing secret
+// re-applied or a freshly minted one. Always contacts Core (used for first boot
+// AND for re-confirm after a Redis auth failure).
 // allowIdentityChange is passed true by exactly one caller, ensureNodeSecret,
 // and false by the two that run later.
 //
@@ -195,6 +195,33 @@ func identityChange(assignedID, currentID string, allow bool) (adopt bool, err e
 	return true, nil
 }
 
+// bootstrapCreds decides what a bootstrap NodeAuth carries: a proof of the
+// cached secret, and - INDEPENDENTLY - the one-shot token that lets Core issue
+// a new one. Recovery wins over enroll: it is the deliberate, admin-minted act.
+//
+// The independence is the whole point. These three used to be one else-chain,
+// so a cached secret suppressed the token entirely. Reset pairing
+// (core/handlers/node_admission.go) wipes Core's copy of the secret and
+// DELUSERs the node's three Redis users, but it cannot touch .node_secret on
+// the node's own disk - so a reset node still has a cache, sent only the
+// now-worthless proof, and never sent the recovery token the panel had just
+// told the operator to set. Core answered "cluster proof or recovery token
+// required", main's Redis bootstrap loop retried that forever, and the
+// documented recovery path was completable only by deleting .node_secret by
+// hand, which nothing tells the operator to do.
+//
+// Sending both is safe on every Core branch: with a secret on file Core runs
+// the challenge and ignores the token; without one the token is the only way in.
+func bootstrapCreds(hasCached bool, recoveryToken, enrollToken string) (sendProof bool, token string) {
+	switch {
+	case recoveryToken != "":
+		token = recoveryToken
+	case enrollToken != "":
+		token = enrollToken
+	}
+	return hasCached, token
+}
+
 func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]byte, error) {
 	if coreGRPCAddr == "" {
 		return nil, fmt.Errorf("CORE_GRPC_ADDR not set")
@@ -215,14 +242,11 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 
 	auth := &pb.NodeAuth{NodeToken: nodeID, AclSupported: true}
 	cached, hasCached := loadNodeSecret(nodeSecretDir)
-	if hasCached {
+	sendProof, token := bootstrapCreds(hasCached, nodeRecoveryToken, nodeEnrollToken)
+	if sendProof {
 		auth.SecretProof = aclProof(cached, nodeID)
-	} else if nodeRecoveryToken != "" {
-		// Re-pair under the existing identity via an admin-minted recovery token.
-		auth.EnrollToken = nodeRecoveryToken
-	} else if nodeEnrollToken != "" {
-		auth.EnrollToken = nodeEnrollToken
 	}
+	auth.EnrollToken = token
 	if clusterSecret != "" {
 		auth.ClusterProof = aclClusterProof(clusterSecret, nodeID)
 	}

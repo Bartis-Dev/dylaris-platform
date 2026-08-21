@@ -1440,10 +1440,51 @@ func (dm *DockerManager) CountLinkContainers() int {
 	return count
 }
 
+// redisConnKeys are the container env vars that decide whether the log-shipper
+// inside can reach Redis at all. All three are baked in at container-create time
+// and buildRedisEnv derives all three, so all three have to be reconciled.
+var redisConnKeys = []string{"REDIS_ADDR", "REDIS_USER", "REDIS_PASS"}
+
+// envValue returns the value of key in a "KEY=VALUE" env slice, "" when absent.
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, prefix); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// redisEnvDrift names the first Redis connection variable whose value in a
+// running container differs from what a container created now would get, or ""
+// when they agree. Only the NAME is returned: REDIS_PASS is a live credential
+// and the caller logs this.
+func redisEnvDrift(current, want []string) string {
+	for _, k := range redisConnKeys {
+		if envValue(current, k) != envValue(want, k) {
+			return k
+		}
+	}
+	return ""
+}
+
 // ReconcileRedisEnv checks all running MC containers and restarts any whose
-// REDIS_ADDR env var doesn't match what a container created NOW would get. This
-// handles the case where Node is redeployed with a new SIDECAR_REDIS_ADDR —
-// running containers still have the old value baked in from creation time.
+// baked-in Redis connection env doesn't match what a container created NOW
+// would get. This handles the case where Node is redeployed with a new
+// SIDECAR_REDIS_ADDR — running containers still have the old value from
+// creation time.
+//
+// It compares the CREDENTIALS too, not just the address, because they drift for
+// a different and less visible reason. buildRedisEnv derives REDIS_USER and
+// REDIS_PASS from the per-node secret, and a pairing reset replaces that secret
+// while every MC container keeps running (they are host siblings; restarting
+// the agent does not touch them). Core then provisions the shipper user at the
+// NEW password, so every container on the machine holds a credential that will
+// never authenticate again. Nothing about that is visible from outside: Java
+// keeps serving players, the container stays Up, and only the console goes
+// silent - the shipper retries forever (log-shipper connectRedis never gives
+// up) and the stdin bridge that carries panel commands is gone with it.
 //
 // The expected value goes through the same resolver as container creation, not
 // the startup global: on the warp proxy that global is deliberately empty, and
@@ -1475,17 +1516,13 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 			continue
 		}
 
-		var currentAddr string
-		for _, e := range info.Config.Env {
-			if strings.HasPrefix(e, "REDIS_ADDR=") {
-				currentAddr = strings.TrimPrefix(e, "REDIS_ADDR=")
-				break
-			}
-		}
-
-		if currentAddr != wantAddr {
-			log.Printf("ReconcileRedisEnv: %s has REDIS_ADDR=%s, expected %s — restarting",
-				mc.ContainerName, currentAddr, wantAddr)
+		// Built through buildRedisEnv rather than re-deriving the three values
+		// here, so there is exactly one producer of what a container should
+		// hold. The sub-server is irrelevant to this comparison (redisEnvDrift
+		// only reads the connection keys), so it is left empty.
+		want := buildRedisEnv(mc.UUID, "", wantAddr)
+		if key := redisEnvDrift(info.Config.Env, want); key != "" {
+			log.Printf("ReconcileRedisEnv: %s has a stale %s — restarting", mc.ContainerName, key)
 			if err := dm.RestartContainer(mc.UUID); err != nil {
 				log.Printf("ReconcileRedisEnv: failed to restart %s: %v", mc.ContainerName, err)
 			}
