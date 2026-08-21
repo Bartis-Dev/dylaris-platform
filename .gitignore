@@ -27,7 +27,7 @@ vendor/
 # dylaris-core, a 43MB Linux ELF leaking a dev build path) -- anchored to the
 # repo root so it doesn't shadow real subdirectories/files of the same name.
 /dylaris-core
-/dylaris-node
+dylaris-node
 
 # Beam desktop app build outputs (rebuilt by CI; not committed). NOTE:
 # beam/app/third_party/ (the vendored, BC3-patched Wails) IS committed and must

@@ -348,7 +348,15 @@ func (v *virtualFS) resolve(path string) (string, string, error) {
 		return base, ".", nil
 	}
 	rel := filepath.FromSlash(parts[1])
-	return filepath.Join(base, rel), rel, nil
+	full := filepath.Join(base, rel)
+	// SFTP builds its own paths rather than going through resolveWithinDir, so
+	// it needs the symlink half of that guard restated here: Clean("/"+path)
+	// above strips traversal from the STRING, and os.Open/os.OpenFile then
+	// follow a planted link straight out of the server directory.
+	if !linkStaysWithin(base, full) {
+		return "", "", os.ErrPermission
+	}
+	return full, rel, nil
 }
 
 // protectedRel reports whether a resolved SFTP path names a platform-managed

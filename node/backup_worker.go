@@ -131,71 +131,10 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 		// The goroutine is the source side of the pipe. Any error we hit
 		// has to propagate to the reader by closing the pipe with that
 		// error so the uploader sees it and aborts cleanly.
-		gw := gzip.NewWriter(mw)
-		tw := tar.NewWriter(gw)
-
-		walkErr := filepath.Walk(rootDir, func(path string, info os.FileInfo, werr error) error {
-			if werr != nil {
-				return werr
-			}
-			rel, _ := filepath.Rel(rootDir, path)
-			rel = filepath.ToSlash(rel)
-			if rel == "." {
-				return nil
-			}
-			if isBackupStoreEntry(rel) {
-				if info.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if matchAny(rel, cmd.ExcludePatterns) {
-				if info.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if len(cmd.IncludePatterns) > 0 && !matchAny(rel, cmd.IncludePatterns) {
-				return nil
-			}
-			hdr, err := tar.FileInfoHeader(info, "")
-			if err != nil {
-				return err
-			}
-			hdr.Name = rel
-			if err := tw.WriteHeader(hdr); err != nil {
-				return err
-			}
-			if !info.IsDir() {
-				f, err := os.Open(path)
-				if err != nil {
-					return err
-				}
-				_, copyErr := io.Copy(tw, f)
-				f.Close()
-				if copyErr != nil {
-					return copyErr
-				}
-			}
-			addedAny = true
-			return nil
-		})
-
-		// Order matters: close tar (flush remaining records) then gzip
-		// (flush trailer) then the pipe writer so the uploader sees EOF.
-		tarErr := tw.Close()
-		gzErr := gw.Close()
-
-		if walkErr != nil {
-			pw.CloseWithError(walkErr)
-			return
-		}
-		if tarErr != nil {
-			pw.CloseWithError(tarErr)
-			return
-		}
-		if gzErr != nil {
-			pw.CloseWithError(gzErr)
+		added, err := writeServerArchive(mw, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns)
+		addedAny = added
+		if err != nil {
+			pw.CloseWithError(err)
 			return
 		}
 		pw.Close()
@@ -229,6 +168,94 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 
 	reportBackup(ctx, rdb, cmd.RunID, "success", "", size)
 	log.Printf("Backup %d streamed to %s/%s — %.2f MB in %v", cmd.RunID, storage.Provider, cmd.StorageKey, float64(size)/1024/1024, time.Since(started))
+}
+
+// writeServerArchive tar+gzips the tree at rootDir into w and reports whether
+// anything was written. serverRoot is the tenant boundary a symlink may not
+// point outside of; it is the SERVER root, not rootDir, so a link from one
+// sub-server to another keeps working.
+//
+// Split out of RunBackup so the walk can be driven without Redis, a storage
+// manager or a live provider.
+func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclude []string) (bool, error) {
+	resolvedRoot := resolveZipRoot(serverRoot)
+	gw := gzip.NewWriter(w)
+	tw := tar.NewWriter(gw)
+	addedAny := false
+
+	walkErr := filepath.Walk(rootDir, func(path string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		rel, _ := filepath.Rel(rootDir, path)
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			return nil
+		}
+		if isBackupStoreEntry(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if matchAny(rel, exclude) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(include) > 0 && !matchAny(rel, include) {
+			return nil
+		}
+		// The same symlink guard the zip walkers take. Skipping it here was
+		// not a leak but a hard stop: Walk reports a link via Lstat, so
+		// FileInfoHeader emits a header-only symlink entry of size 0, and the
+		// os.Open below then FOLLOWS the link and copies the target's bytes
+		// into it. The tar writer answers that with ErrWriteTooLong, which
+		// aborts the walk - so one link anywhere under a server, planted over
+		// SFTP or from inside its own container, failed every backup of that
+		// server from then on.
+		info, ok := zipEntryInfo(resolvedRoot, path, info)
+		if !ok {
+			return nil
+		}
+		hdr, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		hdr.Name = rel
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(tw, f)
+			f.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+		}
+		addedAny = true
+		return nil
+	})
+
+	// Order matters: close tar (flush remaining records) then gzip (flush
+	// trailer) so the reader sees a complete stream.
+	tarErr := tw.Close()
+	gzErr := gw.Close()
+
+	switch {
+	case walkErr != nil:
+		return addedAny, walkErr
+	case tarErr != nil:
+		return addedAny, tarErr
+	case gzErr != nil:
+		return addedAny, gzErr
+	}
+	return addedAny, nil
 }
 
 // countingWriter sums the byte count of an in-flight stream without

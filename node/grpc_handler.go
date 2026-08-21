@@ -122,7 +122,56 @@ func resolveWithinDir(dataPath, reqPath string) (string, error) {
 	if cleanPath != cleanData && !strings.HasPrefix(cleanPath, cleanData+string(os.PathSeparator)) {
 		return "", fmt.Errorf("access denied: path traversal")
 	}
+	if !linkStaysWithin(cleanData, cleanPath) {
+		return "", fmt.Errorf("access denied: path leaves the server directory")
+	}
 	return cleanPath, nil
+}
+
+// linkStaysWithin reports whether the filesystem agrees that cleanPath - which
+// already passed the lexical check above - still lands inside lexRoot once
+// every symlink on the way to it is followed.
+//
+// The lexical check cannot see this. It cleans and prefix-checks a string and
+// never asks the filesystem, so it accepted a planted link and every operation
+// then reached the link's TARGET: a plain download returned it, a copy
+// materialised it as a real file inside the tenant's own directory. A tenant
+// plants one from inside their own Minecraft container (the server directory is
+// bind-mounted into it), and the link text is resolved on the NODE's side, so it
+// can name a path that exists only there - .node_secret, another tenant's server
+// directory, /proc/self/environ. The archive walkers had their own guard for
+// exactly this (zipEntryInfo); the boundary itself did not.
+//
+// One rule, no per-operation exceptions. Deleting or renaming a link never
+// touches its target and would be safe to allow, but a second, laxer variant is
+// a second thing to reach for by mistake, and the cost of the strict rule is
+// small: the containing directory can still be removed, which takes the link
+// with it.
+func linkStaysWithin(lexRoot, cleanPath string) bool {
+	return resolvesInside(lexRoot, resolveZipRoot(lexRoot), cleanPath)
+}
+
+// resolvesInside is linkStaysWithin's recursion. lexRoot bounds the walk up the
+// LEXICAL path; resolvedRoot is what a resolved path is measured against. They
+// differ whenever the storage path itself is a symlink, and comparing a
+// resolved path to the lexical root would then reject every contained link.
+func resolvesInside(lexRoot, resolvedRoot, path string) bool {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return withinRoot(resolvedRoot, resolved)
+	}
+	// Not resolvable, but Lstat can still see it: a DANGLING link, which is a
+	// trap for whatever creates the file next - an open with O_CREAT follows it
+	// and creates the target.
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	// The path does not exist yet (an upload, a new directory). It is safe
+	// exactly when the deepest ancestor that DOES exist resolves inside.
+	parent := filepath.Dir(path)
+	if parent == path || !withinRoot(lexRoot, parent) {
+		return true // walked past the root without finding anything to follow
+	}
+	return resolvesInside(lexRoot, resolvedRoot, parent)
 }
 
 // withinRoot reports whether abs is root itself or lies underneath it. Same
@@ -146,9 +195,10 @@ func resolveZipRoot(root string) string {
 }
 
 // zipEntryInfo decides whether a walked path belongs in an archive and which
-// FileInfo describes it.
+// FileInfo describes it. Despite the name it is not zip-specific: the backup
+// tar builder in backup_worker.go walks the same trees and calls it too.
 //
-// This closes a symlink hole shared by every zip path here: filepath.Walk
+// This closes a symlink hole shared by every archive path here: filepath.Walk
 // reports links via Lstat, but os.Open FOLLOWS them, so a link planted inside a
 // tenant's server directory would have its target read and written into the
 // archive - an arbitrary-file-read out of that directory, dressed up as a folder

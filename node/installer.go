@@ -615,6 +615,12 @@ func copyTree(src, dst string) error {
 }
 
 func copyWalk(src, dst string, skipProtected bool) error {
+	// The boundary is the copy source. A walk reaches entries the caller never
+	// named, and copyFile below FOLLOWS a link, so without this a link planted
+	// anywhere in the tree materialises its target as a REAL file in the
+	// destination - which for a copy inside a server directory is a file the
+	// tenant can then download. Same guard the archive walkers take.
+	resolvedRoot := resolveZipRoot(src)
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -628,6 +634,12 @@ func copyWalk(src, dst string, skipProtected bool) error {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if rel != "." {
+			var ok bool
+			if info, ok = zipEntryInfo(resolvedRoot, path, info); !ok {
+				return nil
+			}
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
