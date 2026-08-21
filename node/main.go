@@ -1225,8 +1225,19 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 
-		// Always write eula.txt automatically
-		eulaPath := filepath.Join(serverPath, subName, "eula.txt")
+		// Always write eula.txt automatically.
+		//
+		// Through resolveWithinDir rather than a bare Join: a re-install targets a
+		// sub-server directory that is ALREADY bind-mounted into the tenant's
+		// Minecraft container as /data, so "ln -s <anything> eula.txt" in there
+		// makes os.WriteFile (O_TRUNC) truncate the link's target instead. Fixed
+		// content, but truncating an arbitrary file the node can write is still a
+		// cross-tenant destroy.
+		eulaPath, err := resolveWithinDir(serverPath, filepath.Join(subName, "eula.txt"))
+		if err != nil {
+			log.Printf("Refusing to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
+			return
+		}
 		if err := os.WriteFile(eulaPath, []byte("eula=true\n"), 0644); err != nil {
 			log.Printf("Failed to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
 		}

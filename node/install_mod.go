@@ -76,15 +76,43 @@ func runInstallMod(storage *StorageManager, payload string) {
 		log.Printf("install_mod: invalid file name %q", pl.FileName)
 		return
 	}
-	// GetServerDir returns the path up to <uuid>; we tack on the active
-	// sub-server + targetDir.
-	destDir := filepath.Join(serverPath, pl.ActiveSubServer, pl.TargetDir)
+	// GetServerDir returns the path up to <uuid>; the active sub-server and
+	// targetDir are joined on through resolveWithinDir - the same traversal AND
+	// symlink boundary the file browser, the beam server and the zip walkers go
+	// through.
+	//
+	// This file joined the path by hand instead. Every check it did make
+	// (validSubDir, validActiveSubServer, filepath.Base) guards the STRING; none
+	// of them asks the filesystem, and the directory being joined onto is
+	// bind-mounted into the tenant's OWN Minecraft container as /data. "ln -s
+	// /app/dylaris_data mods" is one line in there. After it, os.MkdirAll adopts
+	// the link and os.Create follows it, so installing a mod wrote a
+	// Modrinth-hosted file - content the tenant picks, by publishing it - to any
+	// path the node process can write, and removing one deleted any file it can
+	// delete. resolveWithinDir refuses a component that resolves outside the
+	// server root, and refuses a DANGLING link too: that one is a trap for
+	// whatever creates the file next.
+	//
+	// Checked before MkdirAll on purpose - MkdirAll through a dangling link
+	// creates the target.
+	destDir, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir))
+	if err != nil {
+		log.Printf("install_mod: %v", err)
+		return
+	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		log.Printf("install_mod: mkdir %s: %v", destDir, err)
 		return
 	}
+	// The .part file is the one the download actually opens, so it is the one
+	// that has to be clean; destFile is only ever reached by os.Rename, which
+	// does not follow a link.
+	tmpFile, err := resolveWithinDir(destDir, cleanName+".part")
+	if err != nil {
+		log.Printf("install_mod: %v", err)
+		return
+	}
 	destFile := filepath.Join(destDir, cleanName)
-	tmpFile := destFile + ".part"
 
 	if err := downloadAndVerify(pl.DownloadURL, tmpFile, pl.SHA512); err != nil {
 		os.Remove(tmpFile)
@@ -125,7 +153,15 @@ func runRemoveMod(storage *StorageManager, payload string) {
 		log.Printf("remove_mod: invalid file name %q", pl.FileName)
 		return
 	}
-	path := filepath.Join(serverPath, pl.ActiveSubServer, pl.TargetDir, cleanName)
+	// Same boundary as the install side: os.Remove does not follow the leaf, but
+	// a symlinked "mods" directory would still put the deletion outside the
+	// server root.
+	dir, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir))
+	if err != nil {
+		log.Printf("remove_mod: %v", err)
+		return
+	}
+	path := filepath.Join(dir, cleanName)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("remove_mod: rm %s: %v", path, err)
 		return
@@ -169,7 +205,15 @@ func downloadAndVerify(url, dest, expectedSHA512 string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("upstream status %d", resp.StatusCode)
 	}
-	f, err := os.Create(dest)
+	// Remove-then-O_EXCL rather than os.Create: the caller resolved this path a
+	// moment ago, but the tenant can re-plant a link at it from inside their
+	// container between that check and this open. os.Remove takes the link
+	// itself, O_EXCL refuses anything that reappears. Same pair backup_worker.go
+	// uses for node-local archives.
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clear previous partial download: %w", err)
+	}
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dest, err)
 	}
