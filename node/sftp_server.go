@@ -27,6 +27,7 @@ import (
 // SFTPServer exposes server directories to users via SSH/SFTP.
 // Auth is Redis-based: sftp:auth:{username} = bcrypt hash.
 // Server list per user: sftp:node:{nodeID}:user:{username} = [{uuid,name}].
+// Failed-auth counter: see sftpFailKey.
 type SFTPServer struct {
 	rdb        *redis.Client
 	storageMgr *StorageManager
@@ -85,13 +86,33 @@ func (s *SFTPServer) Start(ctx context.Context, port string) {
 	}
 }
 
+// sftpFailKey is the per-username failed-auth counter, scoped to this node.
+//
+// It used to be a bare "sftp:fail:<username>", which is outside every pattern
+// Core grants this node's Redis ACL user (core/services/redisacl/rules.go:
+// sftp:auth:* and sftp:node:<token>:* are granted, that third namespace was
+// not). Under mandatory ACL every GET/INCR/DEL on it therefore answered NOPERM
+// - and all three call sites discarded the error, so the counter read as 0
+// forever and the lockout below could never trigger. The whole guard was inert
+// with nothing in any log to say so.
+//
+// Node-scoped rather than fleet-global on purpose. The alternative fix was a
+// global grant on that namespace, which would hand every node in the fleet -
+// BYON machines the tenant owns included - write access to a brute-force
+// counter it is itself subject to. A node that can zero the counter can also
+// erase the guard, so the scope that makes the grant free is the scope worth
+// having: each node counts the attempts made against its own SFTP listener.
+func sftpFailKey(nodeID, username string) string {
+	return fmt.Sprintf("dylaris:node:%s:sftp_fail:%s", nodeID, username)
+}
+
 func (s *SFTPServer) authUser(username, password string) (*ssh.Permissions, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	// Per-username lockout to blunt brute force: after 10 failures in the
 	// sliding 15min window, reject outright (with a small delay).
-	failKey := "sftp:fail:" + username
+	failKey := sftpFailKey(s.nodeID, username)
 	if n, _ := s.rdb.Get(ctx, failKey).Int(); n >= 10 {
 		time.Sleep(time.Second)
 		return nil, fmt.Errorf("too many failed attempts, try again later")
@@ -117,7 +138,12 @@ func (s *SFTPServer) recordAuthFail(ctx context.Context, key string) {
 	pipe := s.rdb.Pipeline()
 	pipe.Incr(ctx, key)
 	pipe.Expire(ctx, key, 15*time.Minute)
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Was discarded, which is how the key being outside this node's ACL grant
+		// stayed invisible for as long as it did. A counter that cannot be written
+		// is a lockout that cannot fire, so say it rather than fail open quietly.
+		log.Printf("SFTP: failed-auth counter %s could not be updated, the lockout is not counting: %v", key, err)
+	}
 }
 
 func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig) {
