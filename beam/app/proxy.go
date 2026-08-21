@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -267,8 +268,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
-			page := strings.ReplaceAll(panelUnreachableHTML, "{{ERROR}}", err.Error())
-			_, _ = w.Write([]byte(page))
+			_, _ = w.Write([]byte(renderPanelUnreachable(err)))
 		},
 	}
 
@@ -405,10 +405,26 @@ func serveBeamIndex(app *App, next http.Handler, w http.ResponseWriter, r *http.
 	_, _ = w.Write(body)
 }
 
+// renderPanelUnreachable fills the {{ERROR}} slot of panelUnreachableHTML with
+// the transport error, HTML-ESCAPED.
+//
+// The error string is not ours. A Go transport error can carry bytes the far
+// end chose - an HTTP/2 GoAwayError renders the server's debug data verbatim -
+// so the Panel we just failed to reach can put markup in here. This page is
+// served on the wails:// origin, the one where window.go is bound and where the
+// rest of this file's CSP and framing work exists to contain a compromised
+// Panel; handing that same Panel a script tag through the error path would walk
+// straight around all of it. Extracted from the ErrorHandler closure so the
+// invariant is unit-testable, the same way isBrowserOpenableURL was.
+func renderPanelUnreachable(err error) string {
+	return strings.ReplaceAll(panelUnreachableHTML, "{{ERROR}}", html.EscapeString(err.Error()))
+}
+
 // panelUnreachableHTML is shown when the Panel can't be reached (DNS
 // failure, connection refused, TLS error, …). It carries a single
 // affordance: jump to the Settings page to fix the URL. The {{ERROR}}
-// token is replaced with the underlying transport error.
+// token is replaced (escaped, see renderPanelUnreachable) with the
+// underlying transport error.
 const panelUnreachableHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>

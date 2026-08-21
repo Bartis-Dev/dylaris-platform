@@ -1217,10 +1217,32 @@ func (a *App) RevealInExplorer() error {
 	if _, err := os.Stat(abs); err != nil {
 		return fmt.Errorf("downloaded file no longer exists: %w", err)
 	}
-	// Wails ships a cross-platform open-folder helper via runtime; we
-	// pass the path as a file:// URL which BrowserOpenURL hands to the
-	// OS shell. Works for both files (selects them) and directories
-	// (opens them) on every supported platform.
-	runtime.BrowserOpenURL(a.ctx, "file://"+filepath.ToSlash(abs))
+	// The CONTAINING FOLDER, not the file.
+	//
+	// BrowserOpenURL is a browser-open, not a file-manager reveal: on Windows it
+	// goes through url.dll's FileProtocolHandler, on macOS through `open`, on
+	// Linux through xdg-open. Handed a file:// URL pointing at a FILE, all three
+	// launch that file in its default handler - so this button, labelled
+	// "reveal", would hand a downloaded .jar to javaw and a .zip to the
+	// archiver. It never selected the file the way the old comment here claimed;
+	// that needs `explorer /select,` and its per-OS twins. Pointing at the
+	// directory gives the honest behaviour on all three platforms in one line:
+	// the folder opens, and nothing that came off the server is executed.
+	runtime.BrowserOpenURL(a.ctx, fileURL(filepath.Dir(abs)))
 	return nil
+}
+
+// fileURL renders a local path as a well-formed file:// URL.
+//
+// Concatenating "file://" with the path is wrong on Windows: "C:/x" yields
+// file://C:/x, where "C:" parses as the URL's HOST, and it leaves spaces and
+// other reserved characters unescaped. Prefixing the drive-letter path with "/"
+// and letting url.URL do the escaping produces file:///C:/x and percent-encodes
+// the rest. On Unix the path already starts with "/", so the prefix is a no-op.
+func fileURL(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }

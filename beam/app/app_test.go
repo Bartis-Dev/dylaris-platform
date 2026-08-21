@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -151,4 +152,26 @@ func TestOpenUpdateDownloadTokenGate(t *testing.T) {
 	// does not panic. ctx is nil, so even the token-valid path would no-op.
 	a := &App{shellToken: "good"}
 	a.OpenUpdateDownload("bad")
+}
+
+// TestFileURL covers the reveal-in-explorer URL construction. The old code
+// concatenated "file://" with the path, which on Windows makes the drive letter
+// the URL HOST (file://C:/x) and leaves spaces unescaped.
+func TestFileURL(t *testing.T) {
+	// Inputs go through FromSlash so each case is a NATIVE path on whichever OS
+	// runs it: separators become backslashes on Windows (which is what ToSlash
+	// has to undo) and stay as-is on the Linux CI runner. Hard-coding a
+	// backslash instead would assert Windows behaviour on a platform where
+	// ToSlash is a no-op, and fail there.
+	cases := []struct{ in, want string }{
+		{filepath.FromSlash("C:/Users/x/Downloads"), "file:///C:/Users/x/Downloads"},
+		{filepath.FromSlash("C:/Users/x/My Documents"), "file:///C:/Users/x/My%20Documents"},
+		{filepath.FromSlash("/home/x/Downloads"), "file:///home/x/Downloads"},
+		{filepath.FromSlash("/home/x/my files"), "file:///home/x/my%20files"},
+	}
+	for _, c := range cases {
+		if got := fileURL(c.in); got != c.want {
+			t.Errorf("fileURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
 }

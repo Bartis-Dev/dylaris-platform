@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -139,5 +140,26 @@ func TestInjectWailsRuntimeNonce(t *testing.T) {
 	}
 	if !strings.Contains(out2, wailsRuntimeInjection) {
 		t.Errorf("fallback tags changed from wailsRuntimeInjection: %q", out2)
+	}
+}
+
+// TestRenderPanelUnreachableEscapesTheTransportError is the guard for markup in
+// a transport error. The error text is not ours - Go's HTTP/2 transport renders
+// a GOAWAY frame's server-chosen debug data verbatim into GoAwayError.Error() -
+// and this page is served on the wails:// origin where window.go is bound. A
+// Panel that can pick its own GOAWAY debug string must not be able to put a
+// script tag on that origin through the "can't reach the Panel" page.
+func TestRenderPanelUnreachableEscapesTheTransportError(t *testing.T) {
+	page := renderPanelUnreachable(errors.New(`dial failed: <script>window.go.main.App.RevealInExplorer()</script>`))
+
+	if strings.Contains(page, "<script>window.go") {
+		t.Fatal("the transport error reached the page as live markup")
+	}
+	if !strings.Contains(page, "&lt;script&gt;") {
+		t.Fatalf("expected the error to be escaped into the page, got:\n%s", page)
+	}
+	// The real text still has to be readable - escaping must not swallow it.
+	if !strings.Contains(page, "dial failed:") {
+		t.Error("the error message itself was lost")
 	}
 }

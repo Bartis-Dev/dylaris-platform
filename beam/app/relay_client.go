@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "dylaris-proto/beam"
@@ -480,8 +481,25 @@ func (s *UploadSession) Cancel() {
 
 // ─── Streaming Downloads ──────────────────────────────────────────────
 
+// beamDownloadIdleTimeout bounds how long a download may go with NO bytes
+// before the client gives up. Activity resets it, so only a transfer that has
+// stopped making progress is torn down.
+//
+// It replaces a fixed 10-minute deadline on the whole transfer. Nothing else on
+// this path caps a transfer by the clock: UploadStart deliberately builds a
+// plain context.WithCancel because "uploads can be arbitrarily large", and the
+// Core REST download fallback deliberately uses a client with no timeout
+// because "large files can take a while". Only the beam path had the cap - the
+// path built FOR multi-GB transfers, and the one an admin can bandwidth-cap via
+// the relay throttle, where 600 seconds times the cap is the largest file that
+// can ever arrive. Past that the download died at the same byte every attempt,
+// and writeChunksToFile restarts from zero, so retrying could not get through
+// it. Mirrors the relay's own beamSpliceIdleTimeout, which bounds the same
+// session from the other end on the same principle.
+const beamDownloadIdleTimeout = 5 * time.Minute
+
 func (c *BeamNodeClient) DownloadFile(path string, isDir bool, savePath string, onProgress func(loaded, total int64)) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Directory downloads are server-zipped — already compressed by the time
@@ -495,11 +513,11 @@ func (c *BeamNodeClient) DownloadFile(path string, isDir bool, savePath string, 
 	if err != nil {
 		return err
 	}
-	return writeChunksToFile(stream, savePath, onProgress)
+	return writeChunksToFile(cancel, beamDownloadIdleTimeout, stream, savePath, onProgress)
 }
 
 func (c *BeamNodeClient) SelectiveDownload(basePath string, selected []string, selectAll bool, savePath string, onProgress func(loaded, total int64)) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Selective downloads always produce a zip on the server side — no point
@@ -512,7 +530,7 @@ func (c *BeamNodeClient) SelectiveDownload(basePath string, selected []string, s
 	if err != nil {
 		return err
 	}
-	return writeChunksToFile(stream, savePath, onProgress)
+	return writeChunksToFile(cancel, beamDownloadIdleTimeout, stream, savePath, onProgress)
 }
 
 // chunkStream is satisfied by both DownloadFile and DownloadSelective streams.
@@ -520,7 +538,12 @@ type chunkStream interface {
 	Recv() (*pb.BeamChunk, error)
 }
 
-func writeChunksToFile(stream chunkStream, savePath string, onProgress func(loaded, total int64)) error {
+// writeChunksToFile drains a download stream to savePath, cancelling the call
+// via cancel when no chunk has arrived for idle. The caller owns the context
+// and passes its cancel func here so the watchdog can end the RPC; see
+// beamDownloadIdleTimeout for why the bound is on idleness and not on the
+// transfer's total duration.
+func writeChunksToFile(cancel context.CancelFunc, idle time.Duration, stream chunkStream, savePath string, onProgress func(loaded, total int64)) error {
 	// Ensure target directory exists
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
@@ -532,6 +555,31 @@ func writeChunksToFile(stream chunkStream, savePath string, onProgress func(load
 	}
 	defer f.Close()
 
+	// Idle watchdog. stalled distinguishes "we gave up" from a real stream
+	// error, because the cancel surfaces on Recv as an opaque context error
+	// that reads like a network fault.
+	var lastChunk atomic.Int64
+	var stalled atomic.Bool
+	lastChunk.Store(time.Now().UnixNano())
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	go func() {
+		t := time.NewTicker(idle / 2)
+		defer t.Stop()
+		for {
+			select {
+			case <-watchdogDone:
+				return
+			case <-t.C:
+				if time.Since(time.Unix(0, lastChunk.Load())) > idle {
+					stalled.Store(true)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
 	var totalSize int64
 	var loaded int64
 
@@ -541,8 +589,12 @@ func writeChunksToFile(stream chunkStream, savePath string, onProgress func(load
 			break
 		}
 		if err != nil {
+			if stalled.Load() {
+				return fmt.Errorf("download stalled: no data received for %s", idle)
+			}
 			return err
 		}
+		lastChunk.Store(time.Now().UnixNano())
 		if len(chunk.Data) > 0 {
 			if _, err := f.Write(chunk.Data); err != nil {
 				return err
