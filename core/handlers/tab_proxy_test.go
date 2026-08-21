@@ -203,6 +203,39 @@ func TestSanitizeProxyPath(t *testing.T) {
 	}
 }
 
+// What the table above actually protects is not a string shape, it is where the
+// node's "http://"+addr+path ends up pointing. Assert that directly, built the
+// way the node builds it, so a future rewrite of sanitizeProxyPath is measured
+// against the outcome instead of against its own expectations.
+//
+// The case that makes this necessary is "@evil.com/x": net/url reads
+// "http://10.0.0.5:8080@evil.com/x" as host evil.com with the container address
+// demoted to userinfo, so a path reaching the node without a leading "/" walks
+// straight past the node's private-IP guard and turns the tab proxy into an
+// SSRF pivot onto the node's network.
+func TestSanitizedPathCannotRetargetTheNodesOutboundHost(t *testing.T) {
+	const container = "10.0.0.5:8080"
+	for _, raw := range []string{
+		"@evil.com/x",
+		"@evil.com/x?a=1",
+		"@evil.com:9/x",
+		"//evil.com/x",
+		"/@evil.com/x",
+		"evil.com",
+		"",
+	} {
+		req, err := http.NewRequest(http.MethodGet, "http://"+container+sanitizeProxyPath(raw), nil)
+		if err != nil {
+			t.Errorf("%q: the node's URL build failed outright: %v", raw, err)
+			continue
+		}
+		if req.URL.Host != container {
+			t.Errorf("%q: the node would dial %q instead of %q, past its private-IP guard",
+				raw, req.URL.Host, container)
+		}
+	}
+}
+
 // --- Cookie-only auth (WS5 Task 8 fast-follow): MintProxyAuth + InDashboard ---
 
 // tabProxyFakeStore embeds store.Store (nil) so it satisfies the full

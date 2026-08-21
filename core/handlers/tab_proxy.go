@@ -538,12 +538,19 @@ func singleJoin(base, sub string) string {
 
 // sanitizeProxyPath hardens the origin-form path (+ query) Core forwards to
 // the node in HttpProxyReq.Path (security invariant #2, carried forward from
-// earlier task reviews). The node currently builds the outbound URL by plain
-// string concatenation ("http://"+addr+path, see node/grpc_tabproxy.go),
-// which already keeps the host fixed regardless of what's in path - but this
-// is the last point Core controls before the value crosses the mesh
-// boundary, so it is normalized defensively rather than trusted to stay safe
-// under some future node-side refactor:
+// earlier task reviews).
+//
+// This is load-bearing, not defence in depth. The node builds the outbound URL
+// by plain string concatenation ("http://"+addr+path, see
+// node/grpc_tabproxy.go), and concatenation does NOT keep the host fixed the
+// way this comment used to claim: net/url reads "http://10.0.0.5:8080@evil.com/x"
+// as host evil.com with the container address demoted to USERINFO. Guaranteeing
+// the leading "/" below is what makes the concatenation safe, so the node's
+// private-IP guard (resolveMCAddr) is never simply bypassed. Verified against
+// http.NewRequest, which returns host="evil.com" for exactly that input.
+//
+// Three rules, applied to the JOINED path so the client-controlled {rest:.*}
+// capture is covered as well as the DB-stored target_path:
 //   - strips raw control characters (CR/LF, etc.) that could otherwise enable
 //     request-line/header injection when concatenated into a raw URL string.
 //   - collapses a leading run of slashes to exactly one, so a value like

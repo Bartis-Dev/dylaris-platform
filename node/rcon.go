@@ -37,7 +37,25 @@ const (
 	// packet's full timeout is for. Too long and every command pays it; too
 	// short and a split reply gets truncated.
 	rconIdleGap = 250 * time.Millisecond
+	// rconMaxOutputLen caps the ASSEMBLED reply. rconMaxBodyLen only bounds one
+	// packet, and the loop below appends every packet it receives, so on its own
+	// it bounds nothing.
+	//
+	// The reply crosses to Core as ONE NodeMessage, and Core's gRPC server caps
+	// a received message at 128KB (core/grpc/server.go). Going over does not
+	// fail just that message: RecvMsg returns ResourceExhausted, the NodeConnect
+	// handler returns, and the whole bidi stream goes with it - every in-flight
+	// file transfer, console attach and tab-proxy bridge on that node.
+	//
+	// 64KB leaves room for the envelope and is far past any real command reply
+	// (a 500-player /list is under 10KB).
+	rconMaxOutputLen = 64 * 1024
 )
+
+// rconTruncatedNote is appended in place of the bytes that were dropped. A
+// silent cut would read as a short answer from the server, which for something
+// like a player list is worse than no answer.
+const rconTruncatedNote = "\n[output truncated: the server's reply exceeded the 64KB limit]"
 
 // execRcon dials addr, auths, runs cmd, returns the server's reply.
 //
@@ -103,14 +121,28 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 	// caller's full timeout, and every packet after it a short one, so a reply
 	// split across packets is still assembled while a single-packet reply does
 	// not cost the whole timeout.
+	//
+	// Both bounds below exist because what answers on the RCON port is inside
+	// the tenant's own container - they pick the port (rcon.port in
+	// server.properties) and they pick what listens on it.
+	//
+	// hardDeadline bounds the whole exchange. The per-packet SetReadDeadline
+	// calls OVERRIDE the connection deadline set after the dial, so without it a
+	// peer sending one packet every rconIdleGap keeps this goroutine, and the
+	// buffer it is filling, alive indefinitely.
+	hardDeadline := time.Now().Add(timeout)
 	var out strings.Builder
 	got := false
+	truncated := false
 	for {
+		deadline := time.Now().Add(timeout)
 		if got {
-			_ = conn.SetReadDeadline(time.Now().Add(rconIdleGap))
-		} else {
-			_ = conn.SetReadDeadline(time.Now().Add(timeout))
+			deadline = time.Now().Add(rconIdleGap)
 		}
+		if deadline.After(hardDeadline) {
+			deadline = hardDeadline
+		}
+		_ = conn.SetReadDeadline(deadline)
 		rid, rtyp, body, err := readRconPacket(conn)
 		if err != nil {
 			// Once something arrived, a read timeout is the end of the reply,
@@ -125,8 +157,20 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 		}
 		got = true
 		out.WriteString(body)
+		if out.Len() >= rconMaxOutputLen {
+			truncated = true
+			break
+		}
 	}
-	return strings.TrimRight(out.String(), "\x00 \r\n"), nil
+	// Stopping mid-stream can cut a multi-byte rune in half, and the bytes were
+	// the tenant's to choose regardless. Output is a proto3 string field, which
+	// must be valid UTF-8 or the marshal fails - and a marshal failure on this
+	// message is a failure of the stream carrying it.
+	res := strings.ToValidUTF8(strings.TrimRight(out.String(), "\x00 \r\n"), "")
+	if truncated {
+		res += rconTruncatedNote
+	}
+	return res, nil
 }
 
 func writeRconPacket(w io.Writer, id int32, typ int32, body string) error {
