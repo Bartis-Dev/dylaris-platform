@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,39 @@ func TestLanCandidates(t *testing.T) {
 		got := lanCandidates("", nil)
 		if len(got) != 0 {
 			t.Fatalf("got %v, want empty", got)
+		}
+	})
+
+	// The list is the SOURCE node's self-report: it goes into that node's own
+	// discovery heartbeat, Core stores it verbatim and hands it to this node,
+	// and chooseMigrationHost then sends the pull token to every entry. Anything
+	// that is not an address the source could honestly own must not be probed.
+	t.Run("only private IPv4 addresses are probed", func(t *testing.T) {
+		got := lanCandidates("10.0.0.1:9999", []string{
+			"127.0.0.1",       // this node's own loopback
+			"169.254.169.254", // cloud metadata
+			"8.8.8.8",         // arbitrary public host
+			"::1",             // IPv6 loopback
+			"evil.example.com",
+			"10.0.0.2:1", // an address with a port glued on
+			"",
+			"192.168.1.5", // the one honest entry
+		})
+		want := []string{"192.168.1.5:9999"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	})
+
+	t.Run("the candidate list is capped", func(t *testing.T) {
+		var many []string
+		for i := range 60 {
+			many = append(many, fmt.Sprintf("10.1.%d.%d", i/256, i%256))
+		}
+		got := lanCandidates("10.0.0.1:9999", many)
+		if len(got) != maxLANCandidates {
+			t.Fatalf("got %d candidates, want the cap of %d - each one costs a %s probe before the R2 fallback",
+				len(got), maxLANCandidates, migrationProbeTimeout)
 		}
 	})
 }

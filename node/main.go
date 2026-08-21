@@ -249,7 +249,7 @@ func main() {
 		} else {
 			log.Printf("redisacl: Redis ping failed, re-confirming ACL with Core: %v", err)
 		}
-		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
+		if s, berr := bootstrapSecretViaGRPC(ctx, false); berr == nil && len(s) == 32 {
 			// setNodeSecret restarts the agent (log.Fatal) if this differs from
 			// the secret we just tried against Redis - a genuine rotation, not
 			// just Valkey having lost the aclfile. The rebuild below only runs
@@ -897,18 +897,36 @@ func privateIPv4s() []string {
 	}
 	for _, addr := range addrs {
 		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() {
+		if !ok {
 			continue
 		}
-		ip := ipNet.IP.To4()
-		if ip == nil {
-			continue
-		}
-		if ip[0] == 10 || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) || (ip[0] == 192 && ip[1] == 168) {
-			ips = append(ips, ip.String())
+		if isRFC1918(ipNet.IP) {
+			ips = append(ips, ipNet.IP.To4().String())
 		}
 	}
 	return ips
+}
+
+// isRFC1918 reports whether ip is a non-loopback IPv4 address in 10/8,
+// 172.16/12 or 192.168/16 - the exact rule privateIPv4s publishes by.
+//
+// It is a named predicate rather than an inline condition because the list it
+// produces travels: the heartbeat writes it, Core stores it verbatim
+// (services/discovery.go SetNodeIPs) and hands it to a PEER node, which then
+// sends an authenticated probe to every entry. The producing side had the rule
+// and the consuming side had none, so whatever a node put in its own discovery
+// key is where another node's request went. Same rule, both ends.
+func isRFC1918(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() {
+		return false
+	}
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 10 ||
+		(v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31) ||
+		(v4[0] == 192 && v4[1] == 168)
 }
 
 func getPrivateIPs() []string {

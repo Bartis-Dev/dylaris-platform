@@ -139,7 +139,9 @@ func ensureNodeSecret(ctx context.Context) []byte {
 	// whose Core is briefly away has to come back on its own.
 	var bo retry.Backoff
 	for {
-		s, err := bootstrapSecretViaGRPC(ctx)
+		// The one caller allowed to adopt a server-assigned identity: nothing
+		// else is running yet, and re-pairing is what this function is for.
+		s, err := bootstrapSecretViaGRPC(ctx, true)
 		if err == nil && len(s) == 32 {
 			setNodeSecret(s, true) // first install (nodeSecret was nil until now), never restarts
 			log.Println("redisacl: obtained node secret via gRPC bootstrap")
@@ -160,7 +162,40 @@ func ensureNodeSecret(ctx context.Context) []byte {
 // and we return the cached secret; without one it sends the enroll token and Core
 // mints + returns a fresh secret. Always contacts Core (used for first boot AND
 // for re-confirm after a Redis auth failure).
-func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
+// allowIdentityChange is passed true by exactly one caller, ensureNodeSecret,
+// and false by the two that run later.
+//
+// Two reasons, and either alone is enough. Adopting a server-assigned identity
+// writes the package-level nodeID, which by then is being read by the
+// heartbeat, the SFTP listener, the beam server, the stats collector and the
+// gRPC mesh - a plain string written under no lock while ten goroutines read
+// it. And a paired node quietly re-pairing under a NEW identity in the
+// background is the exact thing ensureNodeSecret's hard guard exists to
+// prevent: it orphans the old node row and its three scoped Redis ACL users,
+// and every server assigned to the old id is suddenly on a node that no longer
+// exists. That path is reachable from the watchdog whenever the startup
+// persist failed, since saveNodeSecret only WARNs.
+//
+// Refusing loses nothing: re-pairing is a startup operation, and a restart goes
+// through ensureNodeSecret, which demands a recovery or enroll token first.
+// identityChange decides what to do with the identity Core returned. adopt is
+// true only when Core named a DIFFERENT id and the caller is allowed to take
+// it; an id that matches, or an empty one, is simply nothing to do.
+func identityChange(assignedID, currentID string, allow bool) (adopt bool, err error) {
+	if assignedID == "" || assignedID == currentID {
+		return false, nil
+	}
+	if !allow {
+		return false, fmt.Errorf(
+			"Core assigned identity %s but this node is already running as %s; "+
+				"refusing to change identity outside startup. Restart the node with "+
+				"NODE_RECOVERY_TOKEN to re-pair under its existing identity",
+			assignedID, currentID)
+	}
+	return true, nil
+}
+
+func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]byte, error) {
 	if coreGRPCAddr == "" {
 		return nil, fmt.Errorf("CORE_GRPC_ADDR not set")
 	}
@@ -208,7 +243,11 @@ func bootstrapSecretViaGRPC(ctx context.Context) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("auth rejected: %s", msg)
 	}
-	if res.AssignedId != "" && res.AssignedId != nodeID {
+	adopt, ierr := identityChange(res.AssignedId, nodeID, allowIdentityChange)
+	if ierr != nil {
+		return nil, ierr
+	}
+	if adopt {
 		// Distinguish the two cases this branch covers. They look identical in a
 		// log and mean opposite things: a first pairing is routine, while
 		// REPLACING an identity the node already held means the old node row and
@@ -295,7 +334,7 @@ func redisACLWatchdog(ctx context.Context, rdb *redis.Client) {
 		if consecutive < failsToAct {
 			continue
 		}
-		if s, berr := bootstrapSecretViaGRPC(ctx); berr == nil && len(s) == 32 {
+		if s, berr := bootstrapSecretViaGRPC(ctx, false); berr == nil && len(s) == 32 {
 			// setNodeSecret applies the change-detection + restart rule itself
 			// (log.Fatal if this differs from the currently loaded secret), so
 			// the lines below only run when the secret is unchanged (Core just

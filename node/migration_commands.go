@@ -281,6 +281,17 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 // over the LAN or falls back to R2, never hairpins the warp overlay. The LAN IPs
 // reuse the overlay endpoint's port (the migration server listens on all
 // interfaces on a single port).
+// It filters: the list is the SOURCE node's self-report. It travels from that
+// node's own discovery heartbeat through Core, which stores it verbatim, into
+// this command - and chooseMigrationHost then sends the pull token to every
+// entry. Unfiltered, a node could name this node's loopback, a metadata
+// endpoint, or any host at all and have a peer probe it with a credential
+// attached. isRFC1918 is the same rule privateIPv4s publishes by, so an honest
+// node loses nothing.
+//
+// maxLANCandidates bounds the other half of the same input: each probe costs up
+// to migrationProbeTimeout, sequentially, before the R2 fallback is even
+// considered, so a long list is a stall on every move to this node.
 func lanCandidates(overlayEndpoint string, privateIPs []string) []string {
 	port := "25522"
 	if _, p, err := net.SplitHostPort(overlayEndpoint); err == nil && p != "" {
@@ -289,14 +300,26 @@ func lanCandidates(overlayEndpoint string, privateIPs []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, ip := range privateIPs {
-		hp := net.JoinHostPort(ip, port)
-		if !seen[hp] {
-			seen[hp] = true
-			out = append(out, hp)
+		if !isRFC1918(net.ParseIP(strings.TrimSpace(ip))) {
+			log.Printf("migrate_in: ignoring source LAN candidate %q, not a private IPv4 address", ip)
+			continue
+		}
+		hp := net.JoinHostPort(strings.TrimSpace(ip), port)
+		if seen[hp] {
+			continue
+		}
+		seen[hp] = true
+		out = append(out, hp)
+		if len(out) == maxLANCandidates {
+			break
 		}
 	}
 	return out
 }
+
+// maxLANCandidates caps how many of the source's advertised LAN addresses are
+// probed. A real machine has a handful of interfaces.
+const maxLANCandidates = 8
 
 // chooseMigrationHost probes each candidate with a short HEAD request (bearer
 // token) and returns the first that answers 200. Empty when none responded
