@@ -22,6 +22,7 @@ import (
 	agent "dylaris-agent"
 	"dylaris-pkg/queue"
 	"dylaris-pkg/retry"
+	"dylaris-pkg/validate"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/joho/godotenv"
@@ -969,6 +970,20 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 // consumer; returning normally lets the queue ACK the message. Handler errors
 // are logged (preserving the previous behaviour) rather than surfaced, since
 // redelivery is driven by crash-before-return, not per-command logical failure.
+// commandIdentifierProblem reports why a queued command's identifiers are unfit
+// to be used as directory names, or "" when they are fine. An empty sub-server
+// name is legal: setup and reinstall default it to "server" themselves, and
+// filepath.Join skips an empty element.
+func commandIdentifierProblem(uuid, subServer string) string {
+	if !validate.IsServerUUID(uuid) {
+		return fmt.Sprintf("server id %q is not a valid identifier", uuid)
+	}
+	if subServer != "" && !validate.IsSubServerName(subServer) {
+		return fmt.Sprintf("sub-server name %q is not a plain directory name", subServer)
+	}
+	return ""
+}
+
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
@@ -993,6 +1008,30 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	// Apply node-level default cpuset if not set by core
 	if cmd.Config.Docker.CpusetCpus == "" && defaultCpusetCpus != "" {
 		cmd.Config.Docker.CpusetCpus = defaultCpusetCpus
+	}
+
+	// Every action below is per-server, and both of these fields become a
+	// DIRECTORY NAME: storage.GetServerDir joins the UUID onto a storage path,
+	// and four branches (setup, switch_server, delete_sub_server, reinstall)
+	// join the sub-server name onto that. filepath.Join CLEANS rather than
+	// confines, so a ".." in either walks out of the server root - and
+	// delete_sub_server ends in os.RemoveAll, reinstall in CleanServerJars.
+	//
+	// Core validates both on every dispatch path today, so this is the second
+	// lock rather than the only one. It belongs here anyway: install_mod.go
+	// already re-checks the same fields for the same reason ("a stale queued
+	// payload is technically a stale trust boundary"), and the shared rules say
+	// so themselves - validate.SubServerName's comment is "it names a directory
+	// on the node, so it must never carry path metacharacters". Two commands
+	// took a guard the node had already written and the other nineteen did not.
+	//
+	// Placed here rather than at the top of the function: the mode refresh above
+	// is node-level and must happen on every pulled command, malformed ones
+	// included. Placed here rather than in the branches: one check covers every
+	// action, including the ones added after this comment.
+	if problem := commandIdentifierProblem(cmd.Config.UUID, cmd.Config.ActiveSubServer); problem != "" {
+		log.Printf("%s: refusing this command, %s", cmd.Action, problem)
+		return
 	}
 
 	switch cmd.Action {
