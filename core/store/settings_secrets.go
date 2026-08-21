@@ -20,6 +20,32 @@ var settingsSecretKeys = map[string]bool{
 	"dns.api_token": true,
 }
 
+// smtpPasswordSuffix identifies the SMTP credential settings, whose key is
+// built per purpose ("smtp." + purpose + ".password", handlers/auth_settings.go)
+// and so cannot be a fixed map entry.
+const smtpPasswordSuffix = ".password"
+const smtpSettingPrefix = "smtp."
+
+// isSecretSettingKey reports whether a settings key holds a credential that
+// must be encrypted at rest.
+//
+// The SMTP password was the one credential in this table stored in the clear.
+// It is written through the same SetSettingBy that encodes everything else, so
+// only its absence from the list decided that - and it belongs by the same
+// argument the DNS token above carries: a mail credential lets whoever reads a
+// DB dump send as the operator's domain, which is the reset-email domain. The
+// UI already treats it write-only (GetSMTPConfig returns only passwordSet), so
+// the clear-text copy in the settings table was the only place it was readable.
+//
+// Matched by shape rather than by exact key because the key is parameterised by
+// purpose; the prefix keeps that from also catching an unrelated ".password".
+func isSecretSettingKey(key string) bool {
+	if settingsSecretKeys[key] {
+		return true
+	}
+	return strings.HasPrefix(key, smtpSettingPrefix) && strings.HasSuffix(key, smtpPasswordSuffix)
+}
+
 // settingsEncMarker prefixes an encrypted value so a read can tell it apart from
 // a legacy plaintext value written before encryption existed. Migration is
 // therefore lazy and lossless: an old plaintext secret reads through unchanged
@@ -44,7 +70,7 @@ func (s *PostgresStore) SetSettingsEncryptionKey(clusterSecret string) {
 // fails closed: an encryption error is returned rather than persisting the
 // plaintext, which would be the exact leak this exists to prevent.
 func (s *PostgresStore) encodeSettingValue(key, value string) (string, error) {
-	if value == "" || s.settingsSecretKey == nil || !settingsSecretKeys[key] {
+	if value == "" || s.settingsSecretKey == nil || !isSecretSettingKey(key) {
 		return value, nil
 	}
 	enc, err := crypto.Encrypt(s.settingsSecretKey, []byte(value))
@@ -59,7 +85,7 @@ func (s *PostgresStore) encodeSettingValue(key, value string) (string, error) {
 // value with no key configured, or one that fails to decrypt, returns "" - a
 // provider build then fails cleanly instead of using ciphertext as a secret.
 func (s *PostgresStore) decodeSettingValue(key, value string) string {
-	if !settingsSecretKeys[key] || !strings.HasPrefix(value, settingsEncMarker) {
+	if !isSecretSettingKey(key) || !strings.HasPrefix(value, settingsEncMarker) {
 		return value
 	}
 	if s.settingsSecretKey == nil {

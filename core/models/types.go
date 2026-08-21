@@ -6,9 +6,18 @@ import (
 )
 
 type User struct {
-	ID                string    `json:"id"`
-	Username          string    `json:"username"`
-	Password          string    `json:"password,omitempty"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	// Password is the bcrypt hash. json:"-" like the two 2FA fields below it,
+	// rather than "password,omitempty": every read path populates it
+	// (userSelectCols selects the column), so `omitempty` only helped when a
+	// call site remembered to blank it first. Exactly two did, and safety that
+	// depends on each future call site remembering is not safety - an offline
+	// cracking target is the wrong thing to leave one forgotten assignment away
+	// from a response body. Nothing decodes a User from JSON (the create/update
+	// wire types are separate structs on purpose), so nothing needs it to
+	// round-trip.
+	Password          string    `json:"-"`
 	Email             string    `json:"email"`
 	MinecraftUsername string    `json:"minecraftUsername"`
 	IsAdmin           bool      `json:"isAdmin"`
