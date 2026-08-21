@@ -316,7 +316,17 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		}
 		archive := nodeLocalArchiveName(key)
 		full := filepath.Join(dir, archive)
-		f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		// The write side of the same problem archiveInfo describes: this
+		// directory is inside the tenant's own bind mount, so O_CREATE|O_TRUNC
+		// would follow a symlink planted under the name the next run is about to
+		// use and write the archive through it. Remove first (that unlinks a
+		// link, it does not follow one) and then insist on creating the file
+		// ourselves - O_EXCL fails on anything that reappeared in between, so
+		// the race ends in a failed backup rather than a write somewhere else.
+		if rerr := os.Remove(full); rerr != nil && !os.IsNotExist(rerr) {
+			return fmt.Errorf("clear previous archive: %w", rerr)
+		}
+		f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			return err
 		}

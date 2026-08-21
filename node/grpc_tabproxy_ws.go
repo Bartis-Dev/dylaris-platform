@@ -180,6 +180,14 @@ func (m *MeshManager) dialWSBridge(cc *coreConnection, reqID, serverUUID string,
 		hdr.Add(kv.Key, kv.Value)
 	}
 
+	// Same guard as the HTTP path: this URL is built by concatenation too, so a
+	// path that is not origin-form re-targets the dial. See safeProxyPath.
+	if !safeProxyPath(open.Path) {
+		cc.send(errorMsg(reqID, 502, "invalid proxy path"))
+		m.closeWSBridge(reqID)
+		return
+	}
+
 	// The dialer takes a candidate list, but policy says there is exactly one
 	// legitimate target: the server's own container. See containerAddr.
 	addr, err := wsResolveContainer(serverUUID, int(open.TargetPort))

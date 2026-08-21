@@ -58,6 +58,30 @@ func (h *StreamHandler) resolveBackupKey(serverUUID, key string) (string, error)
 	return filepath.Join(dir, key), nil
 }
 
+// archiveInfo Lstats a node-local archive and refuses anything that is not a
+// plain file.
+//
+// .dylaris-backups sits INSIDE the server directory, and that directory is
+// bind-mounted into the tenant's own Minecraft container at /data. The file API
+// refuses to write through a ".dylaris-" path, but a plugin running in that
+// container does not go through the file API: "ln -s /whatever
+// /data/.dylaris-backups/x" is one line. Every function here then followed it,
+// because Stat and Open both do - so the archive download RPC would read the
+// link's target and stream it out through the panel's own download button, with
+// the node's process credentials. The node writes these archives itself and
+// never as a link, so a link is never something to resolve carefully; it is
+// something that has no business being here.
+func archiveInfo(path string) (os.FileInfo, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a backup archive")
+	}
+	return fi, nil
+}
+
 // handleBackupList walks .dylaris-backups/ and returns one BackupObject
 // per archive. Empty when the directory doesn't exist or is empty.
 func (h *StreamHandler) handleBackupList(reqID, serverUUID string) *pb.NodeMessage {
@@ -79,11 +103,10 @@ func (h *StreamHandler) handleBackupList(reqID, serverUUID string) *pb.NodeMessa
 	}
 	objs := make([]*pb.BackupObject, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
+		// Info() is Lstat-based, so a planted symlink shows as one here and is
+		// dropped rather than listed as a downloadable archive. See archiveInfo.
 		info, err := e.Info()
-		if err != nil {
+		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		objs = append(objs, &pb.BackupObject{
@@ -136,11 +159,8 @@ func (h *StreamHandler) handleBackupUsage(reqID, serverUUID string) *pb.NodeMess
 	var total int64
 	var count int32
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
 		info, err := e.Info()
-		if err != nil {
+		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		total += info.Size()
@@ -167,13 +187,8 @@ func (h *StreamHandler) streamBackupArchive(reqID, serverUUID string, req *pb.Ba
 		sendFn(errorMsg(reqID, 400, err.Error()))
 		return
 	}
-	stat, err := os.Stat(path)
-	if err != nil {
+	if _, err := archiveInfo(path); err != nil {
 		sendFn(errorMsg(reqID, 404, "backup not found"))
-		return
-	}
-	if stat.IsDir() {
-		sendFn(errorMsg(reqID, 400, "backup key is a directory"))
 		return
 	}
 

@@ -66,6 +66,26 @@ func containerAddr(serverUUID string, port int) (string, error) {
 	return resolveMCAddr(serverUUID, port)
 }
 
+// safeProxyPath reports whether a path may be concatenated onto
+// "http://<addr>" / "ws://<addr>" without moving the target somewhere else.
+//
+// Both proxy paths build their URL by string concatenation, and without a
+// leading slash that is not a path at all: "http://" + "10.0.0.5:8080" +
+// "@evil.com/x" parses with 10.0.0.5:8080 as USERINFO and evil.com as the host,
+// which is precisely the "never an arbitrary host, no SSRF pivot" property the
+// header of this file claims. A leading "//" is harmless by comparison - the
+// authority still ends at the first slash - but nothing legitimate sends one,
+// and it is the other half of the pair Core's sanitizeProxyPath names.
+//
+// Core does sanitize (handlers/tab_proxy.go, security invariant #2). This is
+// deliberately not a second copy of that: Core and the node are separately
+// deployed and separately versioned, and this is the side that holds the
+// network position. A guard whose only enforcement lives in the other component
+// is a guard the file cannot claim for itself.
+func safeProxyPath(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//")
+}
+
 // nodeStripHopByHop returns the subset of headers that are safe to forward.
 func nodeStripHopByHop(hs []*pb.HttpHeader) []*pb.HttpHeader {
 	out := make([]*pb.HttpHeader, 0, len(hs))
@@ -94,6 +114,10 @@ func headersToProto(h http.Header) []*pb.HttpHeader {
 func (h *StreamHandler) handleHTTPProxy(reqID, serverUUID string, req *pb.HttpProxyReq, send func(*pb.NodeMessage) error) {
 	if req == nil || req.TargetPort < 1 || req.TargetPort > 65535 {
 		send(errorMsg(reqID, 502, "invalid proxy target"))
+		return
+	}
+	if !safeProxyPath(req.Path) {
+		send(errorMsg(reqID, 502, "invalid proxy path"))
 		return
 	}
 	method := req.Method
