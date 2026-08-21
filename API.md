@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **461 routes** in 50 sections: 203 GET, 133 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
-- **37** accept no credential at all; read the Gates column before assuming any of them is open.
-- **313** declare a capability at the route and **18** enforce authorization inside the handler. Of the rest, **88** need a credential but no capability, **37** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **460 routes** in 49 sections: 202 GET, 132 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
+- **36** accept no credential at all; read the Gates column before assuming any of them is open.
+- **313** declare a capability at the route and **18** enforce authorization inside the handler. Of the rest, **88** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -161,7 +161,6 @@ can still show what exists.
 - [/api/me](#apime) (19)
 - [/api/modrinth](#apimodrinth) (5)
 - [/api/modules](#apimodules) (6)
-- [/api/node](#apinode) (1)
 - [/api/nodes](#apinodes) (17)
 - [/api/notifications](#apinotifications) (4)
 - [/api/packs](#apipacks) (27)
@@ -512,12 +511,6 @@ can still show what exists.
 | PATCH | `/api/modules/{id:[0-9]+}/position` | session | `settings.write` | - | `ModuleHandler.UpdateModulePositionHandler` | RequireCap( "settings.write") at the route (Phase 4 Task 19). |
 | PATCH | `/api/modules/{id:[0-9]+}/role` | session | `settings.write` | - | `ModuleHandler.SetModuleAccessRoleHandler` | RequireCap("settings.write") at the route (Phase 4 Task 19). |
 | PATCH | `/api/modules/{id:[0-9]+}/toggle` | session | `settings.write` | - | `ModuleHandler.ToggleModuleHandler` | for enabling/disabling modules - RequireCap("settings.write") at the route (Phase 4 Task 19). |
-
-## /api/node
-
-| Method | Path | Auth | Capability | Gates | Handler | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| GET, POST | `/api/node/connect` | **none** | _public_ | - | `NodeGRPCHandler.NodeConnectHandler` | (Legacy / Status Check) Since the Node now uses Redis, this endpoint is optional. |
 
 ## /api/nodes
 

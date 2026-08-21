@@ -361,3 +361,59 @@ func TestGatewayBandwidthStatsTable(t *testing.T) {
 		t.Fatalf("row count = %d, want 1", n)
 	}
 }
+
+// A BYON node is a tenant's own machine, paired through a single-use enroll
+// token. NodeCleanupService sweeps offline server-less nodes every 5 minutes
+// with a 24h cutoff, and that sweep used to include owned nodes - so a customer
+// who registered a node and then did not create a server for a day (a laptop, a
+// home box off over a weekend) lost the pairing. Not just the row: the node's
+// scoped Redis ACL users are pruned with it, and on the next boot the node still
+// holds its cached .node_secret, so the "paired node with no cached secret"
+// guard in redisacl_bootstrap never fires. It reconnects under an identity Core
+// has forgotten and loops on a rejected handshake, with no BYON route back in.
+//
+// Against a real Postgres rather than sqlmock, because the whole change is one
+// SQL predicate and NULL semantics are exactly what a query-text assertion
+// cannot check: nodes.owner_id is nullable, and the sweep's own
+// "id NOT IN (SELECT node_id FROM servers)" sits one nullable column away from
+// matching nothing at all.
+func TestIntegrationStaleNodeSweepSparesBYONNodes(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st) // supplies the user that owns the BYON node
+
+	stale := time.Now().Add(-48 * time.Hour)
+
+	mkNode := func(prefix string, owner *string) *models.Node {
+		t.Helper()
+		n := &models.Node{Name: uniqueName(prefix), Address: "127.0.0.1", Token: uniqueName(prefix + "t_"), Status: "offline"}
+		if err := st.CreateNode(n); err != nil {
+			t.Fatalf("CreateNode(%s): %v", prefix, err)
+		}
+		t.Cleanup(func() { st.DeleteNode(n.ID) })
+		if owner != nil {
+			if err := st.SetNodeOwner(n.ID, owner); err != nil {
+				t.Fatalf("SetNodeOwner(%s): %v", prefix, err)
+			}
+		}
+		if _, err := db.Exec(`UPDATE nodes SET status = 'offline', last_seen_at = $1 WHERE id = $2`, stale, n.ID); err != nil {
+			t.Fatalf("age node %s: %v", prefix, err)
+		}
+		return n
+	}
+
+	byon := mkNode("byon_", &f.user.ID)
+	platform := mkNode("plat_", nil)
+
+	if _, err := st.DeleteStaleOfflineNodes(time.Now().Add(-24 * time.Hour)); err != nil {
+		t.Fatalf("DeleteStaleOfflineNodes: %v", err)
+	}
+
+	if got, err := st.GetNodeByID(byon.ID); err != nil || got == nil {
+		t.Errorf("the BYON node was swept: a tenant's pairing must survive being offline (err=%v)", err)
+	}
+	// The operator's own unadopted node is exactly the churn the sweep exists
+	// for, so sparing everything would be the opposite mistake.
+	if got, _ := st.GetNodeByID(platform.ID); got != nil {
+		t.Errorf("the platform node survived the sweep: the cleanup no longer cleans anything up")
+	}
+}

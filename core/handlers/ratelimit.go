@@ -143,6 +143,15 @@ func (l *IPRateLimiter) allow(ip string, perMin int) bool {
 
 // Limit wraps a public handler with a fixed per-minute budget keyed on the
 // client IP, answering 429 + Retry-After when the budget is exhausted.
+//
+// The bucket is keyed by IP ONLY, so every route sharing one IPRateLimiter
+// shares one counter per client and perMin is that route's ceiling on the shared
+// count, not a budget of its own. Callers rely on this in both directions: the
+// auth routes deliberately share an instance so an attacker rotating between
+// them gets one budget, while the solder mirror, share links and beam download
+// each construct their own so an expensive route cannot drain the login budget.
+// Adding a route to an existing limiter therefore changes the effective limit of
+// every other route on it.
 func (l *IPRateLimiter) Limit(perMin int, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)

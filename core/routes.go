@@ -464,7 +464,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyOrigin, cfg.TabProxyIsolationActive)
 	fileHandler := handlers.NewFileHandler(appState)
-	nodeGRPCHandler := handlers.NewNodeGRPCHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState)
 	authzHandler := handlers.NewAuthzHandler()
@@ -617,13 +616,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// now, so concurrency costs a copy buffer rather than a whole pack. This
 	// limiter only bounds egress.
 	//
-	// And it bounds it against honest clients only. clientIP takes the leftmost
-	// X-Forwarded-For value with no trusted-proxy check, so a caller that sets
-	// that header itself gets a fresh bucket per request and never reaches any
-	// ceiling. That is pre-existing and shared with the login and share-link
-	// limiters, so it is not fixed here, but this comment must not read as if
-	// the budget were a real control against a deliberate attacker: it is a
-	// guard against runaway or misconfigured clients.
+	// (This comment used to end by saying the budget was forgeable, because
+	// clientIP took the leftmost X-Forwarded-For value with no trusted-proxy
+	// check. That is no longer true and has not been for some time: clientIP
+	// anchors on RemoteAddr, ignores XFF entirely unless the peer is a
+	// configured trusted proxy, and then walks the header from the RIGHT. Left
+	// standing, the note told a reader that this limiter and the login and
+	// share-link ones were decorative, which is a good way to get one deleted.)
 	mirrorLimiter := handlers.NewIPRateLimiter()
 	solder.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.SolderMirrorRequestsPerMinute, solderHandler.SolderMirror)).Methods("GET")
 
@@ -660,6 +659,21 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// Per-IP rate limiter for public auth endpoints - blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
+	//
+	// ONE instance, shared by every route below that passes it, and that is
+	// load-bearing: IPRateLimiter buckets by client IP alone, NOT by route. So
+	// all of them draw on a single per-IP counter and each per-route number is a
+	// ceiling on that shared count, not an independent budget. An attacker
+	// rotating login -> forgot-password -> validate-reset-token gets one budget
+	// between them, which is the point; the mirror and share limiters above are
+	// separate instances for the opposite reason, so a launcher install cannot
+	// eat the auth budget.
+	//
+	// The consequence to keep in mind before changing a number: raising one
+	// route's limit raises the shared count every other route here measures
+	// against. Splitting them per route (keying the bucket by route+IP) would
+	// make each number mean what it looks like, and would also hand an anonymous
+	// caller the SUM of them, so it is deliberately not done.
 	authLimiter := handlers.NewIPRateLimiter()
 
 	// --- PUBLIC ENDPOINTS ---
@@ -938,7 +952,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// them, and they are RFC1918 addresses that authorize nothing on their own.
 	api.HandleFunc("/warp/deploy-config", authHandler.AuthMiddleware(warpHandler.GetDeployConfig)).Methods("GET")
 
-	api.HandleFunc("/node/connect", nodeGRPCHandler.NodeConnectHandler).Methods("GET", "POST")
+	// GET/POST /node/connect is GONE, along with handlers/node_grpc.go.
+	//
+	// It was a "Legacy / Status Check" WebSocket left over from before the node
+	// moved to Redis + gRPC, and nothing had called it since: the node's own
+	// NodeConnect is the gRPC NodeService method, the panel never referenced it,
+	// nor did the log-shipper or the gateway.
+	//
+	// Dead is only half of why it is removed. It was registered with no
+	// AuthMiddleware and no limiter, took a bare node token, and on a match wrote
+	// nodes.status = online, then offline again when the socket closed. The node
+	// token is not a secret in the way that arrangement needed: models.Node
+	// serializes it as `json:"token"`, so GET /api/nodes hands it to every caller
+	// who can see the node. Its live sibling - the discovery heartbeat - verifies
+	// an HMAC over (token, timestamp) with the per-node secret and logs "bad or
+	// stale signature" on failure, which is the whole point of the pairing-auth
+	// work; this path checked possession of the identifier and nothing else, so a
+	// node's online/offline state could be flipped with no session at all.
+	//
+	// Both allow-lists that carried it (authz.ExemptRoutes and
+	// anonymousUnlimitedRoutes) justified it as "the enroll token / node secret is
+	// the credential". Neither was ever presented to it.
 
 	// --- PROTECTED ENDPOINTS ---
 	// Read-only capability catalog for the permission-system redesign

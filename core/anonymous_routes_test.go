@@ -35,7 +35,12 @@ var anonymousUnlimitedRoutes = map[string]string{
 	"/auth/registration-status":     "one settings read",
 	"/auth/security-questions/pool": "one settings read; the pool is public by design",
 	"/tools/beam":                   "emits a Location header and nothing else",
-	"/node/connect":                 "node bootstrap; the enroll token / node secret is the credential",
+	// "/node/connect" was listed here as "node bootstrap; the enroll token /
+	// node secret is the credential". It checked neither - a bare node token,
+	// which GET /api/nodes publishes, was enough to flip nodes.status. It was
+	// also dead: nothing had called it since the node moved to gRPC. Route and
+	// handler are removed; a justification in a freeze-list is only as good as
+	// the code it describes.
 
 	// The tab proxy is reached only with an unguessable token, which is the
 	// credential. Bounding it per IP would throttle the legitimate embedded

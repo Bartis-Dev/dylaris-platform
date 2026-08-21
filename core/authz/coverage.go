@@ -49,9 +49,10 @@ var ExemptRoutes = map[string]bool{
 
 	"/api/beam/download": true, // beam-relay download redirect, no session
 
-	// Node bootstrap connect: not a user session, the node's own identity
-	// proof (enroll token / secret) is the credential.
-	"/api/node/connect": true,
+	// /api/node/connect used to sit here, exempted as "the node's own identity
+	// proof (enroll token / secret) is the credential". It presented neither: the
+	// handler accepted a bare node token, which GET /api/nodes publishes. Route
+	// and handler are both gone; see the note at its old registration in routes.go.
 
 	// Warp API-key auth (not a user session): the key IS the credential.
 	"/api/warp/enroll":     true,
@@ -187,7 +188,7 @@ var ExemptRoutes = map[string]bool{
 	// authorize nothing without a warp key, needed by exactly the tenants who
 	// mint one on /nodes.
 	"/api/warp/deploy-config": true, // authed; no per-owner data to filter
-	"/api/store/status":            true, // authed; panel-user session
+	"/api/store/status":       true, // authed; panel-user session
 
 	// Versions: read for any authed user (software list itself is PUBLIC above).
 	"/api/versions": true, // authed; version info

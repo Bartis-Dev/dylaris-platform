@@ -869,6 +869,28 @@ func splitProxyBytes(data []byte, max int) [][]byte {
 	return out
 }
 
+// upgrader is the tab proxy's browser-facing WebSocket upgrader. It used to
+// live in handlers/node_grpc.go (the legacy, unauthenticated /node/connect
+// endpoint, now deleted) and was shared with it, which is why its old comment
+// argued about node-to-node connections. This is its only caller.
+//
+// The origin check is what stops cross-site WebSocket hijacking here, and it
+// matters more than it would elsewhere because this endpoint authenticates with
+// a COOKIE (dyl_tabproxy), which a browser attaches to a cross-site WS handshake
+// automatically. A page on another origin gets ITS origin sent and is rejected.
+// The empty case is allowed because a browser always sends Origin on a WS
+// handshake, so "" means a non-browser client - which has no victim cookie to
+// carry. Both schemes are compared because Core is reached over plain http on a
+// LAN or localhost as often as over https behind a proxy, and r.Host is the host
+// the client actually addressed, which on the origin-isolated tab-proxy listener
+// is that port rather than the panel's.
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
+	},
+}
+
 // serveWS upgrades the browser connection and bridges it to the container WS
 // over the mesh: WsOpen, then WsFrame/WsClose in both directions. Application
 // messages are fragmented at coreWSFragmentSize and reassembled on the far side

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"dylaris-core/models"
 	"dylaris-core/store"
 	"encoding/json"
 	"log"
@@ -12,10 +13,10 @@ import (
 
 // SFTPSyncService publishes SFTP auth data and per-node server lists to Redis.
 //
-// Keys written:
+// Keys written (both refreshed every 60s, both with a 5min TTL):
 //
-//	sftp:auth:{username}                     = bcrypt_hash (no TTL)
-//	sftp:node:{nodeName}:user:{username}     = JSON [{uuid,name}] (TTL 5min)
+//	sftp:auth:{username}                      = bcrypt hash of the panel password
+//	sftp:node:{nodeToken}:user:{username}     = JSON [{uuid,name}]
 type SFTPSyncService struct {
 	store store.Store
 	redis *redis.Client
@@ -40,6 +41,30 @@ func (s *SFTPSyncService) Start() {
 type sftpServerEntry struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
+}
+
+// sftpNodeServersKey is the per-node, per-user server list the node's SFTP
+// server reads to resolve which server a virtual path targets.
+//
+// Keyed by the node's TOKEN, never its NAME. Both start out equal - enrollment
+// sets nodes.name and nodes.token to the same Core-minted identity - but only
+// the token is stable. The panel's node-adoption form has a "Node Name" field
+// next to its "Display Name" one (PATCH /nodes/{id}/config -> SetNodeConfig),
+// so an admin typing a friendly name there renames the row.
+//
+// Keying by the name made that rename break SFTP on the node, silently and in
+// two ways at once. The node reads this key under the identity Core ASSIGNED it
+// (redisacl_bootstrap.go adopts res.AssignedId as nodeID), which is the token;
+// and its Redis ACL grants exactly "%R~sftp:node:<token>:*", so even a node that
+// somehow knew the new name would get NOPERM on it. The session still
+// authenticates - sftp:auth:* is keyed by username and unaffected - so the user
+// logs in successfully and sees an EMPTY root, with nothing in any log to say
+// why. The token is what every other node-scoped key in the system already uses.
+//
+// Takes the whole node rather than a string so the choice of field lives here,
+// where the reasoning is, instead of at a call site that can pass either one.
+func sftpNodeServersKey(node models.Node, username string) string {
+	return "sftp:node:" + node.Token + ":user:" + username
 }
 
 // pruneStaleAuthKeys removes any sftp:auth:* key whose user is no longer in
@@ -86,9 +111,13 @@ func (s *SFTPSyncService) sync() {
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("SFTPSync: failed to write auth keys: %v", err)
 	}
-	// Drop auth keys for users that no longer exist (deleted or renamed); the
-	// keys carry no TTL, so without this stale credentials would authenticate
-	// over SFTP forever.
+	// Drop auth keys for users that no longer exist (deleted or renamed). The
+	// TTL above already bounds this at 5 minutes; the prune is what closes the
+	// gap between a deletion in the panel and the moment those credentials stop
+	// opening an SFTP session. (An earlier version of this comment claimed the
+	// keys carried no TTL and that the prune was the only thing standing between
+	// a deleted user and permanent SFTP access - it is not, and reading it that
+	// way makes the 5-minute window look like a bug rather than the floor.)
 	s.pruneStaleAuthKeys(ctx, valid)
 
 	// 2. Publish per-node, per-user server lists
@@ -116,8 +145,7 @@ func (s *SFTPSyncService) sync() {
 			if err != nil {
 				continue
 			}
-			key := "sftp:node:" + node.Name + ":user:" + username
-			pipe.Set(ctx, key, data, 5*time.Minute)
+			pipe.Set(ctx, sftpNodeServersKey(node, username), data, 5*time.Minute)
 		}
 		if _, err := pipe.Exec(ctx); err != nil {
 			log.Printf("SFTPSync: failed to write node %s keys: %v", node.Name, err)

@@ -685,10 +685,29 @@ func (s *PostgresStore) DeleteServersByNode(nodeID int) error {
 	return err
 }
 
+// DeleteStaleOfflineNodes sweeps PLATFORM nodes (owner_id IS NULL) that have
+// been offline past the cutoff and carry no servers. NodeCleanupService runs it
+// every 5 minutes with a 24h cutoff.
+//
+// The owner_id filter is the load-bearing half. A BYON node is a tenant's own
+// machine, paired deliberately through a single-use enroll token, and a customer
+// who registers one and then does not create a server for a day - a laptop, a
+// home box switched off over a weekend - had the pairing deleted out from under
+// them. The consequences are worse than a missing row: the node's ACL users are
+// pruned, and on the next boot it still holds its cached .node_secret, so
+// redisacl_bootstrap's "paired node with no cached secret" guard never fires. It
+// reconnects with an identity Core has forgotten, is rejected as unknown, and
+// loops on a rejected handshake with no BYON way back in (that path needs an
+// enroll or recovery token the tenant does not have). Support ticket, every time.
+//
+// The operator's own fleet keeps the sweep: an unadopted platform node that
+// stopped reporting is exactly the churn this was written to clean up, and the
+// operator can always re-enroll one with the cluster secret.
 func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) (int, error) {
 	result, err := s.db.Exec(`
 		DELETE FROM nodes
 		WHERE status = 'offline'
+			AND owner_id IS NULL
 			AND last_seen_at IS NOT NULL
 			AND last_seen_at < $1
 			AND id NOT IN (SELECT DISTINCT node_id FROM servers)
