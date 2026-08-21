@@ -986,7 +986,18 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		return dm.cli.ContainerKill(dm.ctx, mcName, "SIGKILL")
 	case "delete":
 		err := dm.cli.ContainerRemove(dm.ctx, mcName, container.RemoveOptions{Force: true})
-		if err == nil && dm.portMgr != nil {
+		// Released whatever the removal reported. The ledger is keyed by SERVER,
+		// not by container, and this action's only caller goes on to delete the
+		// server's directory outright - so by the time it returns there is no
+		// server left to own a port either way.
+		//
+		// Gating it on err == nil stranded the entry in exactly the case that
+		// needs it most: "No such container", from a retried delete or a
+		// container someone removed by hand (which reconcileDeletedContainers
+		// exists because it happens). Nothing else ever reclaims a port -
+		// AdoptExistingBindings only adds - and the default range is about a
+		// hundred wide, so each one is permanent.
+		if dm.portMgr != nil {
 			dm.portMgr.ReleasePort(uuid)
 		}
 		return err

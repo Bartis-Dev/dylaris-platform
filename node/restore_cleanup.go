@@ -35,6 +35,24 @@ const restoreCleanupInterval = time.Hour
 // this walk would have deleted it 24 hours later without a word.
 var preRestoreStash = regexp.MustCompile(`\.pre-restore-\d{8}-\d{6}$`)
 
+// stageDirInfix is what RunRestore hands os.MkdirTemp as the fixed part of the
+// staging directory's name. It lives here rather than in backup_restore.go so
+// the thing that CREATES the name and the thing that has to recognise it again
+// cannot drift apart.
+const stageDirInfix = ".restore-"
+
+// restoreStage matches a staging directory left behind by RunRestore:
+// "<target>.restore-<random>". MkdirTemp's suffix is a long run of digits, so
+// requiring six of them keeps a directory a user could plausibly create by hand
+// ("world.restore-2") out of reach of the sweep.
+//
+// This is the second directory a restore creates, and until now only the first
+// was swept. A restore killed mid-extraction (SIGKILL, node redeploy, OOM) left
+// its whole staging tree behind for good - a full copy of the world, inside the
+// server directory, counting against the server's own disk limit, with nothing
+// that would ever remove it.
+var restoreStage = regexp.MustCompile(`\` + stageDirInfix + `\d{6,}$`)
+
 // StartRestoreCleanup runs a background goroutine that periodically deletes
 // .pre-restore-<timestamp> directories left behind by RunRestore once they
 // are older than preRestoreTTL. The async cleanup in RunRestore itself
@@ -85,7 +103,7 @@ func runRestoreCleanup(sm *StorageManager) {
 			// Neither name is reserved on the way in - only ".pending-delete-"
 			// is, and only against the file API, not zip extraction.
 			shallow := depthBelow(root, path) <= 2
-			isRestore := shallow && preRestoreStash.MatchString(base)
+			isRestore := shallow && (preRestoreStash.MatchString(base) || restoreStage.MatchString(base))
 			isPending := shallow && strings.HasPrefix(base, ".pending-delete-")
 			if !isRestore && !isPending {
 				// Avoid descending into world-data unnecessarily; we only
@@ -97,9 +115,14 @@ func runRestoreCleanup(sm *StorageManager) {
 			}
 			cutoff := preRestoreCutoff
 			label := "pre-restore stash"
-			if isPending {
+			switch {
+			case isPending:
 				cutoff = pendingCutoff
 				label = "pending-delete tombstone"
+			case restoreStage.MatchString(base):
+				// Same 24h TTL as the stash: a restore still extracting after a
+				// day is not running, it is dead.
+				label = "restore staging dir"
 			}
 			if info.ModTime().Before(cutoff) {
 				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(info.ModTime()).Round(time.Minute))

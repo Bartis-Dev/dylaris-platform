@@ -37,6 +37,32 @@ type BackupRestoreCommand struct {
 	PresignedGetURL string `json:"presignedGetUrl"`
 }
 
+// createStageDir makes the directory a restore extracts into, beside targetDir
+// so the swap that follows is a same-filesystem rename.
+//
+// The name is RANDOM, not a timestamp, and it is CREATED rather than adopted.
+// For a sub-server restore this path sits inside the server root - which is
+// bind-mounted into the tenant's own MC container at /data, so anything running
+// there can plant a symlink under any name it can predict. os.MkdirAll would
+// have taken that link (Stat follows links, sees a directory, returns nil), the
+// whole extraction would have written through it, and the swap renames the LINK
+// into place, because rename does not follow one. A second-resolution timestamp
+// is predictable enough to plant a minute of candidates for. MkdirTemp picks the
+// name itself and fails on anything that already exists, so neither half works.
+func createStageDir(targetDir string) (string, error) {
+	dir, err := os.MkdirTemp(filepath.Dir(targetDir), filepath.Base(targetDir)+stageDirInfix+"*")
+	if err != nil {
+		return "", err
+	}
+	// MkdirTemp creates 0700; the restored tree is handed to the MC container,
+	// which may not run as this process's user.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		os.RemoveAll(dir)
+		return "", fmt.Errorf("stage dir perms: %w", err)
+	}
+	return dir, nil
+}
+
 // RunRestore streams the archive from storage straight into a tar reader
 // and extracts on the fly into a staging directory. Once the extraction is
 // complete the staging dir is swapped in atomically (rename) so a partial
@@ -76,8 +102,8 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// Stage the new content in a sibling directory so we can swap it in
 	// atomically. The sibling lives in the same filesystem as targetDir,
 	// which keeps the rename truly atomic.
-	stageDir := targetDir + ".restore-" + time.Now().UTC().Format("20060102-150405")
-	if err := os.MkdirAll(stageDir, 0o755); err != nil {
+	stageDir, err := createStageDir(targetDir)
+	if err != nil {
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stage dir: "+err.Error())
 		return
 	}
@@ -95,7 +121,6 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 
 	var body io.ReadCloser
-	var err error
 	if cmd.PresignedGetURL != "" {
 		body, err = downloadPresigned(ctx, cmd.PresignedGetURL)
 	} else {
