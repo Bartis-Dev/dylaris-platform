@@ -246,12 +246,20 @@ func (h *PacksHandler) PublishSolder(w http.ResponseWriter, r *http.Request) {
 }
 
 // solderConfigRequest is the PATCH body for the pack's Solder-facing settings.
+//
+// Private is a POINTER because this route is a PATCH and its own client type
+// declares the field optional (panel/src/lib/api/solderPublish.ts:
+// `private?: boolean`). As a plain bool, a body that simply left it out
+// decoded to false and PUBLISHED a private pack - exposing its Solder listing
+// and its whole mod list to anyone - with no request ever asking for that.
+// Absent now means "leave the current visibility alone", the same reason
+// serverTabRequest carries *bool for Enabled and OpenInPanel.
 type solderConfigRequest struct {
 	SolderSlug        string `json:"solderSlug"`
 	SolderDisplayName string `json:"solderDisplayName"`
 	RecommendedBuild  string `json:"recommendedBuild"`
 	LatestBuild       string `json:"latestBuild"`
-	Private           bool   `json:"private"`
+	Private           *bool  `json:"private"`
 }
 
 // SetSolderConfig sets the pack's public Solder identity + visibility. Slug is
@@ -285,7 +293,9 @@ func (h *PacksHandler) SetSolderConfig(w http.ResponseWriter, r *http.Request) {
 	pack.SolderDisplayName = strings.TrimSpace(req.SolderDisplayName)
 	pack.RecommendedBuild = strings.TrimSpace(req.RecommendedBuild)
 	pack.LatestBuild = strings.TrimSpace(req.LatestBuild)
-	pack.Private = req.Private
+	if req.Private != nil {
+		pack.Private = *req.Private
+	}
 	if err := h.state.Store.UpdatePack(pack); err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {

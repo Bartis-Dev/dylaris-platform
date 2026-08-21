@@ -42,6 +42,9 @@ func (f *nameConflictStore) CreateStorageConnection(*models.StorageConnection) (
 	return 0, f.err
 }
 func (f *nameConflictStore) UpdateStorageConnection(*models.StorageConnection) error { return f.err }
+func (f *nameConflictStore) GetStorageConnection(int) (*models.StorageConnection, error) {
+	return &models.StorageConnection{}, nil // no stored secret to rebind; not the path under test
+}
 
 func backupStorageBody() []byte {
 	b, _ := json.Marshal(models.BackupStorage{

@@ -42,12 +42,31 @@ func (h *PacksHandler) ownsPack(r *http.Request, packID int) (*models.Pack, bool
 	return nil, false
 }
 
+// packRequest is the body for both Create and the Update PATCH.
+//
+// The three editable text fields are POINTERS because Update is a PATCH: as
+// plain strings, a body that simply left one out decoded to "" and Update
+// wrote that over the stored value. Blanking Summary or SolderDisplayName is
+// merely destructive; blanking SolderSlug takes the pack off the public Solder
+// API entirely AND orphans every published build, because solderManifestKey is
+// derived from the slug (see its own caveat). Absent now means "leave it
+// alone", the same rule serverTabRequest applies with *bool.
 type packRequest struct {
-	Name              string `json:"name"`
-	Slug              string `json:"slug"`
-	Summary           string `json:"summary"`
-	SolderDisplayName string `json:"solderDisplayName"`
-	SolderSlug        string `json:"solderSlug"`
+	Name              string  `json:"name"`
+	Slug              string  `json:"slug"`
+	Summary           *string `json:"summary"`
+	SolderDisplayName *string `json:"solderDisplayName"`
+	SolderSlug        *string `json:"solderSlug"`
+}
+
+// strVal dereferences an optional request string, treating absent as empty.
+// Used on the Create path, where every field is being set for the first time
+// and "absent" and "empty" genuinely mean the same thing.
+func strVal(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // List GET /api/me/packs - the modpacks the calling user owns.
@@ -91,7 +110,7 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
-	solderSlug := strings.TrimSpace(req.SolderSlug)
+	solderSlug := strings.TrimSpace(strVal(req.SolderSlug))
 	if solderSlug != "" && !packSlugRe.MatchString(solderSlug) {
 		sendJSONError(w, "Invalid solder slug", http.StatusBadRequest)
 		return
@@ -100,8 +119,8 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		OwnerID:            userID,
 		InternalName:       req.Name,
 		InternalSlug:       slug,
-		Summary:            strings.TrimSpace(req.Summary),
-		SolderDisplayName:  strings.TrimSpace(req.SolderDisplayName),
+		Summary:            strings.TrimSpace(strVal(req.Summary)),
+		SolderDisplayName:  strings.TrimSpace(strVal(req.SolderDisplayName)),
 		SolderSlug:         solderSlug,
 		ModrinthVisibility: "unlisted",
 	}
@@ -149,9 +168,22 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if n := strings.TrimSpace(req.Name); n != "" {
 		p.InternalName = n
 	}
-	p.Summary = strings.TrimSpace(req.Summary)
-	p.SolderDisplayName = strings.TrimSpace(req.SolderDisplayName)
-	if s := strings.TrimSpace(req.SolderSlug); s == "" || packSlugRe.MatchString(s) {
+	if req.Summary != nil {
+		p.Summary = strings.TrimSpace(*req.Summary)
+	}
+	if req.SolderDisplayName != nil {
+		p.SolderDisplayName = strings.TrimSpace(*req.SolderDisplayName)
+	}
+	// An invalid slug used to be swallowed: the caller got 200 and the old
+	// value, with nothing saying the field was ignored. Clearing it is still
+	// allowed - that is how a pack is taken off the Solder API deliberately -
+	// but it now has to be asked for.
+	if req.SolderSlug != nil {
+		s := strings.TrimSpace(*req.SolderSlug)
+		if s != "" && !packSlugRe.MatchString(s) {
+			sendJSONError(w, "Invalid solder slug", http.StatusBadRequest)
+			return
+		}
 		p.SolderSlug = s
 	}
 	if err := h.state.Store.UpdatePack(p); err != nil {

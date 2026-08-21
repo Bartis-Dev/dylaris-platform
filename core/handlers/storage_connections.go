@@ -70,6 +70,55 @@ func validStorageConnectionProvider(p string) bool {
 	return p == "s3"
 }
 
+// storageConnectionIdentity extracts the three fields that decide WHERE a
+// stored s3 secret gets used. Same trio mergeCoreStorageCandidate and
+// mergeBackupStorageSecret compare; the endpoint and bucket live in the config
+// JSONB here, the access key in its own column.
+func storageConnectionIdentity(raw json.RawMessage, accessKey string) (endpoint, bucket, key string) {
+	var cfg storageConnectionConfig
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &cfg)
+	}
+	return cfg.Endpoint, cfg.Bucket, accessKey
+}
+
+// errStorageConnectionSecretRequired is returned when an edit moves where the
+// stored secret would be used without supplying a new one.
+var errStorageConnectionSecretRequired = errors.New(
+	"the endpoint, bucket or access key changed, so the stored secret cannot be reused - re-enter the secret access key with this change")
+
+// storageConnectionSecretRebound reports whether this update would point the
+// STORED secret somewhere else without the caller having supplied a new one.
+//
+// The same guard core storage has always had (mergeCoreStorageCandidate) and
+// backup storages gained later (mergeBackupStorageSecret), for the same
+// reason, which applies harder here because a storage connection is the shared
+// credential core storage and modpack storage both reference by id:
+//
+//   - Security. settings.write is a delegatable panel capability, and no read
+//     path ever returns the secret (SecretAccessKey is json:"-", the list path
+//     does not even decrypt). A holder who cannot READ the secret could point
+//     it at an endpoint and bucket of their choosing simply by submitting
+//     those with the secret field left blank. SigV4 signs with the secret
+//     rather than sending it, so this is not a plaintext leak - it is
+//     credential rebinding: an attacker-chosen host receives validly signed
+//     requests carrying the operator's data.
+//   - Usability. Changing only the access key while leaving the secret blank
+//     (because the form never shows it) would otherwise persist a NEW access
+//     key paired with the OLD secret, and every later read fails a signature
+//     check with nothing pointing at the edit that caused it.
+//
+// A submitted secret is a genuine rotation and is always allowed. A connection
+// with no stored secret has nothing to rebind.
+func storageConnectionSecretRebound(req storageConnectionRequest, existing *models.StorageConnection) bool {
+	if req.SecretAccessKey != "" || existing == nil || !existing.SecretSet {
+		return false
+	}
+	inEndpoint, inBucket, inKey := storageConnectionIdentity(req.Config, req.AccessKey)
+	exEndpoint, exBucket, exKey := storageConnectionIdentity(existing.Config, existing.AccessKey)
+	return inEndpoint != exEndpoint || inBucket != exBucket || inKey != exKey
+}
+
 // ListConnections GET /api/storage-connections. The secret never appears in the
 // response: SecretAccessKey is json:"-" and the store does not decrypt on the
 // list path, so only the SecretSet flag reports that one is stored.
@@ -145,6 +194,19 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 	}
 	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
 		sendJSONError(w, err.Error(), 400)
+		return
+	}
+	existing, gerr := h.state.Store.GetStorageConnection(id)
+	if gerr != nil {
+		if errors.Is(gerr, sql.ErrNoRows) {
+			sendJSONError(w, "Storage connection not found", 404)
+			return
+		}
+		sendJSONError(w, "Database error", 500)
+		return
+	}
+	if storageConnectionSecretRebound(req, existing) {
+		sendJSONError(w, errStorageConnectionSecretRequired.Error(), 400)
 		return
 	}
 	conn := models.StorageConnection{

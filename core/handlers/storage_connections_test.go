@@ -23,6 +23,22 @@ type connFakeStore struct {
 	secretSets int
 	deleted    int
 	lastSecret string
+
+	// existing is what UpdateConnection reads back to decide whether this edit
+	// would rebind the stored secret. nil means a connection that holds no
+	// secret, which is the case with nothing to guard.
+	existing    *models.StorageConnection
+	existingErr error
+}
+
+func (f *connFakeStore) GetStorageConnection(id int) (*models.StorageConnection, error) {
+	if f.existingErr != nil {
+		return nil, f.existingErr
+	}
+	if f.existing == nil {
+		return &models.StorageConnection{ID: id}, nil
+	}
+	return f.existing, nil
 }
 
 func (f *connFakeStore) CreateStorageConnection(*models.StorageConnection) (int, error) {

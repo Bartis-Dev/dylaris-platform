@@ -198,12 +198,43 @@ func validatePublicBaseURL(subject, raw string) error {
 	return nil
 }
 
+// modpackS3SecretRebound reports whether this save would point the STORED s3
+// secret somewhere else without the caller having supplied a new one.
+//
+// The third copy of a guard core storage has always had
+// (mergeCoreStorageCandidate) and backup storages gained later
+// (mergeBackupStorageSecret), comparing the same trio - endpoint, bucket,
+// access key - for the same two reasons:
+//
+//   - Security. settings.write is a delegatable panel capability, and Get
+//     deliberately omits the secret on every read. A holder who cannot READ it
+//     could point it at an endpoint and bucket of their choosing merely by
+//     submitting those fields with the secret left blank. SigV4 signs with the
+//     secret rather than sending it, so this is not a plaintext leak - it is
+//     credential rebinding: an attacker-chosen host receives validly signed
+//     requests carrying every pack the operator has published.
+//   - Usability. Changing only the access key while leaving the secret blank
+//     (because the form never shows it) would otherwise persist a NEW access
+//     key paired with the OLD secret. Every pack read against that target then
+//     fails a signature check with nothing pointing at the edit that caused it.
+//
+// A submitted secret is a genuine rotation and is always allowed; with no
+// stored secret there is nothing to rebind.
+func modpackS3SecretRebound(req modpackSettings, get func(string) string) bool {
+	if strings.TrimSpace(req.S3SecretKey) != "" || get("modpack_storage_s3_secret_key") == "" {
+		return false
+	}
+	return req.S3Endpoint != get("modpack_storage_s3_endpoint") ||
+		req.S3Bucket != get("modpack_storage_s3_bucket") ||
+		req.S3AccessKey != get("modpack_storage_s3_access_key")
+}
+
 // Set PUT /api/admin/settings/modpacks
 //
 // Body: full modpackSettings. Empty S3SecretKey means "don't change", so the
-// admin can update other fields without re-entering the secret. To clear the
-// secret, send "" with a special sentinel? No — YAGNI; admin can rotate or
-// delete via DB if needed.
+// admin can update other fields without re-entering the secret - unless the
+// save also moves where that secret would be used, which modpackS3SecretRebound
+// refuses.
 func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req modpackSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -224,6 +255,15 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// an open path for the same credential.
 	if err := validateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	get := func(k string) string {
+		v, _ := h.state.Store.GetSetting(k)
+		return v
+	}
+	if modpackS3SecretRebound(req, get) {
+		sendJSONError(w, "the s3 endpoint, bucket or access key changed, so the stored secret cannot be reused - re-enter the secret access key with this change",
+			http.StatusBadRequest)
 		return
 	}
 	// Both are validated whatever the provider is, for the same reason the S3
