@@ -379,14 +379,18 @@ func overlayIP() string {
 // internally and users must NOT be able to overwrite via the Beam file
 // browser (writing to them would silently break server orchestration).
 // Read access stays allowed so the UI can still list them.
+//
+// The named set is isProtectedFile's, deliberately, because this used to be a
+// second hand-written copy of it and the two had drifted: this one knew
+// ".active_server" and the ".dylaris" prefix but NOT ".node_config.json" or
+// ".pending-delete-*", so a beam client could upload straight over the file the
+// node recreates a container from, while the same write over SFTP or the panel
+// file browser was refused. Two spellings of one rule is one spelling too many.
+//
+// The prefix rule stays and is beam-specific: it is broader than the named set
+// and also covers scratch directories such as .dylaris-mrpack.
 func isPlatformReservedName(name string) bool {
-	switch {
-	case name == ".active_server":
-		return true
-	case strings.HasPrefix(name, ".dylaris"):
-		return true
-	}
-	return false
+	return strings.HasPrefix(name, ".dylaris") || isProtectedFile(name)
 }
 
 // reservedComponent returns the first path component that is platform-reserved,
@@ -634,12 +638,23 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
-	// Protect .active_server
-	if filepath.Base(oldPath) == ".active_server" {
-		return &pb.BeamOpResp{Success: false, Message: "cannot rename .active_server"}, nil
+	// The DESTINATION goes through the same guard, which validateBeamPath's own
+	// doc comment already lists rename under. It did not: NewName went straight
+	// into filepath.Join, and Join CLEANS rather than confines, so a name of
+	// "../<other-uuid>/plugins/x.jar" walked out of this ticket's server
+	// directory into a neighbour's. Both live on the same storage path, so
+	// os.Rename across them succeeds - and a jar moved into someone else's
+	// plugins/ is code their Minecraft server loads. Reproduced end to end.
+	//
+	// Validating the request-relative destination rather than the resolved one
+	// keeps it the same shape as every other path in this file, and picks up the
+	// reserved-name check for free: a rename onto .active_server,
+	// .node_config.json, .dylaris.json or .dylaris-backups is a write to a
+	// platform-managed name like any other.
+	newPath, err := s.validateBeamPath(filepath.Join(filepath.Dir(req.OldPath), req.NewName), serverUUID)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
-
-	newPath := filepath.Join(filepath.Dir(oldPath), req.NewName)
 
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil

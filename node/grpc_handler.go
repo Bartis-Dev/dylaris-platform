@@ -715,7 +715,12 @@ func (h *StreamHandler) handleRename(reqID, serverUUID string, req *pb.RenameFil
 	if newName == "" {
 		return errorMsg(reqID, 400, "invalid filename")
 	}
-	if newName == ".active_server" {
+	// The destination gets the same check as the source, not a hand-picked
+	// subset of it. This used to compare against ".active_server" alone while
+	// isProtectedFile knows four names plus two prefixes, and sanitizeFilename
+	// keeps '.', '-' and '_', so .node_config.json, .dylaris.json and
+	// .dylaris-backups all survived it intact and could be renamed over.
+	if isProtectedFile(newName) {
 		return errorMsg(reqID, 403, "cannot use protected filename")
 	}
 	newPath := filepath.Join(dir, newName)
