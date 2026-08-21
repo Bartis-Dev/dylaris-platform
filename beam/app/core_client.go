@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -295,13 +296,44 @@ func (c *CoreClient) CopyFile(srcPath, dstPath, serverUUID string) error {
 	return err
 }
 
+// newDownloadClient builds the client the two streaming download paths use.
+//
+// Those paths used to build a fresh &http.Client{} each, with the comment "No
+// timeout - large files can take a while". That is right about the BODY and
+// wrong about everything before it: a bare client bounds nothing at all, so a
+// host that completes the TCP connect and then stalls the TLS handshake, or
+// accepts and never sends response headers, leaves Do() pending forever. Not an
+// error the UI can report - a download that simply never starts and never
+// fails. The panel's own fetch wrapper documents the identical trap, and every
+// other HTTP caller in this binary already bounds itself (8s for the manifest,
+// 30s for the REST client, a 15-minute context for the update stream).
+//
+// So bound the phases that must not stall and leave the body unbounded: no
+// Client.Timeout, which would cap the whole transfer and reintroduce the
+// problem the old comment was guarding against. Shared rather than per-call, so
+// the two paths also stop discarding the connection pool - and paying for a
+// fresh TLS handshake - on every download.
+func newDownloadClient(dial, tlsHandshake, responseHeader time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: dial, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   tlsHandshake,
+			ResponseHeaderTimeout: responseHeader,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+}
+
+var downloadHTTPClient = newDownloadClient(15*time.Second, 15*time.Second, 60*time.Second)
+
 func (c *CoreClient) DownloadFile(path, serverUUID string) (io.ReadCloser, error) {
 	reqURL := c.apiURL + "/files/download?path=" + url.QueryEscape(path) + "&server_uuid=" + url.QueryEscape(serverUUID)
 	req, _ := http.NewRequest("GET", reqURL, nil)
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	// No timeout — large files can take a while
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := downloadHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -320,8 +352,7 @@ func (c *CoreClient) SelectiveDownload(basePath string, selected []string, selec
 	}
 	req, _ := http.NewRequest("GET", reqURL, nil)
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := downloadHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

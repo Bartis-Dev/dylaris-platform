@@ -135,3 +135,4 @@
 {"date":"2026-08-21","service":"log-shipper","type":"fix","summary":"A single very long or unusual console line no longer freezes the console, which previously also stalled the server itself."}
 {"date":"2026-08-21","service":"core","type":"security","summary":"A file-transfer ticket can no longer be presented to the panel API as a login session; only tokens issued for the panel itself are accepted."}
 {"date":"2026-08-21","service":"node","type":"security","summary":"A server move now refuses a transfer that sends more data than the source announced, so a misbehaving source cannot fill the target machine's disk, and it will not write through a link left in the target folder."}
+{"date":"2026-08-21","service":"beam","type":"fix","summary":"A download from a server that stops responding now fails with an error instead of appearing to hang forever, while large transfers stay uncapped."}

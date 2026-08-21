@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -77,9 +78,27 @@ type BeamNodeClient struct {
 // relayTLSSkipVerify reports whether to skip relay TLS verification. Defaults
 // to false (verify the relay certificate). Set BEAM_TLS_SKIP_VERIFY=true for
 // dev relays that present a self-signed certificate.
+//
+// It says so out loud when it is on. This is the only place in the beam path
+// where transport authentication can be turned OFF, and the hop it disables is
+// the one carrying the beam ticket. Its two siblings are both louder about it:
+// ConnectBeamNodeDirect below refuses to dial at all without a pin, and Core
+// logs a WARNING for its own GRPC_TLS_ENABLED=false. This one was silent, on a
+// desktop app where the variable can be inherited from a shell, a shortcut or a
+// user service and then persist invisibly for the life of the install.
+var skipVerifyWarnOnce sync.Once
+
 func relayTLSSkipVerify() bool {
 	v := os.Getenv("BEAM_TLS_SKIP_VERIFY")
-	return v == "true" || v == "1"
+	skip := v == "true" || v == "1"
+	if skip {
+		skipVerifyWarnOnce.Do(func() {
+			log.Println("WARNING: BEAM_TLS_SKIP_VERIFY is set; the relay's TLS certificate is NOT verified. " +
+				"Anyone able to intercept the connection can read and alter this session, including the beam ticket. " +
+				"Unset it unless you are deliberately talking to a dev relay with a self-signed certificate.")
+		})
+	}
+	return skip
 }
 
 func ConnectBeamNode(relayAddr, ticket string) (*BeamNodeClient, error) {
