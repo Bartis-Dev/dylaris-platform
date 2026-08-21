@@ -15,6 +15,8 @@ import (
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
+	"dylaris-pkg/queue"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -25,7 +27,7 @@ import (
 type BackupScheduler struct {
 	store    store.Store
 	redis    *redis.Client
-	queue    *QueueService       // publishes backup_run to the node's :cmds stream (BC1)
+	queue    *QueueService      // publishes backup_run to the node's :cmds stream (BC1)
 	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
 	leader   leader.Election
 	// coreStorage opens the shared Core file storage as a backup backend.
@@ -103,10 +105,49 @@ func (b *BackupScheduler) Start(ctx context.Context) {
 	go b.consumeRestoreResults(ctx)
 }
 
-// consumeRestoreResults listens on dylaris:backup:restores and updates the
-// backup_restores row with the outcome reported by the node.
+// reporterMatchesServer reports whether the node that published on channel is
+// the node that actually hosts serverID.
+//
+// This is the Core-side half of the per-node channel scoping (see
+// queue.BackupResultsChannel). Redis already refuses a cross-node PUBLISH
+// through the node's ACL, so reaching a mismatch here means either an ACL that
+// was never applied or a credential with wider reach than a node's - both of
+// which are exactly the cases a second, independent check is for.
+//
+// A channel the pattern matched but that carries no token, or a server/node this
+// Core cannot load, is UNATTRIBUTABLE and returns false. Failing closed loses a
+// result, which the reaper later closes as an unverified run; failing open lets
+// an unattributable message write another tenant's backup_runs row.
+func (b *BackupScheduler) reporterMatchesServer(channel string, serverID int, what string) bool {
+	token, ok := queue.NodeTokenFromBackupChannel(channel)
+	if !ok {
+		log.Printf("%s: dropping a message on unattributable channel %q", what, channel)
+		return false
+	}
+	srv, err := b.store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		log.Printf("%s: dropping a message from node %q: server %d could not be loaded: %v", what, token, serverID, err)
+		return false
+	}
+	node, err := b.store.GetNodeByID(srv.NodeID)
+	if err != nil || node == nil {
+		log.Printf("%s: dropping a message from node %q: node %d could not be loaded: %v", what, token, srv.NodeID, err)
+		return false
+	}
+	if node.Token != token {
+		log.Printf("%s: DROPPED a message from node %q for server %d, which is hosted by a different node - a node may only report on its own runs",
+			what, token, serverID)
+		return false
+	}
+	return true
+}
+
+// consumeRestoreResults listens on every node's own restore channel and updates
+// the backup_restores row with the outcome reported by the node that hosts the
+// server. Pattern subscription, so the channel name identifies the publisher;
+// see queue.BackupRestoresChannel.
 func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
-	pubsub := b.redis.Subscribe(ctx, "dylaris:backup:restores")
+	pubsub := b.redis.PSubscribe(ctx, queue.BackupRestoresPattern)
 	defer pubsub.Close()
 	ch := pubsub.Channel()
 	for {
@@ -135,6 +176,16 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if result.RestoreID == 0 {
 				continue
 			}
+			// The restore row names the server directly, so the reporting node is
+			// checked against it before anything is written.
+			restore, err := b.store.GetBackupRestore(result.RestoreID)
+			if err != nil || restore == nil {
+				log.Printf("restore result: restore %d not found", result.RestoreID)
+				continue
+			}
+			if !b.reporterMatchesServer(msg.Channel, restore.ServerID, "restore result") {
+				continue
+			}
 			completed := time.Time{}
 			if result.Status == "success" || result.Status == "failed" {
 				completed = time.Now()
@@ -146,11 +197,14 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 	}
 }
 
-// consumeResults listens on the `dylaris:backup:results` channel and
-// updates the backup_runs row when a node finishes (success or failure).
-// Also prunes old runs from storage when retention limits are exceeded.
+// consumeResults listens on every node's own results channel and updates the
+// backup_runs row when the node that hosts the server finishes (success or
+// failure). Also prunes old runs from storage when retention limits are
+// exceeded - which is why the attribution check below is not merely tidy: a
+// forged "success" on a foreign run fires enforceRetention and DELETES that
+// job's older archives.
 func (b *BackupScheduler) consumeResults(ctx context.Context) {
-	pubsub := b.redis.Subscribe(ctx, "dylaris:backup:results")
+	pubsub := b.redis.PSubscribe(ctx, queue.BackupResultsPattern)
 	defer pubsub.Close()
 	ch := pubsub.Channel()
 	for {
@@ -179,6 +233,17 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 			run, err := b.store.GetBackupRun(result.RunID)
 			if err != nil {
 				log.Printf("backup result: run %d not found", result.RunID)
+				continue
+			}
+			// Attribution BEFORE the write, and before the retention prune the
+			// write can trigger. The run points at a job, the job at a server, the
+			// server at the node that is allowed to report on it.
+			job, err := b.store.GetBackupJob(run.JobID)
+			if err != nil || job == nil {
+				log.Printf("backup result: job %d for run %d not found", run.JobID, result.RunID)
+				continue
+			}
+			if !b.reporterMatchesServer(msg.Channel, job.ServerID, "backup result") {
 				continue
 			}
 			b.store.UpdateBackupRunStatus(result.RunID, result.Status, result.Error, result.SizeBytes, run.StorageKey, time.Now())

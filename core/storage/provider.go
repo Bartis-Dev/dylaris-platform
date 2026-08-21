@@ -65,6 +65,13 @@ var ErrDeleteRoot = errors.New("storage: refusing to delete the storage root")
 // Cleaning against a leading "/" collapses "", ".", "/", "./" and any path
 // that walks back out ("a/..") to the single root form, so the check does not
 // depend on which of those a caller happens to send.
+//
+// It reads the request SPELLING and nothing else, which is only sufficient
+// because both backends resolve a request against the root the same way. That
+// is what LocalProvider.validatePath now guarantees and did not before: a
+// request of "../<base's own last segment>" cleans to "/<segment>" here - not
+// "/" - so it is not a root spelling, yet it used to JOIN back to the base and
+// delete everything under it.
 func addressesRoot(reqPath string) bool {
 	return path.Clean("/"+strings.TrimSpace(reqPath)) == "/"
 }
@@ -102,10 +109,34 @@ type LocalProvider struct {
 	BasePath string
 }
 
+// validatePath resolves a provider-relative request path to an absolute one
+// inside BasePath.
+//
+// The request path is ROOTED before it is joined, which is the whole guard.
+// filepath.Join CLEANS its result, so a leading ".." is resolved against the
+// BASE and eats the base's own last segment: with a base of
+// "<core-storage>/library", a request of "../library" joins straight back to
+// the library root. That spelling then passed the old prefix test (the result
+// literally starts with the base), so DeletePath ran os.RemoveAll over the
+// entire library - the exact outcome ErrDeleteRoot exists to prevent, reached
+// past it because addressesRoot inspects the REQUEST spelling and "../library"
+// cleans to "/library", not "/".
+//
+// Cleaning against a leading "/" first collapses every ".." at or above the
+// root away, so the joined path can only ever go DEEPER than the base. That is
+// how the two sibling backends already do it - S3Provider.key
+// (path.Clean("/"+reqPath)) and backup.LocalStorage.resolveKey
+// (filepath.Clean("/"+key)) - and it is why neither of them has this hole.
+//
+// The separator-anchored containment check stays as the second half of the
+// same guard, matching the node's shared path-traversal helper
+// (node/grpc_handler.go) and extractZip below: a bare HasPrefix also accepts a
+// SIBLING whose name merely starts with the base's, e.g. "<...>/library-old"
+// for a base of "<...>/library".
 func (p *LocalProvider) validatePath(reqPath string) (string, error) {
-	fullPath := filepath.Join(p.BasePath, reqPath)
-	cleanPath := filepath.Clean(fullPath)
-	if !strings.HasPrefix(cleanPath, filepath.Clean(p.BasePath)) {
+	base := filepath.Clean(p.BasePath)
+	cleanPath := filepath.Join(base, filepath.Clean("/"+reqPath))
+	if cleanPath != base && !strings.HasPrefix(cleanPath, base+string(os.PathSeparator)) {
 		return "", fmt.Errorf("access denied: path outside library root")
 	}
 	return cleanPath, nil

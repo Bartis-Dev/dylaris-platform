@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,7 +77,10 @@ func TestMergeBackupStorageSecret_KeepsExistingWhenBlank(t *testing.T) {
 	existing := s3Storage("stored-secret")
 	incoming := s3Storage("") // panel sent a blank secret
 
-	merged := mergeBackupStorageSecret(incoming, &existing)
+	merged, err := mergeBackupStorageSecret(incoming, &existing)
+	if err != nil {
+		t.Fatalf("blank edit with an unchanged identity was refused: %v", err)
+	}
 
 	if !strings.Contains(string(merged.Config), "stored-secret") {
 		t.Fatalf("blank edit wiped the secret: %s", merged.Config)
@@ -89,7 +93,10 @@ func TestMergeBackupStorageSecret_UsesNewSecret(t *testing.T) {
 	existing := s3Storage("old-secret")
 	incoming := s3Storage("new-secret")
 
-	merged := mergeBackupStorageSecret(incoming, &existing)
+	merged, err := mergeBackupStorageSecret(incoming, &existing)
+	if err != nil {
+		t.Fatalf("rotation was refused: %v", err)
+	}
 
 	if !strings.Contains(string(merged.Config), "new-secret") {
 		t.Fatalf("rotation was ignored: %s", merged.Config)
@@ -159,5 +166,128 @@ func TestUpdateStorage_BlankSecretKeepsTheStoredOne(t *testing.T) {
 	}
 	if !strings.Contains(string(st.updated.Config), "stored-secret-xyz") {
 		t.Fatalf("blank update wiped the stored secret: %s", st.updated.Config)
+	}
+}
+
+// s3StorageAt is s3Storage with the identity fields under the caller's control,
+// so a test can express "same credential, different destination".
+func s3StorageAt(endpoint, bucket, accessKey, secret string) models.BackupStorage {
+	cfg, _ := json.Marshal(map[string]string{
+		"endpoint": endpoint, "bucket": bucket,
+		"region": "us-east-1", "accessKeyId": accessKey, "secretAccessKey": secret,
+	})
+	return models.BackupStorage{ID: 1, Name: "s3", Provider: "s3", Config: cfg}
+}
+
+// TestMergeBackupStorageSecret_RefusesToRebindTheStoredSecret is the security
+// half of the write-only field, and the reason mergeCoreStorageCandidate has
+// always compared these three fields.
+//
+// settings.write is delegatable and ListStorages redacts the secret on every
+// read, so without this a holder who cannot READ the secret redirects it simply
+// by submitting a different endpoint or bucket with the secret left blank:
+// SigV4 signs with it rather than sending it, so an attacker-chosen host starts
+// receiving validly signed requests for the operator's backups.
+func TestMergeBackupStorageSecret_RefusesToRebindTheStoredSecret(t *testing.T) {
+	existing := s3StorageAt("https://objects.internal:9000", "backups", "AKIA", "stored-secret")
+
+	for _, tc := range []struct {
+		name     string
+		incoming models.BackupStorage
+	}{
+		{"endpoint redirected", s3StorageAt("https://attacker.example", "backups", "AKIA", "")},
+		{"bucket changed", s3StorageAt("https://objects.internal:9000", "other-bucket", "AKIA", "")},
+		{"access key changed", s3StorageAt("https://objects.internal:9000", "backups", "AKIB", "")},
+		{"identity fields omitted entirely", models.BackupStorage{Provider: "s3", Config: json.RawMessage(`{}`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merged, err := mergeBackupStorageSecret(tc.incoming, &existing)
+			if !errors.Is(err, ErrBackupStorageSecretRequired) {
+				t.Fatalf("err = %v, want ErrBackupStorageSecretRequired", err)
+			}
+			// And it must not have leaked the stored secret into the returned row
+			// on the way out, which would persist the rebinding anyway.
+			if strings.Contains(string(merged.Config), "stored-secret") {
+				t.Fatalf("the refused merge still carried the stored secret: %s", merged.Config)
+			}
+		})
+	}
+}
+
+// A row with no secret stored has nothing to rebind and nothing to wipe, so an
+// identity change there is an ordinary edit and must not be refused.
+func TestMergeBackupStorageSecret_NoStoredSecretIsNotRefused(t *testing.T) {
+	existing := s3StorageAt("https://objects.internal:9000", "backups", "AKIA", "")
+	incoming := s3StorageAt("https://elsewhere.example", "other", "AKIB", "")
+
+	if _, err := mergeBackupStorageSecret(incoming, &existing); err != nil {
+		t.Fatalf("an edit with nothing to protect was refused: %v", err)
+	}
+}
+
+// TestValidateBackupStorageEndpoint covers the check backup_storages was the
+// last s3 surface to skip. It fails CLOSED on "@": a valid s3 endpoint host
+// cannot contain one, and a password with a space defeats url.Parse, so
+// "parses cleanly" is not a safe acceptance test.
+func TestValidateBackupStorageEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		bs      models.BackupStorage
+		wantErr bool
+	}{
+		{"credentialed endpoint", s3StorageAt("https://AKIA:secret@objects.internal", "b", "AKIA", "s"), true},
+		{"plain endpoint", s3StorageAt("https://objects.internal:9000", "b", "AKIA", "s"), false},
+		{"empty endpoint is the AWS default", s3StorageAt("", "b", "AKIA", "s"), false},
+		{"non-s3 provider has no endpoint", models.BackupStorage{Provider: "node-local"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateBackupStorageEndpoint(tc.bs)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateBackupStorageEndpoint err = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestUpdateStorage_RefusesARebindOnTheWire is the call-site half: the merge
+// refusing is worthless if the handler ignores the error and writes the row
+// anyway. It must answer 400 and persist NOTHING - a silent save would drop the
+// credential and report success.
+func TestUpdateStorage_RefusesARebindOnTheWire(t *testing.T) {
+	existing := s3StorageAt("https://objects.internal:9000", "backups", "AKIA", "stored-secret-xyz")
+	st := &backupSecretFakeStore{byID: map[int]*models.BackupStorage{1: &existing}}
+	h := &BackupHandler{state: &AppState{Store: st}}
+
+	redirected := s3StorageAt("https://attacker.example", "backups", "AKIA", "")
+	redirected.ID = 1
+	payload, _ := json.Marshal(redirected)
+	req := httptest.NewRequest(http.MethodPatch, "/api/backup-storages/1", strings.NewReader(string(payload)))
+	req = mux.SetURLVars(req, map[string]string{"id": "1"})
+
+	rec := httptest.NewRecorder()
+	h.UpdateStorage(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if st.updated != nil {
+		t.Fatalf("the refused edit was persisted anyway: %s", st.updated.Config)
+	}
+}
+
+// A credentialed endpoint must be refused on the write path too, not merely by
+// the helper.
+func TestCreateStorage_RefusesACredentialedEndpoint(t *testing.T) {
+	st := &backupSecretFakeStore{}
+	h := &BackupHandler{state: &AppState{Store: st}}
+
+	payload, _ := json.Marshal(s3StorageAt("https://AKIA:secret@objects.internal", "backups", "AKIA", "s"))
+	req := httptest.NewRequest(http.MethodPost, "/api/backup-storages", strings.NewReader(string(payload)))
+
+	rec := httptest.NewRecorder()
+	h.CreateStorage(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }

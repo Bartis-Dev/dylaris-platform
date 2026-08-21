@@ -21,6 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/redis/go-redis/v9"
+
+	"dylaris-pkg/queue"
 )
 
 // BackupRunCommand is the payload the Core scheduler / handler pushes onto
@@ -476,7 +478,12 @@ func matchAny(path string, patterns []string) bool {
 }
 
 // reportBackup publishes the run result so Core can update the DB row.
-// The Core listens on `dylaris:backup:results`.
+//
+// On THIS node's own channel, never a fleet-wide one: Pub/Sub carries no sender
+// identity, so the channel name is the only thing Core can attribute a result
+// by. See queue.BackupResultsChannel for what the shared channel allowed. nodeID
+// is the Core-assigned node identity - the same value the ACL user and every
+// other node-scoped Redis name are built from.
 func reportBackup(ctx context.Context, rdb *redis.Client, runID int, status, errMsg string, size int64) {
 	payload := map[string]interface{}{
 		"runId":     runID,
@@ -486,7 +493,7 @@ func reportBackup(ctx context.Context, rdb *redis.Client, runID int, status, err
 		"timestamp": time.Now().Unix(),
 	}
 	data, _ := json.Marshal(payload)
-	if err := rdb.Publish(ctx, "dylaris:backup:results", data).Err(); err != nil {
+	if err := rdb.Publish(ctx, queue.BackupResultsChannel(nodeID), data).Err(); err != nil {
 		log.Printf("backup result publish failed: %v", err)
 	}
 }

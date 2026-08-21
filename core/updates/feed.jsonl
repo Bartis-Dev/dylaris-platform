@@ -99,3 +99,7 @@
 {"date":"2026-08-21","service":"core","type":"fix","summary":"A node that reconnects after a brief network drop no longer ends up unreachable from the panel when its old connection finally times out."}
 {"date":"2026-08-21","service":"core","type":"change","summary":"Deleting a single sub-server now needs the same delete permission as deleting a whole server."}
 {"date":"2026-08-21","service":"core","type":"change","summary":"Creating a node enrollment token is refused once your plan's machine limit is used up, instead of handing out a token that would fail during pairing."}
+{"date":"2026-08-21","service":"core","type":"security","summary":"Deleting a library folder can no longer be tricked into wiping the whole library by pointing the path back at the storage root."}
+{"date":"2026-08-21","service":"node","type":"breaking","summary":"Nodes now report backup and restore results on their own private channel, so one machine can no longer close or complete another machine's backups; update Core and every node together, or a node left on the old build will have its backups sit as running until they time out."}
+{"date":"2026-08-21","service":"core","type":"security","summary":"Editing a backup target's endpoint, bucket or access key now requires re-entering the secret access key instead of silently reusing the stored one."}
+{"date":"2026-08-21","service":"core","type":"fix","summary":"A backup target's S3 endpoint is rejected if it carries credentials in the URL, matching the other storage settings forms."}

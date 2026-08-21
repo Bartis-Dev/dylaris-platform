@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/redis/go-redis/v9"
+
+	"dylaris-pkg/queue"
 )
 
 // BackupRestoreCommand is the payload Core pushes onto the node queue to
@@ -300,8 +302,10 @@ func downloadPresigned(ctx context.Context, url string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-// reportRestore publishes on a dedicated restore channel so the Core's
-// scheduler can update the backup_restores row matching this attempt.
+// reportRestore publishes on this node's OWN restore channel so the Core's
+// scheduler can update the backup_restores row matching this attempt, and can
+// tell which node reported it. Same reasoning as reportBackup; see
+// queue.BackupRestoresChannel.
 func reportRestore(ctx context.Context, rdb *redis.Client, restoreID, runID int, status, errMsg string) {
 	payload := map[string]interface{}{
 		"restoreId": restoreID,
@@ -311,7 +315,7 @@ func reportRestore(ctx context.Context, rdb *redis.Client, restoreID, runID int,
 		"timestamp": time.Now().Unix(),
 	}
 	data, _ := json.Marshal(payload)
-	if err := rdb.Publish(ctx, "dylaris:backup:restores", data).Err(); err != nil {
+	if err := rdb.Publish(ctx, queue.BackupRestoresChannel(nodeID), data).Err(); err != nil {
 		log.Printf("restore result publish failed: %v", err)
 	}
 }

@@ -29,11 +29,46 @@ func TestBuildNodeACLRules(t *testing.T) {
 		// sees an empty root under mandatory ACL.
 		"beam:max_upload_bytes", "beam:daily_upload_bytes", "~dylaris:beam:daily:*",
 		"sftp:node:n1:",
-		"&dylaris:backup:results", "&dylaris:server:uuid-a:stats:live",
+		"&dylaris:backup:results:n1", "&dylaris:server:uuid-a:stats:live",
 		"+@read", "+@write", "+@stream", "+@pubsub", "-@dangerous", "+scan",
 	} {
 		if !strings.Contains(r, want) {
 			t.Errorf("node rules missing %q in: %s", want, r)
+		}
+	}
+}
+
+// TestNodeBackupChannelsAreNodeScoped pins that a node may publish backup and
+// restore results ONLY on its own channel.
+//
+// Token-exact, not strings.Contains, and that distinction is the whole test:
+// "&dylaris:backup:results:n1" CONTAINS "&dylaris:backup:results", so the
+// Contains assertion in TestBuildNodeACLRules stayed green across this very
+// change and could never have caught the fleet-wide grant it was written
+// against.
+//
+// The fleet-wide grant let any node - a tenant-owned BYON machine included -
+// publish a result for ANY run in the fleet. Pub/Sub carries no sender identity,
+// so Core had nothing to attribute it by: marking a foreign run "success" fires
+// the retention prune, which deletes that job's older archives from storage.
+func TestNodeBackupChannelsAreNodeScoped(t *testing.T) {
+	tokens := map[string]bool{}
+	for _, v := range BuildNodeACLRules("n1", "pw", []string{"uuid-a"}) {
+		tokens[v.(string)] = true
+	}
+	for _, want := range []string{"&dylaris:backup:results:n1", "&dylaris:backup:restores:n1"} {
+		if !tokens[want] {
+			t.Errorf("node rules missing the per-node channel grant %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"&dylaris:backup:results", "&dylaris:backup:restores",
+		// A wildcard would be the same hole with extra steps.
+		"&dylaris:backup:results:*", "&dylaris:backup:restores:*",
+		"&dylaris:backup:*",
+	} {
+		if tokens[forbidden] {
+			t.Errorf("node rules grant %q, which lets one node report on every other node's runs", forbidden)
 		}
 	}
 }

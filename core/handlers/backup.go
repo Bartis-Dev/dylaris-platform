@@ -19,8 +19,8 @@ import (
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
-	pbNode "dylaris-proto/node"
 	"dylaris-pkg/validate"
+	pbNode "dylaris-proto/node"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -121,6 +121,10 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
 	}
+	if err := validateBackupStorageEndpoint(req); err != nil {
+		sendJSONError(w, err.Error(), 400)
+		return
+	}
 	id, err := h.state.Store.CreateBackupStorage(&req)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
@@ -151,11 +155,23 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
 	}
+	if err := validateBackupStorageEndpoint(req); err != nil {
+		sendJSONError(w, err.Error(), 400)
+		return
+	}
 	// The panel edits with the secret redacted, so an update normally carries no
 	// secret. Backfill the stored one unless a new value was submitted, or the
-	// edit would silently wipe the credential.
+	// edit would silently wipe the credential - but only while the edit leaves
+	// the secret pointed at the same endpoint, bucket and access key. Changing
+	// any of those without supplying a secret is refused rather than merged; see
+	// mergeBackupStorageSecret.
 	if existing, err := h.state.Store.GetBackupStorage(id); err == nil {
-		req = mergeBackupStorageSecret(req, existing)
+		merged, merr := mergeBackupStorageSecret(req, existing)
+		if merr != nil {
+			sendJSONError(w, merr.Error(), 400)
+			return
+		}
+		req = merged
 	}
 	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
 		switch {

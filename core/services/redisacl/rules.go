@@ -1,5 +1,7 @@
 package redisacl
 
+import "dylaris-pkg/queue"
+
 // commandCats is the exhaustive category grant covering every command the node
 // and log-shipper use: read/write/stream/pubsub/connection/transaction, minus
 // dangerous/admin/scripting, plus explicit SCAN (SCAN is not in @dangerous;
@@ -69,7 +71,22 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 	for _, k := range globalReadKeys() {
 		rules = append(rules, k)
 	}
-	rules = append(rules, "&dylaris:backup:results", "&dylaris:backup:restores")
+	// Backup + restore reporting, scoped to THIS node's channel.
+	//
+	// These were "&dylaris:backup:results" and "&dylaris:backup:restores" - one
+	// fleet-wide name each, granted to every node including a tenant-owned BYON
+	// machine. Core read the runId straight out of the payload, and Pub/Sub
+	// carries no sender identity, so any node could close, complete or resize any
+	// run in the fleet: marking a foreign run "success" fires the retention prune,
+	// which deletes that job's older archives from storage, and the reported size
+	// counts against the owner's backup quota.
+	//
+	// Per-token, like every other node-scoped name here, so Redis itself refuses a
+	// cross-node publish. Core additionally re-derives the owning node from the run
+	// and compares it with the token in the channel name.
+	rules = append(rules,
+		"&"+queue.BackupResultsChannel(token),
+		"&"+queue.BackupRestoresChannel(token))
 	for _, u := range serverUUIDs {
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}
