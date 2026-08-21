@@ -20,7 +20,9 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -301,6 +303,30 @@ func (c *Consumer) claimStale(ctx context.Context, handler Handler) {
 	}
 }
 
+// runHandler calls handler and turns a panic into an ordinary error.
+//
+// Without this, the package's own promise that "a poison message can't wedge the
+// queue" held only for a handler that RETURNS an error. A handler that PANICS
+// took the whole process with it: Run is started from a bare goroutine in both
+// consumers (the node's command loop and the migration orchestrator), so nothing
+// above it recovers. The message was still pending, the next start redelivered
+// it through recoverPending, and it panicked again - and because the attempts
+// counter only advances on a returned error, MaxDeliveries never fired and the
+// dead-letter path was never reached. One malformed command wedged a node
+// permanently, through every restart.
+//
+// Converting it to an error puts a panicking message on the normal
+// retry-then-dead-letter path and keeps the stack in the log, where the ordinary
+// failure logging already carries it.
+func runHandler(ctx context.Context, handler Handler, data []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("handler panicked: %v\n%s", r, debug.Stack())
+		}
+	}()
+	return handler(ctx, data)
+}
+
 // handleOne runs the dedup → handler → mark-done → ACK sequence for one message.
 func (c *Consumer) handleOne(ctx context.Context, m redis.XMessage, handler Handler) {
 	// Already running here: a recovery read listed an entry whose handler has
@@ -325,7 +351,7 @@ func (c *Consumer) handleOne(ctx context.Context, m redis.XMessage, handler Hand
 		return
 	}
 
-	if err := handler(ctx, data); err != nil {
+	if err := runHandler(ctx, handler, data); err != nil {
 		attempts, _ := c.rdb.Incr(ctx, c.attemptsKey(m.ID)).Result()
 		c.rdb.Expire(ctx, c.attemptsKey(m.ID), c.DedupTTL)
 		if attempts >= c.MaxDeliveries {

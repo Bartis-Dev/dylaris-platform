@@ -391,6 +391,27 @@ func (r *replayBuffer) pending() []string {
 
 func (r *replayBuffer) clear() { r.lines, r.bytes, r.dropped = nil, 0, 0 }
 
+// heapLatest holds the most recent post-GC heap reading (MB) until a flush can
+// publish it. Latest-wins: between two flushes a busy server emits many GC
+// lines, and only the newest is worth writing - the key holds one value.
+//
+// It exists so the line-reading path does no Redis I/O at all. See the flush
+// comment in shipLogs for what the per-line write cost.
+type heapLatest struct{ mb int64 }
+
+func (h *heapLatest) note(mb int64) { h.mb = mb }
+
+// take returns the pending reading and clears it. ok is false when nothing new
+// arrived since the last take, so a flush with no GC activity issues no write.
+func (h *heapLatest) take() (int64, bool) {
+	if h.mb <= 0 {
+		return 0, false
+	}
+	mb := h.mb
+	h.mb = 0
+	return mb, true
+}
+
 // shipLogs batches log lines and writes them to the Redis Stream.
 // Flushes every 200ms or when 50 lines accumulate, whichever comes first.
 // Side effect: also scans each line for JVM GC summaries and updates a
@@ -403,6 +424,7 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 	var (
 		buf      []string
 		replay   replayBuffer
+		heap     heapLatest
 		bo       retry.Backoff
 		nextTry  time.Time // zero = attempt immediately
 		degraded bool      // true between the first failed write and the recovery
@@ -420,7 +442,41 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 			replay.add(buf)
 			buf = buf[:0]
 		}
-		if replay.empty() || (!force && now.Before(nextTry)) {
+		if !force && now.Before(nextTry) {
+			return
+		}
+
+		// The latest post-GC heap reading, written HERE rather than on the line
+		// that produced it.
+		//
+		// rdb.Set is a synchronous round-trip. Doing it per GC line put one in
+		// front of the loop whose whole job is to keep draining lineCh, and -
+		// unlike the stream write below - it obeyed no retry spacing at all.
+		// With Redis unreachable that is not a slow metric, it is a stalled
+		// reader: lineCh (512) fills, both scanners block, the JVM's stdout pipe
+		// fills, and the Minecraft server itself blocks writing a log line. The
+		// replay buffer exists precisely so a log outage delays output instead
+		// of costing anything, and this one unspaced call walked around it.
+		//
+		// Coalescing also drops steady-state round-trips from one per GC line to
+		// at most one per batch. A dropped reading is harmless and always was -
+		// the next GC replaces it.
+		heapFailed := false
+		if heapKey != "" {
+			if mb, ok := heap.take(); ok {
+				heapFailed = rdb.Set(ctx, heapKey, mb, heapKeyTTL).Err() != nil
+			}
+		}
+
+		if replay.empty() {
+			// Nothing to ship, but a failed heap write still means Redis is
+			// unreachable. Fall in behind the same spacing, or a server whose
+			// only output is GC lines - which are filtered out of the stream, so
+			// they never produce one - would retry a blocking write on every
+			// 200ms tick, with no stream write ever there to set the backoff.
+			if heapFailed && !force && ctx.Err() == nil {
+				nextTry = now.Add(bo.Next())
+			}
 			return
 		}
 		lines := replay.pending()
@@ -491,10 +547,11 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 			// the actual live heap.
 			if heapKey != "" {
 				if mb, ok := parseHeapAfterGC(line); ok {
-					// Non-blocking: a slow Redis must not stall the log
-					// shipper, so we fire-and-forget. Stale values fall
-					// out via TTL.
-					rdb.Set(ctx, heapKey, mb, heapKeyTTL)
+					// Recorded only. The write happens in flush, which is the
+					// one place that respects the retry schedule; this path
+					// must stay free of Redis round-trips so it keeps draining
+					// lineCh. Stale values fall out via TTL.
+					heap.note(mb)
 				}
 			}
 			// Hide JVM GC log noise from the user console. Parsing above

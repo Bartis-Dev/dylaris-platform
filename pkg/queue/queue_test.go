@@ -364,3 +364,62 @@ func TestRunSelfHealsAfterGroupVanishes(t *testing.T) {
 		t.Fatal("command enqueued after a Redis restart was never delivered: the consumer did not self-heal the vanished group")
 	}
 }
+
+// TestPanickingHandlerIsDeadLetteredNotFatal is the guard for the one poison
+// message this package's own doc promises it can survive.
+//
+// "A message that keeps failing is dead-lettered after MaxDeliveries so it can't
+// block the queue" held only for a handler that RETURNS an error. A handler that
+// PANICS took the whole process with it: Run is called from a bare goroutine in
+// both consumers (platform/node/main.go and the migration orchestrator), so
+// nothing above it recovers. The message stayed pending, the next start
+// redelivered it through recoverPending, and it panicked again - and because the
+// attempts counter only advances on a returned error, MaxDeliveries never fired.
+// One malformed command wedged a customer's node permanently, through every
+// restart, with no way out but deleting the stream by hand.
+//
+// The same shape was already found and fixed once in this audit, on the hub's
+// queue consumer (a [:8] slice on a short token). There the panic cost one
+// process; here the recovery loop makes it cost every restart after it too.
+func TestPanickingHandlerIsDeadLetteredNotFatal(t *testing.T) {
+	rdb := newTestRedis(t)
+	ctx := context.Background()
+	c := NewConsumer(rdb, "q", "g", "c1")
+	c.MaxDeliveries = 2
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup: %v", err)
+	}
+	if _, err := Publish(ctx, rdb, "q", []byte("poison")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	msgs := readNew(t, c)
+	m := msgs[0]
+	// A log-prefix slice on a payload shorter than the code assumes: the exact
+	// shape found in the hub's queue consumer earlier in this audit, not a bare
+	// panic(). The payload is 6 bytes.
+	alwaysPanic := func(_ context.Context, data []byte) error {
+		_ = string(data[:64])
+		return nil
+	}
+
+	// If handleOne does not recover, this call takes the test binary down and the
+	// failure reads as a crash rather than an assertion - which is exactly what it
+	// does to the node.
+	c.handleOne(ctx, m, alwaysPanic) // attempt 1 -> pending
+	if got := pendingCount(t, c); got != 1 {
+		t.Fatalf("pending=%d, want 1 after the first panic (a panic must count as a failed attempt)", got)
+	}
+	c.handleOne(ctx, m, alwaysPanic) // attempt 2 == MaxDeliveries -> dead-letter + ack
+
+	if got := pendingCount(t, c); got != 0 {
+		t.Fatalf("pending=%d, want 0: a panicking message is never dead-lettered, so it is redelivered forever", got)
+	}
+	n, err := rdb.XLen(ctx, c.deadKey()).Result()
+	if err != nil {
+		t.Fatalf("XLen dead: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("dead-letter len=%d, want 1", n)
+	}
+}

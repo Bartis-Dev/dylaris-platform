@@ -123,3 +123,54 @@ func TestReplayBuffer_PendingDoesNotConsume(t *testing.T) {
 		t.Errorf("after clear(), pending() = %v, want nothing", got)
 	}
 }
+
+// TestHeapLatest_CoalescesToTheNewestReading pins the coalescing that moved the
+// heap write off the line-reading path.
+//
+// It used to be one synchronous rdb.Set per GC line, on the loop whose only job
+// is to keep draining lineCh. With Redis unreachable that stalls the reader:
+// lineCh fills, the scanners block, the JVM's stdout pipe fills, and the
+// Minecraft server blocks writing a log line. Now the line path only records,
+// and flush publishes at most one value per batch - the newest, since the key
+// holds exactly one.
+func TestHeapLatest_CoalescesToTheNewestReading(t *testing.T) {
+	var h heapLatest
+
+	if _, ok := h.take(); ok {
+		t.Error("take() reported a reading before any GC line arrived")
+	}
+
+	h.note(512)
+	h.note(480)
+	h.note(497)
+
+	mb, ok := h.take()
+	if !ok {
+		t.Fatal("take() reported nothing after three GC lines")
+	}
+	if mb != 497 {
+		t.Errorf("take() = %d, want 497 (the newest reading)", mb)
+	}
+
+	// A second flush with no GC activity in between must issue no write at all,
+	// rather than re-writing the value the key already holds.
+	if _, ok := h.take(); ok {
+		t.Error("take() reported a reading twice; a quiet flush would re-write the key")
+	}
+}
+
+// TestHeapLatest_IgnoresANonPositiveReading is the guard parseHeapAfterGC
+// already applies at its own end: a 0 MB heap right after a Full GC would
+// publish a misleading dip to zero. Pinned here too so the coalescing layer
+// cannot reintroduce it.
+func TestHeapLatest_IgnoresANonPositiveReading(t *testing.T) {
+	var h heapLatest
+	h.note(0)
+	if _, ok := h.take(); ok {
+		t.Error("a zero reading was published")
+	}
+	h.note(-1)
+	if _, ok := h.take(); ok {
+		t.Error("a negative reading was published")
+	}
+}
