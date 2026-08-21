@@ -1,0 +1,118 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"dylaris-core/models"
+	"dylaris-core/services"
+
+	"github.com/gorilla/mux"
+)
+
+// The per-user gateway route cap is one allowance shared by both doors:
+// countOwnerRoutes counts EVERY route whose owner is this user, whichever
+// endpoint created it. Only /api/gateway/link-routes ever consulted it.
+//
+// So a tenant capped at N could create unlimited routes through
+// POST /api/servers/{id}/routes, and - the sharper half - the explicit
+// "disabled" mode an operator sets via PUT /api/users/{id}/route-limit to stop
+// an abusive tenant was enforced on one endpoint and ignored on the other.
+//
+// RedisGateway.CreateServerRoute's "limit counts skipped - Hub enforces
+// uniqueness in its DB" is true and about a different thing: uniqueness stops
+// two routes sharing a domain, it does not bound how many one account holds.
+
+func serverRouteReq(userID string, isAdmin bool, body map[string]interface{}) *http.Request {
+	b, _ := json.Marshal(body)
+	r := httptest.NewRequest(http.MethodPost, "/api/servers/1/routes", bytes.NewReader(b))
+	r = mux.SetURLVars(r, map[string]string{"id": "1"})
+	ctx := context.WithValue(r.Context(), "userID", userID)
+	ctx = context.WithValue(ctx, "isAdmin", isAdmin)
+	return r.WithContext(ctx)
+}
+
+func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
+	tests := []struct {
+		name       string
+		limits     map[string]*models.GatewayRouteLimit
+		existing   int
+		isAdmin    bool
+		wantStatus int
+		wantCreate bool
+	}{
+		{
+			name:       "no limit configured at all",
+			existing:   5,
+			wantStatus: http.StatusCreated,
+			wantCreate: true,
+		},
+		{
+			name:       "under the user override",
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 3}},
+			existing:   2,
+			wantStatus: http.StatusCreated,
+			wantCreate: true,
+		},
+		{
+			name:       "at the user override",
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 3}},
+			existing:   3,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			// The mode an operator picks to stop an abusive tenant outright.
+			name:       "route creation explicitly disabled for this user",
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 0}},
+			existing:   0,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "the platform-wide user_default applies too",
+			limits:     map[string]*models.GatewayRouteLimit{"user_default": {MaxRoutes: 1}},
+			existing:   1,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			// The cap is a tenant allowance; an admin registering the platform's
+			// own routes must not be blocked by user_default. Same asymmetry
+			// resolveRouteDomain already applies to the reserved-name list.
+			name:       "an admin is not capped",
+			limits:     map[string]*models.GatewayRouteLimit{"user_default": {MaxRoutes: 1}},
+			existing:   9,
+			isAdmin:    true,
+			wantStatus: http.StatusCreated,
+			wantCreate: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newLinkRouteRedis(t)
+			for i := 0; i < tc.existing; i++ {
+				seedLinkRoute(t, rdb, "held"+string(rune('a'+i))+".example.com",
+					services.GatewayRoute{OwnerID: linkRouteUserID, CoreOwned: true})
+			}
+			fs := &linkRouteFakeStore{routeLimits: tc.limits, settings: map[string]string{}}
+			gw := &linkRouteFakeGateway{}
+			h := newLinkRouteHandler(fs, gw, rdb)
+
+			rec := httptest.NewRecorder()
+			h.CreateServerRoute(rec, serverRouteReq(linkRouteUserID, tc.isAdmin, map[string]interface{}{
+				"domain": "new.example.com", "targetPort": 25565,
+			}))
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			// A refusal must land BEFORE the route is queued: a 403 that still
+			// created the route would be worse than no check at all.
+			if got := len(gw.createRouteServerCalls); (got > 0) != tc.wantCreate {
+				t.Fatalf("gateway create calls = %d, wantCreate = %v", got, tc.wantCreate)
+			}
+		})
+	}
+}

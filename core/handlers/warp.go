@@ -614,7 +614,24 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("revoke link %s: revoked, %d route(s) removed", linkID, removed)
+	// The overlay membership, on top of what the teardown removes.
+	//
+	// Deliberately HERE and not inside RevokeLinkKitTeardown, which is shared with
+	// the admin force-suspend path (BillingLifecycleService.SuspendNow). Suspension
+	// cuts the tunnel at the grace CUTOFF, not at the moment of suspension - that
+	// is what suspendTenantWarpPeers is for and it is a decision, not an omission.
+	// Putting the disconnect in the shared helper would move that cutoff forward
+	// for every suspended tenant. A tenant revoking their OWN kit has no grace to
+	// preserve: they asked for the machine to lose access.
+	//
+	// Without this the teardown took away what the tunnel CARRIES (routes, tunnel
+	// key, Redis ACL) and left the tunnel itself, so the machine stayed an overlay
+	// member after the panel reported the kit revoked.
+	peers := 0
+	if h.svc != nil {
+		peers = h.svc.DisconnectKeyPeers(ctx, key.ID)
+	}
+	log.Printf("revoke link %s: revoked, %d route(s) removed, %d peer(s) disconnected", linkID, removed, peers)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -659,13 +676,48 @@ func (h *WarpHandler) UpsertRegion(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
-// DeleteRegion (admin) removes a region (cascades its leaders).
+// DeleteRegion (admin) removes a region (cascades its leaders). Refused while
+// peers are still enrolled in it.
+//
+// The refusal is not tidiness, it is the only exit that exists. warp_leaders has
+// an ON DELETE CASCADE to warp_regions, so deleting the region takes every leader
+// row with it - while warp_peers.region is a plain TEXT column with no foreign
+// key, so the peer rows SURVIVE, pointing at a region that is gone.
+//
+// From that moment nothing can remove those tunnels. Every leader command goes
+// through pushToRegion, which enumerates ListWarpLeaders and matches on region;
+// with no leader rows left it matches nothing and silently sends nothing. So
+// DisconnectKeyPeers, revoke, delete-key and the suspension cutoff all report
+// success and push no command, while the leader PROCESSES keep running with their
+// full WireGuard peer set. The only way back is re-creating the region under the
+// identical id.
+//
+// This is the same hazard DeleteAPIKey spells out ("the peers MUST be pushed out
+// to the leaders first ... leaving a live WireGuard peer on every leader and no
+// record that would ever remove it"), reached from the other direction, and the
+// same guard the platform-regions sibling applies (handlers/regions.go refuses to
+// delete a region that still has servers or nodes).
+//
+// Fails CLOSED on a count error, for the reason regions.go states: discarding it
+// would let a database fault read as "empty" and delete the region anyway.
 func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 	region := mux.Vars(r)["region"]
+	peers, err := h.state.Store.ListWarpPeersByRegion(region)
+	if err != nil {
+		sendJSONError(w, "Could not verify the region is empty", http.StatusInternalServerError)
+		return
+	}
+	if len(peers) > 0 {
+		sendJSONError(w, fmt.Sprintf(
+			"Region still has %d enrolled peer(s). Revoke or delete their enrollment keys first - deleting the region removes its leaders, and Core can no longer reach a leader it has no row for, so those tunnels would stay up with nothing able to remove them.",
+			len(peers)), http.StatusConflict)
+		return
+	}
 	if err := h.state.Store.DeleteWarpRegion(region); err != nil {
 		sendJSONError(w, "Failed to delete region", http.StatusInternalServerError)
 		return
 	}
+	log.Printf("warp: deleted region %s (no enrolled peers)", region)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
@@ -851,10 +903,28 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 // secret is shown once. A tenant who loses it before using it would otherwise sit
 // at their cap forever with nothing to revoke it through.
 //
-// Revoking blocks future warp enrollment for that identity. A machine already
-// connected under it keeps its current tunnel until it reconnects; removing the
-// NODE itself is a separate action, which is the honest split - this endpoint
-// owns the key, not the machine.
+// Revoking blocks future warp enrollment for that identity AND drops whatever it
+// already enrolled, which is the same pairing RevokeAPIKey and DeleteAPIKey
+// perform and the suspension cutoff performs.
+//
+// An earlier version of this comment claimed a connected machine "keeps its
+// current tunnel until it reconnects". Nothing implemented that, and nothing
+// could: a re-enroll under a revoked key is refused at the middleware, and the
+// refusal leaves the existing warp_peers row and the leader's WireGuard peer
+// exactly where they are. The tunnel therefore stayed up indefinitely. That is
+// precisely what DisconnectKeyPeers' own doc says makes revoke "a security
+// control that is not one", and what suspendTenantWarpPeers says about a client
+// that "happily keeps a working peer forever".
+//
+// This endpoint still owns the KEY, not the machine: the node row, its servers
+// and its data are untouched, and removing the node is a separate action. What
+// changed is that revoking now actually takes the overlay membership away, which
+// is the one thing a tenant revoking a lost key is asking for.
+//
+// Best-effort by construction (DisconnectKeyPeers is per peer and per leader, and
+// a leader that is down converges on its next resync). The durable revoke runs
+// FIRST so a failure below cannot undo itself - same ordering as
+// RevokeLinkKitTeardown.
 func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !byonActive(h.state, r) {
 		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
@@ -888,7 +958,13 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Failed to revoke the node key", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("revoke node warp key %s (owner %s)", nodeID, key.OwnerID)
+	removed := 0
+	if h.svc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		removed = h.svc.DisconnectKeyPeers(ctx, key.ID)
+	}
+	log.Printf("revoke node warp key %s (owner %s), disconnected %d peer(s)", nodeID, key.OwnerID, removed)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "disconnected": removed})
 }

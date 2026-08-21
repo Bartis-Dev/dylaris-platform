@@ -384,6 +384,36 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The same per-user route cap CreateLinkRoute applies, and for the same
+	// reason: countOwnerRoutes counts EVERY route owned by this user, so the two
+	// endpoints spend one shared allowance and only one of them was checking it.
+	//
+	// A tenant capped at N link routes could create unlimited managed-server
+	// routes on the same account, and - the sharper half - the explicit
+	// "disabled" mode an operator sets on /api/users/{id}/route-limit to stop an
+	// abusive tenant was honoured on one door and ignored on the other.
+	//
+	// RedisGateway.CreateServerRoute says "limit counts skipped - Hub enforces
+	// uniqueness in its DB", which is true and unrelated: uniqueness stops two
+	// routes sharing a domain, it does not bound how many one account may hold.
+	// The cap lives here because effectiveRouteLimit reads Core's settings.
+	//
+	// Admins are exempt. The cap is a tenant allowance, and an admin registering
+	// the platform's own routes must not be blocked by user_default - the same
+	// asymmetry resolveRouteDomain already applies to the reserved-name list.
+	if !IsAdmin(r) {
+		if limit, has := h.effectiveRouteLimit(userID); has {
+			if limit <= 0 {
+				http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
+				return
+			}
+			if h.countOwnerRoutes(userID) >= limit {
+				http.Error(w, fmt.Sprintf("Route limit reached (%d)", limit), http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	if err := h.state.Gateway.CreateServerRoute(uint(serverID), userID, finalDomain, req.TargetPort); err != nil {
 		errMsg := err.Error()
 		if errors.Is(err, services.ErrRouteDomainTaken) {

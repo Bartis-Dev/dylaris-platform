@@ -58,6 +58,7 @@ type linkRouteFakeGateway struct {
 	createRouteViaLinkCalls []linkRouteCreateCall
 	createRouteViaLinkErr   error
 	createServerRouteErr    error
+	createRouteServerCalls  []linkRouteCreateCall
 	linkTokenFor            map[string]string
 }
 
@@ -70,6 +71,7 @@ type linkRouteCreateCall struct {
 }
 
 func (g *linkRouteFakeGateway) CreateServerRoute(serverID uint, ownerID string, domain string, port int) error {
+	g.createRouteServerCalls = append(g.createRouteServerCalls, linkRouteCreateCall{ownerID: ownerID, domain: domain, targetPort: port})
 	return g.createServerRouteErr
 }
 
