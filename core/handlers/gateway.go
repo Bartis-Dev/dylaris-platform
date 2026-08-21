@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -339,7 +340,7 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 // server. Three input shapes are accepted in priority order: {subdomain,
 // hosterDomain} picked from the admin's hoster list, {customDomain} for a
 // domain the user owns via CNAME, and a raw {domain} for scripts. 201 means
-// queued, not live.
+// queued, not live; 409 means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	userID := r.Context().Value("userID").(string)
@@ -385,7 +386,9 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 
 	if err := h.state.Gateway.CreateServerRoute(uint(serverID), userID, finalDomain, req.TargetPort); err != nil {
 		errMsg := err.Error()
-		if strings.Contains(errMsg, "not found") {
+		if errors.Is(err, services.ErrRouteDomainTaken) {
+			http.Error(w, fmt.Sprintf("%s is already in use", finalDomain), http.StatusConflict)
+		} else if strings.Contains(errMsg, "not found") {
 			http.Error(w, errMsg, http.StatusNotFound)
 		} else if strings.Contains(errMsg, "disabled") {
 			http.Error(w, errMsg, http.StatusForbidden)

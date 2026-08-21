@@ -15,6 +15,7 @@ import (
 	"dylaris-core/store"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -56,6 +57,7 @@ func (f *linkRouteFakeStore) GetSetting(key string) (string, error) {
 type linkRouteFakeGateway struct {
 	createRouteViaLinkCalls []linkRouteCreateCall
 	createRouteViaLinkErr   error
+	createServerRouteErr    error
 	linkTokenFor            map[string]string
 }
 
@@ -68,7 +70,7 @@ type linkRouteCreateCall struct {
 }
 
 func (g *linkRouteFakeGateway) CreateServerRoute(serverID uint, ownerID string, domain string, port int) error {
-	return nil
+	return g.createServerRouteErr
 }
 
 func (g *linkRouteFakeGateway) CreateRouteViaLink(ownerID string, domain string, linkToken string, targetHost string, port int) error {
@@ -393,6 +395,36 @@ func TestCreateLinkRoute_GatewayFailure(t *testing.T) {
 		h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A domain another tenant already holds is a conflict the caller can act on, not
+// a server fault, and the 500 it used to land in would have read as "try again".
+// Both create paths carry the same mapping; both are asserted, because they live
+// in different files and the next person to touch one will not see the other.
+func TestCreateRoute_DomainTakenIsAConflict(t *testing.T) {
+	t.Run("route-only", func(t *testing.T) {
+		gw := &linkRouteFakeGateway{createRouteViaLinkErr: services.ErrRouteDomainTaken}
+		h := newLinkRouteHandler(baseLinkRouteStore(), gw, newLinkRouteRedis(t))
+		rec := httptest.NewRecorder()
+		h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("managed server", func(t *testing.T) {
+		gw := &linkRouteFakeGateway{createServerRouteErr: services.ErrRouteDomainTaken}
+		h := newLinkRouteHandler(baseLinkRouteStore(), gw, newLinkRouteRedis(t))
+		body, _ := json.Marshal(map[string]interface{}{"domain": "survival.example.com", "targetPort": 25565})
+		r := httptest.NewRequest("POST", "/api/servers/1/routes", bytes.NewReader(body))
+		r = mux.SetURLVars(r, map[string]string{"id": "1"})
+		r = r.WithContext(context.WithValue(r.Context(), "userID", linkRouteUserID))
+		rec := httptest.NewRecorder()
+		h.CreateServerRoute(rec, r)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

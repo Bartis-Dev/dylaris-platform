@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -85,7 +86,8 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 	return "", fmt.Errorf("unknown link")
 }
 
-// CreateLinkRoute POST /api/gateway/link-routes — authed, gateway-gated.
+// CreateLinkRoute POST /api/gateway/link-routes — authed, gateway-gated. 409
+// means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
 
@@ -155,7 +157,11 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	host := strings.TrimSpace(strings.ToLower(req.TargetHost))
 	if err := h.state.Gateway.CreateRouteViaLink(userID, finalDomain, linkToken, host, req.TargetPort); err != nil {
 		msg := err.Error()
-		if strings.Contains(msg, "disabled") {
+		if errors.Is(err, services.ErrRouteDomainTaken) {
+			// Same wording the availability hint uses, and deliberately silent
+			// about who holds it.
+			http.Error(w, fmt.Sprintf("%s is already in use", finalDomain), http.StatusConflict)
+		} else if strings.Contains(msg, "disabled") {
 			http.Error(w, msg, http.StatusForbidden)
 		} else {
 			http.Error(w, fmt.Sprintf("Failed to create route: %s", msg), http.StatusInternalServerError)

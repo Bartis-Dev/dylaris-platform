@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -109,6 +110,32 @@ type hubQueueMessage struct {
 // sweep skips them.
 const coreOwnedRouteTTL = 0
 
+// ErrRouteDomainTaken is returned when route:{domain} already belongs to
+// someone else. route:{domain} is a single global namespace with two writers -
+// the hub, from its own routes table, and Core, for route-only entries - and
+// only the hub half has a uniqueness constraint (a unique index on domain).
+// Nothing enforced the other half, so a plain SET handed a domain from one
+// tenant to the next. CheckDomainAvailability has always reported the collision
+// to the panel; it was only ever a hint, never a gate.
+var ErrRouteDomainTaken = errors.New("domain is already routed")
+
+// coreOwnedRouteHolder reads route:{domain} and reports whether it is a
+// route-only (Core-owned) entry, plus the user UUID that owns it. ok is false
+// when the key is absent, unreadable or not JSON - callers treat that as
+// "someone else holds it" and refuse, because a domain we cannot prove is free
+// is not free.
+func (g *RedisGateway) coreOwnedRouteHolder(ctx context.Context, domain string) (ownerID string, coreOwned bool, ok bool) {
+	val, err := g.redis.Get(ctx, "route:"+domain).Result()
+	if err != nil {
+		return "", false, false
+	}
+	var r GatewayRoute
+	if json.Unmarshal([]byte(val), &r) != nil {
+		return "", false, false
+	}
+	return r.OwnerID, r.CoreOwned, true
+}
+
 // --- GatewayProvider interface ---
 
 // GatewayProvider handles route lifecycle operations (write path only).
@@ -166,7 +193,21 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 		}
 	}
 
-	// 4. Push to queue
+	// 4. Refuse to queue a route that would land on a tenant's route-only entry.
+	// The hub enforces uniqueness only within its OWN routes table, and a
+	// route-only entry has no row there - so the create would succeed, and the
+	// hub's next sync would SET route:{domain} straight over the tenant's.
+	// Managed-vs-managed needs no check here: that collision hits the hub's
+	// unique index, which keeps the first route. Adding one would misfire
+	// anyway, because a deleted managed route's Redis key survives until the
+	// leader's next sweep.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, coreOwned, ok := g.coreOwnedRouteHolder(ctx, domain); ok && coreOwned {
+		return ErrRouteDomainTaken
+	}
+
+	// 5. Push to queue
 	sID := uint(serverID)
 	oID := ownerID
 	msg := hubQueueMessage{
@@ -212,8 +253,26 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := g.redis.Set(ctx, "route:"+domain, data, coreOwnedRouteTTL).Err(); err != nil {
+	// SETNX, not SET: one domain, one owner. Two tenants can post the same
+	// domain at the same moment, so the claim has to be atomic - a read-then-
+	// write here would let both through and hand the loser's players to the
+	// winner's Link.
+	claimed, err := g.redis.SetNX(ctx, "route:"+domain, data, coreOwnedRouteTTL).Result()
+	if err != nil {
 		return err
+	}
+	if !claimed {
+		// Taken. The only permitted overwrite is this same tenant rewriting
+		// their OWN route-only entry, which is how they change its target host
+		// or port. Anything else - another tenant's entry, or a managed
+		// server's route (no core_owned flag, written by the hub) - is refused.
+		holder, coreOwned, ok := g.coreOwnedRouteHolder(ctx, domain)
+		if !ok || !coreOwned || holder != ownerID {
+			return ErrRouteDomainTaken
+		}
+		if err := g.redis.Set(ctx, "route:"+domain, data, coreOwnedRouteTTL).Err(); err != nil {
+			return err
+		}
 	}
 	return g.redis.SAdd(ctx, "sys:index:routes", domain).Err()
 }
