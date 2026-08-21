@@ -207,7 +207,7 @@ type GatewaySettings struct {
 	// CnameTarget is a single DNS LABEL (e.g. "route"), not a full domain. It is
 	// expanded per hoster domain into route.<base>, so one setting covers every
 	// region: a user picks whichever base matches the region they want.
-	CnameTarget          string         `json:"cnameTarget"`
+	CnameTarget string `json:"cnameTarget"`
 	// BlockedRoutePrefixes are leftmost labels users may not register as a route
 	// (e.g. "admin", "dylaris"). Applies to the hoster-subdomain picker and the
 	// leftmost label of custom/raw domains. Even though only :25565 MC traffic is
@@ -774,6 +774,19 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	// MinVersion is deliberately not read from the request: the floor lives in
 	// the signed manifest and this endpoint no longer accepts one.
 
+	// The download link is a URL Core itself GETs and then streams to the
+	// caller of the unauthenticated /api/beam/download, so it gets the same
+	// http/https + host + no-credentials check the other operator-set public
+	// URLs get (core public URL, solder mirror URL). The dialer behind that
+	// fetch refuses non-public addresses, which is what actually contains an
+	// SSRF; this rejects the obviously-wrong value at the point where an
+	// operator can still see the error.
+	req.DownloadLink = strings.TrimSpace(req.DownloadLink)
+	if err := validatePublicBaseURL("beam download link", req.DownloadLink); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	enabledStr := "false"
 	if req.Enabled {
 		enabledStr = "true"
@@ -1220,7 +1233,7 @@ func (h *SettingsHandler) LoadWarpTunnelSubnets() string {
 // GetWarpFirewallSettings GET /api/settings/warp-firewall - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
+		"success": true,
 		"settings": WarpFirewallSettings{
 			AllowedPorts:  h.LoadWarpSpokeAllowedPorts(),
 			TunnelSubnets: h.LoadWarpTunnelSubnets(),

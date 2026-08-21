@@ -149,7 +149,12 @@ func httpGetBeamManifestBytes(ctx context.Context, u string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
+	// Same SSRF-guarded dial the binary fetch uses: beam.release_manifest is a
+	// settings-table override, and this fetch is on the connect hot path.
+	resp, err := (&http.Client{
+		Timeout:   8 * time.Second,
+		Transport: &http.Transport{DialContext: beamDialContext},
+	}).Do(req)
 	if err != nil {
 		return nil, err
 	}

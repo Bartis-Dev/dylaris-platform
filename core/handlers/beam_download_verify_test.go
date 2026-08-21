@@ -39,6 +39,8 @@ const beamTestManifest = `{"version":"1.2.3","minVersion":"1.0.0","platforms":{"
 // carried verifyBeamManifest and a comment saying the manifest is read only
 // after the signature verifies.
 func TestFetchVerifiedBeamPlatformURL_RequiresAValidSignature(t *testing.T) {
+	// httptest binds 127.0.0.1, which the beam fetch guard refuses on purpose.
+	allowLoopbackBeamDial(t)
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)

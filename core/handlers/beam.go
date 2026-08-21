@@ -572,6 +572,17 @@ var validBeamPlatforms = map[string]bool{
 // An operator pointing beam.download_link at an internal host with a
 // self-signed cert now needs a real certificate there.
 //
+// It also dials through services.SafeDialContext, which refuses any address
+// that resolves to a loopback, private, CGNAT or link-local range - the
+// cloud metadata endpoint included. That is load-bearing, not tidiness:
+// beam.download_link is a settings.write-writable string this client GETs and
+// GetBeamDownload then streams straight to the caller, and that route is
+// deliberately unauthenticated (you fetch the client before you have an
+// account). Without the guard a settings.write holder - a delegatable panel
+// capability, not admin - could point Core at an internal address and have
+// anyone on the internet read the response back out of it. The check runs on
+// the resolved IP at connect time, so every redirect hop is covered too.
+//
 // Tight connect + response-header timeouts so an unreachable upstream surfaces
 // as a 502 in a few seconds instead of leaving the browser spinning.
 var beamBinaryClient = &http.Client{
@@ -579,11 +590,21 @@ var beamBinaryClient = &http.Client{
 	Transport: &http.Transport{
 		ResponseHeaderTimeout: 10 * time.Second,
 		IdleConnTimeout:       60 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout: 5 * time.Second, // connect timeout
-		}).DialContext,
-		TLSHandshakeTimeout: 5 * time.Second,
+		DialContext:           beamDialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
 	},
+}
+
+// beamDial is the dial both beam upstream fetches (the binary and the signed
+// manifest) go through. It is a variable ONLY so a test can point an httptest
+// server at it: httptest binds 127.0.0.1, which the guard correctly refuses.
+// Nothing in production reassigns it, and a test that does must restore it.
+var beamDial = services.SafeDialContext
+
+// beamDialContext is the indirection the transports hold, so swapping beamDial
+// takes effect on clients built at package init.
+func beamDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return beamDial(ctx, network, addr)
 }
 
 // GetBeamDownload streams a Beam binary through Core. We deliberately do

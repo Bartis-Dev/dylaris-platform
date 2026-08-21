@@ -81,6 +81,21 @@ var safeFetchClient = &http.Client{
 	},
 }
 
+// SafeDialContext is the SSRF-guarded dial safeFetchClient uses, exported so a
+// caller that must STREAM its response can get the same protection. SafeFetch
+// buffers into a []byte and caps the size, which is right for a manifest and
+// wrong for a multi-hundred-megabyte binary; such a caller builds its own
+// http.Client and sets this as its Transport.DialContext.
+//
+// The check runs on the already-resolved address, so it covers every hop of a
+// redirect chain and defeats DNS rebinding the same way it does for SafeFetch.
+// What it does NOT bring along is SafeFetch's scheme check and size cap -
+// those belong to the caller, because a streaming caller has its own answer
+// for both.
+func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return safeFetchDialer.DialContext(ctx, network, addr)
+}
+
 // SafeFetch GETs a user-supplied URL through the hardened client and returns
 // the response body, capped at maxBytes. The URL must be http/https; the
 // dialer blocks any request that resolves to a non-public address. A body

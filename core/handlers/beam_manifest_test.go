@@ -75,6 +75,8 @@ func TestVerifyBeamManifest(t *testing.T) {
 }
 
 func TestFetchVerifiedBeamMinVersion(t *testing.T) {
+	// httptest binds 127.0.0.1, which the beam fetch guard refuses on purpose.
+	allowLoopbackBeamDial(t)
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

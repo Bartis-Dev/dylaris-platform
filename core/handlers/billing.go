@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -143,6 +144,20 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 			sendJSONError(w, "Presigned URL TTL must be a positive number of minutes", http.StatusBadRequest)
 			return
 		}
+	}
+	// The payment URL was the one operator-set URL in the platform stored with
+	// no check at all ("free-form"). It is not a display string: GetMyBilling
+	// hands it to every tenant, and the panel renders the whole billing banner
+	// as <a href={paymentUrl}> (components/BillingBanner.tsx). plans.write is a
+	// delegatable panel capability, so "an admin typed it" is not the threat
+	// model, and whether a given browser happens to refuse a javascript: or
+	// data: href is not something this side should be relying on. Same
+	// http/https + host + no-credentials rule the other operator-set public
+	// URLs already take; empty stays valid and simply renders no link.
+	req.PaymentUrl = strings.TrimSpace(req.PaymentUrl)
+	if err := validatePublicBaseURL("payment URL", req.PaymentUrl); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	writes := map[string]string{
 		services.BillingGracePeriodKey:   req.GracePeriod,
