@@ -28,6 +28,11 @@ vendor/
 # repo root so it doesn't shadow real subdirectories/files of the same name.
 /dylaris-core
 dylaris-node
+# Same thing for the shipper. It was the one local build output with no rule,
+# so it stayed untracked only as long as every `git add` remembered to exclude
+# it by hand - and one that ran from a subdirectory (where the pathspec no
+# longer matched) committed 9MB of ELF.
+dylaris-log-shipper
 
 # Beam desktop app build outputs (rebuilt by CI; not committed). NOTE:
 # beam/app/third_party/ (the vendored, BC3-patched Wails) IS committed and must

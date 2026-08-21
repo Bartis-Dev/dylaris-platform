@@ -366,10 +366,21 @@ func (dm *DockerManager) sidecarRedisAddr(netID string) (string, error) {
 // two differ on the warp proxy, where the node's is loopback and a container's
 // is the bridge gateway.
 func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
-	// Redis ACL is mandatory: MC containers always get the per-node SHIPPER user,
-	// scoped to this node's assigned server keys only (no node-scoped keys, no
-	// :cmds), so a compromised container can't reach sibling-tenant data or the
-	// command stream. Derived deterministically; Core provisions the matching user.
+	// Redis ACL is mandatory: MC containers always get the per-node SHIPPER user.
+	// Derived deterministically; Core provisions the matching user.
+	//
+	// The scope is PER NODE, not per server. BuildShipperACLRules (core/services/
+	// redisacl/rules.go) grants ~dylaris:server:<u>:* for EVERY server assigned to
+	// this node, with +@read +@write. On a shared platform node those are other
+	// tenants' servers, and dylaris:server:<u>:input is a stdin bridge into their
+	// JVM (log-shipper's forwardInput BLPops it straight into the process), so
+	// this credential reaches a neighbour's console - reading it and writing to
+	// it. What it genuinely does NOT reach is node-scoped keys or :cmds.
+	//
+	// This comment used to claim the opposite. Closing it needs a per-SERVER
+	// shipper user, which is a Core provisioning change (N users per node) rather
+	// than something this function can decide; until then, do not read the
+	// per-node scoping as tenant isolation.
 	user := aclShipperUsername(nodeID)
 	pass := aclShipperPassword(getNodeSecret(), nodeID)
 	env := []string{

@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -614,10 +615,76 @@ func firstPersistedStoragePath(pathsCSV string) string {
 	return filepath.Join(baseDir, "dylaris_data", "servers")
 }
 
-// getOutboundIP returns the node's public IP address.
-// Inside a Docker Swarm stack the UDP-dial trick returns the overlay IP,
-// so we hit ipify first and fall back to a secondary service before the UDP trick.
+// publicIPTTL is how long a resolved public address is reused. The heartbeat
+// runs every 5s and a machine's public address changes on the order of days, so
+// the lookup does not belong on that tick: unthrottled it was three external
+// requests per node per 5 seconds, against a free third-party service that will
+// eventually answer with a rate limit instead of an address.
+const publicIPTTL = 5 * time.Minute
+
+var (
+	publicIPMu   sync.Mutex
+	publicIPVal  string
+	publicIPAt   time.Time
+	publicIPWarn bool
+)
+
+// getOutboundIP returns the node's public IP address, cached for publicIPTTL.
+//
+// Inside a Docker Swarm stack the UDP-dial trick returns the OVERLAY IP, which
+// is why the lookup services come first. That also makes the trick a bad
+// fallback: the heartbeat's IP is persisted by Core (services/discovery.go
+// SetNodeAddress) and read back as the node's public address, so a transient
+// lookup outage used to overwrite a correct public address with an unroutable
+// overlay one - and, being persisted, it stayed wrong after the outage ended.
+//
+// So a failed refresh keeps the last known good answer instead. The trick is
+// only used when there is nothing better, which is a first boot with no
+// reachable lookup service.
 func getOutboundIP() string {
+	publicIPMu.Lock()
+	if publicIPVal != "" && time.Since(publicIPAt) < publicIPTTL {
+		defer publicIPMu.Unlock()
+		return publicIPVal
+	}
+	last := publicIPVal
+	publicIPMu.Unlock()
+
+	ip := publicIPLookup()
+	if ip == "" && last != "" {
+		publicIPMu.Lock()
+		if !publicIPWarn {
+			publicIPWarn = true
+			log.Printf("discovery: public IP lookup failed, keeping the last known address %s", last)
+		}
+		publicIPMu.Unlock()
+		return last
+	}
+	if ip == "" {
+		// Nothing cached and no service reachable: the routing trick is the only
+		// answer left. Inside Swarm it is the overlay address, which is wrong but
+		// is at least not empty on a first boot.
+		conn, err := net.Dial("udp", "8.8.8.8:80")
+		if err != nil {
+			return "127.0.0.1"
+		}
+		defer conn.Close()
+		return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	}
+
+	publicIPMu.Lock()
+	publicIPVal, publicIPAt, publicIPWarn = ip, time.Now(), false
+	publicIPMu.Unlock()
+	return ip
+}
+
+// publicIPLookup is the seam the cache calls through, so a test can drive the
+// refresh without reaching the network.
+var publicIPLookup = lookupPublicIP
+
+// lookupPublicIP asks the external services in turn; "" when none answered with
+// a parseable address.
+func lookupPublicIP() string {
 	client := &http.Client{Timeout: 3 * time.Second}
 	for _, url := range []string{
 		"https://api4.ipify.org",
@@ -638,13 +705,7 @@ func getOutboundIP() string {
 			return ip
 		}
 	}
-	// Last resort: UDP routing trick (returns overlay IP inside Swarm)
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return "127.0.0.1"
-	}
-	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	return ""
 }
 
 // loadModesFromRedis reads routing_mode, file_access_mode, port_mode and
