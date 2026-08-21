@@ -124,13 +124,13 @@ func TestTransport_RoundTrip(t *testing.T) {
 	pulledZip := filepath.Join(dest, "pulled.zip")
 
 	// Correct sha → passes.
-	if err := Pull(context.Background(), srv.URL+"/migration", tok, sum, pulledZip, 2); err != nil {
+	if err := Pull(context.Background(), srv.URL+"/migration", tok, sum, pulledZip, 2, size); err != nil {
 		t.Fatalf("pull (good sha): %v", err)
 	}
 
 	// Wrong sha → fails after retries.
 	wrong := strings.Repeat("0", 64)
-	if err := Pull(context.Background(), srv.URL+"/migration", tok, wrong, pulledZip, 2); err == nil {
+	if err := Pull(context.Background(), srv.URL+"/migration", tok, wrong, pulledZip, 2, size); err == nil {
 		t.Fatal("pull (wrong sha): expected failure, got nil")
 	}
 
@@ -164,7 +164,7 @@ func TestTransport_BadTokenRejected(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "out.zip")
 	// Forged token → server returns 401 → Pull never matches the hash.
-	if err := Pull(context.Background(), srv.URL+"/migration", "garbage.token", sum, dest, 1); err == nil {
+	if err := Pull(context.Background(), srv.URL+"/migration", "garbage.token", sum, dest, 1, 0); err == nil {
 		t.Fatal("expected pull to fail with a bad token")
 	}
 }

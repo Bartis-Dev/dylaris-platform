@@ -240,7 +240,7 @@ func TestSendMigrateInCommand(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", []string{"10.0.0.5", "192.168.1.10"}); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -261,6 +261,11 @@ func TestSendMigrateInCommand(t *testing.T) {
 	if got["expectedSha256"] != "deadbeef" {
 		t.Errorf("expectedSha256 = %v, want deadbeef", got["expectedSha256"])
 	}
+	// The download bound. The sha256 travels with it but cannot replace it: the
+	// target checks the hash only after the last byte is on its disk.
+	if size, _ := got["expectedSize"].(float64); int64(size) != 4096 {
+		t.Errorf("expectedSize = %v, want 4096; without it the target pulls unbounded", got["expectedSize"])
+	}
 	ips, ok := got["sourcePrivateIps"].([]interface{})
 	if !ok || len(ips) != 2 || ips[0] != "10.0.0.5" || ips[1] != "192.168.1.10" {
 		t.Errorf("sourcePrivateIps = %+v, want [10.0.0.5 192.168.1.10]", got["sourcePrivateIps"])
@@ -271,7 +276,7 @@ func TestSendMigrateInCommand_OmitsEmptySourcePrivateIPs(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", nil); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, nil); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -306,7 +311,7 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "https://example.com/get-url", "cafebabe"); err != nil {
+	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "https://example.com/get-url", "cafebabe", 8192); err != nil {
 		t.Fatalf("SendMigratePullR2Command: %v", err)
 	}
 
@@ -323,6 +328,11 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	}
 	if got["expectedSha256"] != "cafebabe" {
 		t.Errorf("expectedSha256 = %v, want cafebabe", got["expectedSha256"])
+	}
+	// The R2 leg pulls from a pre-signed URL and needs the same bound as the
+	// node-to-node leg; a pre-signed URL says nothing about the response size.
+	if size, _ := got["expectedSize"].(float64); int64(size) != 8192 {
+		t.Errorf("expectedSize = %v, want 8192; without it the target pulls unbounded", got["expectedSize"])
 	}
 }
 

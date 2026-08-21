@@ -133,3 +133,5 @@
 {"date":"2026-08-21","service":"node","type":"security","summary":"Installing or removing a mod, and the automatic EULA accept during setup, now stay inside the server's own folder even if a link was left in the mods or plugins directory."}
 {"date":"2026-08-21","service":"log-shipper","type":"fix","summary":"Stopping a server now always shuts the Minecraft process down cleanly and lets it save, instead of it being killed together with the container on some stop paths."}
 {"date":"2026-08-21","service":"log-shipper","type":"fix","summary":"A single very long or unusual console line no longer freezes the console, which previously also stalled the server itself."}
+{"date":"2026-08-21","service":"core","type":"security","summary":"A file-transfer ticket can no longer be presented to the panel API as a login session; only tokens issued for the panel itself are accepted."}
+{"date":"2026-08-21","service":"node","type":"security","summary":"A server move now refuses a transfer that sends more data than the source announced, so a misbehaving source cannot fill the target machine's disk, and it will not write through a link left in the target folder."}

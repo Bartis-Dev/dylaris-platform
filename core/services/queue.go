@@ -178,7 +178,7 @@ func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, ser
 // pulls the staged archive from sourceNodeID using token, verifies it against
 // expectedSha256, and extracts it. The move parameters ride as top-level fields
 // (matching the node's NodeCommand shape), not inside Config.
-func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, sourcePrivateIPs []string) error {
+func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateInCmd struct {
@@ -187,6 +187,12 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 		SourceNodeID   string                 `json:"sourceNodeId"`
 		MigrateToken   string                 `json:"migrateToken"`
 		ExpectedSha256 string                 `json:"expectedSha256"`
+		// ExpectedSize is the size the source staged, and the bound the target
+		// enforces while downloading. The sha256 cannot serve as that bound: it
+		// is checked once the last byte is already on the target's disk, which
+		// is shared with every other tenant on that node. Sent for BOTH pull
+		// paths; omitted only if the source never reported a size.
+		ExpectedSize int64 `json:"expectedSize,omitempty"`
 		// SourcePrivateIPs are the source node's LAN host IPs. When set (BYON
 		// transfers), the target probes them first so a same-LAN move pulls
 		// directly over the LAN instead of hairpinning through the warp overlay.
@@ -198,6 +204,7 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 		SourceNodeID:     sourceNodeID,
 		MigrateToken:     token,
 		ExpectedSha256:   expectedSha256,
+		ExpectedSize:     expectedSize,
 		SourcePrivateIPs: sourcePrivateIPs,
 	}
 
@@ -239,7 +246,7 @@ func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, 
 // fallback). The target node downloads from the pre-signed GET URL, verifies the
 // archive against expectedSha256, extracts it, and reports phase "transferred" —
 // the same terminal phase as migrate_in, so cutover proceeds identically.
-func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, getURL, expectedSha256 string) error {
+func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, getURL, expectedSha256 string, expectedSize int64) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migratePullR2Cmd struct {
@@ -247,12 +254,15 @@ func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, 
 		Config          map[string]interface{} `json:"config"`
 		PresignedGetURL string                 `json:"presignedGetUrl"`
 		ExpectedSha256  string                 `json:"expectedSha256"`
+		// See SendMigrateInCommand: the same download bound, for the R2 leg.
+		ExpectedSize int64 `json:"expectedSize,omitempty"`
 	}
 	cmd := migratePullR2Cmd{
 		Action:          "migrate_pull_r2",
 		Config:          map[string]interface{}{"uuid": serverUUID},
 		PresignedGetURL: getURL,
 		ExpectedSha256:  expectedSha256,
+		ExpectedSize:    expectedSize,
 	}
 
 	jsonData, err := json.Marshal(cmd)

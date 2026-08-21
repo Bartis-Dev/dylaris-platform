@@ -139,6 +139,10 @@ func Extract(zipPath, destDir string) error {
 		return err
 	}
 
+	// Directories already cleared by linkFreeUnder, so the check costs one Lstat
+	// per distinct directory rather than one per entry per level.
+	verified := map[string]bool{destAbs: true}
+
 	for _, f := range zr.File {
 		target := filepath.Join(destDir, f.Name)
 		targetAbs, err := filepath.Abs(target)
@@ -150,6 +154,9 @@ func Extract(zipPath, destDir string) error {
 		// from passing a naive prefix check against "dest".
 		if targetAbs != destAbs && !strings.HasPrefix(targetAbs, destAbs+string(os.PathSeparator)) {
 			return fmt.Errorf("migration: entry %q escapes destination", f.Name)
+		}
+		if err := linkFreeUnder(destAbs, targetAbs, verified); err != nil {
+			return err
 		}
 
 		if f.FileInfo().IsDir() {
@@ -164,6 +171,51 @@ func Extract(zipPath, destDir string) error {
 		}
 		if err := extractOne(f, target); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// linkFreeUnder reports whether target - already known to be LEXICALLY inside
+// destAbs - is reachable without following a symlink out of it.
+//
+// The zip-slip guard above cleans a string and never asks the filesystem, so it
+// cannot see a link that is already sitting in the destination. Extract's
+// destination is a server directory, and a server directory is bind-mounted
+// into the tenant's own Minecraft container: on a move BACK to a node that still
+// holds the old copy, "world" can be a link pointing anywhere, and then
+// MkdirAll adopts it and every entry written underneath lands outside. Archive
+// never puts a link INTO the zip (it skips non-regular files), so nothing here
+// legitimately traverses one.
+//
+// verified is the caller's cache of directories already cleared.
+func linkFreeUnder(destAbs, target string, verified map[string]bool) error {
+	rel, err := filepath.Rel(destAbs, target)
+	if err != nil {
+		return err
+	}
+	cur := destAbs
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if seg == "" || seg == "." {
+			continue
+		}
+		cur = filepath.Join(cur, seg)
+		if verified[cur] {
+			continue
+		}
+		fi, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			return nil // nothing from here down exists yet, so nothing to follow
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("migration: %q in the destination is a symlink", rel)
+		}
+		// Only directories are cached: a file leaf is about to be replaced.
+		if fi.IsDir() {
+			verified[cur] = true
 		}
 	}
 	return nil

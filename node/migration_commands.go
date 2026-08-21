@@ -199,7 +199,7 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 // same-LAN move stays within a few seconds before falling back to the overlay.
 const migrationProbeTimeout = 2 * time.Second
 
-func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, sourceNodeID, token, expectedSha256 string, sourcePrivateIPs []string) {
+func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string) {
 	if sourceNodeID == "" || token == "" || expectedSha256 == "" {
 		log.Printf("migrate_in %s: missing sourceNodeID/token/expectedSha256", serverUUID)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", "missing migrate_in parameters")
@@ -250,7 +250,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	url := fmt.Sprintf("http://%s/migration", chosen)
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_in %s: pulling from %s", serverUUID, url)
-	if err := migration.Pull(ctx, url, token, expectedSha256, tmpZip, 3); err != nil {
+	if err := migration.Pull(ctx, url, token, expectedSha256, tmpZip, 3, expectedSize); err != nil {
 		log.Printf("migrate_in %s: pull failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		// Hash mismatch after retries aborts before extract — never write
@@ -422,7 +422,7 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 // hash is checked BEFORE extract so a corrupted download never lands in the live
 // server directory. Reports phase "transferred" — identical to migrate_in, so
 // the orchestrator's cutover proceeds the same way.
-func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, getURL, expectedSha256 string) {
+func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, serverUUID, getURL, expectedSha256 string, expectedSize int64) {
 	if getURL == "" || expectedSha256 == "" {
 		log.Printf("migrate_pull_r2 %s: missing getURL/expectedSha256", serverUUID)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", "missing pull_r2 parameters")
@@ -444,7 +444,7 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_pull_r2 %s: downloading from R2", serverUUID)
-	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3); err != nil {
+	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3, expectedSize); err != nil {
 		log.Printf("migrate_pull_r2 %s: download failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		setMigrationStatus(ctx, rdb, serverUUID, "error", fmt.Sprintf("r2 pull failed: %v", err))

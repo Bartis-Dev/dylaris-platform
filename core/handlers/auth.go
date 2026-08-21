@@ -297,6 +297,34 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Everything above is a DENYLIST, and it named the two token types that
+		// existed when it was written. A third one already did not appear in it:
+		// the BEAM TICKET.
+		//
+		// A beam ticket is HS256-signed with this exact key (BEAM_JWT_SECRET is
+		// wired to JWT_SECRET in both compose files, deliberately - see the
+		// README), carries a "username" claim under the same JSON name a session
+		// uses, and carries no purpose at all. It therefore fell through to the
+		// session path below, and since authorization is then re-read from the
+		// user ROW, the bearer got that user's full session for the ticket's 30
+		// minutes.
+		//
+		// Who holds one: the ticket travels to the beam desktop app, through the
+		// gateway beam-relay (a separate repo and deployment), and to the NODE -
+		// which for BYON is the customer's own machine. So a BYON operator who
+		// receives an admin's beam ticket could replay it here as that admin.
+		//
+		// The rule is an ALLOWLIST by construction rather than a third name on
+		// the list: every token this middleware should accept comes from
+		// IssueToken / the login handler, and none of them sets an issuer. Any
+		// future token type minted with this key the way the beam ticket was -
+		// with its own issuer, for its own audience - is refused here without
+		// anyone having to remember to extend a list.
+		if claims.Issuer != "" {
+			sendJSONError(w, "Token was not issued for the panel API", http.StatusForbidden)
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), "username", claims.Username)
 		ctx = context.WithValue(ctx, "isAdmin", claims.IsAdmin)
 

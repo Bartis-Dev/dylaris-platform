@@ -206,6 +206,11 @@ type NodeCommand struct {
 	SourceNodeID   string `json:"sourceNodeId,omitempty"`
 	MigrateToken   string `json:"migrateToken,omitempty"`
 	ExpectedSha256 string `json:"expectedSha256,omitempty"`
+	// ExpectedSize is the byte size the SOURCE announced for the staged
+	// archive, and the bound the pull enforces on the response. The sha256 is
+	// not that bound - it is checked after the last byte is already on disk.
+	// Absent (an older core) means no cap, i.e. the previous behaviour.
+	ExpectedSize int64 `json:"expectedSize,omitempty"`
 	// SourcePrivateIPs: the source node's LAN IPs to probe before the overlay
 	// (BYON same-LAN fast path). Empty = overlay-only (platform moves).
 	SourcePrivateIPs []string `json:"sourcePrivateIps,omitempty"`
@@ -1694,7 +1699,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "migrate_in":
 		// Target side: pull the staged archive and extract it. No
 		// container start here — the orchestrator sends start next.
-		handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.SourcePrivateIPs)
+		handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
@@ -1706,7 +1711,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
-		handleMigratePullR2(ctx, rdb, storage, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256)
+		handleMigratePullR2(ctx, rdb, storage, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
 
 	case "backup_run":
 		// Re-decode the full payload — BackupRunCommand has many fields

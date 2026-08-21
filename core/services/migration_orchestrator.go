@@ -439,7 +439,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	if sourceNode.OwnerID != nil || targetNode.OwnerID != nil {
 		sourcePrivateIPs = sourceNode.PrivateIPs
 	}
-	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, sourcePrivateIPs); err != nil {
+	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, meta.Size, sourcePrivateIPs); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
@@ -450,7 +450,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	phase, nerr := o.waitForNodePhaseAny(ctx, srv.UUID, map[string]bool{"transferred": true, "need_remote": true}, migrationTransferTimeout)
 	if phase == "need_remote" {
 		log.Printf("migration %s: source LAN unreachable, falling back to R2 transfer", srv.UUID)
-		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, meta.SHA256); err != nil {
+		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, meta.SHA256, meta.Size); err != nil {
 			// Still pre-cutover: node_id unchanged, source authoritative — roll back.
 			log.Printf("migration %s: R2 transfer failed: %v", srv.UUID, err)
 			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "r2 transfer failed: "+err.Error())
@@ -828,7 +828,7 @@ func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, serverU
 // counts against the tenant's R2 quota) and is deleted when we're done, success
 // or fail. On success the target has reported "transferred" exactly like
 // migrate_in, so the caller proceeds to the normal cutover.
-func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, expectedSha256 string) error {
+func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, expectedSha256 string, expectedSize int64) error {
 	bs, err := o.store.GetDefaultBackupStorage()
 	if err != nil {
 		return fmt.Errorf("resolve backup storage: %w", err)
@@ -871,7 +871,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	}
 
 	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".
-	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256); err != nil {
+	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256, expectedSize); err != nil {
 		return fmt.Errorf("queue migrate_pull_r2: %w", err)
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
