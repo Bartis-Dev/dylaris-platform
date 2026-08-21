@@ -1942,12 +1942,35 @@ func (s *PostgresStore) GetUserByPasswordResetToken(token string) (*models.User,
 	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
 }
 
-func (s *PostgresStore) SetPasswordResetToken(userID string, token string, expiresAt time.Time) error {
-	_, err := s.db.Exec(
-		`UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2 WHERE id = $3`,
-		hashAuthToken(token), expiresAt, userID,
+// SetPasswordResetToken issues a reset token for userID, but only when any
+// token already on the row is no longer fresh, and reports whether it issued.
+//
+// The freshness test is expressed against password_reset_expires_at rather than
+// a send timestamp because a reset token's expiry IS its send time plus the
+// policy TTL, so the column already carries the information and no new one is
+// needed. issueWhenExpiryAtOrBefore is that boundary: pass expiresAt minus the
+// cooldown and the comparison reduces to "the previous send was at least a
+// cooldown ago". (Changing the TTL policy between two sends skews the window by
+// the difference; the effect is bounded by that and self-corrects on the next
+// send.)
+//
+// Doing it in the UPDATE's WHERE rather than as a read-then-write also makes it
+// atomic, so two simultaneous requests cannot both decide they are due.
+func (s *PostgresStore) SetPasswordResetToken(userID string, token string, expiresAt, issueWhenExpiryAtOrBefore time.Time) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2
+		 WHERE id = $3
+		   AND (password_reset_expires_at IS NULL OR password_reset_expires_at <= $4)`,
+		hashAuthToken(token), expiresAt, userID, issueWhenExpiryAtOrBefore,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *PostgresStore) ClearPasswordResetToken(userID string) error {

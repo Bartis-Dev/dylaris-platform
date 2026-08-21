@@ -368,7 +368,7 @@ type Store interface {
 
 	// --- Password reset ---
 	GetUserByPasswordResetToken(token string) (*models.User, error)
-	SetPasswordResetToken(userID string, token string, expiresAt time.Time) error
+	SetPasswordResetToken(userID string, token string, expiresAt, issueWhenExpiryAtOrBefore time.Time) (bool, error)
 	ClearPasswordResetToken(userID string) error
 
 	// --- Security questions ---

@@ -67,9 +67,30 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		return
 	}
+	// Per-MAILBOX cooldown, the twin of the one on /auth/resend-verification.
+	//
+	// The per-IP limiter on this route bounds one CALLER; it does not bound one
+	// mailbox, which is what an attacker rotating source addresses aims at. And
+	// this is not only an inbox-filling and mail-bill problem: the write below
+	// REPLACES the reset token, so an unthrottled loop keeps invalidating the
+	// link the user is trying to click, for as long as it runs. Its sibling
+	// spells that reasoning out and has been enforcing it; this endpoint,
+	// which does the same thing to the same mailbox, had nothing.
+	//
+	// No new column: a reset token's expiry is its send time plus the policy
+	// TTL, so subtracting the cooldown from the expiry being written gives the
+	// boundary the store compares against, atomically inside the UPDATE.
 	expires := time.Now().Add(time.Duration(policy.PasswordResetLinkTTLMinutes) * time.Minute)
-	if err := h.state.Store.SetPasswordResetToken(user.ID, token, expires); err != nil {
+	issued, err := h.state.Store.SetPasswordResetToken(user.ID, token, expires, expires.Add(-passwordResetCooldown))
+	if err != nil {
 		log.Printf("forgot-password: SetPasswordResetToken for userID=%s: %v", user.ID, err)
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+	if !issued {
+		// A fresh link is already in that inbox. Silent success, same as every
+		// other no-op branch here - telling the caller they were throttled
+		// would confirm the address is on file.
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		return
 	}
@@ -81,12 +102,18 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	}
 
 	LogIdentityAudit(h.state, r, AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
-		"email":      user.Email,
+		"email":       user.Email,
 		"ttl_minutes": policy.PasswordResetLinkTTLMinutes,
 	})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
+
+// passwordResetCooldown is the minimum gap between two reset emails to ONE
+// address. Deliberately the same 60 seconds as resendVerificationCooldown: both
+// endpoints send mail on an anonymous request, both replace the token they just
+// sent, and a caller inside the per-IP route limit is inside this one too.
+const passwordResetCooldown = 60 * time.Second
 
 type validateResetTokenRequest struct {
 	Token string `json:"token"`

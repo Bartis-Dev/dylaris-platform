@@ -35,6 +35,12 @@ type apiKeysAuthFakeStore struct {
 	// resolver-based delegation subset check in Create. Key: grantKey(serverID, userID).
 	grants map[string]*store.ServerGrant
 
+	// users backs the use-time owner re-check in APIKeyMiddleware
+	// (ownerStillHolds): the key's authority is re-resolved against what its
+	// owner holds NOW. Absent = the owner's account is gone.
+	users      map[string]*models.User
+	getUserErr error
+
 	createCalls []*models.APIKey
 	createErr   error
 	nextID      int
@@ -53,6 +59,17 @@ func (f *apiKeysAuthFakeStore) GetAPIKeyByHash(hash string) (*models.APIKey, err
 }
 
 func (f *apiKeysAuthFakeStore) TouchAPIKey(id int) error { return nil }
+
+func (f *apiKeysAuthFakeStore) GetUserByID(id string) (*models.User, error) {
+	if f.getUserErr != nil {
+		return nil, f.getUserErr
+	}
+	u, ok := f.users[id]
+	if !ok {
+		return nil, errors.New("user not found")
+	}
+	return u, nil
+}
 
 func (f *apiKeysAuthFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
 	if f.getServerErr != nil {
@@ -136,14 +153,14 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 	past := time.Now().Add(-time.Hour)
 
 	cases := []struct {
-		name           string
-		authHeader     string
-		setAuthHeader  bool
-		key            *models.APIKey
-		requiredPerm   string
-		uuidVar        string
-		wantStatus     int
-		wantBodySub    string
+		name            string
+		authHeader      string
+		setAuthHeader   bool
+		key             *models.APIKey
+		requiredPerm    string
+		uuidVar         string
+		wantStatus      int
+		wantBodySub     string
 		wantInnerCalled bool
 	}{
 		{
@@ -174,11 +191,11 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 			wantBodySub:   "Invalid key",
 		},
 		{
-			name:          "Bearer without the dyl_ prefix still resolves (prefix strip is optional)",
-			setAuthHeader: true,
-			authHeader:    "Bearer noprefixtoken",
-			key:           &models.APIKey{ID: 1, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
-			requiredPerm:  "rcon.exec",
+			name:            "Bearer without the dyl_ prefix still resolves (prefix strip is optional)",
+			setAuthHeader:   true,
+			authHeader:      "Bearer noprefixtoken",
+			key:             &models.APIKey{ID: 1, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
+			requiredPerm:    "rcon.exec",
 			wantInnerCalled: true,
 		},
 		{
@@ -200,11 +217,11 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 			wantBodySub:   "Key expired",
 		},
 		{
-			name:          "not-yet-expired key (ExpiresAt in the future) is accepted",
-			setAuthHeader: true,
-			authHeader:    "Bearer notyetexpired",
-			key:           &models.APIKey{ID: 4, RatePerMin: 1000, ExpiresAt: &future, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
-			requiredPerm:  "rcon.exec",
+			name:            "not-yet-expired key (ExpiresAt in the future) is accepted",
+			setAuthHeader:   true,
+			authHeader:      "Bearer notyetexpired",
+			key:             &models.APIKey{ID: 4, RatePerMin: 1000, ExpiresAt: &future, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
+			requiredPerm:    "rcon.exec",
 			wantInnerCalled: true,
 		},
 		{
@@ -227,37 +244,37 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 			wantBodySub:   "Key not scoped to this server",
 		},
 		{
-			name:          "path server uuid within the key's scope succeeds",
-			setAuthHeader: true,
-			authHeader:    "Bearer inscopetoken",
-			key:           &models.APIKey{ID: 7, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{"target-server-uuid"}}},
-			requiredPerm:  "rcon.exec",
-			uuidVar:       "target-server-uuid",
+			name:            "path server uuid within the key's scope succeeds",
+			setAuthHeader:   true,
+			authHeader:      "Bearer inscopetoken",
+			key:             &models.APIKey{ID: 7, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{"target-server-uuid"}}},
+			requiredPerm:    "rcon.exec",
+			uuidVar:         "target-server-uuid",
 			wantInnerCalled: true,
 		},
 		{
-			name:          "no server uuid in the path skips the AllowsServer check entirely",
-			setAuthHeader: true,
-			authHeader:    "Bearer noserverintoken",
-			key:           &models.APIKey{ID: 8, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
-			requiredPerm:  "rcon.exec",
+			name:            "no server uuid in the path skips the AllowsServer check entirely",
+			setAuthHeader:   true,
+			authHeader:      "Bearer noserverintoken",
+			key:             &models.APIKey{ID: 8, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
+			requiredPerm:    "rcon.exec",
 			wantInnerCalled: true,
 		},
 		{
-			name:          "non-rcon server cap honored",
-			setAuthHeader: true,
-			authHeader:    "Bearer powerstarttoken",
-			key:           &models.APIKey{ID: 9, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"power.start"}}},
-			requiredPerm:  "power.start",
+			name:            "non-rcon server cap honored",
+			setAuthHeader:   true,
+			authHeader:      "Bearer powerstarttoken",
+			key:             &models.APIKey{ID: 9, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"power.start"}}},
+			requiredPerm:    "power.start",
 			wantInnerCalled: true,
 		},
 		{
-			name:          "server cap honored within scope",
-			setAuthHeader: true,
-			authHeader:    "Bearer filesreadtoken",
-			key:           &models.APIKey{ID: 10, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"files.read"}, Servers: []string{"target-server-uuid"}}},
-			requiredPerm:  "files.read",
-			uuidVar:       "target-server-uuid",
+			name:            "server cap honored within scope",
+			setAuthHeader:   true,
+			authHeader:      "Bearer filesreadtoken",
+			key:             &models.APIKey{ID: 10, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"files.read"}, Servers: []string{"target-server-uuid"}}},
+			requiredPerm:    "files.read",
+			uuidVar:         "target-server-uuid",
 			wantInnerCalled: true,
 		},
 		{
@@ -282,8 +299,21 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fs := &apiKeysAuthFakeStore{keysByHash: map[string]*models.APIKey{}}
+			// The cases here exercise the key's OWN scope and caps. Since the
+			// middleware also re-resolves the key owner's current access
+			// (ownerStillHolds), every key is owned by the server's owner so that
+			// second gate is satisfied and cannot mask what these cases assert.
+			// TestAPIKeyMiddleware_OwnerAccessIsRecheckedAtUse covers the gate
+			// itself.
+			fs := &apiKeysAuthFakeStore{
+				keysByHash: map[string]*models.APIKey{},
+				users:      map[string]*models.User{"owner-1": {ID: "owner-1", Username: "owner"}},
+				servers: map[string]*models.Server{
+					"target-server-uuid": {ID: 1, UUID: "target-server-uuid", OwnerID: "owner-1"},
+				},
+			}
 			if c.key != nil {
+				c.key.UserID = "owner-1"
 				plaintext := strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(c.authHeader, "Bearer ")), "dyl_")
 				fs.keysByHash[HashAPIKey(plaintext)] = c.key
 			}
@@ -735,5 +765,117 @@ func TestAPIKeysCreate_StoreErrorIsInternalServerError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAPIKeyMiddleware_OwnerAccessIsRecheckedAtUse pins that a key carries no
+// more authority than its owner holds at the moment it is USED.
+//
+// Create's doc comment promises "a caller cannot hand a key more access than
+// they hold themselves". That was enforced once, at mint time, and then frozen
+// into the key's scope row. Removing someone from a server ended their session's
+// access and left every key they had minted from it fully working - and revoking
+// a member is precisely when the credential they created needs to stop working.
+//
+// The admin case is the reason the owner is loaded rather than assumed to be an
+// ordinary user: Create deliberately skips the delegation check for admins, so
+// re-resolving an admin's key as a non-admin would refuse keys that are supposed
+// to work.
+func TestAPIKeyMiddleware_OwnerAccessIsRecheckedAtUse(t *testing.T) {
+	const serverUUID = "target-server-uuid"
+
+	newStore := func(owner *models.User, grant *store.ServerGrant) *apiKeysAuthFakeStore {
+		fs := &apiKeysAuthFakeStore{
+			keysByHash: map[string]*models.APIKey{},
+			users:      map[string]*models.User{},
+			servers: map[string]*models.Server{
+				// Owned by someone else entirely, so nothing but an explicit
+				// grant (or admin) can satisfy the re-check.
+				serverUUID: {ID: 1, UUID: serverUUID, OwnerID: "someone-else"},
+			},
+			grants: map[string]*store.ServerGrant{},
+		}
+		if owner != nil {
+			fs.users[owner.ID] = owner
+		}
+		if grant != nil && owner != nil {
+			fs.grants[grantKey(1, owner.ID)] = grant
+		}
+		fs.keysByHash[HashAPIKey("thekey")] = &models.APIKey{
+			ID: 1, UserID: "friend-1", RatePerMin: 1000,
+			Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{serverUUID}},
+		}
+		return fs
+	}
+
+	grantWith := func(caps ...string) *store.ServerGrant {
+		return &store.ServerGrant{CapOverrides: store.CapOverrides{Grant: caps}}
+	}
+
+	friend := &models.User{ID: "friend-1", Username: "friend"}
+	adminOwner := &models.User{ID: "friend-1", Username: "root", IsAdmin: true}
+
+	tests := []struct {
+		name        string
+		fs          *apiKeysAuthFakeStore
+		wantStatus  int
+		wantInner   bool
+		wantBodySub string
+	}{
+		{
+			name:      "grant still in place: the key works",
+			fs:        newStore(friend, grantWith("rcon.exec")),
+			wantInner: true,
+		},
+		{
+			name:        "grant revoked since the key was minted",
+			fs:          newStore(friend, nil),
+			wantStatus:  http.StatusForbidden,
+			wantBodySub: "no longer has this access",
+		},
+		{
+			name:        "grant narrowed to a different capability",
+			fs:          newStore(friend, grantWith("console.read")),
+			wantStatus:  http.StatusForbidden,
+			wantBodySub: "no longer has this access",
+		},
+		{
+			name:      "admin key stays unrestricted, as Create intends",
+			fs:        newStore(adminOwner, nil),
+			wantInner: true,
+		},
+		{
+			name:        "owner account gone",
+			fs:          newStore(nil, nil),
+			wantStatus:  http.StatusUnauthorized,
+			wantBodySub: "no longer valid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newAPIKeysAuthHandler(tt.fs)
+			wrapped := h.APIKeyMiddleware("rcon.exec")(sentinelInner)
+
+			r := httptest.NewRequest("POST", "/api/external/rcon", nil)
+			r.Header.Set("Authorization", "Bearer dyl_thekey")
+			r = mux.SetURLVars(r, map[string]string{"uuid": serverUUID})
+			rec := httptest.NewRecorder()
+
+			wrapped(rec, r)
+
+			if tt.wantInner {
+				if rec.Code != sentinelStatus {
+					t.Fatalf("expected the inner handler to run, got %d: %s", rec.Code, rec.Body.String())
+				}
+				return
+			}
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tt.wantBodySub) {
+				t.Errorf("body = %q, want it to mention %q", rec.Body.String(), tt.wantBodySub)
+			}
+		})
 	}
 }

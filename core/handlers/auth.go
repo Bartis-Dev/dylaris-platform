@@ -206,17 +206,43 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					// Sliding window: keep long-lived streams alive.
 					h.state.Redis.Expire(r.Context(), key, sseTicketTTL)
 
+					// FAIL CLOSED, same rule as the Bearer path below.
+					//
+					// This used to swallow the lookup error and continue with
+					// isAdmin=false and NO userID in the context - the exact
+					// shape the Bearer path was fixed out of. It survived here
+					// because the branch is GET-only, which looks like it bounds
+					// the damage, and it does not: ListLinkRoutes is a GET that
+					// reads userID with a bare .(string), so a nil value panics
+					// the request rather than filtering to nothing.
+					//
+					// The reachable case needs no outage. The ticket outlives the
+					// account, and its TTL is refreshed on every accepted request
+					// (the sliding window just above), so a deleted user's
+					// EventSource keeps its own ticket alive indefinitely. The
+					// ticket is dropped rather than left to slide; a rename lands
+					// here too, since the ticket stores the name, and re-minting
+					// after a 401 is what the panel already does.
 					isAdmin := false
-					var userID interface{}
+					userID := ""
 					if h.state.Store != nil {
-						if user, err := h.state.Store.GetUserByUsername(username); err == nil && user != nil {
-							isAdmin = user.IsAdmin
-							userID = user.ID
+						user, uerr := h.state.Store.GetUserByUsername(username)
+						if errors.Is(uerr, sql.ErrNoRows) || (uerr == nil && user == nil) {
+							h.state.Redis.Del(r.Context(), key)
+							sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+							return
 						}
+						if uerr != nil {
+							log.Printf("auth: could not resolve SSE ticket holder %q: %v", username, uerr)
+							sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
+							return
+						}
+						isAdmin = user.IsAdmin
+						userID = user.ID
 					}
 					ctx := context.WithValue(r.Context(), "username", username)
 					ctx = context.WithValue(ctx, "isAdmin", isAdmin)
-					if userID != nil {
+					if userID != "" {
 						ctx = context.WithValue(ctx, "userID", userID)
 					}
 					next(w, r.WithContext(ctx))
@@ -301,11 +327,40 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 
 			ctx = context.WithValue(ctx, "userID", user.ID)
+
+			// Authorization comes from the ROW, never from the claim.
+			//
+			// The claim was signed at login and the session lasts 24 hours, so
+			// PUT /admin/users/{id}/role took a full day to take effect on the
+			// person it was aimed at. SetUserRole writes users.is_admin
+			// immediately, but a demoted admin's token still said isAdmin:true,
+			// and that is what landed in the context - which authz.Resolve
+			// short-circuits on to grant EVERY capability. The demotion did not
+			// merely lag: the window was long enough, and carried users.write
+			// and panelroles.write, for the demoted account to simply promote
+			// itself back.
+			//
+			// The row is right here already; it is fetched a few lines up to
+			// decide whether the account still exists at all. The SSE-ticket
+			// branch near the top of this function has always re-derived
+			// identity from the database for exactly this reason ("so nothing
+			// here is client-supplied") - this is the same rule applied to the
+			// path that carries every other request.
+			//
+			// Promotions land immediately too, which is the harmless direction.
+			// One deliberate gap remains: IsAdminToken, which the maintenance
+			// gate calls BEFORE any of this, still reads the claim because it
+			// runs without a database. A just-demoted admin can therefore still
+			// pass a maintenance window for the rest of their token's life - and
+			// then arrives here, gets a non-admin identity, and is refused by
+			// every admin route.
+			ctx = context.WithValue(ctx, "isAdmin", user.IsAdmin)
+
 			// The demo account is read-only: reject every mutating verb so a
 			// public demo session can only ever view, never change anything.
 			// One central gate covers all write endpoints (power, files, RCON,
 			// profile, server-create, ...) without per-handler checks.
-			if !claims.IsAdmin &&
+			if !user.IsAdmin &&
 				r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 				// Refuse when the answer is UNKNOWN, not just when it is
 				// "yes". The lookup's error used to be discarded, and its

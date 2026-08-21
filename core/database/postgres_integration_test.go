@@ -417,3 +417,67 @@ func TestIntegrationStaleNodeSweepSparesBYONNodes(t *testing.T) {
 		t.Errorf("the platform node survived the sweep: the cleanup no longer cleans anything up")
 	}
 }
+
+// /auth/forgot-password sends mail on an anonymous request and REPLACES the
+// reset token every time. Its sibling /auth/resend-verification has enforced a
+// per-mailbox cooldown for exactly that reason ("a per-IP limit bounds one
+// CALLER, not one MAILBOX"); this endpoint had only the shared per-IP limiter,
+// so a caller rotating source addresses could both flood an inbox and keep
+// invalidating the link the victim was trying to click.
+//
+// The window is enforced inside the UPDATE's WHERE, against
+// password_reset_expires_at - a reset token's expiry IS its send time plus the
+// policy TTL, so no new column was needed. Against a real Postgres because
+// that predicate, its NULL branch and RowsAffected are the entire mechanism.
+func TestIntegrationPasswordResetTokenCooldown(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	const ttl = 30 * time.Minute
+	const cooldown = 60 * time.Second
+
+	issue := func(at time.Time, token string) bool {
+		t.Helper()
+		expires := at.Add(ttl)
+		ok, err := st.SetPasswordResetToken(f.user.ID, token, expires, expires.Add(-cooldown))
+		if err != nil {
+			t.Fatalf("SetPasswordResetToken: %v", err)
+		}
+		return ok
+	}
+
+	now := time.Now()
+
+	// No token on the row yet: the NULL branch must let the first one through,
+	// or password reset would never work at all.
+	if !issue(now, "first-token") {
+		t.Fatal("the first request was refused; the NULL branch does not let a first token through")
+	}
+	if issue(now.Add(5*time.Second), "flood-token") {
+		t.Error("a second request 5s later was allowed: the mailbox cooldown does not hold")
+	}
+	if issue(now.Add(30*time.Second), "flood-token-2") {
+		t.Error("a request inside the cooldown was allowed")
+	}
+	if !issue(now.Add(90*time.Second), "second-token") {
+		t.Error("a request after the cooldown was refused; a user who never got the first mail could not ask again")
+	}
+
+	// A completed reset clears both columns, and the next request must not be
+	// held back by the token that was just consumed.
+	if err := st.ClearPasswordResetToken(f.user.ID); err != nil {
+		t.Fatalf("ClearPasswordResetToken: %v", err)
+	}
+	if !issue(now.Add(91*time.Second), "after-consume") {
+		t.Error("a request right after a completed reset was refused")
+	}
+
+	// The token that survives must be the last one actually issued.
+	u, err := st.GetUserByPasswordResetToken("after-consume")
+	if err != nil || u == nil || u.ID != f.user.ID {
+		t.Errorf("the issued token does not resolve back to its user (err=%v)", err)
+	}
+	if u, _ := st.GetUserByPasswordResetToken("flood-token"); u != nil {
+		t.Error("a token from a refused request was stored anyway")
+	}
+}

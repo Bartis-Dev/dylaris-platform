@@ -92,3 +92,7 @@
 {"date":"2026-08-21","service":"core","type":"fix","summary":"SFTP on a node that was renamed in the panel listed no servers at all; the folder list was looked up under the node's display name instead of its identity."}
 {"date":"2026-08-21","service":"core","type":"fix","summary":"A node you own is no longer unpaired automatically after a day offline with no servers on it, so a home machine can be switched off without having to enroll it again."}
 {"date":"2026-08-21","service":"core","type":"security","summary":"Removed a leftover node endpoint that accepted no login and let anyone holding a node's id flip that node between online and offline."}
+{"date":"2026-08-21","service":"core","type":"security","summary":"Changing a user's role now applies to their current session instead of waiting up to 24 hours: admin rights are read from the account on every request, not from the sign-in token."}
+{"date":"2026-08-21","service":"core","type":"security","summary":"An API key now stops working as soon as its creator loses access to the server it points at, instead of keeping the access it was created with."}
+{"date":"2026-08-21","service":"core","type":"fix","summary":"Password-reset emails are limited to one per minute per address, so nobody can flood an inbox or keep invalidating the reset link you are trying to use."}
+{"date":"2026-08-21","service":"core","type":"fix","summary":"Live event streams now end when the account behind them is deleted or renamed, instead of continuing on a stale ticket."}

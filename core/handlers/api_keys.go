@@ -44,10 +44,10 @@ type createAPIKeyRequest struct {
 }
 
 type createAPIKeyResponse struct {
-	Success   bool          `json:"success"`
+	Success   bool           `json:"success"`
 	APIKey    *models.APIKey `json:"apiKey"`
-	Plaintext string        `json:"plaintext"`
-	Message   string        `json:"message"`
+	Plaintext string         `json:"plaintext"`
+	Message   string         `json:"message"`
 }
 
 // Create POST /api/me/api-keys - mints a key and returns its plaintext exactly
@@ -271,6 +271,9 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 					sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
 					return
 				}
+				if !h.ownerStillHolds(w, key, uuidVar, requiredPerm) {
+					return
+				}
 			}
 			if !h.rateLimiter.allow(key.ID, key.RatePerMin) {
 				w.Header().Set("Retry-After", "60")
@@ -285,6 +288,59 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 			next(w, r)
 		}
 	}
+}
+
+// ownerStillHolds re-checks the key's capability against what its OWNER holds
+// RIGHT NOW, and reports whether the request may continue (it writes the
+// response itself when it may not).
+//
+// Create's doc comment promises "a caller cannot hand a key more access than
+// they hold themselves", and that was true at mint time and never again. The
+// key's authority is the caps frozen into its scope row, so removing someone
+// from a server took away their session's access and left every key they had
+// minted working. Revoking a member is exactly when you most need the credential
+// they created to stop working, and it was the one thing that did not.
+//
+// The owner is loaded rather than assumed non-admin because an admin's key is
+// deliberately unrestricted (Create skips the delegation check for admins), and
+// resolving them as an ordinary user would refuse keys that are supposed to
+// work. Resolve's own admin and owner short-circuits then answer those cases
+// without touching a grant table.
+//
+// Only server-scoped requests are checked: OWNER caps act on the key holder's
+// own realm, which they hold by definition, and there is no key-authed
+// OWNER-scoped route today (see the note on authz.ResolveAPIKey). Both lookups
+// fail closed, matching AuthMiddleware: a vanished account or server is a 401,
+// and a database fault is a 503 rather than a 403 that would read as a
+// permissions problem.
+func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, key *models.APIKey, serverUUID, requiredPerm string) bool {
+	if serverUUID == "" || h.state == nil || h.state.Authz == nil || h.state.Store == nil {
+		return true
+	}
+	owner, err := h.state.Store.GetUserByID(key.UserID)
+	if err != nil || owner == nil {
+		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
+		return false
+	}
+	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	if err != nil || srv == nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return false
+	}
+	res, err := h.state.Authz.Resolve(authz.Identity{
+		UserID:   owner.ID,
+		Username: owner.Username,
+		IsAdmin:  owner.IsAdmin,
+	}, srv.ID)
+	if err != nil {
+		sendJSONError(w, "Could not verify key authorization", http.StatusServiceUnavailable)
+		return false
+	}
+	if !res.HasCap(requiredPerm) {
+		sendJSONError(w, "The key's owner no longer has this access", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // --- Rate limiter ---
