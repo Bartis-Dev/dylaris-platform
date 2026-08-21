@@ -14,6 +14,7 @@ import SetupNewWizard from './setup/SetupNewWizard';
 import SetupEditMode from './setup/SetupEditMode';
 import RoutesModal from '@/components/RoutesModal';
 import { API_URL } from '@/lib/api/core';
+import { isSubServerName } from '@/lib/validation';
 const DEFAULT_GC_FLAGS = '-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps';
 
 const PROXY_GC_FLAGS = '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 ' +
@@ -24,7 +25,11 @@ const PROXY_GC_FLAGS = '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseM
     '-XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 ' +
     '-XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1';
 
-const nameRegex = /^[a-zA-Z0-9\-_+]+$/;
+// The sub-server name rule lives in @/lib/validation, which mirrors
+// validate.SubServerName. The copy that used to sit here was the same alphabet
+// WITHOUT the 1-50 length bound, so the field accepted a name Core rejects. The
+// canonical constant existed the whole time and had no callers - a rule nothing
+// reads is not a rule.
 function sanitizeName(raw: string): string {
     return raw.replace(/ /g, '_').replace(/[^a-zA-Z0-9\-_+]/g, '');
 }
@@ -306,7 +311,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const handleSubNameChange = (raw: string) => {
         setSubName(raw);
         const s = sanitizeName(raw);
-        setSubNameError(raw && !nameRegex.test(s) ? 'Only letters, numbers, -, _, + allowed.' : '');
+        setSubNameError(raw && !isSubServerName(s) ? 'Use letters, numbers, -, _ or +, up to 50 characters.' : '');
     };
 
     const handleSwitchServer = async () => {

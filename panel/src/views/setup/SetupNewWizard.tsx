@@ -13,7 +13,6 @@ import ModpackPicker from './ModpackPicker';
 import PackPicker from './PackPicker';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 
-const nameRegex = /^[a-zA-Z0-9\-_+]+$/;
 function sanitizeName(raw: string): string {
     return raw.replace(/ /g, '_').replace(/[^a-zA-Z0-9\-_+]/g, '');
 }

@@ -49,6 +49,7 @@ export const LIMITS = {
 export const isUsername = (s: string) => USERNAME.test(s);
 export const isEmail = (s: string) => EMAIL.test(s);
 export const isServerName = (s: string) => SERVER_NAME.test(s);
+export const isSubServerName = (s: string) => SUB_SERVER_NAME.test(s);
 export const isPackSlug = (s: string) => PACK_SLUG.test(s);
 export const isSemver = (s: string) => SEMVER.test(s);
 export const isMcVersion = (s: string) => MC_VERSION.test(s);
