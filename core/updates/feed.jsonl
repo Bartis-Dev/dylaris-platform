@@ -131,3 +131,5 @@
 {"date":"2026-08-21","service":"node","type":"security","summary":"A backup run refuses to write through a link left in the backup folder instead of creating its archive, and the panel no longer lists such a link as a downloadable backup."}
 {"date":"2026-08-21","service":"node","type":"security","summary":"A proxied custom tab is now checked on the node side too: only a plain request path is accepted, so nothing can steer the request away from the server's own container."}
 {"date":"2026-08-21","service":"node","type":"security","summary":"Installing or removing a mod, and the automatic EULA accept during setup, now stay inside the server's own folder even if a link was left in the mods or plugins directory."}
+{"date":"2026-08-21","service":"log-shipper","type":"fix","summary":"Stopping a server now always shuts the Minecraft process down cleanly and lets it save, instead of it being killed together with the container on some stop paths."}
+{"date":"2026-08-21","service":"log-shipper","type":"fix","summary":"A single very long or unusual console line no longer freezes the console, which previously also stalled the server itself."}

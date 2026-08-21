@@ -8,11 +8,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"dylaris-pkg/retry"
@@ -291,35 +293,93 @@ func connectRedis() *redis.Client {
 
 // applyCarriageReturns simulates terminal CR behavior.
 // \r resets the cursor to column 0; the following text overwrites from the start.
+//
+// Written in place rather than by splitting on \r and re-concatenating. The
+// split version was quadratic: every segment shorter than what came before
+// rebuilt the whole string, so one line holding a long run followed by many
+// one-character runs cost tens of gigabytes of copying. That is not a slow log
+// line - while it runs nothing drains this reader, so the JVM's stdout pipe
+// fills and the Minecraft server blocks on its next log write. Anything that
+// reaches the console can carry a \r: a mod, a plugin, a player name.
 func applyCarriageReturns(line string) string {
 	if !strings.ContainsRune(line, '\r') {
 		return line
 	}
-	parts := strings.Split(line, "\r")
-	result := ""
-	for _, part := range parts {
-		if len(part) >= len(result) {
-			result = part
-		} else {
-			result = part + result[len(part):]
+	buf := make([]byte, 0, len(line))
+	col := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] == '\r' {
+			col = 0
+			continue
 		}
+		if col < len(buf) {
+			buf[col] = line[i]
+		} else {
+			buf = append(buf, line[i])
+		}
+		col++
 	}
-	return result
+	return string(buf)
 }
 
+// maxLineBytes caps ONE console line. Over it the line is truncated and marked;
+// reading continues either way.
+const maxLineBytes = 1 << 20
+
+const lineTruncatedMarker = " [dylaris: line truncated at 1MB]"
+
 // scanLines reads from r line by line and sends each line to ch.
+//
+// A bufio.Reader and not a bufio.Scanner, deliberately. A Scanner that meets a
+// line longer than its buffer sets ErrTooLong, and from then on EVERY Scan
+// returns false - the failure is permanent, not per-line. This function then
+// returned, so nothing read the pipe again, and because this process is PID 1
+// of the Minecraft container the JVM blocked on its next write to a full stdout
+// pipe: one oversized log line hung the customer's server, with the console
+// frozen at whatever it last showed. main compounded it - scanWG.Wait() waits
+// for both readers, and the surviving one never finishes either.
+//
+// The old code reported "a log line exceeded 1MB and was dropped", which is how
+// it looked from in here and not what happened.
 func scanLines(r io.Reader, ch chan<- string) {
-	scanner := bufio.NewScanner(r)
-	// Default scanner buffer is 64KB; a single oversized log line trips
-	// bufio.ErrTooLong, the goroutine returns, and the console freezes with
-	// no diagnostic. Raise the cap to 1MB and surface the error.
-	scanner.Buffer(make([]byte, 64*1024), 1<<20)
-	for scanner.Scan() {
-		ch <- applyCarriageReturns(scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("log-shipper: scanner error (line >1MB or read failure): %v", err)
-		ch <- "[log-shipper: a log line exceeded 1MB and was dropped]"
+	br := bufio.NewReaderSize(r, 64*1024)
+	var (
+		line      []byte
+		truncated bool
+	)
+	for {
+		// ReadSlice returns ErrBufferFull for a line longer than the buffer,
+		// which is the ordinary case here rather than an error: keep taking
+		// chunks until the newline arrives.
+		chunk, err := br.ReadSlice('\n')
+		if room := maxLineBytes - len(line); room > 0 {
+			if len(chunk) > room {
+				line, truncated = append(line, chunk[:room]...), true
+			} else {
+				line = append(line, chunk...)
+			}
+		} else if len(chunk) > 0 {
+			truncated = true
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		// err == nil means the newline landed. On EOF a partial last line is
+		// still worth shipping, but an empty one is not a line at all.
+		if err == nil || len(line) > 0 {
+			out := strings.TrimSuffix(string(line), "\n")
+			if truncated {
+				out += lineTruncatedMarker
+			}
+			ch <- applyCarriageReturns(out)
+			line, truncated = line[:0], false
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("log-shipper: read error: %v", err)
+			}
+			return
+		}
 	}
 }
 
@@ -613,6 +673,29 @@ func forwardInput(ctx context.Context, rdb *redis.Client, inputKey string, stdin
 	}
 }
 
+// requestStop is what happens when this container is asked to stop from the
+// outside. It sets the flag FIRST and only then asks the server to quit, so the
+// restart loop cannot see the exit before it knows the exit was wanted.
+//
+// Without this there was no signal handling at all, and Go's default action for
+// SIGTERM is to terminate. This process is PID 1 of the Minecraft container, so
+// "docker stop" killed the supervisor instantly and the JVM - a child in that
+// PID namespace - was SIGKILLed with it: no save, no clean shutdown. The node
+// normally stops a server by pushing "stop" onto the input queue and only falls
+// back to ContainerStop, but every path that skips straight to ContainerStop
+// (RecreateWithCommand, PowerAction "stop", a node or host restart) landed on
+// the hard kill.
+//
+// Docker's stop timeout still bounds this: the node passes 15-30s and SIGKILL
+// follows, so the worst case is exactly what happened before.
+func requestStop(stopping *atomic.Bool, stdin io.Writer) {
+	stopping.Store(true)
+	log.Print("log-shipper: stop signal received, asking the server to shut down cleanly")
+	if _, err := fmt.Fprint(stdin, "stop\n"); err != nil {
+		log.Printf("log-shipper: could not write stop to stdin: %v", err)
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("Usage: log-shipper <command> [args...]\nExample: log-shipper java -Xmx2048M -jar /data/server/server.jar nogui")
@@ -672,10 +755,16 @@ func main() {
 
 	stopKey := fmt.Sprintf("dylaris:server:%s:stop-requested", serverUUID)
 
+	// Buffered: signal delivery never blocks, and one pending SIGTERM is all
+	// this needs - the second one from an impatient operator changes nothing.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM)
+
 	// Restart loop: re-launches Java on crash, exits on manual stop, and gives
 	// up once the process has proven it cannot stay alive (see
 	// maxConsecutiveCrashes).
 	var streak crashStreak
+	var stopping atomic.Bool
 	for {
 		javaCmd := exec.Command(os.Args[1], os.Args[2:]...)
 		javaCmd.Env = append(os.Environ(), "TERM=xterm-256color")
@@ -713,6 +802,16 @@ func main() {
 		go rconFilter.watch(ctx, rdb, rconFilterKey)
 		go shipLogs(ctx, rdb, streamKey, heapKey, lineCh, rconFilter)
 
+		// Tied to this iteration's ctx, so at most one of these is ever waiting
+		// on sigCh and it always holds the CURRENT process's stdin.
+		go func() {
+			select {
+			case <-sigCh:
+				requestStop(&stopping, stdinPipe)
+			case <-ctx.Done():
+			}
+		}()
+
 		// Wait for Java process to exit
 		if err := javaCmd.Wait(); err != nil {
 			log.Printf("log-shipper: process exited with error: %v", err)
@@ -735,6 +834,15 @@ func main() {
 			// Stop flag exists -> clean exit (manual stop)
 			rdb.Del(context.Background(), stopKey)
 			log.Printf("log-shipper: stop requested, exiting cleanly")
+			os.Exit(exitCode)
+		}
+
+		// A stop signal is as deliberate as the stop-requested key, and it is the
+		// one the key cannot cover: it comes from Docker, not from Core. Checked
+		// before the crash accounting so a server that was mid-crash when the
+		// stop arrived is not also counted as a crash loop.
+		if stopping.Load() {
+			log.Printf("log-shipper: exiting after the stop signal (code %d)", exitCode)
 			os.Exit(exitCode)
 		}
 
