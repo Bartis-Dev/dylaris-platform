@@ -177,9 +177,20 @@ func downloadAndVerify(url, dest, expectedSHA512 string) error {
 
 	h := sha512.New()
 	// Cap downloads at 256 MB so a runaway / malicious URL can't fill the disk.
+	//
+	// The extra byte is the overflow probe, and it has to be ACTED on: without
+	// the length check below, an oversized response was cut off at the cap and
+	// reported as a successful download, so with no sha512 in the payload a
+	// truncated jar got renamed into place and the server crash-looped on a
+	// corrupt archive with nothing pointing at the size. Same shape as the bug in
+	// downloadFileBounded (installer_modpack.go).
 	const maxSize = 256 << 20
-	if _, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, maxSize+1)); err != nil {
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, maxSize+1))
+	if err != nil {
 		return fmt.Errorf("copy: %w", err)
+	}
+	if n > maxSize {
+		return fmt.Errorf("download exceeds the %d byte limit", int64(maxSize))
 	}
 	if expectedSHA512 != "" {
 		got := hex.EncodeToString(h.Sum(nil))

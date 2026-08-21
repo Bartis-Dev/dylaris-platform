@@ -32,13 +32,13 @@ import (
 )
 
 type mrpackIndex struct {
-	FormatVersion int                    `json:"formatVersion"`
-	Game          string                 `json:"game"`
-	VersionID     string                 `json:"versionId"`
-	Name          string                 `json:"name"`
-	Summary       string                 `json:"summary"`
-	Files         []mrpackFile           `json:"files"`
-	Dependencies  map[string]string      `json:"dependencies"`
+	FormatVersion int               `json:"formatVersion"`
+	Game          string            `json:"game"`
+	VersionID     string            `json:"versionId"`
+	Name          string            `json:"name"`
+	Summary       string            `json:"summary"`
+	Files         []mrpackFile      `json:"files"`
+	Dependencies  map[string]string `json:"dependencies"`
 }
 
 type mrpackFile struct {
@@ -53,21 +53,50 @@ type mrpackFile struct {
 // hosts. Any URL outside this set is a sign of a tampered or self-hosted
 // pack — V1 we just refuse those rather than try to whitelist user content.
 var modpackAllowedHosts = map[string]bool{
-	"cdn.modrinth.com":                true,
-	"github.com":                      true,
-	"raw.githubusercontent.com":       true,
-	"gitlab.com":                      true,
-	"edge.forgecdn.net":               true,
-	"mediafilez.forgecdn.net":         true,
-	"maven.fabricmc.net":              true,
-	"maven.minecraftforge.net":        true,
+	"cdn.modrinth.com":          true,
+	"github.com":                true,
+	"raw.githubusercontent.com": true,
+	"gitlab.com":                true,
+	"edge.forgecdn.net":         true,
+	"mediafilez.forgecdn.net":   true,
+	"maven.fabricmc.net":        true,
+	"maven.minecraftforge.net":  true,
 }
 
 const (
-	maxMrpackSize       = 200 << 20  // 200 MB total mrpack archive
-	maxModpackTotalSize = 4 << 30    // 4 GB cap on summed file sizes
-	mrpackTempDir       = ".dylaris-mrpack"
+	maxMrpackSize       = 200 << 20 // 200 MB total mrpack archive
+	maxModpackTotalSize = 4 << 30   // 4 GB cap on summed file sizes
+	// maxModpackFile bounds ONE file from the manifest. The manifest's own
+	// fileSize is a claim by whoever wrote the pack, not a fact, so it may only
+	// tighten this ceiling - never raise it, and never remove it. See
+	// modpackFileCap.
+	maxModpackFile = 512 << 20 // 512 MB; no single mod jar comes close
+	// modpackSizeSlack is the headroom allowed over a declared size before a
+	// download is called oversized. A manifest that is a few KB out is normal.
+	modpackSizeSlack = 64 << 10
+	mrpackTempDir    = ".dylaris-mrpack"
 )
+
+// modpackFileCap converts a manifest-declared file size into the byte ceiling
+// for that download.
+//
+// Every value that is not a usable size - zero, absent, negative, or larger
+// than any real mod file - falls back to maxModpackFile. Negative is the one
+// that mattered: the cap used to be computed as fileSize+slack and handed
+// straight to downloadFileBounded, where a value <= 0 selected the 4 GB
+// WHOLE-PACK cap as the limit for a SINGLE file. A pack declaring
+// "fileSize": -100000 for each of its entries therefore got 4 GB per file, and
+// because the running total added those negative numbers it went DOWN with
+// every entry, so the 4 GB aggregate cap could never trip either. Both caps
+// were defeated by the same field, and the field belongs to the attacker: the
+// host allowlist admits github.com and raw.githubusercontent.com, where anyone
+// can publish an .mrpack.
+func modpackFileCap(declared int64) int64 {
+	if declared > 0 && declared+modpackSizeSlack <= maxModpackFile {
+		return declared + modpackSizeSlack
+	}
+	return maxModpackFile
+}
 
 // loadExtraModpackHosts merges operator-trusted hosts from MODPACK_MIRROR_HOSTS
 // (comma-separated, e.g. the operator's Core public domain / S3 mirror host)
@@ -106,7 +135,7 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	defer os.RemoveAll(tmp)
 
 	mrpackPath := filepath.Join(tmp, "pack.mrpack")
-	if err := downloadFileBounded(cfg.URL, mrpackPath, maxMrpackSize); err != nil {
+	if _, err := downloadFileBounded(cfg.URL, mrpackPath, maxMrpackSize); err != nil {
 		return fmt.Errorf("download .mrpack: %w", err)
 	}
 
@@ -123,18 +152,24 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	}
 
 	// Fan out every listed file. Skip client-only.
+	//
+	// The running total counts bytes actually WRITTEN, not the sizes the
+	// manifest declares. Declared sizes cannot bound anything on their own: a
+	// pack that lies about them low still writes real bytes to the node's disk,
+	// and one that declares them negative used to walk the total backwards.
 	var totalBytes int64
 	for _, f := range idx.Files {
 		if env := f.Env["server"]; env == "unsupported" {
 			continue
 		}
-		totalBytes += f.FileSize
-		if totalBytes > maxModpackTotalSize {
-			return fmt.Errorf("modpack exceeds %d byte cap", int64(maxModpackTotalSize))
-		}
-		if err := fetchModpackFile(destDir, f); err != nil {
+		n, err := fetchModpackFile(destDir, f)
+		totalBytes += n
+		if err != nil {
 			log.Printf("modpack: file %s failed: %v", f.Path, err)
 			return fmt.Errorf("file %s: %w", f.Path, err)
+		}
+		if totalBytes > maxModpackTotalSize {
+			return fmt.Errorf("modpack exceeds %d byte cap", int64(maxModpackTotalSize))
 		}
 	}
 
@@ -258,16 +293,18 @@ func extractOverrides(mrpackPath, destDir string) error {
 	return nil
 }
 
-func fetchModpackFile(destDir string, f mrpackFile) error {
+// fetchModpackFile downloads one manifest entry and returns the bytes it left
+// on disk, so the caller can bound the pack by what was really written.
+func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 	if len(f.Downloads) == 0 {
-		return fmt.Errorf("no download URLs")
+		return 0, fmt.Errorf("no download URLs")
 	}
 	if strings.Contains(f.Path, "..") {
-		return fmt.Errorf("unsafe path %q", f.Path)
+		return 0, fmt.Errorf("unsafe path %q", f.Path)
 	}
 	dst := filepath.Join(destDir, filepath.FromSlash(f.Path))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return 0, err
 	}
 	var lastErr error
 	for _, u := range f.Downloads {
@@ -276,7 +313,8 @@ func fetchModpackFile(destDir string, f mrpackFile) error {
 			continue
 		}
 		tmp := dst + ".part"
-		if err := downloadFileBounded(u, tmp, f.FileSize+(64<<10)); err != nil {
+		n, err := downloadFileBounded(u, tmp, modpackFileCap(f.FileSize))
+		if err != nil {
 			lastErr = err
 			continue
 		}
@@ -296,38 +334,55 @@ func fetchModpackFile(destDir string, f mrpackFile) error {
 		}
 		if err := os.Rename(tmp, dst); err != nil {
 			os.Remove(tmp)
-			return err
+			return 0, err
 		}
-		return nil
+		return n, nil
 	}
-	return lastErr
+	return 0, lastErr
 }
 
-// downloadFileBounded streams a URL to disk with a sane timeout + size cap.
-// Named distinctly from the installer.go downloadFile (which is unbounded
-// and used by single-jar installers) so we don't shadow that helper.
-func downloadFileBounded(url, dst string, maxBytes int64) error {
+// downloadFileBounded streams a URL to disk with a sane timeout + size cap and
+// returns the bytes written. Named distinctly from the installer.go
+// downloadFile (which is unbounded and used by single-jar installers) so we
+// don't shadow that helper.
+//
+// The cap is ENFORCED, not merely requested. It reads one byte past it and
+// fails if that byte arrives - the standard probe. That probe was already here
+// and its result was discarded, so an oversized response was silently truncated
+// to the cap and reported as a successful download: for a mod file with no
+// sha512 in the manifest, a corrupt jar was then renamed into place as if it
+// were the real one.
+func downloadFileBounded(url, dst string, maxBytes int64) (int64, error) {
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(url)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	out, err := os.Create(dst)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer out.Close()
 	if maxBytes <= 0 {
-		maxBytes = maxModpackTotalSize
+		maxBytes = maxModpackFile
 	}
-	if _, err := io.Copy(out, io.LimitReader(resp.Body, maxBytes+1)); err != nil {
-		return err
+	n, copyErr := io.Copy(out, io.LimitReader(resp.Body, maxBytes+1))
+	closeErr := out.Close()
+	switch {
+	case copyErr != nil:
+		os.Remove(dst)
+		return 0, copyErr
+	case closeErr != nil:
+		os.Remove(dst)
+		return 0, closeErr
+	case n > maxBytes:
+		os.Remove(dst)
+		return 0, fmt.Errorf("download exceeds its %d byte limit", maxBytes)
 	}
-	return nil
+	return n, nil
 }
 
 func hashFile(path string) (string, error) {
