@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"time"
 )
@@ -42,6 +43,21 @@ func (zeroReader) Read(p []byte) (int, error) {
 // the Beam LAN fast-path plus its lowercase-hex SHA-256 fingerprint. Node and
 // Core call this with the same (secret, nodeID) and get identical results.
 func DeriveLANCert(secret, nodeID string) (tls.Certificate, string, error) {
+	// The secret is the ONLY secret input: the node ID is public (it is in the
+	// panel and in the Redis discovery key), so an empty secret makes the seed -
+	// and therefore the private key this certificate is served with - derivable
+	// by anyone who knows the node's name. SignBeamTicket and ValidateBeamTicket
+	// beside it already refuse an empty secret; this one derived a key from it.
+	//
+	// It is reachable: a node started without BEAM_JWT_SECRET still starts the
+	// LAN fast-path listener (node/beam_server.go), and the BYON deploy snippet
+	// deliberately hands out no fleet secrets. Pinning hides the consequence
+	// today - Core derives the fingerprint from the REAL secret, so the app never
+	// completes the handshake - but that makes it a listener with a public key
+	// kept safe by a check on the other side of the connection.
+	if secret == "" {
+		return tls.Certificate{}, "", errors.New("auth: empty secret")
+	}
 	seed := sha256.Sum256([]byte("dylaris-beam-lan-tls\x00" + secret + "\x00" + nodeID))
 	priv := ed25519.NewKeyFromSeed(seed[:])
 

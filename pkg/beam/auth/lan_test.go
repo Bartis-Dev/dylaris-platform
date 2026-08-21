@@ -39,3 +39,24 @@ func TestDeriveLANCertDeterministic(t *testing.T) {
 		t.Fatal("cert incomplete")
 	}
 }
+
+// The node ID is public, so with an empty secret the seed - and the private key
+// the LAN listener serves with - is derivable by anyone who knows the node's
+// name. A node started without BEAM_JWT_SECRET reaches here: beam_server.go
+// starts the LAN fast-path unconditionally, and the BYON deploy snippet hands
+// out no fleet secrets on purpose. SignBeamTicket and ValidateBeamTicket in
+// this same package already refuse an empty secret.
+func TestDeriveLANCertRefusesAnEmptySecret(t *testing.T) {
+	cert, fp, err := DeriveLANCert("", "node-1")
+	if err == nil {
+		t.Fatal("an empty secret produced a certificate; its private key is derivable from the public node ID alone")
+	}
+	if fp != "" || len(cert.Certificate) != 0 || cert.PrivateKey != nil {
+		t.Fatalf("refused but still returned material: fp=%q cert=%+v", fp, cert)
+	}
+	// Core's fingerprint-only entry point must refuse it too, or it would hand
+	// the app a pin for a certificate no honest node can serve.
+	if _, err := LANCertFingerprint("", "node-1"); err == nil {
+		t.Fatal("LANCertFingerprint accepted an empty secret")
+	}
+}

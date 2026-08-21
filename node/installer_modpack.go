@@ -259,10 +259,13 @@ func extractOverrides(mrpackPath, destDir string) error {
 			if rel == "" {
 				continue
 			}
-			if strings.Contains(rel, "..") {
-				return fmt.Errorf("unsafe path in mrpack: %s", f.Name)
+			// resolveExtractPath, not a "..' substring check: destDir is a
+			// directory the tenant can plant a symlink in before the install
+			// runs, and os.Create follows it on the node's side. See its doc.
+			dst, err := resolveExtractPath(destDir, rel)
+			if err != nil {
+				return fmt.Errorf("unsafe path in mrpack: %s: %w", f.Name, err)
 			}
-			dst := filepath.Join(destDir, rel)
 			if f.FileInfo().IsDir() {
 				if err := os.MkdirAll(dst, 0o755); err != nil {
 					return err
@@ -299,10 +302,12 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 	if len(f.Downloads) == 0 {
 		return 0, fmt.Errorf("no download URLs")
 	}
-	if strings.Contains(f.Path, "..") {
-		return 0, fmt.Errorf("unsafe path %q", f.Path)
+	// Same guard as extractOverrides above: the manifest names the path, the
+	// tenant owns the directory it lands in.
+	dst, err := resolveExtractPath(destDir, f.Path)
+	if err != nil {
+		return 0, fmt.Errorf("unsafe path %q: %w", f.Path, err)
 	}
-	dst := filepath.Join(destDir, filepath.FromSlash(f.Path))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return 0, err
 	}

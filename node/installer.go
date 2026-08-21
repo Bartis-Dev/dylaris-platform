@@ -517,7 +517,40 @@ func DetectServerJar(destDir string) string {
 	return "server.jar"
 }
 
-// extractZipToDir extracts a ZIP archive into destDir, guarding against path traversal.
+// resolveExtractPath resolves one archive entry against destDir with the same
+// guard the node's file APIs use.
+//
+// The extractors had a lexical prefix check only, and lexical containment is not
+// containment here: destDir is a directory the tenant writes to BEFORE the
+// extraction runs - over SFTP, over beam, and from inside their own Minecraft
+// container, which has the server directory bind-mounted. A symlink planted
+// there is followed by os.OpenFile/os.Create on the NODE's side, so an entry
+// under it lands wherever the link points: a neighbour's server directory on the
+// same storage path, or anything else the node process can write.
+//
+// linkStaysWithin (grpc_handler.go) was written for exactly this and its own doc
+// comment names the attack; resolveWithinDir is the lexical check plus that one.
+// Every read/write path in the file API takes it. The three extractors did not.
+//
+// An entry resolving to destDir itself is refused: resolveWithinDir permits the
+// root (listing needs it) and the previous prefix check did not, so keeping the
+// stricter rule here avoids changing what an empty entry name does.
+func resolveExtractPath(destDir, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("empty entry name")
+	}
+	p, err := resolveWithinDir(destDir, filepath.FromSlash(name))
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(p) == filepath.Clean(destDir) {
+		return "", fmt.Errorf("entry resolves to the destination directory itself")
+	}
+	return p, nil
+}
+
+// extractZipToDir extracts a ZIP archive into destDir, guarding against path
+// traversal and against symlinks already planted in destDir.
 func extractZipToDir(zipPath, destDir string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -528,10 +561,9 @@ func extractZipToDir(zipPath, destDir string) error {
 	destDir = filepath.Clean(destDir)
 
 	for _, f := range r.File {
-		fPath := filepath.Join(destDir, f.Name)
-		// Path traversal guard
-		if !strings.HasPrefix(filepath.Clean(fPath), destDir+string(os.PathSeparator)) {
-			log.Printf("Skipping unsafe zip entry: %s", f.Name)
+		fPath, err := resolveExtractPath(destDir, f.Name)
+		if err != nil {
+			log.Printf("Skipping unsafe zip entry %q: %v", f.Name, err)
 			continue
 		}
 

@@ -190,6 +190,15 @@ type NodeCommand struct {
 	Installer  InstallerConfig `json:"installer"`
 	TargetPath string          `json:"targetPath,omitempty"`
 
+	// backup_run and backup_restore are the only actions Core dispatches as a
+	// FLAT payload (services.QueueService.SendRawCommand): they carry their
+	// identifiers at the top level and have no "config" object at all. Decoding
+	// one into this struct therefore leaves Config zero, which is why the
+	// dispatcher's identifier guard reads them through commandIdentifiers rather
+	// than off Config directly.
+	ServerUUID string `json:"serverUuid,omitempty"`
+	SubServer  string `json:"subServer,omitempty"`
+
 	// migrate_in (auto-move) parameters. Carried as top-level fields like
 	// TargetPath rather than stuffed into Config, since they describe
 	// the move, not the server.
@@ -984,6 +993,22 @@ func commandIdentifierProblem(uuid, subServer string) string {
 	return ""
 }
 
+// commandIdentifiers returns the server UUID and sub-server name a queued
+// command actually operates on, whichever shape Core sent it in.
+//
+// Core has two dispatch shapes and they carry the identifiers in different
+// places. SendCommand wraps them in "config" (nineteen actions); SendRawCommand
+// puts them at the top level as "serverUuid"/"subServer" (backup_run,
+// backup_restore). Reading Config alone sees an empty UUID for the flat ones -
+// which the guard below then refuses, silently dropping every backup and every
+// restore, ACKed and never redelivered.
+func commandIdentifiers(cmd NodeCommand) (uuid, subServer string) {
+	if cmd.Config.UUID != "" {
+		return cmd.Config.UUID, cmd.Config.ActiveSubServer
+	}
+	return cmd.ServerUUID, cmd.SubServer
+}
+
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
@@ -1016,6 +1041,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	// join the sub-server name onto that. filepath.Join CLEANS rather than
 	// confines, so a ".." in either walks out of the server root - and
 	// delete_sub_server ends in os.RemoveAll, reinstall in CleanServerJars.
+	// backup_run and backup_restore join them too (backup_worker.go:103,
+	// backup_restore.go:66) and carry no check of their own, so they need this
+	// one - via commandIdentifiers, since their payload has no Config.
 	//
 	// Core validates both on every dispatch path today, so this is the second
 	// lock rather than the only one. It belongs here anyway: install_mod.go
@@ -1029,7 +1057,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	// is node-level and must happen on every pulled command, malformed ones
 	// included. Placed here rather than in the branches: one check covers every
 	// action, including the ones added after this comment.
-	if problem := commandIdentifierProblem(cmd.Config.UUID, cmd.Config.ActiveSubServer); problem != "" {
+	cmdUUID, cmdSubServer := commandIdentifiers(cmd)
+	if problem := commandIdentifierProblem(cmdUUID, cmdSubServer); problem != "" {
 		log.Printf("%s: refusing this command, %s", cmd.Action, problem)
 		return
 	}
