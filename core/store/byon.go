@@ -87,6 +87,24 @@ func (s *PostgresStore) ResolveRecoveryToken(plaintext string) (recoversNodeToke
 }
 
 // ListNodeEnrollTokens returns a user's tokens (metadata only, never the hash).
+// CountPendingNodeEnrollTokens returns how many of a tenant's enroll tokens are
+// still redeemable: not consumed and not expired. An unredeemed token is a
+// pending node, which is why it counts against the same cap the node itself
+// does - the twin of CountNodeWarpKeysByOwner, which counts unrevoked warp keys
+// against max_nodes for exactly that reason.
+//
+// Recovery tokens are excluded: they re-pair a machine that already exists and
+// is already counted, so counting them would refuse a re-pair to a tenant who is
+// legitimately at their limit.
+func (s *PostgresStore) CountPendingNodeEnrollTokens(userID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM node_enroll_tokens
+		 WHERE user_id = $1 AND consumed_at IS NULL AND recovers_node_token IS NULL
+		   AND (expires_at IS NULL OR expires_at > NOW())`, userID).Scan(&n)
+	return n, err
+}
+
 func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, label, created_at, expires_at, consumed_at

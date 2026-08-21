@@ -351,7 +351,10 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	log.Printf("gRPC: Node %d connected (token=%s...)", node.ID, tokenPrefix(node.Token))
 
 	defer func() {
-		s.registry.Unregister(node.ID)
+		// Pass this stream's own connection: by the time a dead stream gets here
+		// the node may already have reconnected and taken over the map entry, and
+		// tearing that one down would leave a connected node unreachable.
+		s.registry.Unregister(node.ID, conn)
 		log.Printf("gRPC: Node %d disconnected", node.ID)
 	}()
 
@@ -417,7 +420,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 			MinTime:             10 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.MaxRecvMsgSize(128*1024), // 128KB max message (64KB chunks + overhead)
+		grpc.MaxRecvMsgSize(128 * 1024), // 128KB max message (64KB chunks + overhead)
 	}
 
 	if tlsEnabled {

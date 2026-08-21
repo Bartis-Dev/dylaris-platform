@@ -1503,6 +1503,25 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Invalid server ID", 400)
 		return
 	}
+	// Same capability gate as DeleteServer, whose comment says "both gates must
+	// be open" - and of the two delete handlers in this file, only that one
+	// checked both. Both routes carry RequireCap("server.delete"); this one
+	// stopped there.
+	//
+	// A sub-server is a whole instance directory on the node, so deleting one
+	// destroys the same kind of data the flag exists to protect, and a server
+	// made of sub-servers can be emptied a slot at a time. An operator who
+	// deliberately withheld can_delete_servers still handed that out.
+	//
+	// No panel change is needed: the sub-server delete already renders the
+	// response message on failure, and the full-server delete button is
+	// likewise shown to everyone with Core doing the refusing.
+	userID, _ := r.Context().Value("userID").(string)
+	if perms := LoadEffectivePermissions(h.state, userID); !perms.IsAdmin && !perms.CanDeleteServers {
+		sendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
+		return
+	}
+
 	subServerName := vars["subServerName"]
 	if subServerName == "" {
 		sendJSONError(w, "Sub-server name required", 400)

@@ -51,6 +51,7 @@ type Store interface {
 	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
 	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
+	CountPendingNodeEnrollTokens(userID string) (int, error)
 	DeleteNodeEnrollToken(id, userID string) error
 	CreateRecoveryToken(userID, plaintext, nodeToken string, expiresAt *time.Time) error
 	ResolveRecoveryToken(plaintext string) (recoversNodeToken string, ok bool, err error)

@@ -60,7 +60,7 @@ func TestSendRequestStreamingSendFailureDoesNotDoubleClose(t *testing.T) {
 	const rounds = 500
 	for i := 0; i < rounds; i++ {
 		r := NewRegistry()
-		r.Register(1, "token", errSendStream{err: errors.New("node dropped")})
+		conn := r.Register(1, "token", errSendStream{err: errors.New("node dropped")})
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -70,7 +70,7 @@ func TestSendRequestStreamingSendFailureDoesNotDoubleClose(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			r.Unregister(1)
+			r.Unregister(1, conn)
 		}()
 		wg.Wait()
 	}
@@ -109,7 +109,7 @@ func TestPendingChannelsAreRemovedWhenClosed(t *testing.T) {
 		},
 		{
 			name:  "node disconnects",
-			close: func(r *Registry, _ *NodeConnection) { r.Unregister(1) },
+			close: func(r *Registry, conn *NodeConnection) { r.Unregister(1, conn) },
 		},
 		{
 			name:  "streaming transfer finishes",
@@ -169,5 +169,50 @@ func TestRouteResponseSurvivesAReconnectRace(t *testing.T) {
 			r.Register(1, "token", nil)
 		}()
 		wg.Wait()
+	}
+}
+
+// TestUnregisterDoesNotEvictAReconnectedNode pins the identity check in
+// Unregister.
+//
+// Two NodeConnect streams can hold the same node id at once. gRPC keepalive
+// gives Core up to about 15 seconds to notice a stream is dead (Time 5s +
+// Timeout 10s), and a node whose network blipped - or which was restarted -
+// reconnects well inside that. Register handles the overlap: it closes the
+// superseded connection's pending channels and takes over the map entry.
+//
+// The LATE teardown was the problem. When the old stream's Recv finally
+// errored, its deferred Unregister deleted whatever sat under that node id,
+// which by then was the new connection. The node was connected and Core
+// believed it was not, so every command, transfer and tab-proxy request to it
+// failed until the live stream itself died - with nothing in either log to say
+// why, because both halves did exactly what they were told.
+func TestUnregisterDoesNotEvictAReconnectedNode(t *testing.T) {
+	r := NewRegistry()
+
+	first := r.Register(1, "token", nil)
+	second := r.Register(1, "token", nil) // the node reconnects
+
+	// The stale stream's deferred teardown finally runs.
+	r.Unregister(1, first)
+
+	got, ok := r.GetConnection(1)
+	if !ok {
+		t.Fatal("the reconnected node was evicted by the dead stream's teardown; every request to it now fails with \"node not connected\"")
+	}
+	if got != second {
+		t.Fatalf("registry holds the wrong connection: got %p, want the reconnected one %p", got, second)
+	}
+
+	// And the live connection must still be usable, not a husk whose pending
+	// map was nil'd on the way past.
+	if ch := addPending(second, "req-1"); ch == nil {
+		t.Fatal("the surviving connection cannot take a pending request")
+	}
+
+	// The real teardown still works.
+	r.Unregister(1, second)
+	if _, ok := r.GetConnection(1); ok {
+		t.Error("Unregister no longer removes the connection it was given")
 	}
 }

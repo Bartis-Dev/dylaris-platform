@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,11 @@ type nodeEnrollFakeStore struct {
 
 	settings map[string]string
 
+	planID        *int
+	plan          *store.Plan
+	nodes         int
+	pendingTokens int
+
 	createCalls []nodeEnrollCreateCall
 	createErr   error
 }
@@ -36,6 +42,21 @@ type nodeEnrollCreateCall struct {
 
 func (f *nodeEnrollFakeStore) GetSetting(key string) (string, error) {
 	return f.settings[key], nil
+}
+
+// The plan-cap gate (MintToken counts existing nodes + redeemable tokens
+// against max_nodes) runs before the token is generated. These fields let a
+// case put the caller over the line; zero values mean "no plan, no limit", so
+// the expiry cases stay about the expiry.
+func (f *nodeEnrollFakeStore) GetUserPlanID(userID string) (*int, error) { return f.planID, nil }
+func (f *nodeEnrollFakeStore) GetPlan(id int) (*store.Plan, error)       { return f.plan, nil }
+func (f *nodeEnrollFakeStore) GetDefaultPlan() (*store.Plan, error)      { return f.plan, nil }
+func (f *nodeEnrollFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	return nil, nil
+}
+func (f *nodeEnrollFakeStore) CountNodesByOwner(ownerID string) (int, error) { return f.nodes, nil }
+func (f *nodeEnrollFakeStore) CountPendingNodeEnrollTokens(userID string) (int, error) {
+	return f.pendingTokens, nil
 }
 
 func (f *nodeEnrollFakeStore) CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error {
@@ -254,5 +275,76 @@ func TestMintToken_StoreErrorIsInternalServerError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMintToken_HonorsTheNodeCap pins that minting an enroll token is capped the
+// way the other two tenant-facing mints are.
+//
+// MintNodeWarpKey counts unrevoked warp keys against max_nodes, MintLinkKit
+// counts link kits against max_links; this endpoint - the third door to the same
+// outcome, an owned node - counted nothing.
+//
+// The limit was never bypassable (Handshake.Enroll checks NodeLimitReached
+// before creating the node), but it refused at the far end of the flow, and the
+// gRPC layer flattens every enrollment error to "enrollment failed". A tenant
+// over their plan set a machine up, watched it fail to pair, and had nothing
+// telling them why. A redeemable token is a pending node, which is why it counts
+// - the same reasoning behind the warp sibling's "Revoke an unused key or remove
+// a machine first".
+func TestMintToken_HonorsTheNodeCap(t *testing.T) {
+	plan2 := &store.Plan{MaxNodes: 2}
+
+	tests := []struct {
+		name          string
+		plan          *store.Plan
+		nodes         int
+		pendingTokens int
+		wantStatus    int
+	}{
+		{name: "no plan means no cap", wantStatus: http.StatusOK},
+		{name: "under the cap", plan: plan2, nodes: 1, wantStatus: http.StatusOK},
+		{
+			name: "machines alone reach the cap",
+			plan: plan2, nodes: 2, wantStatus: http.StatusForbidden,
+		},
+		{
+			// The case the sibling endpoint already refuses: nothing is enrolled
+			// yet, but every slot is spoken for by a token that can still be
+			// redeemed. Counting only machines would hand out a token that is
+			// guaranteed to fail at pairing time.
+			name: "unredeemed tokens fill the remaining slots",
+			plan: plan2, nodes: 1, pendingTokens: 1, wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := &nodeEnrollFakeStore{
+				plan:          tt.plan,
+				nodes:         tt.nodes,
+				pendingTokens: tt.pendingTokens,
+			}
+			h := &NodeEnrollHandler{state: newNodeEnrollState(fs, true, false, "")}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/nodes/enroll-token", nil)
+			req = req.WithContext(context.WithValue(req.Context(), "userID", "u1"))
+			rec := httptest.NewRecorder()
+			h.MintToken(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus == http.StatusForbidden {
+				if len(fs.createCalls) != 0 {
+					t.Error("a refused mint still wrote a token row")
+				}
+				if !strings.Contains(rec.Body.String(), "Node limit reached") {
+					t.Errorf("body = %q, want the same wording the warp key mint uses", rec.Body.String())
+				}
+			} else if len(fs.createCalls) != 1 {
+				t.Errorf("createCalls = %d, want 1", len(fs.createCalls))
+			}
+		})
 	}
 }

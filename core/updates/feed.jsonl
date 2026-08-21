@@ -96,3 +96,6 @@
 {"date":"2026-08-21","service":"core","type":"security","summary":"An API key now stops working as soon as its creator loses access to the server it points at, instead of keeping the access it was created with."}
 {"date":"2026-08-21","service":"core","type":"fix","summary":"Password-reset emails are limited to one per minute per address, so nobody can flood an inbox or keep invalidating the reset link you are trying to use."}
 {"date":"2026-08-21","service":"core","type":"fix","summary":"Live event streams now end when the account behind them is deleted or renamed, instead of continuing on a stale ticket."}
+{"date":"2026-08-21","service":"core","type":"fix","summary":"A node that reconnects after a brief network drop no longer ends up unreachable from the panel when its old connection finally times out."}
+{"date":"2026-08-21","service":"core","type":"change","summary":"Deleting a single sub-server now needs the same delete permission as deleting a whole server."}
+{"date":"2026-08-21","service":"core","type":"change","summary":"Creating a node enrollment token is refused once your plan's machine limit is used up, instead of handing out a token that would fail during pairing."}

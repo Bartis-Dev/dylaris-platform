@@ -57,16 +57,38 @@ func (r *Registry) Register(nodeID int, token string, stream pb.NodeService_Node
 	return conn
 }
 
-// Unregister removes a Node connection from the registry.
-func (r *Registry) Unregister(nodeID int) {
+// Unregister removes a Node connection from the registry - but only when the
+// registry still holds THAT connection.
+//
+// The identity check is the whole point. Each NodeConnect stream defers this
+// with its own node id, and a node can be registered twice for a while: gRPC
+// keepalive gives Core up to about 15 seconds to notice a stream is dead
+// (Time 5s + Timeout 10s), and a node whose network blipped, or which was
+// restarted, reconnects well inside that. Register handles the overlap
+// correctly - it closes the superseded connection's pending channels and takes
+// over the map entry. What did not was the LATE teardown that follows: when the
+// old stream's Recv finally errored, its deferred Unregister deleted whatever
+// was under that node id, which by then was the NEW connection.
+//
+// The node was then connected and Core believed it was not. Every command,
+// file transfer and tab-proxy request to it failed with "node not connected"
+// until the live stream itself died and the node reconnected a second time -
+// and nothing in either log said why, because both halves had done exactly what
+// they were told.
+//
+// A superseded connection needs no cleanup here; Register already closed its
+// pending channels and nil'd the map, so returning early is complete, not a
+// shortcut. This is the same reconnect overlap TestRouteResponseSurvivesAReconnectRace
+// covers for pending channels, applied to the registry entry itself.
+func (r *Registry) Unregister(nodeID int, conn *NodeConnection) {
 	r.mu.Lock()
-	if conn, ok := r.connections[nodeID]; ok {
-		conn.mu.Lock()
-		for _, ch := range conn.pending {
+	if cur, ok := r.connections[nodeID]; ok && cur == conn {
+		cur.mu.Lock()
+		for _, ch := range cur.pending {
 			close(ch)
 		}
-		conn.pending = nil
-		conn.mu.Unlock()
+		cur.pending = nil
+		cur.mu.Unlock()
 		delete(r.connections, nodeID)
 	}
 	r.mu.Unlock()

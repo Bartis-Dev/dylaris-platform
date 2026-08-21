@@ -481,3 +481,61 @@ func TestIntegrationPasswordResetTokenCooldown(t *testing.T) {
 		t.Error("a token from a refused request was stored anyway")
 	}
 }
+
+// CountPendingNodeEnrollTokens backs the node cap on POST /nodes/enroll-token.
+// Against a real Postgres because the whole method is one predicate over three
+// nullable columns, and because this file exists for exactly the class of defect
+// that only Postgres rejects.
+//
+// "Pending" means redeemable: not consumed, not expired, and not a recovery
+// token. Recovery tokens are excluded deliberately - they re-pair a machine that
+// already exists and is therefore already counted, so counting them too would
+// refuse a re-pair to a tenant who is legitimately at their limit.
+func TestIntegrationCountPendingNodeEnrollTokens(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	if n, err := st.CountPendingNodeEnrollTokens(f.user.ID); err != nil || n != 0 {
+		t.Fatalf("fresh user: got (%d, %v), want (0, nil)", n, err)
+	}
+
+	future := time.Now().Add(24 * time.Hour)
+	past := time.Now().Add(-1 * time.Hour)
+
+	if err := st.CreateNodeEnrollToken(f.user.ID, "live-1", "one", &future); err != nil {
+		t.Fatalf("CreateNodeEnrollToken: %v", err)
+	}
+	if err := st.CreateNodeEnrollToken(f.user.ID, "live-2", "no expiry", nil); err != nil {
+		t.Fatalf("CreateNodeEnrollToken (no expiry): %v", err)
+	}
+	if err := st.CreateNodeEnrollToken(f.user.ID, "expired", "stale", &past); err != nil {
+		t.Fatalf("CreateNodeEnrollToken (expired): %v", err)
+	}
+	if err := st.CreateRecoveryToken(f.user.ID, "recovery-1", f.node.Token, &future); err != nil {
+		t.Fatalf("CreateRecoveryToken: %v", err)
+	}
+
+	// A NULL expiry must count: it never lapses, so it is the most pending of
+	// the lot, and a NOT-NULL-only predicate would silently skip it.
+	if n, err := st.CountPendingNodeEnrollTokens(f.user.ID); err != nil || n != 2 {
+		t.Errorf("got (%d, %v), want (2, nil) - one dated, one open-ended; the expired and recovery tokens must not count", n, err)
+	}
+
+	// Redeeming one drops it out of the count, which is what frees the slot.
+	if _, _, ok, err := st.ConsumeNodeEnrollToken("live-1"); err != nil || !ok {
+		t.Fatalf("ConsumeNodeEnrollToken: ok=%v err=%v", ok, err)
+	}
+	if n, err := st.CountPendingNodeEnrollTokens(f.user.ID); err != nil || n != 1 {
+		t.Errorf("after redeeming one: got (%d, %v), want (1, nil)", n, err)
+	}
+
+	// Another tenant's tokens are not this tenant's problem.
+	var other string
+	if err := db.QueryRow(`SELECT id FROM users WHERE id <> $1 LIMIT 1`, f.user.ID).Scan(&other); err == nil && other != "" {
+		if n, err := st.CountPendingNodeEnrollTokens(other); err != nil {
+			t.Errorf("counting another tenant: %v", err)
+		} else if n != 0 {
+			t.Errorf("another tenant sees %d of this one's tokens", n)
+		}
+	}
+}

@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"dylaris-core/services"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -53,6 +55,32 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	// Enforce the tenant's node cap here, counting redeemable tokens as pending
+	// nodes - the same rule MintNodeWarpKey applies to unrevoked warp keys, and
+	// MintLinkKit to link kits. This was the one tenant-facing mint endpoint of
+	// the three with no cap at all.
+	//
+	// The limit was never bypassable: Handshake.Enroll checks NodeLimitReached
+	// before creating the node. But it refused at the far end of the flow, and
+	// the gRPC layer flattens every enrollment error to "enrollment failed", so a
+	// tenant over their plan set up a machine, watched it fail to pair, and had
+	// nothing telling them why. Refusing at mint time says it in the place where
+	// it can still be acted on - which is exactly what the warp sibling's
+	// "Revoke an unused key or remove a machine first" does.
+	//
+	// It also bounds the table: minting was an uncapped, unrate-limited write
+	// available to any authenticated tenant.
+	if lim, lerr := services.EffectiveLimits(h.state.Store, userID); lerr == nil && lim.MaxNodes > 0 {
+		nodes, nerr := h.state.Store.CountNodesByOwner(userID)
+		pending, perr := h.state.Store.CountPendingNodeEnrollTokens(userID)
+		if nerr == nil && perr == nil && int64(nodes+pending) >= lim.MaxNodes {
+			sendJSONError(w, fmt.Sprintf(
+				"Node limit reached (%d). Revoke an unused enroll token or remove a machine first.", lim.MaxNodes),
+				http.StatusForbidden)
+			return
+		}
 	}
 
 	b := make([]byte, 32)
