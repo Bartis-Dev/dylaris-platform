@@ -65,15 +65,35 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
-	var mode, surface string
-	if err := db.QueryRow(`SELECT mode, surface FROM server_tabs WHERE id=$1 AND server_id=$2`,
-		tabID, serverID).Scan(&mode, &surface); err != nil {
+	var mode, surface, owner string
+	var existing sql.NullString
+	if err := db.QueryRow(`SELECT mode, surface, share_token, COALESCE(created_by::text,'')
+		FROM server_tabs WHERE id=$1 AND server_id=$2`,
+		tabID, serverID).Scan(&mode, &surface, &existing, &owner); err != nil {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	if mode != "proxied" || (surface != "page" && surface != "both") {
 		sendJSONError(w, "Share links only apply to proxied page tabs", http.StatusBadRequest)
 		return
+	}
+	// Minting a slug where there was none ADDS to the allowance Create checks
+	// and this handler did not, so the per-user cap was one PATCH away from
+	// being irrelevant: create the tab with surface "tab" (no slug, no check),
+	// PATCH it to "page", rotate. Re-rolling an EXISTING slug is not a new
+	// link and stays allowed at the cap.
+	//
+	// The count is against created_by, not the caller: that is the column
+	// countUserShareLinks measures and the one this row will keep, so counting
+	// anyone else would bill the wrong allowance.
+	if !existing.Valid || existing.String == "" {
+		if owner != "" {
+			if used, uerr := h.countUserShareLinks(db, owner); uerr == nil &&
+				capReached(used, h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(r.Context())) {
+				sendJSONError(w, "This tab's owner has reached their share-link limit.", http.StatusConflict)
+				return
+			}
+		}
 	}
 	tok, err := generateShareToken()
 	if err != nil {

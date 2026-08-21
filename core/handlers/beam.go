@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/services"
 	beamauth "dylaris-pkg/beam/auth"
 	"github.com/redis/go-redis/v9"
@@ -189,6 +190,42 @@ func NewBeamHandler(state *AppState, jwtSecret string) *BeamHandler {
 	return &BeamHandler{state: state, jwtSecret: jwtSecret}
 }
 
+// beamAccessCap is the capability a caller must hold on a server before Core
+// will mint a beam ticket for it, or list it to a beam client.
+//
+// It is sftp.access rather than a files.* cap because a beam ticket is a
+// full file-transfer credential: the node validates it (node/beam_server.go
+// Authenticate) and then serves list, read, WRITE, delete and rename over the
+// whole server directory. BeamClaims carries no capability, so the node has
+// nothing to narrow that down with - the decision has to be made here, once,
+// and it has to be the write-capable one.
+//
+// sftp.access is exactly that decision as the catalog already expresses it:
+// it gates the sibling full-file-transfer door (GET /api/servers/{id}/
+// sftp-credentials, routes.go), and every preset carrying it also carries
+// files.read + files.write.
+const beamAccessCap = "sftp.access"
+
+// canBeam resolves beamAccessCap for the caller on one server. Admins pass;
+// owners pass through the resolver's own owner short-circuit.
+//
+// Fail-closed on a missing resolver: this is the only gate between a panel
+// member and unrestricted write access to a server's files.
+func (h *BeamHandler) canBeam(r *http.Request, serverID int) bool {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if isAdmin {
+		return true
+	}
+	if h.state == nil || h.state.Authz == nil {
+		return false
+	}
+	username, _ := r.Context().Value("username").(string)
+	userID, _ := r.Context().Value("userID").(string)
+	res, err := h.state.Authz.Resolve(
+		authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	return err == nil && res.HasCap(beamAccessCap)
+}
+
 type BeamServerInfo struct {
 	ID              int    `json:"id"`
 	UUID            string `json:"uuid"`
@@ -220,6 +257,14 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 
 	var result []BeamServerInfo
 	for _, s := range servers {
+		// This list is the beam client's server picker, so it must show what
+		// beam can actually open. ListServersForUser answers "can this account
+		// see the server at all", which is a wider set than beamAccessCap -
+		// listing the rest offered a member a server whose ticket request is
+		// refused, and handed out that server's node discovery token on the way.
+		if !h.canBeam(r, s.ID) {
+			continue
+		}
 		// Resolve node info — Node.Token is used as the discovery nodeID
 		nodeDiscoveryID := ""
 		nodeName := s.NodeName
@@ -307,22 +352,24 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check access (admin or owner or invited member)
-	if !isAdmin {
-		user, _ := h.state.Store.GetUserByUsername(username)
-		if user == nil {
-			sendJSONError(w, "User not found", http.StatusUnauthorized)
-			return
-		}
-		hasAccess := server.OwnerID == user.ID
-		if !hasAccess {
-			invite, _ := h.state.Store.GetInvite(server.ID, user.ID)
-			hasAccess = invite != nil
-		}
-		if !hasAccess {
-			sendJSONError(w, "Access denied", http.StatusForbidden)
-			return
-		}
+	// Access: beamAccessCap through the same resolver every other server-scoped
+	// route uses.
+	//
+	// This used to accept any server_invites row - "is this user a member at
+	// all" - which made it the one file door in Core that resolved no
+	// capability. The Viewer preset is described as "Read-only access to ...
+	// files" and holds files.read without files.write; through beam it wrote,
+	// deleted and renamed anyway, because the node has no capability in the
+	// ticket to check. Operator holds no file capability at all and had the
+	// same access.
+	//
+	// It was wrong in the other direction too: GetInvite matches
+	// si.server_id = $1, so an ACCOUNT-wide grant (server_id IS NULL), which
+	// the resolver honours on every server of that owner, produced no row and
+	// was refused.
+	if !h.canBeam(r, server.ID) {
+		sendJSONError(w, "Access denied", http.StatusForbidden)
+		return
 	}
 
 	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + direct-connect
@@ -658,10 +705,10 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 //
 // The Beam app is published to GitHub Releases (no longer served by the relay).
 // Resolution order:
-//   1. beam.download_link - explicit full-URL override (CDN/mirror).
-//   2. The platform URL from the GitHub manifest (beam.release_manifest, default
-//      https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json).
-//      Public once the repo is public, so Core fetches it without auth.
+//  1. beam.download_link - explicit full-URL override (CDN/mirror).
+//  2. The platform URL from the GitHub manifest (beam.release_manifest, default
+//     https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json).
+//     Public once the repo is public, so Core fetches it without auth.
 func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) []string {
 	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
 		base := strings.TrimRight(link, "/")
@@ -683,4 +730,3 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 	}
 	return []string{u}
 }
-

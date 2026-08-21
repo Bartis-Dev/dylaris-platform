@@ -80,6 +80,45 @@ func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) int64 
 	return defaultVal
 }
 
+// downloadBudget enforces the per-user download ceiling across a streamed
+// response whose total size is not known up front (the node zips a directory
+// as it walks it, so there is no Content-Length to pre-check). The only place
+// the limit can be applied is per chunk, as the bytes go past.
+//
+// getTransferLimit has had a "download" branch, and settings.go has read and
+// written fm.user_download_limit / fm.admin_download_limit, since the file
+// manager existed - but nothing ever called the download branch. The panel
+// offered the operator a download ceiling that did nothing, while the upload
+// ceiling right next to it (same function, same settings page) was enforced on
+// both write paths.
+type downloadBudget struct{ left int64 }
+
+// take reserves n bytes, reporting false once the budget is spent.
+func (b *downloadBudget) take(n int) bool {
+	if b.left < int64(n) {
+		return false
+	}
+	b.left -= int64(n)
+	return true
+}
+
+// refuse ends a download that hit the ceiling. Before any byte is written
+// there is still a status code to send. After that there is not: the abort is
+// what makes the browser report a failed download instead of silently saving a
+// truncated file, and net/http treats ErrAbortHandler as a deliberate abort
+// (no stack trace, no 500 attempt on a response already in flight).
+func (b *downloadBudget) refuse(w http.ResponseWriter, bodyStarted bool) {
+	if !bodyStarted {
+		// The attachment headers were staged from the node's metadata frame
+		// before the first chunk arrived; leaving them on would make the
+		// browser offer to SAVE this error message as the requested file.
+		w.Header().Del("Content-Disposition")
+		http.Error(w, "This download exceeds your download limit", http.StatusRequestEntityTooLarge)
+		return
+	}
+	panic(http.ErrAbortHandler)
+}
+
 // getServerUUID extracts and validates the server_uuid query param for a WRITE
 // or download operation against requiredCap (files.write or files.delete).
 // Non-admin users must own the server or hold requiredCap via a grant. Demo
@@ -630,6 +669,13 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 // DownloadFileHandler handles file and folder downloads via gRPC streaming
 func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 	pathParam := r.URL.Query().Get("path")
+	// The node validates this too. Refusing early keeps the request from ever
+	// reaching a node running an older build - the same reason DeleteFileHandler
+	// gives. "" is legal and means the server root (download the whole server).
+	if !validate.IsSafeRelPath(pathParam) {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
 	serverUUID, err := h.getServerUUID(r, "files.read")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
@@ -668,7 +714,12 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 	// Then stream data chunks directly to browser (zero-copy).
 	// Final TransferDone (TotalBytes>0) signals completion — channel closes.
 	headerWritten := false
+	// Distinct from headerWritten: the metadata TransferDone stages headers
+	// before a single body byte exists, and only an already-STARTED body takes
+	// the status code away from us. See downloadBudget.refuse.
+	bodyStarted := false
 	flusher, canFlush := w.(http.Flusher)
+	budget := downloadBudget{left: h.getTransferLimit(r, "download")}
 
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
@@ -689,11 +740,16 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		if chunk := resp.GetChunk(); chunk != nil {
+			if !budget.take(len(chunk.Data)) {
+				budget.refuse(w, bodyStarted)
+				return
+			}
 			if !headerWritten {
 				w.Header().Set("Content-Type", "application/octet-stream")
 				headerWritten = true
 			}
 			w.Write(chunk.Data)
+			bodyStarted = true
 			if canFlush {
 				flusher.Flush()
 			}
@@ -709,6 +765,19 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	basePath := r.URL.Query().Get("base_path")
 	selectedPaths := r.URL.Query()["selected"]
 	selectAll := r.URL.Query().Get("select_all") == "true"
+
+	// Same early refusal as DownloadFileHandler, applied to every path the
+	// caller supplies - the node joins each selected entry onto base_path.
+	if !validate.IsSafeRelPath(basePath) {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	for _, p := range selectedPaths {
+		if !validate.IsSafeRelPath(p) {
+			http.Error(w, "Invalid path", http.StatusBadRequest)
+			return
+		}
+	}
 
 	serverUUID, err := h.getServerUUID(r, "files.read")
 	if err != nil {
@@ -752,7 +821,9 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	headerWritten := false
+	bodyStarted := false
 	flusher, canFlush := w.(http.Flusher)
+	budget := downloadBudget{left: h.getTransferLimit(r, "download")}
 
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
@@ -772,11 +843,16 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 		}
 
 		if chunk := resp.GetChunk(); chunk != nil {
+			if !budget.take(len(chunk.Data)) {
+				budget.refuse(w, bodyStarted)
+				return
+			}
 			if !headerWritten {
 				w.Header().Set("Content-Type", "application/octet-stream")
 				headerWritten = true
 			}
 			w.Write(chunk.Data)
+			bodyStarted = true
 			if canFlush {
 				flusher.Flush()
 			}

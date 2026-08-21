@@ -335,6 +335,27 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
+	// The per-server proxied-tab cap was enforced in Create only, so a PATCH
+	// that flips an existing tab to proxied walked straight past it - and
+	// DIRECT tabs are uncapped, which makes the whole ceiling two calls per
+	// tab away from any tabs.write holder. Only a TRANSITION is counted:
+	// editing a tab that is already proxied must keep working once the server
+	// sits at its limit, or the cap would freeze every existing tab.
+	if req.Mode == "proxied" {
+		var currentMode string
+		if err := db.QueryRow(`SELECT mode FROM server_tabs WHERE id=$1 AND server_id=$2`,
+			tabID, serverID).Scan(&currentMode); err != nil {
+			sendJSONError(w, "Not found", http.StatusNotFound)
+			return
+		}
+		if currentMode != "proxied" {
+			if count, cerr := h.countProxiedTabs(db, serverID); cerr == nil &&
+				capReached(count, h.state.FeatureFlags.TabProxyMaxPerServer(r.Context())) {
+				sendJSONError(w, "This server has reached its proxied-tab limit.", http.StatusConflict)
+				return
+			}
+		}
+	}
 	// Patch-style: only fields the client sent are written. COALESCE keeps
 	// the existing value for empty strings on optional fields.
 	var portArg interface{}
