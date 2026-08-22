@@ -194,3 +194,31 @@ func TestBuildShipperACLRulesIsNarrow(t *testing.T) {
 		}
 	}
 }
+
+// The Link pins BOTH the edge and the beam relay against a stored certificate
+// fingerprint, and fails CLOSED when the lookup errors. A missing grant is
+// therefore not a degraded pin - it is a permanent connection failure that
+// looks like a certificate problem: the relay logs "tls: bad certificate" on a
+// loop while the fingerprints match perfectly.
+//
+// beam:cert:fingerprint:* was missing while its edge twin was present, so beam
+// over the relay could not work on any node. Table-driven so the next
+// registry/fingerprint pair cannot be half-added either.
+func TestLinkCanPinEverythingItDials(t *testing.T) {
+	tokens := map[string]bool{}
+	for _, a := range BuildLinkACLRules("pw", "n1", "tunnel-token") {
+		tokens[a.(string)] = true
+	}
+	for _, pair := range []struct{ registry, fingerprint string }{
+		{"%R~edge:registry:*", "%R~edge:cert:fingerprint:*"},
+		{"%R~beam:registry:*", "%R~beam:cert:fingerprint:*"},
+	} {
+		if !tokens[pair.registry] {
+			t.Errorf("missing %q", pair.registry)
+		}
+		if !tokens[pair.fingerprint] {
+			t.Errorf("the Link may discover via %q but cannot read %q, so it can never "+
+				"complete a pinned TLS handshake there", pair.registry, pair.fingerprint)
+		}
+	}
+}

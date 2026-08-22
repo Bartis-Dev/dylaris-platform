@@ -162,7 +162,15 @@ func BuildLinkACLRules(password, nodeToken, tunnelToken string) []interface{} {
 		"~hub:link:discovery:"+nodeToken,
 		"~beam:node:"+nodeToken,
 		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
-		"%R~sys:beams", "%R~beam:registry:*",
+		// beam:cert:fingerprint:* is the twin of edge:cert:fingerprint:* above,
+		// and it was missing. The Link pins the beam relay's self-signed
+		// certificate against it exactly as it pins an edge's, and fails CLOSED
+		// on a Redis error - so NOPERM here did not degrade to trust-on-first-use,
+		// it made every beam tunnel attempt abort with a TLS alert, forever. The
+		// relay logged "link auth read error: remote error: tls: bad certificate"
+		// on a loop while the fingerprints matched perfectly, and beam over the
+		// relay was simply dead on every node.
+		"%R~sys:beams", "%R~beam:registry:*", "%R~beam:cert:fingerprint:*",
 		"%R~beam:node-endpoint:"+nodeToken,
 	)
 	for _, c := range commandCats {
