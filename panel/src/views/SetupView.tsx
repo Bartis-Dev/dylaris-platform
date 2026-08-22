@@ -327,6 +327,15 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const handleSubmit = async () => {
         const sanitized = sanitizeName(subName);
         if (!sanitized) { setSubNameError('Server name is required.'); return; }
+        // The field shows this error while you type, and nothing used to act on
+        // it: submitting anyway sent a name the rule rejects. Core sanitized it
+        // through, so a 51-character name became a sub-server that no switch
+        // would ever accept. Core refuses it now, so this is the message that
+        // makes the refusal readable instead of a generic server error.
+        if (!isSubServerName(sanitized)) {
+            setSubNameError('Use letters, numbers, -, _ or +, up to 50 characters.');
+            return;
+        }
         setSubmitting(true);
         setError('');
 

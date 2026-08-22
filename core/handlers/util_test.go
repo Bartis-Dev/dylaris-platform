@@ -89,17 +89,3 @@ func TestSseEscape(t *testing.T) {
 		}
 	}
 }
-
-func TestSanitizeServerName(t *testing.T) {
-	cases := []struct{ input, want string }{
-		{"My Server", "My_Server"},
-		{"server!", "server"},
-		{"hello world!", "hello_world"},
-		{"My-Server+1", "My-Server+1"},
-	}
-	for _, c := range cases {
-		if got := sanitizeServerName(c.input); got != c.want {
-			t.Errorf("sanitizeServerName(%q) = %q, want %q", c.input, got, c.want)
-		}
-	}
-}

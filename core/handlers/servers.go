@@ -4,8 +4,6 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
-	"regexp"
-	"strings"
 )
 
 // defaultJvmFlags are always injected into the start command but not stored in extra_jvm_flags.
@@ -28,14 +26,6 @@ const aikarsHighMemFlags = "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPa
 	"-XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 " +
 	"-XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 " +
 	"-XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1"
-
-// sanitizeServerName allows only a-z A-Z 0-9 - + _  (spaces are replaced with _)
-var serverNameRegex = regexp.MustCompile(`[^a-zA-Z0-9\-_+]`)
-
-func sanitizeServerName(name string) string {
-	name = strings.ReplaceAll(name, " ", "_")
-	return serverNameRegex.ReplaceAllString(name, "")
-}
 
 // ==========================================
 // REQUEST TYPES

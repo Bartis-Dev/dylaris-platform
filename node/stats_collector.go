@@ -561,7 +561,42 @@ func duDiskUsage(ctx context.Context, rdb *redis.Client, uuid string) *DiskUsage
 	if total < 0 {
 		return nil
 	}
-	return &DiskUsagePayload{Total: total, Limit: loadDiskLimit(ctx, rdb, uuid) * 1024 * 1024}
+	return &DiskUsagePayload{
+		Total: total,
+		Limit: loadDiskLimit(ctx, rdb, uuid) * 1024 * 1024,
+		// The quota path fills this and this one did not, which made it the
+		// only path most installs ever take with the map missing: project
+		// quotas need xfs or ext4, so NFS, CIFS and every Docker Desktop bind
+		// mount land here. Core reads the map to enforce the per-server
+		// sub-server limit, and len(nil) is never >= a positive limit, so that
+		// setting silently did nothing wherever quotas were unavailable.
+		//
+		// The extra du walks cost little here: the parent walk above has just
+		// pulled the same inodes through the cache, and this path runs on
+		// diskFallbackInterval, minutes apart.
+		SubServers: scanSubServerSizes(dir),
+	}
+}
+
+// scanSubServerSizes measures each sub-server directory under a server root.
+//
+// Both disk-usage paths report the same map, so they build it the same way
+// rather than each doing its own readdir: a breakdown that means one thing
+// under quotas and another without them is worse than no breakdown.
+// Dot-directories are skipped - .dylaris-backups and friends are not
+// sub-servers, and counting them would inflate the limit Core enforces.
+func scanSubServerSizes(serverDir string) map[string]int64 {
+	sizes := make(map[string]int64)
+	entries, err := os.ReadDir(serverDir)
+	if err != nil {
+		return sizes
+	}
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			sizes[e.Name()] = dirSize(filepath.Join(serverDir, e.Name()))
+		}
+	}
+	return sizes
 }
 
 // dirSize returns the total size of a directory in bytes.

@@ -209,24 +209,12 @@ func (qp *QuotaProvider) GetDiskUsage(uuid string) *DiskUsagePayload {
 		return nil
 	}
 
-	// Quotas give total only; sub-server breakdown uses quick readdir
-	serverPath := filepath.Join(qp.basePath, uuid)
-	subServers := make(map[string]int64)
-	entries, err := os.ReadDir(serverPath)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				// Quick size estimate from direct children only
-				subPath := filepath.Join(serverPath, e.Name())
-				subServers[e.Name()] = dirSize(subPath)
-			}
-		}
-	}
-
+	// Quotas give total only; the sub-server breakdown is a readdir, shared with
+	// the du path so both report the same shape (see scanSubServerSizes).
 	return &DiskUsagePayload{
 		Total:      totalBytes,
 		Limit:      limitBytes,
-		SubServers: subServers,
+		SubServers: scanSubServerSizes(filepath.Join(qp.basePath, uuid)),
 	}
 }
 

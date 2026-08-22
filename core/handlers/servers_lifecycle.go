@@ -375,9 +375,19 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	subName := sanitizeServerName(req.SubServerName)
-	if subName == "" {
-		sendJSONError(w, "Invalid server name", 400)
+	// The same rule SwitchSubServer applies, and for the same reason: this names
+	// a directory on the node. It used to sanitize instead - stripping the
+	// characters it did not like and accepting whatever was left - which had two
+	// consequences. A caller got a sub-server under a name they did not choose
+	// ("../escape" became "escape", "my server" became "my_server") and was never
+	// told. And because sanitizing has no length bound while the rule does, it
+	// could create a 51-character sub-server that no switch would ever accept.
+	//
+	// The panel already applies this exact rule to the field before submitting,
+	// so nothing it can send changes shape here.
+	subName := strings.TrimSpace(req.SubServerName)
+	if !validate.IsSubServerName(subName) {
+		sendJSONError(w, "Invalid sub-server name: letters, numbers, -, _ or +, up to 50 characters", 400)
 		return
 	}
 
@@ -407,16 +417,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 				maxSub = n
 			}
 		}
-		if maxSub > 0 && h.state.Redis != nil {
-			diskKey := fmt.Sprintf("dylaris:server:%s:stats:disk", srv.UUID)
-			if data, err := h.state.Redis.Get(context.Background(), diskKey).Result(); err == nil {
-				var diskPayload struct {
-					SubServers map[string]int64 `json:"subServers"`
-				}
-				if json.Unmarshal([]byte(data), &diskPayload) == nil && len(diskPayload.SubServers) >= maxSub {
-					sendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Increase the limit in Settings → Servers.", maxSub), 400)
-					return
-				}
+		if maxSub > 0 {
+			if known, ok := h.knownSubServers(r.Context(), srv.UUID); ok && len(known) >= maxSub {
+				sendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Increase the limit in Settings → Servers.", maxSub), 400)
+				return
 			}
 		}
 	}
@@ -724,6 +728,44 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// knownSubServers reports which sub-servers the node last saw on disk for a
+// server, and whether that answer is known at all.
+//
+// The source is the node's disk-usage report (dylaris:server:<uuid>:stats:disk),
+// which carries a per-sub-server size map. It is the only sub-server inventory
+// Core holds without a round trip to the node.
+//
+// ok=false means "no answer", not "none": the key expires ten minutes after the
+// last report, so a server whose node just restarted, or one that has never run,
+// legitimately has nothing here. Callers must not treat that as an empty
+// inventory - refusing every switch and every install while a cache is cold
+// would be a worse failure than the one this guards against, and the node
+// refuses an impossible request safely either way.
+//
+// Both readers of this key go through here. They used to parse it separately,
+// which is how one of them ended up asserting against a map that the node's
+// non-quota path never filled.
+func (h *ServerHandler) knownSubServers(ctx context.Context, serverUUID string) (map[string]bool, bool) {
+	if h.state == nil || h.state.Redis == nil {
+		return nil, false
+	}
+	data, err := h.state.Redis.Get(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", serverUUID)).Result()
+	if err != nil {
+		return nil, false
+	}
+	var payload struct {
+		SubServers map[string]int64 `json:"subServers"`
+	}
+	if json.Unmarshal([]byte(data), &payload) != nil || payload.SubServers == nil {
+		return nil, false
+	}
+	known := make(map[string]bool, len(payload.SubServers))
+	for name := range payload.SubServers {
+		known[name] = true
+	}
+	return known, true
+}
+
 // SwitchSubServer: Switches the active MC server in the container
 func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -750,9 +792,25 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	subName := sanitizeServerName(req.SubServerName)
-	if subName == "" {
-		sendJSONError(w, "Invalid server name", 400)
+	// Rejected, not sanitized. Setup may sanitize because it is NAMING a new
+	// directory; this is picking an existing one, and quietly rewriting the
+	// caller's string switches them to a different sub-server than they asked
+	// for. "../escape" used to sanitize to "escape" and be accepted.
+	subName := strings.TrimSpace(req.SubServerName)
+	if !validate.IsSubServerName(subName) {
+		sendJSONError(w, "Invalid sub-server name", 400)
+		return
+	}
+
+	// The sub-server has to exist before it becomes this server's active one.
+	// Without this, any owner could switch to a name that is not on disk: the
+	// write below succeeded, the node then failed asynchronously with "no
+	// runnable server found", and Core's active_sub_server and the node's
+	// .active_server disagreed from then on - with Core's pointing at nothing.
+	// Everything keyed on the active sub-server (the console above all) reads
+	// empty in that state while the old sub-server is still the one running.
+	if known, ok := h.knownSubServers(r.Context(), srv.UUID); ok && !known[subName] {
+		sendJSONError(w, "No sub-server named "+subName+" on this server", 400)
 		return
 	}
 
