@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -88,6 +89,31 @@ func TestFetchVerifiedBeamPlatformURL_RequiresAValidSignature(t *testing.T) {
 		srv := beamManifestServer(t, body, goodSig, true)
 		if _, err := fetchVerifiedBeamPlatformURL(context.Background(), srv.URL+"/latest.json", pubB64, "linux-arm64"); err == nil {
 			t.Fatal("a platform absent from the signed manifest returned a url")
+		}
+	})
+
+	// The download route is unauthenticated and browser-facing, so "we do not
+	// build for your platform" and "the release feed is down" must not read the
+	// same. Only the first is the visitor's to act on; while GitHub is
+	// unreachable EVERY platform looks unbuilt, and telling a Windows user there
+	// is no Windows build would be false AND would hide the outage.
+	t.Run("no build for this platform is distinguishable from a broken feed", func(t *testing.T) {
+		srv := beamManifestServer(t, body, goodSig, true)
+		_, _, err := fetchVerifiedBeamPlatformArtifact(context.Background(), srv.URL+"/latest.json", pubB64, "darwin-arm64")
+		if !errors.Is(err, errBeamPlatformNotInManifest) {
+			t.Errorf("absent platform: err = %v, want errBeamPlatformNotInManifest", err)
+		}
+
+		// A platform that IS built, but whose manifest cannot be verified, must
+		// NOT come back as "no build for your platform".
+		unsigned := beamManifestServer(t, body, nil, false)
+		_, _, err = fetchVerifiedBeamPlatformArtifact(context.Background(), unsigned.URL+"/latest.json", pubB64, "windows-amd64")
+		if err == nil {
+			t.Fatal("an unsigned manifest was accepted")
+		}
+		if errors.Is(err, errBeamPlatformNotInManifest) {
+			t.Error("an unverifiable manifest was reported as \"no build for this platform\"; " +
+				"every visitor would be told a permanent falsehood and the outage would be invisible")
 		}
 	})
 }

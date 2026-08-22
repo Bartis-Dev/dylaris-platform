@@ -688,13 +688,22 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	// the beam.download_link override. Relays have not served binaries since
 	// eeff445; the loop below survives because the override may still name
 	// several hosts in future, and one attempt is the normal case.
-	candidates, expectedSHA := resolveDownloadCandidates(r.Context(), h.state.Redis, getSetting, platform)
+	candidates, expectedSHA, resolveErr := resolveDownloadCandidates(r.Context(), h.state.Redis, getSetting, platform)
 	if len(candidates) == 0 {
-		// Naming the real subsystem matters here: this fires when the signed
-		// manifest is missing, unreachable, or its signature does not verify -
-		// none of which an operator would find by looking at relays.
-		sendJSONError(w, "No verified Beam release found for "+platform+
-			" (check the signed release manifest, or set beam.download_link)",
+		// This route is UNAUTHENTICATED and browser-facing (/api/tools/beam
+		// redirects into it off the User-Agent), so the two reasons a download
+		// cannot start are answered differently. "We do not build for your
+		// platform" is a permanent, ordinary fact the visitor can act on; a
+		// manifest that is missing, unreachable or unverifiable is an operator
+		// problem the visitor can only wait out, and its detail belongs in the
+		// log rather than in a stranger's browser.
+		if errors.Is(resolveErr, errBeamPlatformNotInManifest) {
+			sendJSONError(w, "Beam is not available for "+platform+" yet.", http.StatusNotFound)
+			return
+		}
+		log.Printf("beam-download: cannot resolve %s from the signed release manifest "+
+			"(check beam.release_manifest, or set beam.download_link): %v", platform, resolveErr)
+		sendJSONError(w, "The Beam download is temporarily unavailable. Please try again shortly.",
 			http.StatusServiceUnavailable)
 		return
 	}
@@ -854,7 +863,7 @@ func (t *tempFileReader) Close() error {
 //  2. The platform URL from the GitHub manifest (beam.release_manifest, default
 //     https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json).
 //     Public once the repo is public, so Core fetches it without auth.
-func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) ([]string, string) {
+func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) ([]string, string, error) {
 	manifestURL := strings.TrimSpace(getSetting("beam.release_manifest"))
 	if manifestURL == "" {
 		manifestURL = defaultBeamManifestURL
@@ -874,8 +883,9 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 	// match, so a mirror serves the same artifact or it serves nothing.
 	u, sha, err := fetchVerifiedBeamPlatformArtifact(ctx, manifestURL, beamUpdatePublicKeyB64, platform)
 	if err != nil {
-		log.Printf("beam-download: no verified manifest entry for %s: %v", platform, err)
-		return nil, ""
+		// The caller decides what the visitor is told; it needs the error to tell
+		// "no build for this platform" apart from "the feed is down".
+		return nil, "", err
 	}
 
 	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
@@ -883,7 +893,7 @@ func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSettin
 		if !strings.Contains(base, "/download/") {
 			base = base + "/download/" + platform
 		}
-		return []string{base}, sha
+		return []string{base}, sha, nil
 	}
-	return []string{u}, sha
+	return []string{u}, sha, nil
 }

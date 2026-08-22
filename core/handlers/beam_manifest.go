@@ -54,6 +54,17 @@ const beamMinAutoTTL = 5 * time.Minute
 // signature failure. Callers translate it to "no auto floor" ("").
 var errBeamManifestUnverified = errors.New("beam: manifest signature verification failed")
 
+// errBeamPlatformNotInManifest separates "we do not build for this platform" from
+// every other reason a download cannot start.
+//
+// Collapsing the two told a macOS visitor to the public download link, verbatim,
+// to "check the signed release manifest, or set beam.download_link" - operator
+// vocabulary on an unauthenticated route, for the ordinary and permanent case
+// that there is no macOS build. Worse in the other direction: while GitHub is
+// unreachable EVERY platform looks unbuilt, so a Windows user would be told
+// something false and the real outage would be hidden behind it.
+var errBeamPlatformNotInManifest = errors.New("beam: no build for this platform")
+
 // beamManifest is Core's read view of the signed latest.json. Only the fields
 // Core needs are modeled; the per-binary sigs are ignored here (the app consumes
 // those). Read ONLY after the signature verifies.
@@ -109,7 +120,7 @@ func fetchVerifiedBeamPlatformArtifact(ctx context.Context, manifestURL, pubB64,
 	}
 	p, ok := m.Platforms[platform]
 	if !ok || strings.TrimSpace(p.URL) == "" {
-		return "", "", fmt.Errorf("signed manifest has no entry for %s", platform)
+		return "", "", fmt.Errorf("%w: %s", errBeamPlatformNotInManifest, platform)
 	}
 	return strings.TrimSpace(p.URL), strings.ToLower(strings.TrimSpace(p.Sha256)), nil
 }
