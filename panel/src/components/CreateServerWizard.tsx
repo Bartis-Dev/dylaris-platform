@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import {
     getUsers, User, createServer, getNodes, Node,
     getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
@@ -735,8 +736,15 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 <div className="modal-footer">
                     {showNoNodeMsg ? (
                         <>
-                            <div></div>
                             <button onClick={onClose} className="btn btn-secondary">Close</button>
+                            {/* The one place a customer reaches with the intent to spend money used
+                                to dead-end on Close alone. /nodes is the correct destination for all
+                                three ways to land here - no subscription, subscribed but nothing
+                                deployed yet, or a node that is offline - and it already carries the
+                                store link, so this needs no second opinion about which to offer. */}
+                            <Link href="/nodes" onClick={onClose} className="btn btn-primary inline-flex items-center gap-1.5">
+                                Add a node <ArrowRight size={14} />
+                            </Link>
                         </>
                     ) : (
                     <>
